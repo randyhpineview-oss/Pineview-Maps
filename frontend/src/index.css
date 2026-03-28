@@ -1,0 +1,493 @@
+:root {
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: #e5eefb;
+  background: #09111f;
+  line-height: 1.5;
+  font-weight: 400;
+  --tab-height: 56px;
+  --topbar-height: 48px;
+  --panel-width: 380px;
+}
+
+* { box-sizing: border-box; margin: 0; }
+
+html, body, #root { height: 100%; width: 100%; overflow: hidden; }
+
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; }
+
+/* ───── App shell ───── */
+.app-shell {
+  height: 100vh;
+  display: grid;
+  grid-template-rows: var(--topbar-height) 1fr var(--tab-height);
+}
+
+/* ───── Top bar ───── */
+.topbar {
+  height: var(--topbar-height);
+  padding: 0 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  background: rgba(9, 17, 31, 0.92);
+  border-bottom: 1px solid rgba(143, 182, 255, 0.10);
+  z-index: 30;
+}
+
+.topbar-title { font-size: 0.95rem; font-weight: 700; white-space: nowrap; }
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border-radius: 999px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.72rem;
+  border: 1px solid rgba(143, 182, 255, 0.18);
+  background: rgba(15, 23, 42, 0.75);
+}
+.badge.online { color: #86efac; }
+.badge.offline { color: #fbbf24; }
+
+.topbar select {
+  background: rgba(15, 23, 42, 0.85);
+  color: #e5eefb;
+  border: 1px solid rgba(143, 182, 255, 0.18);
+  border-radius: 8px;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.78rem;
+}
+
+/* ───── Main area (map is always behind) ───── */
+.main-area {
+  position: relative;
+  overflow: hidden;
+}
+
+.map-container {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.map-shell {
+  width: 100%;
+  height: 100%;
+}
+
+.map-fallback {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  text-align: center;
+  color: #c6d6f1;
+}
+
+/* ───── Floating controls on map ───── */
+.map-float-tl {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.float-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid rgba(143, 182, 255, 0.22);
+  border-radius: 12px;
+  padding: 0.5rem 0.75rem;
+  background: rgba(9, 17, 31, 0.92);
+  color: #e5eefb;
+  font-size: 0.82rem;
+  font-weight: 600;
+  backdrop-filter: blur(8px);
+}
+
+/* ───── Filter overlay ───── */
+.filter-overlay {
+  position: absolute;
+  top: 52px;
+  left: 12px;
+  z-index: 12;
+  background: rgba(9, 17, 31, 0.95);
+  border: 1px solid rgba(143, 182, 255, 0.14);
+  border-radius: 14px;
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.5rem;
+  width: 260px;
+  backdrop-filter: blur(12px);
+}
+
+.filter-overlay input,
+.filter-overlay select {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid rgba(143, 182, 255, 0.16);
+  background: rgba(9, 17, 31, 0.85);
+  color: #f5f8ff;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.82rem;
+}
+
+/* ───── FAB (add pin) ───── */
+.fab {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  z-index: 10;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: none;
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: white;
+  font-size: 1.5rem;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.fab-menu {
+  position: absolute;
+  bottom: 72px;
+  right: 16px;
+  z-index: 12;
+  background: rgba(9, 17, 31, 0.95);
+  border: 1px solid rgba(143, 182, 255, 0.14);
+  border-radius: 14px;
+  padding: 0.5rem;
+  display: grid;
+  gap: 0.25rem;
+  min-width: 160px;
+  backdrop-filter: blur(12px);
+}
+
+.fab-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.6rem 0.75rem;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: #e5eefb;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+.fab-menu button:hover { background: rgba(143, 182, 255, 0.1); }
+
+/* ───── Place-pin banner ───── */
+.place-banner {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 14;
+  background: rgba(9, 17, 31, 0.92);
+  border: 1px solid rgba(143, 182, 255, 0.18);
+  border-radius: 12px;
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  backdrop-filter: blur(8px);
+}
+
+.place-banner .cancel-btn {
+  border: none;
+  background: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+  border-radius: 8px;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+/* ───── Add-pin popup form (on map) ───── */
+.add-pin-popup {
+  position: absolute;
+  z-index: 15;
+  background: rgba(9, 17, 31, 0.95);
+  border: 1px solid rgba(143, 182, 255, 0.16);
+  border-radius: 14px;
+  padding: 0.75rem;
+  width: 240px;
+  display: grid;
+  gap: 0.5rem;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.add-pin-popup input {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid rgba(143, 182, 255, 0.16);
+  background: rgba(9, 17, 31, 0.85);
+  color: #f5f8ff;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.82rem;
+}
+
+.add-pin-popup .button-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* ───── Side panel (overlay on right) ───── */
+.side-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--panel-width);
+  max-width: 100%;
+  z-index: 20;
+  background: rgba(9, 17, 31, 0.96);
+  border-left: 1px solid rgba(143, 182, 255, 0.10);
+  overflow-y: auto;
+  transform: translateX(100%);
+  transition: transform 0.25s ease;
+}
+.side-panel.open { transform: translateX(0); }
+.side-panel.detail-priority { z-index: 25; }
+
+.side-panel-header {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: rgba(9, 17, 31, 0.98);
+  border-bottom: 1px solid rgba(143, 182, 255, 0.10);
+  z-index: 2;
+}
+
+.back-btn {
+  border: none;
+  background: transparent;
+  color: #e5eefb;
+  font-size: 1.2rem;
+  padding: 0.25rem;
+  line-height: 1;
+}
+
+.side-panel-header h2 {
+  margin: 0;
+  font-size: 1rem;
+  flex: 1;
+}
+
+.side-panel-body {
+  padding: 1rem;
+}
+
+/* ───── Bottom tabs ───── */
+.bottom-tabs {
+  height: var(--tab-height);
+  display: flex;
+  background: rgba(9, 17, 31, 0.96);
+  border-top: 1px solid rgba(143, 182, 255, 0.10);
+  z-index: 30;
+}
+
+.tab-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: none;
+  background: transparent;
+  color: #6b7fa3;
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 0;
+  transition: color 0.15s;
+}
+.tab-btn.active { color: #60a5fa; }
+.tab-btn svg { width: 22px; height: 22px; }
+
+/* ───── Shared UI elements ───── */
+.panel {
+  background: rgba(14, 23, 43, 0.9);
+  border: 1px solid rgba(143, 182, 255, 0.12);
+  border-radius: 14px;
+  padding: 1rem;
+}
+
+.panel input,
+.panel select,
+.panel textarea,
+.side-panel-body input,
+.side-panel-body select,
+.side-panel-body textarea {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid rgba(143, 182, 255, 0.16);
+  background: rgba(9, 17, 31, 0.85);
+  color: #f5f8ff;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.85rem;
+}
+
+.panel h2, .panel h3 { margin-top: 0; }
+
+.list-grid {
+  display: grid;
+  gap: 0.65rem;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.site-row {
+  padding: 0.75rem;
+  border-radius: 12px;
+  background: rgba(9, 17, 31, 0.72);
+  border: 1px solid rgba(143, 182, 255, 0.12);
+  text-align: left;
+  width: 100%;
+}
+
+button.site-row { cursor: pointer; }
+
+.primary-button,
+.secondary-button,
+.danger-button,
+.status-button {
+  border: none;
+  border-radius: 10px;
+  padding: 0.6rem 0.85rem;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.primary-button {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: white;
+}
+
+.secondary-button {
+  background: rgba(30, 41, 59, 1);
+  color: #d7e4fa;
+}
+
+.danger-button {
+  background: rgba(127, 29, 29, 0.9);
+  color: #fef2f2;
+}
+
+.status-button.green {
+  background: rgba(34, 197, 94, 0.18);
+  color: #86efac;
+}
+
+.status-button.red {
+  background: rgba(239, 68, 68, 0.18);
+  color: #fca5a5;
+}
+
+.button-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.meta-item {
+  padding: 0.65rem;
+  border-radius: 12px;
+  background: rgba(9, 17, 31, 0.72);
+}
+
+.meta-item strong {
+  display: block;
+  font-size: 0.72rem;
+  color: #9ab1d6;
+  margin-bottom: 0.2rem;
+}
+
+.small-text {
+  color: #9ab1d6;
+  font-size: 0.82rem;
+}
+
+.pending-badge {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 0.2rem 0.5rem;
+  background: rgba(245, 158, 11, 0.14);
+  color: #fbbf24;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.legend {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+
+.legend-chip {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  font-size: 0.78rem;
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.panel-header .small-text { margin: 0; }
+
+/* ───── Responsive: desktop gets wider panel ───── */
+@media (min-width: 769px) {
+  :root { --panel-width: 400px; }
+
+  .filter-overlay { width: 300px; }
+
+  .meta-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 768px) {
+  .side-panel { width: 100%; }
+
+  .meta-grid { grid-template-columns: 1fr; }
+
+  .topbar-right .badge { display: none; }
+}

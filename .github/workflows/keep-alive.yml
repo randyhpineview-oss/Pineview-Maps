@@ -1,0 +1,24 @@
+name: Keep Backend Alive
+
+on:
+  schedule:
+    # Run every 10 minutes to keep the backend warm (free tier)
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping-backend:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Check backend health
+      run: |
+        BACKEND_URL=${{ secrets.BACKEND_URL || 'https://your-backend.onrender.com' }}
+        curl -f "${BACKEND_URL}/health" \
+          -H "Accept: application/json" \
+          --connect-timeout 10 \
+          --max-time 30 \
+          --retry 3 \
+          --retry-delay 5
+      env:
+        BACKEND_URL: ${{ secrets.BACKEND_URL }}
