@@ -29,12 +29,12 @@ def seed_demo_users(db: Session) -> None:
 
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     # If using Supabase, verify JWT token
-    if settings.use_supabase:
+    if settings.use_supabase and db is None:
         authorization: Optional[str] = request.headers.get("Authorization")
         if authorization and authorization.startswith("Bearer "):
             token = authorization.split(" ")[1]
             try:
-                # Verify Supabase JWT
+                # Verify Supabase JWT (production mode, no database)
                 payload = jwt.decode(
                     token,
                     settings.supabase_anon_key,
@@ -43,10 +43,7 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
                 )
                 user_email = payload.get("email")
                 if user_email:
-                    user = db.query(User).filter(User.email == user_email).first()
-                    if user:
-                        return user
-                    # Create user if doesn't exist (first login)
+                    # Create a temporary user object from JWT payload
                     user_metadata = payload.get("user_metadata", {})
                     role_str = user_metadata.get("role", "worker")
                     try:
@@ -54,18 +51,22 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
                     except ValueError:
                         role_enum = RoleEnum.worker
                     
-                    new_user = User(
+                    # Return a user-like object (doesn't need to be persisted in production)
+                    user = User(
+                        id=0,  # Placeholder ID
                         email=user_email,
-                        name=payload.get("email", "").split("@")[0].title() or "User",
+                        name=user_email.split("@")[0].title() or "User",
                         role=role_enum
                     )
-                    db.add(new_user)
-                    db.commit()
-                    db.refresh(new_user)
-                    return new_user
+                    return user
             except jwt.PyJWTError:
                 pass
-        # Fallback to demo users for local development
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing token")
+    
+    # Development mode: use demo users with SQLite
+    if db is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database not available")
+    
     requested_role = request.headers.get("X-Demo-User", "worker").lower().strip()
     if requested_role not in DEMO_USERS:
         requested_role = "worker"
