@@ -36,14 +36,18 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup_event() -> None:
-    Base.metadata.create_all(bind=engine)
-    _migrate_add_columns()
-    with SessionLocal() as db:
-        seed_demo_users(db)
+    # Only initialize database in development mode (SQLite)
+    if engine is not None:
+        Base.metadata.create_all(bind=engine)
+        _migrate_add_columns()
+        with SessionLocal() as db:
+            seed_demo_users(db)
 
 
 def _migrate_add_columns() -> None:
     """Add columns that create_all() won't add to existing tables."""
+    if engine is None:
+        return  # Production mode: skip migrations
     insp = inspect(engine)
     if not insp.has_table("sites"):
         return
