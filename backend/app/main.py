@@ -76,7 +76,7 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 def health_check() -> dict[str, str]:
     return {
         "status": "healthy",
