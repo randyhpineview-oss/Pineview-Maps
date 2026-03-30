@@ -7,13 +7,15 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const USE_SUPABASE_AUTH = !!SUPABASE_URL && !!SUPABASE_ANON_KEY;
 
 // Debug logging
-console.log('[API] Environment check:', {
-  apiBaseUrl: API_BASE_URL || 'NOT SET',
-  supabaseUrl: SUPABASE_URL ? 'SET' : 'NOT SET',
-  supabaseAnonKey: SUPABASE_ANON_KEY ? 'SET' : 'NOT SET',
-  useSupabaseAuth: USE_SUPABASE_AUTH,
-  allEnvVars: Object.keys(import.meta.env).filter(k => k.startsWith('VITE_'))
-});
+if (typeof window !== 'undefined') {
+  console.log('[API] Environment check:', {
+    apiBaseUrl: API_BASE_URL || 'NOT SET',
+    supabaseUrl: SUPABASE_URL ? 'SET' : 'NOT SET',
+    supabaseAnonKey: SUPABASE_ANON_KEY ? 'SET' : 'NOT SET',
+    useSupabaseAuth: USE_SUPABASE_AUTH,
+    allEnvVars: Object.keys(import.meta.env).filter(k => k.startsWith('VITE_')).sort()
+  });
+}
 
 async function request(path, options = {}) {
   const { demoUser = 'worker', body, formData, headers = {}, ...rest } = options;
