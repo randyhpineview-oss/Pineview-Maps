@@ -175,19 +175,43 @@ export default function App() {
   }, [loadCachedSites, loadServerSites]);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChange((event, authSession) => {
-      setSession(authSession);
-      setUser(authSession?.user || null);
-      setIsAuthLoading(false);
-      
-      if (authSession?.access_token) {
-        localStorage.setItem('supabase-access-token', authSession.access_token);
-      } else {
-        localStorage.removeItem('supabase-access-token');
-      }
-    });
+    let mounted = true;
     
-    return () => unsubscribe?.data?.subscription?.unsubscribe?.();
+    const initAuth = async () => {
+      try {
+        const result = onAuthStateChange((event, authSession) => {
+          if (mounted) {
+            setSession(authSession);
+            setUser(authSession?.user || null);
+            setIsAuthLoading(false);
+            
+            if (authSession?.access_token) {
+              localStorage.setItem('supabase-access-token', authSession.access_token);
+            } else {
+              localStorage.removeItem('supabase-access-token');
+            }
+          }
+        });
+        
+        // If onAuthStateChange returns null (Supabase not configured), set loading to false
+        if (!result) {
+          if (mounted) {
+            setIsAuthLoading(false);
+          }
+        }
+      } catch (error) {
+        console.error('Auth initialization error:', error);
+        if (mounted) {
+          setIsAuthLoading(false);
+        }
+      }
+    };
+    
+    initAuth();
+    
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   useEffect(() => {
