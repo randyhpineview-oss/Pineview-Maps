@@ -11,12 +11,17 @@ settings = get_settings()
 
 # Determine which database to use
 if settings.supabase_db_url:
-    # Production: Use Supabase PostgreSQL directly
+    # Production: Use Supabase PostgreSQL directly via psycopg v3
+    db_url = settings.supabase_db_url
+    # Ensure we use the psycopg v3 driver (not psycopg2)
+    if db_url.startswith("postgresql://"):
+        db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
+    elif db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql+psycopg://", 1)
     engine = create_engine(
-        settings.supabase_db_url,
+        db_url,
         future=True,
         pool_pre_ping=True,
-        connect_args={"connect_timeout": 10}
     )
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 elif settings.database_url.startswith("sqlite"):
