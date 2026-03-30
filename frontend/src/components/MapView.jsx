@@ -156,17 +156,19 @@ export default function MapView({
               style={{
                 background: '#0f172a',
                 color: '#e5eefb',
-                padding: '8px 12px',
+                padding: '10px 14px',
                 borderRadius: '10px',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '10px',
-                minWidth: '160px',
+                minWidth: '180px',
                 boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
                 whiteSpace: 'nowrap',
                 position: 'relative',
+                WebkitTapHighlightColor: 'transparent',
               }}
               onClick={(e) => e.stopPropagation()}
+              onTouchEnd={(e) => e.stopPropagation()}
             >
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 700, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>{popupSite.lsd || 'Unnamed'}</div>
@@ -178,24 +180,35 @@ export default function MapView({
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
+                  e.preventDefault();
+                  const site = popupSite;
+                  setPopupSite(null);
+                  if (onOpenDetail) onOpenDetail(site);
+                  else if (onSelectSite) onSelectSite(site);
+                }}
+                onTouchEnd={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
                   const site = popupSite;
                   setPopupSite(null);
                   if (onOpenDetail) onOpenDetail(site);
                   else if (onSelectSite) onSelectSite(site);
                 }}
                 style={{
-                  width: 28,
-                  height: 28,
+                  width: 36,
+                  height: 36,
                   borderRadius: '50%',
                   border: '2px solid #22c55e',
                   background: 'transparent',
                   color: '#22c55e',
                   fontWeight: 700,
-                  fontSize: '0.85rem',
+                  fontSize: '1rem',
                   display: 'grid',
                   placeItems: 'center',
                   cursor: 'pointer',
                   flexShrink: 0,
+                  WebkitTapHighlightColor: 'transparent',
+                  touchAction: 'manipulation',
                 }}
               >
                 i
