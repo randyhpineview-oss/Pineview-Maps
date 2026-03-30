@@ -47,9 +47,11 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
                     # Create a temporary user object from JWT payload
                     user_metadata = payload.get("user_metadata", {})
                     role_str = user_metadata.get("role", "worker")
+                    print(f"[AUTH] Decoded JWT for {user_email}, role: {role_str}, metadata: {user_metadata}")
                     try:
                         role_enum = RoleEnum(role_str)
                     except ValueError:
+                        print(f"[AUTH] Invalid role '{role_str}', defaulting to worker")
                         role_enum = RoleEnum.worker
                     
                     # Return a user-like object (doesn't need to be persisted in production)
@@ -59,8 +61,13 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
                         name=user_email.split("@")[0].title() or "User",
                         role=role_enum
                     )
+                    print(f"[AUTH] Returning user: {user.email} with role {user.role}")
                     return user
-            except jwt.PyJWTError:
+            except jwt.PyJWTError as e:
+                print(f"[AUTH] JWT decode error: {e}")
+                pass
+            except Exception as e:
+                print(f"[AUTH] Unexpected error: {e}")
                 pass
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing token")
     
