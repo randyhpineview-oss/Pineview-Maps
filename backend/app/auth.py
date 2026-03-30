@@ -1,12 +1,13 @@
 from collections.abc import Callable
 from typing import Optional
+import json
+import base64
 
-import jwt
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from app.database import get_db
 from app.config import get_settings
+from app.database import get_db
 from app.models import RoleEnum, User
 
 settings = get_settings()
@@ -34,20 +35,28 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
         if authorization and authorization.startswith("Bearer "):
             token = authorization.split(" ")[1]
             try:
-                # Decode Supabase JWT without verification (trusting HTTPS connection)
-                # Supabase uses ES256 signing which requires fetching JWKS public keys
-                # For simplicity, we decode without verification since we trust the HTTPS channel
-                payload = jwt.decode(
-                    token,
-                    options={"verify_signature": False, "verify_aud": False},
-                    algorithms=["ES256", "HS256"]
-                )
+                # Decode JWT payload using base64 (no signature verification)
+                # JWT format: header.payload.signature
+                parts = token.split(".")
+                if len(parts) != 3:
+                    raise ValueError("Invalid JWT format")
+                
+                # Decode the payload (second part)
+                # Add padding if needed for base64 decode
+                payload_b64 = parts[1]
+                padding = 4 - (len(payload_b64) % 4)
+                if padding != 4:
+                    payload_b64 += "=" * padding
+                
+                payload_bytes = base64.urlsafe_b64decode(payload_b64)
+                payload = json.loads(payload_bytes)
+                
                 user_email = payload.get("email")
                 if user_email:
                     # Create a temporary user object from JWT payload
                     user_metadata = payload.get("user_metadata", {})
                     role_str = user_metadata.get("role", "worker")
-                    print(f"[AUTH] Decoded JWT for {user_email}, role: {role_str}, metadata: {user_metadata}")
+                    print(f"[AUTH] Decoded JWT for {user_email}, role: {role_str}")
                     try:
                         role_enum = RoleEnum(role_str)
                     except ValueError:
@@ -63,11 +72,8 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
                     )
                     print(f"[AUTH] Returning user: {user.email} with role {user.role}")
                     return user
-            except jwt.PyJWTError as e:
-                print(f"[AUTH] JWT decode error: {e}")
-                pass
             except Exception as e:
-                print(f"[AUTH] Unexpected error: {e}")
+                print(f"[AUTH] JWT decode error: {e}")
                 pass
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing token")
     
