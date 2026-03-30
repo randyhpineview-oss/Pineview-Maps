@@ -6,13 +6,14 @@ import os
 class Settings(BaseSettings):
     app_name: str = "Pineview Actual Data Collaboration"
     
-    # Database configuration - supports both SQLite (local) and Supabase (production)
+    # Database configuration - supports both SQLite (local) and Supabase PostgreSQL (production)
     database_url: str = "sqlite:///./data/pineview.db"
     
     # Supabase configuration (for production)
     supabase_url: str = ""
     supabase_anon_key: str = ""
     supabase_service_role_key: str = ""
+    supabase_db_url: str = ""  # PostgreSQL connection string from Supabase
     
     # API Configuration
     allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173,https://pineview-maps.vercel.app"

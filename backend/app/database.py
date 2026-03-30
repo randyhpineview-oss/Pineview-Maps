@@ -9,16 +9,25 @@ from app.config import get_settings
 
 settings = get_settings()
 
-# For local SQLite development only
-if settings.database_url.startswith("sqlite"):
+# Determine which database to use
+if settings.supabase_db_url:
+    # Production: Use Supabase PostgreSQL directly
+    engine = create_engine(
+        settings.supabase_db_url,
+        future=True,
+        pool_pre_ping=True,
+        connect_args={"connect_timeout": 10}
+    )
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+elif settings.database_url.startswith("sqlite"):
+    # Development: Use local SQLite
     data_dir = Path(__file__).resolve().parents[1] / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     connect_args = {"check_same_thread": False}
     engine = create_engine(settings.database_url, future=True, connect_args=connect_args)
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 else:
-    # For production: use Supabase REST API (no direct database connection)
-    # This avoids IPv6 network issues on Render
+    # Fallback: No database connection
     engine = None
     SessionLocal = None
 
