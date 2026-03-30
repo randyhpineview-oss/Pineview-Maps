@@ -45,62 +45,56 @@ export default function LoginPage({ onLoginSuccess }) {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 flex items-center justify-center p-4">
-      {/* Background decorative elements */}
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute top-0 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl"></div>
-        <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl"></div>
-      </div>
-
-      <div className="relative w-full max-w-md">
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', background: 'linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #0f172a 100%)' }}>
+      <div style={{ position: 'relative', width: '100%', maxWidth: '28rem', zIndex: 10 }}>
         {/* Card */}
-        <div className="bg-white/95 backdrop-blur rounded-2xl shadow-2xl p-8 border border-white/20">
+        <div style={{ background: 'rgba(255,255,255,0.95)', borderRadius: '1rem', boxShadow: '0 25px 50px rgba(0,0,0,0.25)', padding: '2rem', border: '1px solid rgba(255,255,255,0.2)' }}>
           {/* Header */}
-          <div className="flex items-center justify-center mb-8">
-            <div className="bg-gradient-to-br from-blue-600 to-indigo-600 p-3 rounded-lg text-white">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '1.5rem' }}>
+            <div style={{ background: 'linear-gradient(135deg, #2563eb, #4f46e5)', padding: '0.75rem', borderRadius: '0.5rem', color: 'white' }}>
               <MapIcon />
             </div>
           </div>
 
-          <h1 className="text-3xl font-bold text-center mb-2 text-gray-900">Pineview Maps</h1>
-          <p className="text-center text-gray-600 mb-8">Field Mapping & Collaboration</p>
+          <h1 style={{ fontSize: '1.875rem', fontWeight: 'bold', textAlign: 'center', marginBottom: '0.5rem', color: '#111827' }}>Pineview Maps</h1>
+          <p style={{ textAlign: 'center', color: '#6b7280', marginBottom: '2rem' }}>Field Mapping & Collaboration</p>
 
           {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">Email Address</label>
+              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, color: '#374151', marginBottom: '0.5rem' }}>Email Address</label>
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 disabled={isLoading}
-                className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition disabled:opacity-50"
+                style={{ width: '100%', padding: '0.75rem 1rem', background: '#f9fafb', border: '1px solid #d1d5db', borderRadius: '0.5rem', fontSize: '1rem', boxSizing: 'border-box', opacity: isLoading ? 0.5 : 1 }}
                 placeholder="you@example.com"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">Password</label>
+              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, color: '#374151', marginBottom: '0.5rem' }}>Password</label>
               <input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 disabled={isLoading}
-                className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition disabled:opacity-50"
+                style={{ width: '100%', padding: '0.75rem 1rem', background: '#f9fafb', border: '1px solid #d1d5db', borderRadius: '0.5rem', fontSize: '1rem', boxSizing: 'border-box', opacity: isLoading ? 0.5 : 1 }}
                 placeholder="••••••••"
               />
             </div>
 
             {error && (
-              <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+              <div style={{ padding: '1rem', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '0.5rem', fontSize: '0.875rem', color: '#b91c1c' }}>
                 {error}
               </div>
             )}
 
             {success && (
-              <div className="p-4 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
+              <div style={{ padding: '1rem', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '0.5rem', fontSize: '0.875rem', color: '#15803d' }}>
                 {success}
               </div>
             )}
@@ -108,15 +102,15 @@ export default function LoginPage({ onLoginSuccess }) {
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:from-gray-400 disabled:to-gray-400 text-white font-semibold py-3 px-4 rounded-lg transition transform hover:scale-105 disabled:scale-100"
+              style={{ width: '100%', background: isLoading ? '#9ca3af' : 'linear-gradient(90deg, #2563eb, #4f46e5)', color: 'white', fontWeight: 600, padding: '0.75rem 1rem', borderRadius: '0.5rem', border: 'none', fontSize: '1rem', cursor: isLoading ? 'default' : 'pointer' }}
             >
               {isLoading ? 'Loading...' : isSignUp ? 'Create Account' : 'Sign In'}
             </button>
           </form>
 
           {/* Toggle */}
-          <div className="mt-6 text-center">
-            <p className="text-gray-600 text-sm mb-3">
+          <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
+            <p style={{ color: '#6b7280', fontSize: '0.875rem', marginBottom: '0.75rem' }}>
               {isSignUp ? 'Already have an account?' : "Don't have an account?"}
             </p>
             <button
@@ -126,15 +120,15 @@ export default function LoginPage({ onLoginSuccess }) {
                 setError('');
                 setSuccess('');
               }}
-              className="text-blue-600 hover:text-blue-700 font-semibold text-sm transition"
+              style={{ color: '#2563eb', fontWeight: 600, fontSize: '0.875rem', background: 'none', border: 'none', cursor: 'pointer' }}
             >
               {isSignUp ? 'Sign In' : 'Sign Up'}
             </button>
           </div>
 
           {/* Footer */}
-          <div className="mt-8 pt-6 border-t border-gray-200">
-            <p className="text-xs text-gray-500 text-center">
+          <div style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid #e5e7eb' }}>
+            <p style={{ fontSize: '0.75rem', color: '#9ca3af', textAlign: 'center' }}>
               Secure authentication powered by Supabase
             </p>
           </div>
