@@ -29,12 +29,9 @@ def seed_demo_users(db: Session) -> None:
 
 
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
-    print(f"[AUTH] get_current_user called: use_supabase={settings.use_supabase}, db={'None' if db is None else 'Session'}")
-    
     # If using Supabase, verify JWT token (check JWT first, regardless of db availability)
     if settings.use_supabase:
         authorization: Optional[str] = request.headers.get("Authorization")
-        print(f"[AUTH] Authorization header: {authorization[:50] if authorization else 'None'}...")
         if authorization and authorization.startswith("Bearer "):
             token = authorization.split(" ")[1]
             try:
@@ -59,11 +56,9 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
                     # Create a temporary user object from JWT payload
                     user_metadata = payload.get("user_metadata", {})
                     role_str = user_metadata.get("role", "worker")
-                    print(f"[AUTH] Decoded JWT for {user_email}, role: {role_str}")
                     try:
                         role_enum = RoleEnum(role_str)
                     except ValueError:
-                        print(f"[AUTH] Invalid role '{role_str}', defaulting to worker")
                         role_enum = RoleEnum.worker
                     
                     # Return a user-like object (doesn't need to be persisted in production)
@@ -73,10 +68,8 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
                         name=user_email.split("@")[0].title() or "User",
                         role=role_enum
                     )
-                    print(f"[AUTH] Returning user: {user.email} with role {user.role}")
                     return user
-            except Exception as e:
-                print(f"[AUTH] JWT decode error: {e}")
+            except Exception:
                 pass
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing token")
     

@@ -10,11 +10,8 @@ from app.config import get_settings
 settings = get_settings()
 
 # Determine which database to use
-print(f"[DB INIT] supabase_db_url: {'SET' if settings.supabase_db_url else 'NOT SET'}")
-print(f"[DB INIT] database_url: {settings.database_url}")
 if settings.supabase_db_url:
     # Production: Use Supabase PostgreSQL directly via psycopg v3
-    print("[DB INIT] Using Supabase PostgreSQL")
     db_url = settings.supabase_db_url
     # Ensure we use the psycopg v3 driver (not psycopg2)
     if db_url.startswith("postgresql://"):
@@ -32,7 +29,6 @@ if settings.supabase_db_url:
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 elif settings.database_url.startswith("sqlite"):
     # Development: Use local SQLite
-    print("[DB INIT] Using SQLite (development mode)")
     data_dir = Path(__file__).resolve().parents[1] / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     connect_args = {"check_same_thread": False}
@@ -40,7 +36,6 @@ elif settings.database_url.startswith("sqlite"):
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 else:
     # Fallback: No database connection
-    print("[DB INIT] No database connection (Supabase REST API mode)")
     engine = None
     SessionLocal = None
 
@@ -52,11 +47,9 @@ class Base(DeclarativeBase):
 def get_db() -> Generator[Session, None, None]:
     if SessionLocal is None:
         # Production mode: Supabase REST API (no database session needed)
-        print("[DB] get_db() yielding None (no database session)")
         yield None
     else:
         # Development mode: SQLite
-        print("[DB] get_db() yielding database session")
         db = SessionLocal()
         try:
             yield db
