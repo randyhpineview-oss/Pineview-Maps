@@ -47,9 +47,11 @@ class Base(DeclarativeBase):
 def get_db() -> Generator[Session, None, None]:
     if SessionLocal is None:
         # Production mode: Supabase REST API (no database session needed)
+        print("[DB] get_db() yielding None (no database session)")
         yield None
     else:
         # Development mode: SQLite
+        print("[DB] get_db() yielding database session")
         db = SessionLocal()
         try:
             yield db

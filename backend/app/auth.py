@@ -29,9 +29,12 @@ def seed_demo_users(db: Session) -> None:
 
 
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
+    print(f"[AUTH] get_current_user called: use_supabase={settings.use_supabase}, db={'None' if db is None else 'Session'}")
+    
     # If using Supabase, verify JWT token
     if settings.use_supabase and db is None:
         authorization: Optional[str] = request.headers.get("Authorization")
+        print(f"[AUTH] Authorization header: {authorization[:50] if authorization else 'None'}...")
         if authorization and authorization.startswith("Bearer "):
             token = authorization.split(" ")[1]
             try:
