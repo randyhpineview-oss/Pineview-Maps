@@ -178,7 +178,10 @@ export default function MapView({
               </div>
               <button
                 type="button"
-                onClick={(e) => {
+                onTouchStart={(e) => {
+                  e.stopPropagation();
+                }}
+                onTouchEnd={(e) => {
                   e.stopPropagation();
                   e.preventDefault();
                   const site = popupSite;
@@ -186,7 +189,9 @@ export default function MapView({
                   if (onOpenDetail) onOpenDetail(site);
                   else if (onSelectSite) onSelectSite(site);
                 }}
-                onTouchEnd={(e) => {
+                onClick={(e) => {
+                  // Only handle click if not a touch device (desktop)
+                  if (e.detail === 0) return; // Ignore synthetic clicks from touch
                   e.stopPropagation();
                   e.preventDefault();
                   const site = popupSite;
