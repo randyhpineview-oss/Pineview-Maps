@@ -6,12 +6,14 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 // Check if we're using Supabase auth (production) or demo auth (development)
 const USE_SUPABASE_AUTH = !!SUPABASE_URL && !!SUPABASE_ANON_KEY;
 
-// Debug logging (remove after testing)
-if (typeof window !== 'undefined') {
-  console.log('[API] SUPABASE_URL:', SUPABASE_URL ? 'SET' : 'NOT SET');
-  console.log('[API] SUPABASE_ANON_KEY:', SUPABASE_ANON_KEY ? 'SET' : 'NOT SET');
-  console.log('[API] USE_SUPABASE_AUTH:', USE_SUPABASE_AUTH);
-}
+// Debug logging
+console.log('[API] Environment check:', {
+  apiBaseUrl: API_BASE_URL || 'NOT SET',
+  supabaseUrl: SUPABASE_URL ? 'SET' : 'NOT SET',
+  supabaseAnonKey: SUPABASE_ANON_KEY ? 'SET' : 'NOT SET',
+  useSupabaseAuth: USE_SUPABASE_AUTH,
+  allEnvVars: Object.keys(import.meta.env).filter(k => k.startsWith('VITE_'))
+});
 
 async function request(path, options = {}) {
   const { demoUser = 'worker', body, formData, headers = {}, ...rest } = options;
