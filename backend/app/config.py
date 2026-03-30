@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     supabase_service_role_key: str = ""
     
     # API Configuration
-    allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173,https://pineview-maps.vercel.app"
 
     model_config = SettingsConfigDict(
         env_file=".env",
