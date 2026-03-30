@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import AdminPanel from './components/AdminPanel';
 import FilterBar from './components/FilterBar';
+import LoginPage from './components/LoginPage';
 import MapView from './components/MapView';
 import SiteDetailSheet from './components/SiteDetailSheet';
 import { api } from './lib/api';
+import { onAuthStateChange, signOut } from './lib/supabaseClient';
 import {
   getLastSyncAt,
   getQueuedActions,
@@ -47,8 +49,9 @@ function matchSiteIdentity(site, selectedSite) {
 
 export default function App() {
   const wasOnline = useRef(window.navigator.onLine);
-  const [demoUser, setDemoUser] = useState(() => localStorage.getItem('pineview-demo-user') || 'worker');
-  const [session, setSession] = useState(demoSession('worker'));
+  const [user, setUser] = useState(null);
+  const [session, setSession] = useState(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [sites, setSites] = useState([]);
   const [pendingSites, setPendingSites] = useState([]);
@@ -75,8 +78,9 @@ export default function App() {
   const [editPickMode, setEditPickMode] = useState(false);
   const [editPickedLocation, setEditPickedLocation] = useState(null);
 
-  const canManagePins = demoUser === 'admin' || demoUser === 'office';
-  const roleCanAdmin = demoUser === 'admin' || demoUser === 'office';
+  const userRole = session?.user?.user_metadata?.role || 'worker';
+  const canManagePins = userRole === 'admin' || userRole === 'office';
+  const roleCanAdmin = userRole === 'admin' || userRole === 'office';
   const isPlacingPin = (addPinType !== null && addPinLocation === null) || editPickMode;
   const showAddPopup = addPinType !== null && addPinLocation !== null;
 
@@ -100,18 +104,18 @@ export default function App() {
       return;
     }
     try {
-      const pending = await api.listPendingSites(demoUser);
+      const pending = await api.listPendingSites();
       setPendingSites(pending);
     } catch {
       setPendingSites([]);
     }
     try {
-      const deleted = await api.listDeletedSites(demoUser);
+      const deleted = await api.listDeletedSites();
       setDeletedSites(deleted);
     } catch {
       setDeletedSites([]);
     }
-  }, [demoUser, roleCanAdmin]);
+  }, [roleCanAdmin]);
 
   const loadCachedSites = useCallback(async () => {
     const cachedSites = await getSites();
@@ -121,19 +125,15 @@ export default function App() {
   }, []);
 
   const loadServerSites = useCallback(async () => {
-    const [sessionPayload, sitesPayload] = await Promise.all([
-      api.getSession(demoUser),
-      api.listSites(serverFilters, demoUser),
-    ]);
+    const sitesPayload = await api.listSites(serverFilters);
 
-    setSession(sessionPayload.user);
     setSites(sitesPayload);
     await replaceSites(sitesPayload);
     const now = new Date().toISOString();
     await setLastSyncAt(now);
     setLastSync(now);
     await loadPendingSites();
-  }, [demoUser, loadPendingSites, serverFilters]);
+  }, [loadPendingSites, serverFilters]);
 
   const syncQueuedActions = useCallback(async () => {
     if (!window.navigator.onLine) {
@@ -143,21 +143,20 @@ export default function App() {
     const queuedActions = await refreshQueueCount();
     for (const action of queuedActions.sort((left, right) => left.createdAt.localeCompare(right.createdAt))) {
       if (action.type === 'create_site') {
-        await api.createSite(action.payload, demoUser);
+        await api.createSite(action.payload);
       }
       if (action.type === 'update_status' && Number.isInteger(action.payload.siteId)) {
-        await api.updateSiteStatus(action.payload.siteId, action.payload.body, demoUser);
+        await api.updateSiteStatus(action.payload.siteId, action.payload.body);
       }
       await removeQueuedAction(action.id);
     }
     await refreshQueueCount();
-  }, [demoUser, refreshQueueCount]);
+  }, [refreshQueueCount]);
 
   const refreshAllData = useCallback(async () => {
     setIsLoading(true);
     
     // Load cached data immediately for instant display
-    setSession(demoSession(demoUser));
     await loadCachedSites();
     setMessage('Loading cached data...');
     setIsLoading(false); // Show cached data immediately
@@ -173,11 +172,23 @@ export default function App() {
     } else {
       setMessage('Offline mode: using the last synced site data.');
     }
-  }, [demoUser, loadCachedSites, loadServerSites]);
+  }, [loadCachedSites, loadServerSites]);
 
   useEffect(() => {
-    localStorage.setItem('pineview-demo-user', demoUser);
-  }, [demoUser]);
+    const unsubscribe = onAuthStateChange((event, authSession) => {
+      setSession(authSession);
+      setUser(authSession?.user || null);
+      setIsAuthLoading(false);
+      
+      if (authSession?.access_token) {
+        localStorage.setItem('supabase-access-token', authSession.access_token);
+      } else {
+        localStorage.removeItem('supabase-access-token');
+      }
+    });
+    
+    return () => unsubscribe?.data?.subscription?.unsubscribe?.();
+  }, []);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -325,7 +336,7 @@ export default function App() {
     };
     try {
       if (window.navigator.onLine) {
-        const created = await api.createSite(payload, demoUser);
+        const created = await api.createSite(payload);
         setSites((current) => [created, ...current]);
         await upsertSite(created);
         await loadPendingSites();
@@ -348,7 +359,7 @@ export default function App() {
           updated_at: new Date().toISOString(),
           last_inspected_at: null,
           created_by_user_id: null,
-          approved_by_user_id: canManagePins ? session.id : null,
+          approved_by_user_id: canManagePins ? user?.id : null,
           updates: [],
         };
         await queueAction({ type: 'create_site', payload });
@@ -387,7 +398,7 @@ export default function App() {
     if (!window.navigator.onLine) { setMessage('Online required.'); return false; }
     setAdminBusy(true);
     try {
-      const updated = await api.updateSite(site.id, payload, demoUser);
+      const updated = await api.updateSite(site.id, payload);
       setSites((current) => current.map((item) => (matchSiteIdentity(item, site) ? updated : item)));
       await upsertSite(updated);
       setSelectedSite(updated);
@@ -405,7 +416,7 @@ export default function App() {
     if (!window.navigator.onLine) { setMessage('Online required.'); return false; }
     setAdminBusy(true);
     try {
-      await api.deleteSite(site.id, demoUser);
+      await api.deleteSite(site.id);
       const next = sites.filter((item) => !matchSiteIdentity(item, site));
       setSites(next);
       await removeSite(site);
@@ -425,7 +436,7 @@ export default function App() {
     setStatusSaving(true);
     try {
       if (window.navigator.onLine) {
-        const updated = await api.updateSiteStatus(site.id, { status, note }, demoUser);
+        const updated = await api.updateSiteStatus(site.id, { status, note });
         setSites((current) => current.map((item) => (matchSiteIdentity(item, site) ? updated : item)));
         await upsertSite(updated);
         setSelectedSite(updated);
@@ -448,7 +459,7 @@ export default function App() {
     if (!window.navigator.onLine) { setMessage('Online required.'); return; }
     setAdminBusy(true);
     try {
-      const updated = await api.requestTypeChange(site.id, { pin_type: newPinType }, demoUser);
+      const updated = await api.requestTypeChange(site.id, { pin_type: newPinType });
       setSites((current) => current.map((item) => (matchSiteIdentity(item, site) ? updated : item)));
       await upsertSite(updated);
       setSelectedSite(updated);
@@ -461,7 +472,7 @@ export default function App() {
   async function handleApproveAndEdit(site, overrides) {
     setAdminBusy(true);
     try {
-      const approved = await api.approveSite(site.id, { approval_state: 'approved', ...overrides }, demoUser);
+      const approved = await api.approveSite(site.id, { approval_state: 'approved', ...overrides });
       await refreshAllData();
       const target = approved || site;
       setSelectedSite(target);
@@ -485,9 +496,17 @@ export default function App() {
 
   async function handleRestoreSite(siteId) {
     await runAdminAction(
-      () => api.restoreSite(siteId, demoUser),
+      () => api.restoreSite(siteId),
       'Pin restored successfully.'
     );
+  }
+
+  if (isAuthLoading) {
+    return <div className="flex items-center justify-center h-screen">Loading...</div>;
+  }
+
+  if (!user) {
+    return <LoginPage onLoginSuccess={() => void refreshAllData()} />;
   }
 
   return (
@@ -507,11 +526,14 @@ export default function App() {
             </span>
           ) : null}
           {queuedCount > 0 ? <span className="badge">Queued: {queuedCount}</span> : null}
-          <select value={demoUser} onChange={(e) => setDemoUser(e.target.value)}>
-            <option value="worker">Worker</option>
-            <option value="office">Office</option>
-            <option value="admin">Admin</option>
-          </select>
+          <span className="badge">{user?.email}</span>
+          <button 
+            onClick={() => signOut()}
+            className="badge"
+            style={{ cursor: 'pointer', background: '#ef4444', color: 'white' }}
+          >
+            Sign Out
+          </button>
         </div>
       </header>
 
