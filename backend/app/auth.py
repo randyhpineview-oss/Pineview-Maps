@@ -39,8 +39,8 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
                 # For simplicity, we decode without verification since we trust the HTTPS channel
                 payload = jwt.decode(
                     token,
-                    options={"verify_signature": False},
-                    audience="authenticated"
+                    options={"verify_signature": False, "verify_aud": False},
+                    algorithms=["ES256", "HS256"]
                 )
                 user_email = payload.get("email")
                 if user_email:
