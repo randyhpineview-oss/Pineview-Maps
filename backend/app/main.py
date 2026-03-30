@@ -9,6 +9,7 @@ from app.auth import get_current_user, require_roles, seed_demo_users
 from app.config import get_settings
 from app.database import Base, SessionLocal, engine, get_db
 from app.kml_import import parse_kml_file
+from app.user_management import router as user_management_router
 from app.models import ApprovalState, PinType, RoleEnum, Site, SiteStatus, SiteUpdate, User
 from app.schemas import (
     BulkResetRequest,
@@ -25,6 +26,7 @@ from app.schemas import (
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
+app.include_router(user_management_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.origins_list,

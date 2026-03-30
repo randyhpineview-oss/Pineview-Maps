@@ -737,6 +737,7 @@ export default function App() {
               onBulkReset={(payload) => runAdminAction(() => api.bulkResetStatus(payload, demoUser), 'Reset complete.')}
               onImport={(file) => runAdminAction(() => api.importKml(file, demoUser), 'KML imported.')}
               onRestore={handleRestoreSite}
+              currentUserEmail={user?.email}
             />
           </div>
         </div>

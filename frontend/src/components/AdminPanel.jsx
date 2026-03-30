@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 
 import { pinTypeLabel } from '../lib/mapUtils';
+import UserManagementPanel from './UserManagementPanel';
 
 function PendingSiteCard({ site, busy, onApprove, onReject, onApproveAndEdit }) {
   const [editing, setEditing] = useState(false);
@@ -96,6 +97,7 @@ export default function AdminPanel({
   onBulkReset,
   onImport,
   onRestore,
+  currentUserEmail,
 }) {
   const [file, setFile] = useState(null);
   const [resetClient, setResetClient] = useState('');
@@ -204,6 +206,10 @@ export default function AdminPanel({
               ))
             )}
           </div>
+        </div>
+
+        <div style={{ borderTop: '1px solid #334155', paddingTop: '1rem', marginTop: '0.5rem' }}>
+          <UserManagementPanel busy={busy} currentUserEmail={currentUserEmail} />
         </div>
       </div>
     </div>

@@ -119,4 +119,18 @@ export const api = {
   restoreSite(siteId, demoUser) {
     return request(`/api/sites/${siteId}/restore`, { method: 'POST', demoUser });
   },
+
+  // ── User management (admin only) ──
+  listUsers() {
+    return request('/api/admin/users');
+  },
+  createUser(payload) {
+    return request('/api/admin/users', { method: 'POST', body: payload });
+  },
+  updateUser(userId, payload) {
+    return request(`/api/admin/users/${userId}`, { method: 'PATCH', body: payload });
+  },
+  deleteUser(userId) {
+    return request(`/api/admin/users/${userId}`, { method: 'DELETE' });
+  },
 };
