@@ -1,8 +1,17 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/$/, '') || '';
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 // Check if we're using Supabase auth (production) or demo auth (development)
-const USE_SUPABASE_AUTH = !!import.meta.env.VITE_SUPABASE_URL && !!import.meta.env.VITE_SUPABASE_ANON_KEY;
+const USE_SUPABASE_AUTH = !!SUPABASE_URL && !!SUPABASE_ANON_KEY;
+
+// Debug logging (remove after testing)
+if (typeof window !== 'undefined') {
+  console.log('[API] SUPABASE_URL:', SUPABASE_URL ? 'SET' : 'NOT SET');
+  console.log('[API] SUPABASE_ANON_KEY:', SUPABASE_ANON_KEY ? 'SET' : 'NOT SET');
+  console.log('[API] USE_SUPABASE_AUTH:', USE_SUPABASE_AUTH);
+}
 
 async function request(path, options = {}) {
   const { demoUser = 'worker', body, formData, headers = {}, ...rest } = options;
