@@ -99,6 +99,7 @@ def create_user(payload: UserCreate) -> UserResponse:
     """Create a new Supabase Auth user with a role."""
     client = get_supabase_admin()
     try:
+        print(f"[USER_MGMT] Creating user: {payload.email} with role {payload.role.value}")
         result = client.auth.admin.create_user(
             {
                 "email": payload.email,
@@ -110,9 +111,11 @@ def create_user(payload: UserCreate) -> UserResponse:
                 },
             }
         )
+        print(f"[USER_MGMT] User created successfully: {result.user.id}")
         return _format_user(result.user)
     except Exception as exc:
         error_msg = str(exc)
+        print(f"[USER_MGMT] Error creating user: {error_msg}")
         if "already been registered" in error_msg.lower() or "already exists" in error_msg.lower():
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
