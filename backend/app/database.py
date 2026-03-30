@@ -22,6 +22,9 @@ if settings.supabase_db_url:
         db_url,
         future=True,
         pool_pre_ping=True,
+        pool_recycle=300,
+        pool_size=5,
+        max_overflow=10,
     )
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 elif settings.database_url.startswith("sqlite"):

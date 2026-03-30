@@ -37,7 +37,7 @@ app.add_middleware(
 @app.on_event("startup")
 def startup_event() -> None:
     # Only initialize database in development mode (SQLite)
-    if engine is not None:
+    if engine is not None and settings.database_url.startswith("sqlite"):
         Base.metadata.create_all(bind=engine)
         _migrate_add_columns()
         with SessionLocal() as db:
