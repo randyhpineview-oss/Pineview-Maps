@@ -25,6 +25,7 @@ export default function MapView({
   const lastFittedBoundsKey = useRef('');
   const [popupSite, setPopupSite] = useState(null);
   const lastZoomTarget = useRef(null);
+  const lastZoomTime = useRef(0);
 
   const { isLoaded, loadError } = useJsApiLoader({
     id: 'pineview-google-map',
@@ -57,6 +58,8 @@ export default function MapView({
 
   useEffect(() => {
     if (!isLoaded || !mapRef.current || !sites.length || !siteBoundsKey) return;
+    // Skip fitBounds if we recently zoomed to a specific site (prevents zoom-out after approve)
+    if (Date.now() - lastZoomTime.current < 500) return;
     if (lastFittedBoundsKey.current === siteBoundsKey) return;
     lastFittedBoundsKey.current = siteBoundsKey;
 
@@ -75,6 +78,7 @@ export default function MapView({
     const key = zoomToSite._ts ? String(zoomToSite._ts) : String(zoomToSite.id ?? zoomToSite.cacheId);
     if (lastZoomTarget.current === key) return;
     lastZoomTarget.current = key;
+    lastZoomTime.current = Date.now();
     mapRef.current.panTo({ lat: zoomToSite.latitude, lng: zoomToSite.longitude });
     mapRef.current.setZoom(15);
   }, [isLoaded, zoomToSite]);
