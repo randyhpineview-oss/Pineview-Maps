@@ -267,6 +267,40 @@ export default function App() {
     })();
   }, [isOnline, refreshAllData, syncQueuedActions]);
 
+  // Auto-poll for real-time updates every 2 seconds when online
+  useEffect(() => {
+    if (!isOnline) return;
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const sitesPayload = await api.listSites(serverFilters);
+        setSites(sitesPayload);
+        await replaceSites(sitesPayload);
+        
+        // Update selectedSite if it exists in the new payload
+        if (selectedSite && Number.isInteger(selectedSite.id)) {
+          const updated = sitesPayload.find((s) => s.id === selectedSite.id);
+          if (updated) {
+            setSelectedSite(updated);
+          }
+        }
+        
+        // Always refresh pending sites (admins need this, others get empty list)
+        try {
+          const pending = await api.listPendingSites();
+          setPendingSites(pending);
+        } catch {
+          // Silently fail on pending sites fetch
+        }
+      } catch (error) {
+        // Silently fail polling to avoid spam
+        console.debug('Auto-poll failed:', error);
+      }
+    }, 2000); // Poll every 2 seconds for near-real-time updates
+
+    return () => clearInterval(pollInterval);
+  }, [isOnline, serverFilters]);
+
   const visibleSites = useMemo(() => {
     const normalizedSearch = filters.search.trim().toLowerCase();
     return sites.filter((site) => {
