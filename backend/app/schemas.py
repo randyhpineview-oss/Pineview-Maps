@@ -1,6 +1,7 @@
 from datetime import datetime
+import json
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models import ApprovalState, PinType, RoleEnum, SiteStatus
 
@@ -50,6 +51,16 @@ class SiteRead(BaseModel):
     approved_by_user_id: int | None
     pending_pin_type: PinType | None = None
     updates: list[SiteUpdateRead] = Field(default_factory=list)
+
+    @field_validator('raw_attributes', mode='before')
+    @classmethod
+    def parse_raw_attributes(cls, v):
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                return None
+        return v
 
 
 class SiteCreate(BaseModel):
