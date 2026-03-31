@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { pinTypeLabel } from '../lib/mapUtils';
 import UserManagementPanel from './UserManagementPanel';
 
-function PendingSiteCard({ site, busy, onApprove, onReject, onApproveAndEdit }) {
+function PendingSiteCard({ site, busy, onApprove, onReject, onApproveAndEdit, onSelectSite }) {
   const [editing, setEditing] = useState(false);
   const [edits, setEdits] = useState({
     lsd: site.lsd || '',
@@ -30,7 +30,7 @@ function PendingSiteCard({ site, busy, onApprove, onReject, onApproveAndEdit }) 
   }
 
   return (
-    <div className="site-row">
+    <div className="site-row" onClick={() => onSelectSite?.(site)} style={{ cursor: onSelectSite ? 'pointer' : 'default' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
         <div>
           <strong>{site.lsd || 'Unnamed pin'}</strong>
@@ -121,6 +121,7 @@ export default function AdminPanel({
   onBulkReset,
   onImport,
   onRestore,
+  onSelectSite,
   currentUserEmail,
 }) {
   const [file, setFile] = useState(null);
@@ -166,6 +167,7 @@ export default function AdminPanel({
                   onApprove={onApprove}
                   onReject={onReject}
                   onApproveAndEdit={onApproveAndEdit}
+                  onSelectSite={onSelectSite}
                 />
               ))
             )}

@@ -612,10 +612,10 @@ export default function App() {
       await refreshAllData();
       const target = approved || site;
       setSelectedSite(target);
-      setZoomTarget({ ...target, _ts: Date.now() });
+      // Don't zoom after approval - stay at current view to prevent flash
       setActiveTab(TAB_MAP);
       setDetailOpen(true);
-      setMessage('Approved — showing pin on map.');
+      setMessage('Approved.');
     } catch (error) { setMessage(error.message || 'Approve failed.'); }
     finally { setAdminBusy(false); }
   }
@@ -853,6 +853,7 @@ export default function App() {
               onBulkReset={(payload) => runAdminAction(() => api.bulkResetStatus(payload), 'Reset complete.')}
               onImport={(file) => runAdminAction(() => api.importKml(file), 'KML imported.')}
               onRestore={handleRestoreSite}
+              onSelectSite={(site) => { setZoomTarget({ ...site, _ts: Date.now() }); setActiveTab(TAB_MAP); setSelectedSite(site); setDetailOpen(true); }}
               currentUserEmail={user?.email}
             />
           </div>
