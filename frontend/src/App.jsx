@@ -341,6 +341,8 @@ export default function App() {
   }
 
   const touchStartY = useRef(null);
+  const touchStartScrollTop = useRef(0);
+  const pullDistance = useRef(0);
   const detailBodyRef = useRef(null);
 
   function handleCloseDetail() {
@@ -349,18 +351,34 @@ export default function App() {
 
   function handleTouchStart(e) {
     touchStartY.current = e.touches[0].clientY;
+    touchStartScrollTop.current = detailBodyRef.current?.scrollTop || 0;
+    pullDistance.current = 0;
+  }
+
+  function handleTouchMove(e) {
+    if (touchStartY.current === null) return;
+    const currentY = e.touches[0].clientY;
+    const delta = currentY - touchStartY.current;
+    
+    // If at top of scroll and pulling down (delta > 0), track as pull distance
+    if (touchStartScrollTop.current <= 0 && delta > 0) {
+      pullDistance.current = delta;
+      // Prevent default to stop scroll bounce, but only if we're pulling to dismiss
+      if (delta > 10) {
+        e.preventDefault();
+      }
+    }
   }
 
   function handleTouchEnd(e) {
     if (touchStartY.current === null) return;
-    const touchEndY = e.changedTouches[0].clientY;
-    const diff = touchEndY - touchStartY.current;
-    // Only close if swiped down more than 50px AND content is at top
-    const isAtTop = !detailBodyRef.current || detailBodyRef.current.scrollTop <= 0;
-    if (diff > 50 && detailOpen && isAtTop) {
+    // Require a significant pull (100px) to dismiss
+    if (pullDistance.current > 100 && detailOpen) {
       handleCloseDetail();
     }
     touchStartY.current = null;
+    pullDistance.current = 0;
+    touchStartScrollTop.current = 0;
   }
 
   function handleFabSelect(pinType) {
@@ -756,13 +774,13 @@ export default function App() {
         ) : null}
 
         {/* ── Detail side panel ── */}
-        <div className={`side-panel detail-priority ${detailOpen && selectedSite ? 'open' : ''}`} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+        <div className={`side-panel detail-priority ${detailOpen && selectedSite ? 'open' : ''}`}>
           <div className="side-panel-header">
             <button className="back-btn" type="button" onClick={handleCloseDetail}>←</button>
             <h2>Site Details</h2>
             {canManagePins ? <span className="small-text">Admin</span> : null}
           </div>
-          <div className="side-panel-body" ref={detailBodyRef}>
+          <div className="side-panel-body" ref={detailBodyRef} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
             {selectedSite ? (
               <SiteDetailSheet
                 site={selectedSite}
