@@ -27,13 +27,19 @@ from app.schemas import (
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
 app.include_router(user_management_router)
+
+# Build CORS origins list - include explicit origins and regex for Vercel preview deployments
+cors_origins = settings.origins_list
+print(f"[CORS] Configured origins: {cors_origins}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.origins_list,
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origins=cors_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.vercel\.dev",
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 
