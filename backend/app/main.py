@@ -67,10 +67,20 @@ def startup_event() -> None:
             seed_demo_users(db)
     # Fix PostgreSQL sequence if needed (for Render deployment)
     elif engine is not None:
-        with engine.begin() as conn:
-            conn.execute(text("""
-                SELECT setval('sites_id_seq', COALESCE((SELECT MAX(id) FROM sites), 0) + 1, false)
-            """))
+        try:
+            with engine.begin() as conn:
+                # Get the actual sequence name for the sites.id column
+                seq_result = conn.execute(text("""
+                    SELECT pg_get_serial_sequence('sites', 'id')
+                """)).scalar()
+                if seq_result:
+                    # Reset the sequence to MAX(id) + 1
+                    conn.execute(text(f"""
+                        SELECT setval('{seq_result}', COALESCE((SELECT MAX(id) FROM sites), 0) + 1, false)
+                    """))
+        except Exception as e:
+            # Log error but don't crash startup
+            print(f"Warning: Could not reset sites_id_seq: {e}")
 
 
 def _migrate_add_columns() -> None:
