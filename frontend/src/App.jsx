@@ -443,12 +443,12 @@ export default function App() {
         await refreshQueueCount();
         setMessage('Offline: pin queued for sync.');
       }
-    } catch (error) {
-      console.error('[PIN] Error creating pin:', error);
-      setMessage(error.message || 'Unable to submit pin.');
-    } finally {
       setSubmittingPin(false);
       handleCancelAdd();
+    } catch (error) {
+      console.error('[PIN] Error creating pin:', error);
+      setSubmittingPin(false);
+      setMessage(error.message || 'Unable to submit pin.');
     }
   }
 
@@ -715,6 +715,21 @@ export default function App() {
               </button>
               <button className="secondary-button" type="button" onClick={handleCancelAdd}>Cancel</button>
             </div>
+            {message && message.includes('fail') || message && message.includes('error') || message && message.includes('Unable') ? (
+              <div className="small-text" style={{ color: '#fca5a5', marginTop: '0.35rem' }}>{message}</div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* Toast message overlay on the map */}
+        {message && message !== 'Loading project data...' && message !== 'Loading...' ? (
+          <div style={{
+            position: 'absolute', bottom: 90, left: '50%', transform: 'translateX(-50%)',
+            background: 'rgba(14,23,43,0.95)', color: '#e5eefb', padding: '0.5rem 1rem',
+            borderRadius: 10, fontSize: '0.82rem', zIndex: 50, maxWidth: '90vw',
+            textAlign: 'center', pointerEvents: 'none',
+          }}>
+            {message}
           </div>
         ) : null}
 
