@@ -27,6 +27,8 @@ async function request(path, options = {}) {
     const token = localStorage.getItem('supabase-access-token');
     if (token) {
       requestHeaders['Authorization'] = `Bearer ${token}`;
+    } else {
+      console.warn('[API] No Supabase token found in localStorage');
     }
   } else {
     // Development: use X-Demo-User header
@@ -41,33 +43,49 @@ async function request(path, options = {}) {
     requestBody = JSON.stringify(body);
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...rest,
-    headers: requestHeaders,
-    body: requestBody,
-  });
+  const url = `${API_BASE_URL}${path}`;
+  console.log(`[API] ${rest.method || 'GET'} ${url}`, { headers: requestHeaders, body });
+
+  let response;
+  try {
+    response = await fetch(url, {
+      ...rest,
+      headers: requestHeaders,
+      body: requestBody,
+    });
+  } catch (error) {
+    console.error('[API] Fetch error:', error);
+    throw new Error(`Network error: ${error.message}`);
+  }
 
   if (!response.ok) {
     let message = 'Request failed';
+    let detail = '';
     try {
       const payload = await response.json();
       message = payload.detail || message;
+      detail = JSON.stringify(payload);
     } catch {
       message = response.statusText || message;
     }
-    throw new Error(message);
+    console.error(`[API] Error ${response.status}:`, message, detail);
+    throw new Error(`${response.status}: ${message}`);
   }
 
   if (response.status === 204) {
+    console.log('[API] 204 No Content');
     return null;
   }
 
   const contentType = response.headers.get('content-type') || '';
   if (!contentType.includes('application/json')) {
+    console.error('[API] Non-JSON response:', contentType);
     throw new Error('Unexpected response from the API. Check that the frontend can reach the backend.');
   }
 
-  return response.json();
+  const data = await response.json();
+  console.log('[API] Response:', data);
+  return data;
 }
 
 export const api = {

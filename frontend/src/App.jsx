@@ -408,8 +408,10 @@ export default function App() {
       longitude: addPinLocation.longitude,
     };
     try {
+      console.log('[PIN] Creating pin:', payload);
       if (window.navigator.onLine) {
         const created = await api.createSite(payload);
+        console.log('[PIN] Pin created successfully:', created);
         setSites((current) => [created, ...current]);
         await upsertSite(created);
         await loadPendingSites();
@@ -442,6 +444,7 @@ export default function App() {
         setMessage('Offline: pin queued for sync.');
       }
     } catch (error) {
+      console.error('[PIN] Error creating pin:', error);
       setMessage(error.message || 'Unable to submit pin.');
     } finally {
       setSubmittingPin(false);
@@ -508,8 +511,10 @@ export default function App() {
     if (!Number.isInteger(site.id)) { setMessage('Sync this pin first.'); return; }
     setStatusSaving(true);
     try {
+      console.log('[STATUS] Updating site status:', { siteId: site.id, status, note });
       if (window.navigator.onLine) {
         const updated = await api.updateSiteStatus(site.id, { status, note });
+        console.log('[STATUS] Status updated successfully:', updated);
         setSites((current) => current.map((item) => (matchSiteIdentity(item, site) ? updated : item)));
         await upsertSite(updated);
         setSelectedSite(updated);
@@ -523,7 +528,10 @@ export default function App() {
         await refreshQueueCount();
         setMessage('Offline: queued.');
       }
-    } catch (error) { setMessage(error.message || 'Status update failed.'); }
+    } catch (error) { 
+      console.error('[STATUS] Error updating status:', error);
+      setMessage(error.message || 'Status update failed.'); 
+    }
     finally { setStatusSaving(false); }
   }
 
