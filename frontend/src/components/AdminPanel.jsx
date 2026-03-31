@@ -86,6 +86,28 @@ function PendingSiteCard({ site, busy, onApprove, onReject, onApproveAndEdit }) 
   );
 }
 
+function CollapsibleSection({ title, count, defaultOpen = false, children }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((c) => !c)}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%',
+          background: 'none', border: 'none', color: '#e5eefb', padding: '0.5rem 0', cursor: 'pointer',
+        }}
+      >
+        <h3 style={{ margin: 0, fontSize: '0.95rem' }}>
+          {title}{count != null ? ` (${count})` : ''}
+        </h3>
+        <span style={{ fontSize: '0.8rem', color: '#9ab1d6' }}>{open ? '▾' : '▸'}</span>
+      </button>
+      {open ? children : null}
+    </div>
+  );
+}
+
 export default function AdminPanel({
   visible,
   pendingSites,
@@ -129,39 +151,7 @@ export default function AdminPanel({
     <div className="panel">
       <h2>Admin tools</h2>
       <div className="list-grid">
-        <form onSubmit={handleImport} className="list-grid">
-          <h3>Import KML</h3>
-          <input type="file" accept=".kml" onChange={(event) => setFile(event.target.files?.[0] || null)} />
-          <button className="primary-button" type="submit" disabled={!file || busy}>
-            Import existing KML
-          </button>
-        </form>
-
-        <form onSubmit={handleReset} className="list-grid">
-          <h3>Bulk reset to green</h3>
-          <select value={resetClient} onChange={(event) => setResetClient(event.target.value)}>
-            <option value="">Select client</option>
-            {clients.map((client) => (
-              <option key={client} value={client}>
-                {client}
-              </option>
-            ))}
-          </select>
-          <select value={resetArea} onChange={(event) => setResetArea(event.target.value)}>
-            <option value="">Select area</option>
-            {areas.map((area) => (
-              <option key={area} value={area}>
-                {area}
-              </option>
-            ))}
-          </select>
-          <button className="secondary-button" type="submit" disabled={!canReset || busy}>
-            Reset selected sites to Not inspected
-          </button>
-        </form>
-
-        <div>
-          <h3>Pending approvals</h3>
+        <CollapsibleSection title="Pending approvals" count={pendingSites.length} defaultOpen={pendingSites.length > 0}>
           <div className="list-grid">
             {pendingSites.length === 0 ? (
               <div className="site-row">
@@ -180,10 +170,9 @@ export default function AdminPanel({
               ))
             )}
           </div>
-        </div>
+        </CollapsibleSection>
 
-        <div>
-          <h3>Recent deletes</h3>
+        <CollapsibleSection title="Recent deletes" count={deletedSites.length} defaultOpen={false}>
           <div className="list-grid">
             {deletedSites.length === 0 ? (
               <div className="site-row">
@@ -208,11 +197,44 @@ export default function AdminPanel({
               ))
             )}
           </div>
-        </div>
+        </CollapsibleSection>
 
-        <div style={{ borderTop: '1px solid #334155', paddingTop: '1rem', marginTop: '0.5rem' }}>
+        <CollapsibleSection title="Import KML" defaultOpen={false}>
+          <form onSubmit={handleImport} className="list-grid">
+            <input type="file" accept=".kml" onChange={(event) => setFile(event.target.files?.[0] || null)} />
+            <button className="primary-button" type="submit" disabled={!file || busy}>
+              Import existing KML
+            </button>
+          </form>
+        </CollapsibleSection>
+
+        <CollapsibleSection title="Bulk reset to green" defaultOpen={false}>
+          <form onSubmit={handleReset} className="list-grid">
+            <select value={resetClient} onChange={(event) => setResetClient(event.target.value)}>
+              <option value="">Select client</option>
+              {clients.map((client) => (
+                <option key={client} value={client}>
+                  {client}
+                </option>
+              ))}
+            </select>
+            <select value={resetArea} onChange={(event) => setResetArea(event.target.value)}>
+              <option value="">Select area</option>
+              {areas.map((area) => (
+                <option key={area} value={area}>
+                  {area}
+                </option>
+              ))}
+            </select>
+            <button className="secondary-button" type="submit" disabled={!canReset || busy}>
+              Reset selected sites to Not inspected
+            </button>
+          </form>
+        </CollapsibleSection>
+
+        <CollapsibleSection title="User Management" defaultOpen={false}>
           <UserManagementPanel busy={busy} currentUserEmail={currentUserEmail} />
-        </div>
+        </CollapsibleSection>
       </div>
     </div>
   );

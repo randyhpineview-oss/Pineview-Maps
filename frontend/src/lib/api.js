@@ -129,6 +129,9 @@ export const api = {
   restoreSite(siteId, demoUser) {
     return request(`/api/sites/${siteId}/restore`, { method: 'POST', demoUser });
   },
+  quickEditSite(siteId, payload) {
+    return request(`/api/sites/${siteId}/quick-edit`, { method: 'PATCH', body: payload });
+  },
 
   // ── User management (admin only) ──
   listUsers() {

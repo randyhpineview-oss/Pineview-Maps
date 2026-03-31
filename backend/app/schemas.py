@@ -92,6 +92,12 @@ class SiteApprovalUpdate(BaseModel):
     phone_number: str | None = None
 
 
+class SiteQuickEdit(BaseModel):
+    gate_code: str | None = None
+    phone_number: str | None = None
+    notes: str | None = None
+
+
 class BulkResetRequest(BaseModel):
     client: str | None = None
     area: str | None = None

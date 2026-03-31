@@ -19,6 +19,7 @@ from app.schemas import (
     SiteAdminUpdate,
     SiteApprovalUpdate,
     SiteCreate,
+    SiteQuickEdit,
     SiteRead,
     SiteStatusUpdate,
     TypeChangeRequest,
@@ -226,6 +227,23 @@ def update_site(
     for field_name, value in changes.items():
         setattr(site, field_name, value)
 
+    site.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(site)
+    return SiteRead.model_validate(site)
+
+
+@app.patch("/api/sites/{site_id}/quick-edit", response_model=SiteRead)
+def quick_edit_site(
+    site_id: int,
+    payload: SiteQuickEdit,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SiteRead:
+    site = get_site_or_404(db, site_id)
+    changes = payload.model_dump(exclude_unset=True)
+    for field_name, value in changes.items():
+        setattr(site, field_name, value)
     site.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(site)

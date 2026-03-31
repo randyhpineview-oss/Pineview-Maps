@@ -24,18 +24,26 @@ export default function SiteDetailSheet({
   onSavePin,
   onDeletePin,
   onRequestTypeChange,
+  onQuickEdit,
   adminBusy = false,
   onRequestMapPick,
   pickedLocation = null,
 }) {
-  const [note, setNote] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [editState, setEditState] = useState(() => buildEditState(site));
+  const [quickEditing, setQuickEditing] = useState(false);
+  const [quickFields, setQuickFields] = useState({ gate_code: '', phone_number: '', notes: '' });
+  const [quickSaving, setQuickSaving] = useState(false);
 
   useEffect(() => {
-    setNote('');
     setIsEditing(false);
+    setQuickEditing(false);
     setEditState(buildEditState(site));
+    setQuickFields({
+      gate_code: site?.gate_code || '',
+      phone_number: site?.phone_number || '',
+      notes: site?.notes || '',
+    });
   }, [site?.id, site?.updated_at]);
 
   useEffect(() => {
@@ -73,6 +81,25 @@ export default function SiteDetailSheet({
 
     if (wasSuccessful) {
       setIsEditing(false);
+    }
+  }
+
+  async function handleQuickSave() {
+    if (!onQuickEdit || !site) return;
+    setQuickSaving(true);
+    try {
+      const payload = {};
+      if (quickFields.gate_code !== (site.gate_code || '')) payload.gate_code = quickFields.gate_code || null;
+      if (quickFields.phone_number !== (site.phone_number || '')) payload.phone_number = quickFields.phone_number || null;
+      if (quickFields.notes !== (site.notes || '')) payload.notes = quickFields.notes || null;
+      if (Object.keys(payload).length === 0) {
+        setQuickEditing(false);
+        return;
+      }
+      const success = await onQuickEdit(site, payload);
+      if (success) setQuickEditing(false);
+    } finally {
+      setQuickSaving(false);
     }
   }
 
@@ -170,20 +197,46 @@ export default function SiteDetailSheet({
               <strong>Area</strong>
               {site.area || 'Not set'}
             </div>
-            <div className="meta-item">
-              <strong>Gate code</strong>
-              {site.gate_code || 'Not set'}
-            </div>
-            <div className="meta-item">
-              <strong>Phone number</strong>
-              {site.phone_number || 'Not set'}
-            </div>
-            <div className="meta-item" style={{ gridColumn: '1 / -1' }}>
-              <strong>Notes</strong>
-              {site.notes || 'No notes'}
-            </div>
           </div>
+          {!quickEditing ? (
+            <div className="meta-grid" style={{ marginTop: '0.65rem' }}>
+              <div className="meta-item">
+                <strong>Gate code</strong>
+                {site.gate_code || 'Not set'}
+              </div>
+              <div className="meta-item">
+                <strong>Phone number</strong>
+                {site.phone_number || 'Not set'}
+              </div>
+              <div className="meta-item" style={{ gridColumn: '1 / -1' }}>
+                <strong>Notes</strong>
+                {site.notes || 'No notes'}
+              </div>
+            </div>
+          ) : (
+            <div className="list-grid" style={{ marginTop: '0.65rem' }}>
+              <input value={quickFields.gate_code} onChange={(e) => setQuickFields((c) => ({ ...c, gate_code: e.target.value }))} placeholder="Gate code" />
+              <input value={quickFields.phone_number} onChange={(e) => setQuickFields((c) => ({ ...c, phone_number: e.target.value }))} placeholder="Phone number" />
+              <textarea value={quickFields.notes} onChange={(e) => setQuickFields((c) => ({ ...c, notes: e.target.value }))} placeholder="Notes" rows="3" />
+              <div className="button-row">
+                <button className="primary-button" type="button" disabled={quickSaving} onClick={handleQuickSave}>
+                  {quickSaving ? 'Saving…' : 'Save'}
+                </button>
+                <button className="secondary-button" type="button" onClick={() => {
+                  setQuickEditing(false);
+                  setQuickFields({ gate_code: site.gate_code || '', phone_number: site.phone_number || '', notes: site.notes || '' });
+                }}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
           <div className="button-row" style={{ marginTop: '1rem' }}>
+            {!quickEditing && onQuickEdit ? (
+              <button className="secondary-button" type="button" onClick={() => setQuickEditing(true)}>
+                Edit details
+              </button>
+            ) : null}
             <button
               className="secondary-button"
               type="button"
@@ -194,7 +247,7 @@ export default function SiteDetailSheet({
             {canManagePin ? (
               <>
                 <button className="secondary-button" type="button" onClick={() => setIsEditing(true)}>
-                  Edit pin
+                  Admin edit
                 </button>
                 <button className="danger-button" type="button" disabled={adminBusy} onClick={handleDelete}>
                   Delete pin
@@ -203,38 +256,24 @@ export default function SiteDetailSheet({
             ) : null}
           </div>
           {!isInfoOnlyPin(site.pin_type) ? (
-            <>
-              <div style={{ marginTop: '1rem' }}>
-                <label className="small-text" htmlFor="site-update-note">
-                  Update note
-                </label>
-                <textarea
-                  id="site-update-note"
-                  rows="3"
-                  value={note}
-                  onChange={(event) => setNote(event.target.value)}
-                  placeholder="Add a short note for this status change"
-                />
-              </div>
-              <div className="button-row" style={{ marginTop: '1rem' }}>
-                <button
-                  className="status-button green"
-                  type="button"
-                  disabled={statusSaving}
-                  onClick={() => onStatusChange(site, 'inspected', note)}
-                >
-                  Mark Inspected
-                </button>
-                <button
-                  className="status-button red"
-                  type="button"
-                  disabled={statusSaving}
-                  onClick={() => onStatusChange(site, 'not_inspected', note)}
-                >
-                  Mark Not inspected
-                </button>
-              </div>
-            </>
+            <div className="button-row" style={{ marginTop: '1rem' }}>
+              <button
+                className="status-button green"
+                type="button"
+                disabled={statusSaving}
+                onClick={() => onStatusChange(site, 'inspected', '')}
+              >
+                Mark Inspected
+              </button>
+              <button
+                className="status-button red"
+                type="button"
+                disabled={statusSaving}
+                onClick={() => onStatusChange(site, 'not_inspected', '')}
+              >
+                Mark Not inspected
+              </button>
+            </div>
           ) : null}
           {(site.pin_type === 'lsd' || site.pin_type === 'reclaimed') && onRequestTypeChange ? (
             <div className="button-row" style={{ marginTop: '0.75rem' }}>

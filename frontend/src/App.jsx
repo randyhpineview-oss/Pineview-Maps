@@ -507,6 +507,22 @@ export default function App() {
     } finally { setAdminBusy(false); }
   }
 
+  async function handleQuickEdit(site, payload) {
+    if (!Number.isInteger(site.id)) { setMessage('Sync this pin first.'); return false; }
+    if (!window.navigator.onLine) { setMessage('Online required.'); return false; }
+    try {
+      const updated = await api.quickEditSite(site.id, payload);
+      setSites((current) => current.map((item) => (matchSiteIdentity(item, site) ? updated : item)));
+      await upsertSite(updated);
+      setSelectedSite(updated);
+      setMessage('Details saved.');
+      return true;
+    } catch (error) {
+      setMessage(error.message || 'Save failed.');
+      return false;
+    }
+  }
+
   async function handleStatusChange(site, status, note) {
     if (!Number.isInteger(site.id)) { setMessage('Sync this pin first.'); return; }
     setStatusSaving(true);
@@ -610,7 +626,7 @@ export default function App() {
             <span 
               className="badge" 
               style={{ background: '#f59e0b', color: '#422006', cursor: 'pointer' }}
-              onClick={() => setActiveTab(TAB_ADMIN)}
+              onClick={() => { setDetailOpen(false); setActiveTab(TAB_ADMIN); }}
             >
               Pending: {pendingSites.length}
             </span>
@@ -734,6 +750,7 @@ export default function App() {
                 onSavePin={handleAdminUpdateSite}
                 onDeletePin={handleDeleteSite}
                 onRequestTypeChange={handleRequestTypeChange}
+                onQuickEdit={handleQuickEdit}
                 adminBusy={adminBusy}
                 onRequestMapPick={canManagePins ? handleEditPickRequest : undefined}
                 pickedLocation={editPickedLocation}
