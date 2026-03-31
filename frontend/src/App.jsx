@@ -170,22 +170,28 @@ export default function App() {
 
   const refreshAllData = useCallback(async () => {
     setIsLoading(true);
+    setMessage('Loading...');
     
-    // Load cached data immediately for instant display
-    await loadCachedSites();
-    setMessage('Loading cached data...');
-    setIsLoading(false); // Show cached data immediately
-    
-    // Then sync with server in background if online
-    if (window.navigator.onLine) {
-      try {
-        await loadServerSites();
-        setMessage('Loaded live data from the API.');
-      } catch (error) {
-        setMessage(error.message || 'Using cached data - sync failed.');
+    try {
+      // Load cached data immediately for instant display
+      await loadCachedSites();
+      setIsLoading(false); // Show app immediately with cached data
+      
+      // Then sync with server in background if online (non-blocking)
+      if (window.navigator.onLine) {
+        try {
+          await loadServerSites();
+          setMessage('Synced with server');
+        } catch (error) {
+          setMessage('Using cached data');
+        }
+      } else {
+        setMessage('Offline mode');
       }
-    } else {
-      setMessage('Offline mode: using the last synced site data.');
+    } catch (error) {
+      // Even if cache fails, show the app
+      setIsLoading(false);
+      setMessage('Ready');
     }
   }, [loadCachedSites, loadServerSites]);
 
