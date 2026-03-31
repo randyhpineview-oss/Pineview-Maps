@@ -48,6 +48,21 @@ function matchSiteIdentity(site, selectedSite) {
 }
 
 export default function App() {
+  // Listen for PWA updates and reload silently
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      const handleSWUpdate = () => {
+        // New service worker is ready, reload the page
+        window.location.reload();
+      };
+
+      navigator.serviceWorker.addEventListener('controllerchange', handleSWUpdate);
+
+      return () => {
+        navigator.serviceWorker.removeEventListener('controllerchange', handleSWUpdate);
+      };
+    }
+  }, []);
   const wasOnline = useRef(window.navigator.onLine);
   const [user, setUser] = useState(null);
   const [session, setSession] = useState(null);
