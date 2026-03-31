@@ -192,7 +192,7 @@ def create_site(
         approval_state=ApprovalState.pending_review,
         status=payload.status,
         last_inspected_at=created_at if payload.status == SiteStatus.inspected else None,
-        created_by_user_id=current_user.id,
+        created_by_user_id=current_user.id if current_user.id else None,
     )
     db.add(site)
     db.flush()
@@ -201,7 +201,7 @@ def create_site(
             site_id=site.id,
             status=payload.status,
             note="Initial submission",
-            created_by_user_id=current_user.id,
+            created_by_user_id=current_user.id if current_user.id else None,
             sync_status="synced",
             created_at=created_at,
         )
@@ -249,7 +249,7 @@ def update_site_status(
         site_id=site.id,
         status=payload.status,
         note=payload.note,
-        created_by_user_id=current_user.id,
+        created_by_user_id=current_user.id if current_user.id else None,
         sync_status="synced",
     )
     db.add(update)
@@ -270,7 +270,7 @@ def delete_site(
 ) -> None:
     site = get_site_or_404(db, site_id)
     site.deleted_at = datetime.utcnow()
-    site.deleted_by_user_id = current_user.id
+    site.deleted_by_user_id = current_user.id if current_user.id else None
     site.updated_at = datetime.utcnow()
     db.commit()
 
@@ -289,7 +289,7 @@ def update_site_approval(
     site = get_site_or_404(db, site_id)
 
     site.approval_state = payload.approval_state
-    site.approved_by_user_id = current_user.id
+    site.approved_by_user_id = current_user.id if current_user.id else None
     site.updated_at = datetime.utcnow()
 
     if payload.approval_state == ApprovalState.approved and site.pending_pin_type is not None:
@@ -371,7 +371,7 @@ def bulk_reset_status(
                 site_id=site.id,
                 status=SiteStatus.not_inspected,
                 note="Bulk reset to not inspected",
-                created_by_user_id=current_user.id,
+                created_by_user_id=current_user.id if current_user.id else None,
                 sync_status="synced",
             )
         )
@@ -410,8 +410,8 @@ def import_kml(
             Site(
                 **site_data,
                 approval_state=ApprovalState.approved,
-                created_by_user_id=current_user.id,
-                approved_by_user_id=current_user.id,
+                created_by_user_id=current_user.id if current_user.id else None,
+                approved_by_user_id=current_user.id if current_user.id else None,
             )
         )
 
