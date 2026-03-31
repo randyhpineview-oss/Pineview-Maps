@@ -23,6 +23,7 @@ export default function MapView({
 }) {
   const mapRef = useRef(null);
   const lastFittedBoundsKey = useRef('');
+  const hasInitiallyFitted = useRef(false);
   const [popupSite, setPopupSite] = useState(null);
   const lastZoomTarget = useRef(null);
   const lastZoomTime = useRef(0);
@@ -60,7 +61,9 @@ export default function MapView({
     if (!isLoaded || !mapRef.current || !sites.length || !siteBoundsKey) return;
     // Skip fitBounds if we recently zoomed to a specific site (prevents zoom-out after approve)
     if (Date.now() - lastZoomTime.current < 500) return;
-    if (lastFittedBoundsKey.current === siteBoundsKey) return;
+    // Only fit bounds once on initial load - don't zoom out on background updates from other users
+    if (hasInitiallyFitted.current) return;
+    hasInitiallyFitted.current = true;
     lastFittedBoundsKey.current = siteBoundsKey;
 
     const bounds = new window.google.maps.LatLngBounds();
