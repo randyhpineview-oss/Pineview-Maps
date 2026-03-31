@@ -28,18 +28,13 @@ settings = get_settings()
 app = FastAPI(title=settings.app_name)
 
 # Add CORS middleware FIRST, before any routes or routers
-# Build CORS origins list - include explicit origins and regex for Vercel preview deployments
-cors_origins = settings.origins_list
-print(f"[CORS] Configured origins: {cors_origins}")
-
+# Open CORS completely to avoid any blocking issues
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins,
-    allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.vercel\.dev",
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
 )
 
 # Include routers AFTER middleware is set up
