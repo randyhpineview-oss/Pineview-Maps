@@ -44,7 +44,6 @@ async function request(path, options = {}) {
   }
 
   const url = `${API_BASE_URL}${path}`;
-  console.log(`[API] ${rest.method || 'GET'} ${url}`, { headers: requestHeaders, body });
 
   let response;
   try {
@@ -60,32 +59,25 @@ async function request(path, options = {}) {
 
   if (!response.ok) {
     let message = 'Request failed';
-    let detail = '';
     try {
       const payload = await response.json();
       message = payload.detail || message;
-      detail = JSON.stringify(payload);
     } catch {
       message = response.statusText || message;
     }
-    console.error(`[API] Error ${response.status}:`, message, detail);
     throw new Error(`${response.status}: ${message}`);
   }
 
   if (response.status === 204) {
-    console.log('[API] 204 No Content');
     return null;
   }
 
   const contentType = response.headers.get('content-type') || '';
   if (!contentType.includes('application/json')) {
-    console.error('[API] Non-JSON response:', contentType);
     throw new Error('Unexpected response from the API. Check that the frontend can reach the backend.');
   }
 
-  const data = await response.json();
-  console.log('[API] Response:', data);
-  return data;
+  return response.json();
 }
 
 export const api = {

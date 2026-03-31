@@ -267,7 +267,7 @@ export default function App() {
     })();
   }, [isOnline, refreshAllData, syncQueuedActions]);
 
-  // Auto-poll for real-time updates every 2 seconds when online
+  // Auto-poll for real-time updates every 10 seconds when online
   useEffect(() => {
     if (!isOnline) return;
 
@@ -294,9 +294,8 @@ export default function App() {
         }
       } catch (error) {
         // Silently fail polling to avoid spam
-        console.debug('Auto-poll failed:', error);
       }
-    }, 2000); // Poll every 2 seconds for near-real-time updates
+    }, 10000); // Poll every 10 seconds for updates
 
     return () => clearInterval(pollInterval);
   }, [isOnline, serverFilters]);
