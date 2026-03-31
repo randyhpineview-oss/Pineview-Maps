@@ -42,7 +42,7 @@ class SiteRead(BaseModel):
     notes: str | None
     source: str
     source_name: str | None
-    raw_attributes: str | None
+    raw_attributes: dict | None
     last_inspected_at: datetime | None
     created_at: datetime
     updated_at: datetime
