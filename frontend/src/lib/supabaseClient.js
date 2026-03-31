@@ -13,6 +13,59 @@ export const supabase = (SUPABASE_URL && SUPABASE_ANON_KEY)
   ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       auth: {
         redirectTo: getRedirectUrl(),
+        storage: typeof window !== 'undefined' && window.indexedDB ? {
+          getItem: async (key) => {
+            return new Promise((resolve, reject) => {
+              const request = indexedDB.open('supabase-auth');
+              request.onerror = () => reject(request.error);
+              request.onsuccess = () => {
+                const db = request.result;
+                const transaction = db.transaction('auth', 'readonly');
+                const store = transaction.objectStore('auth');
+                const getRequest = store.get(key);
+                getRequest.onerror = () => reject(getRequest.error);
+                getRequest.onsuccess = () => resolve(getRequest.result?.value || null);
+              };
+            });
+          },
+          setItem: async (key, value) => {
+            return new Promise((resolve, reject) => {
+              const request = indexedDB.open('supabase-auth');
+              request.onerror = () => reject(request.error);
+              request.onupgradeneeded = () => {
+                const db = request.result;
+                if (!db.objectStoreNames.contains('auth')) {
+                  db.createObjectStore('auth');
+                }
+              };
+              request.onsuccess = () => {
+                const db = request.result;
+                const transaction = db.transaction('auth', 'readwrite');
+                const store = transaction.objectStore('auth');
+                const putRequest = store.put({ value }, key);
+                putRequest.onerror = () => reject(putRequest.error);
+                putRequest.onsuccess = () => resolve();
+              };
+            });
+          },
+          removeItem: async (key) => {
+            return new Promise((resolve, reject) => {
+              const request = indexedDB.open('supabase-auth');
+              request.onerror = () => reject(request.error);
+              request.onsuccess = () => {
+                const db = request.result;
+                const transaction = db.transaction('auth', 'readwrite');
+                const store = transaction.objectStore('auth');
+                const deleteRequest = store.delete(key);
+                deleteRequest.onerror = () => reject(deleteRequest.error);
+                deleteRequest.onsuccess = () => resolve();
+              };
+            });
+          },
+        } : undefined,
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
       },
     })
   : null;
