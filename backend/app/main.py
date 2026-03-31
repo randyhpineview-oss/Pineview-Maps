@@ -65,6 +65,12 @@ def startup_event() -> None:
         _migrate_add_columns()
         with SessionLocal() as db:
             seed_demo_users(db)
+    # Fix PostgreSQL sequence if needed (for Render deployment)
+    elif engine is not None:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                SELECT setval('sites_id_seq', COALESCE((SELECT MAX(id) FROM sites), 0) + 1, false)
+            """))
 
 
 def _migrate_add_columns() -> None:
