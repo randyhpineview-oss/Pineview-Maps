@@ -845,7 +845,14 @@ export default function App() {
           <MapIcon />
           <span>Map</span>
         </button>
-        <button className={`tab-btn ${activeTab === TAB_SITES ? 'active' : ''}`} type="button" onClick={() => { setActiveTab(TAB_SITES); setDetailOpen(false); }}>
+        <button className={`tab-btn ${activeTab === TAB_SITES ? 'active' : ''}`} type="button" onClick={() => { 
+          if (activeTab === TAB_SITES) {
+            setActiveTab(TAB_MAP);
+          } else {
+            setActiveTab(TAB_SITES);
+          }
+          setDetailOpen(false); 
+        }}>
           <ListIcon />
           <span>Sites</span>
         </button>
