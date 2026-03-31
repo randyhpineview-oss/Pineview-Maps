@@ -346,9 +346,15 @@ def update_site_approval(
             site.pin_type = site.pending_pin_type
             site.pending_pin_type = None
     elif payload.approval_state == ApprovalState.rejected:
-        # Revert to approved (previous normal state) and discard pending changes
-        site.approval_state = ApprovalState.approved
-        site.pending_pin_type = None
+        # If this is a new pin (field_added source) that was never approved, delete it
+        if site.source == "field_added" and site.approval_state == ApprovalState.pending_review:
+            db.delete(site)
+            db.commit()
+            return SiteRead.model_validate(site)  # Return the deleted site for frontend handling
+        else:
+            # Revert to approved (previous normal state) and discard pending changes
+            site.approval_state = ApprovalState.approved
+            site.pending_pin_type = None
 
     if payload.lsd is not None:
         site.lsd = payload.lsd
