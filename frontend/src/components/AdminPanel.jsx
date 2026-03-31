@@ -29,20 +29,13 @@ function PendingSiteCard({ site, busy, onApprove, onReject, onApproveAndEdit }) 
     return overrides;
   }
 
-  function handleApprove() {
-    onApprove(site.id, buildOverrides());
-  }
-
-  function handleApproveAndEdit() {
-    if (onApproveAndEdit) onApproveAndEdit(site, buildOverrides());
-  }
-
   return (
     <div className="site-row">
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
         <div>
           <strong>{site.lsd || 'Unnamed pin'}</strong>
           <div className="small-text">{pinTypeLabel(site.pin_type)} • {site.client || 'No client'} • {site.area || 'No area'}</div>
+          <div className="small-text">Status: {site.status === 'inspected' ? 'Inspected' : 'Not inspected'}</div>
         </div>
         <span className="pending-badge">Pending</span>
       </div>
@@ -66,19 +59,28 @@ function PendingSiteCard({ site, busy, onApprove, onReject, onApproveAndEdit }) 
         </div>
       )}
       <div className="button-row" style={{ marginTop: '0.75rem' }}>
-        <button className="primary-button" type="button" disabled={busy} onClick={handleApproveAndEdit}>
-          Approve & Edit
-        </button>
-        <button
-          className="secondary-button"
-          type="button"
-          onClick={() => setEditing((prev) => !prev)}
-        >
-          {editing ? 'Hide fields' : 'Edit fields'}
-        </button>
-        <button className="danger-button" type="button" disabled={busy} onClick={() => onReject(site.id)}>
-          Reject
-        </button>
+        {!editing ? (
+          <>
+            <button className="primary-button" type="button" disabled={busy} onClick={() => onApprove(site.id, {})}>
+              Approve
+            </button>
+            <button className="secondary-button" type="button" disabled={busy} onClick={() => setEditing(true)}>
+              Approve & Edit
+            </button>
+            <button className="danger-button" type="button" disabled={busy} onClick={() => onReject(site.id)}>
+              Reject
+            </button>
+          </>
+        ) : (
+          <>
+            <button className="primary-button" type="button" disabled={busy} onClick={() => { onApproveAndEdit ? onApproveAndEdit(site, buildOverrides()) : onApprove(site.id, buildOverrides()); }}>
+              Confirm Approve
+            </button>
+            <button className="secondary-button" type="button" onClick={() => setEditing(false)}>
+              Cancel
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

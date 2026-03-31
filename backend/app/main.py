@@ -288,14 +288,17 @@ def update_site_approval(
 ) -> SiteRead:
     site = get_site_or_404(db, site_id)
 
-    site.approval_state = payload.approval_state
     site.approved_by_user_id = current_user.id if current_user.id else None
     site.updated_at = datetime.utcnow()
 
-    if payload.approval_state == ApprovalState.approved and site.pending_pin_type is not None:
-        site.pin_type = site.pending_pin_type
-        site.pending_pin_type = None
-    elif payload.approval_state == ApprovalState.rejected and site.pending_pin_type is not None:
+    if payload.approval_state == ApprovalState.approved:
+        site.approval_state = ApprovalState.approved
+        if site.pending_pin_type is not None:
+            site.pin_type = site.pending_pin_type
+            site.pending_pin_type = None
+    elif payload.approval_state == ApprovalState.rejected:
+        # Revert to approved (previous normal state) and discard pending changes
+        site.approval_state = ApprovalState.approved
         site.pending_pin_type = None
 
     if payload.lsd is not None:

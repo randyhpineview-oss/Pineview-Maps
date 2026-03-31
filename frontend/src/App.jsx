@@ -510,12 +510,14 @@ export default function App() {
   async function handleStatusChange(site, status, note) {
     if (!Number.isInteger(site.id)) { setMessage('Sync this pin first.'); return; }
     setStatusSaving(true);
+    // Optimistic update: change color instantly on the device
+    const optimistic = { ...site, status, updated_at: new Date().toISOString(), ...(status === 'inspected' ? { last_inspected_at: new Date().toISOString() } : {}) };
+    setSites((current) => current.map((item) => (matchSiteIdentity(item, site) ? optimistic : item)));
+    setSelectedSite(optimistic);
     try {
-      console.log('[STATUS] Updating site status:', { siteId: site.id, status, note });
       if (window.navigator.onLine) {
         const updated = await api.updateSiteStatus(site.id, { status, note });
-        console.log('[STATUS] Status updated successfully:', updated);
-        setSites((current) => current.map((item) => (matchSiteIdentity(item, site) ? updated : item)));
+        setSites((current) => current.map((item) => (matchSiteIdentity(item, optimistic) ? updated : item)));
         await upsertSite(updated);
         setSelectedSite(updated);
         setMessage('Status updated.');
@@ -788,11 +790,11 @@ export default function App() {
               clients={clients}
               areas={areas}
               busy={adminBusy}
-              onApprove={(siteId, overrides) => runAdminAction(() => api.approveSite(siteId, { approval_state: 'approved', ...overrides }, demoUser), 'Approved.')}
-              onReject={(siteId) => runAdminAction(() => api.approveSite(siteId, { approval_state: 'rejected' }, demoUser), 'Rejected.')}
+              onApprove={(siteId, overrides) => runAdminAction(() => api.approveSite(siteId, { approval_state: 'approved', ...overrides }), 'Approved.')}
+              onReject={(siteId) => runAdminAction(() => api.approveSite(siteId, { approval_state: 'rejected' }), 'Rejected.')}
               onApproveAndEdit={handleApproveAndEdit}
-              onBulkReset={(payload) => runAdminAction(() => api.bulkResetStatus(payload, demoUser), 'Reset complete.')}
-              onImport={(file) => runAdminAction(() => api.importKml(file, demoUser), 'KML imported.')}
+              onBulkReset={(payload) => runAdminAction(() => api.bulkResetStatus(payload), 'Reset complete.')}
+              onImport={(file) => runAdminAction(() => api.importKml(file), 'KML imported.')}
               onRestore={handleRestoreSite}
               currentUserEmail={user?.email}
             />
