@@ -59,21 +59,13 @@ export default function MapView({
 
   useEffect(() => {
     if (!isLoaded || !mapRef.current || !sites.length || !siteBoundsKey) return;
-    // Skip fitBounds if we recently zoomed to a specific site (prevents zoom-out after approve)
-    if (Date.now() - lastZoomTime.current < 500) return;
-    // Only fit bounds once on initial load - don't zoom out on background updates from other users
-    if (hasInitiallyFitted.current) return;
-    hasInitiallyFitted.current = true;
-    lastFittedBoundsKey.current = siteBoundsKey;
-
-    const bounds = new window.google.maps.LatLngBounds();
-    sites.forEach((s) => bounds.extend({ lat: s.latitude, lng: s.longitude }));
-    if (sites.length === 1) {
-      mapRef.current.panTo(bounds.getCenter());
-      mapRef.current.setZoom(13);
-      return;
+    // Skip fitBounds - users control their own zoom level
+    // Only set initial center once if no sites were loaded before
+    if (!hasInitiallyFitted.current && sites.length > 0) {
+      hasInitiallyFitted.current = true;
+      // Just center on first site, don't zoom out
+      mapRef.current.panTo({ lat: sites[0].latitude, lng: sites[0].longitude });
     }
-    mapRef.current.fitBounds(bounds, 64);
   }, [isLoaded, siteBoundsKey, sites]);
 
   useEffect(() => {
