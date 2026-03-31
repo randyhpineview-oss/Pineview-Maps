@@ -341,6 +341,7 @@ export default function App() {
   }
 
   const touchStartY = useRef(null);
+  const detailBodyRef = useRef(null);
 
   function handleCloseDetail() {
     setDetailOpen(false);
@@ -354,8 +355,9 @@ export default function App() {
     if (touchStartY.current === null) return;
     const touchEndY = e.changedTouches[0].clientY;
     const diff = touchEndY - touchStartY.current;
-    // Swipe down more than 50px closes the panel
-    if (diff > 50 && detailOpen) {
+    // Only close if swiped down more than 50px AND content is at top
+    const isAtTop = !detailBodyRef.current || detailBodyRef.current.scrollTop <= 0;
+    if (diff > 50 && detailOpen && isAtTop) {
       handleCloseDetail();
     }
     touchStartY.current = null;
@@ -760,7 +762,7 @@ export default function App() {
             <h2>Site Details</h2>
             {canManagePins ? <span className="small-text">Admin</span> : null}
           </div>
-          <div className="side-panel-body">
+          <div className="side-panel-body" ref={detailBodyRef}>
             {selectedSite ? (
               <SiteDetailSheet
                 site={selectedSite}
