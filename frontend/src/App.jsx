@@ -721,18 +721,6 @@ export default function App() {
           </div>
         ) : null}
 
-        {/* Toast message overlay on the map */}
-        {message && message !== 'Loading project data...' && message !== 'Loading...' ? (
-          <div style={{
-            position: 'absolute', bottom: 90, left: '50%', transform: 'translateX(-50%)',
-            background: 'rgba(14,23,43,0.95)', color: '#e5eefb', padding: '0.5rem 1rem',
-            borderRadius: 10, fontSize: '0.82rem', zIndex: 50, maxWidth: '90vw',
-            textAlign: 'center', pointerEvents: 'none',
-          }}>
-            {message}
-          </div>
-        ) : null}
-
         {/* FAB + type menu */}
         {activeTab === TAB_MAP && !isPlacingPin && !showAddPopup ? (
           <>
