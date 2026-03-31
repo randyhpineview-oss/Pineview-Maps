@@ -26,8 +26,8 @@ from app.schemas import (
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
-app.include_router(user_management_router)
 
+# Add CORS middleware FIRST, before any routes or routers
 # Build CORS origins list - include explicit origins and regex for Vercel preview deployments
 cors_origins = settings.origins_list
 print(f"[CORS] Configured origins: {cors_origins}")
@@ -41,6 +41,9 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+# Include routers AFTER middleware is set up
+app.include_router(user_management_router)
 
 
 @app.on_event("startup")

@@ -15,8 +15,8 @@ class Settings(BaseSettings):
     supabase_service_role_key: str = ""
     supabase_db_url: str = ""  # PostgreSQL connection string from Supabase
     
-    # API Configuration
-    allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173,https://pineview-maps.vercel.app"
+    # API Configuration - explicitly allow Vercel frontend and localhost for development
+    allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173,https://pineview-maps.vercel.app,https://pineview-maps.onrender.com"
 
     model_config = SettingsConfigDict(
         env_file=".env",
