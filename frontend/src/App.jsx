@@ -340,8 +340,25 @@ export default function App() {
     setDetailOpen(true);
   }
 
+  const touchStartY = useRef(null);
+
   function handleCloseDetail() {
     setDetailOpen(false);
+  }
+
+  function handleTouchStart(e) {
+    touchStartY.current = e.touches[0].clientY;
+  }
+
+  function handleTouchEnd(e) {
+    if (touchStartY.current === null) return;
+    const touchEndY = e.changedTouches[0].clientY;
+    const diff = touchEndY - touchStartY.current;
+    // Swipe down more than 50px closes the panel
+    if (diff > 50 && detailOpen) {
+      handleCloseDetail();
+    }
+    touchStartY.current = null;
   }
 
   function handleFabSelect(pinType) {
@@ -737,7 +754,7 @@ export default function App() {
         ) : null}
 
         {/* ── Detail side panel ── */}
-        <div className={`side-panel detail-priority ${detailOpen && selectedSite ? 'open' : ''}`}>
+        <div className={`side-panel detail-priority ${detailOpen && selectedSite ? 'open' : ''}`} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
           <div className="side-panel-header">
             <button className="back-btn" type="button" onClick={handleCloseDetail}>←</button>
             <h2>Site Details</h2>
@@ -833,7 +850,14 @@ export default function App() {
           <span>Sites</span>
         </button>
         {roleCanAdmin ? (
-          <button className={`tab-btn ${activeTab === TAB_ADMIN ? 'active' : ''}`} type="button" onClick={() => { setActiveTab(TAB_ADMIN); setDetailOpen(false); }}>
+          <button className={`tab-btn ${activeTab === TAB_ADMIN ? 'active' : ''}`} type="button" onClick={() => { 
+            if (activeTab === TAB_ADMIN) {
+              setActiveTab(TAB_MAP);
+            } else {
+              setActiveTab(TAB_ADMIN);
+              setDetailOpen(false);
+            }
+          }}>
             <GearIcon />
             <span>Admin</span>
           </button>
