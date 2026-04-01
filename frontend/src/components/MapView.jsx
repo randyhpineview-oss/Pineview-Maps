@@ -28,12 +28,14 @@ export default function MapView({
   const lastZoomTarget = useRef(null);
   const lastZoomTime = useRef(0);
   
-  // Double-tap zoom gesture refs
+  // Double-tap hold zoom gesture refs
   const lastTapTimeRef = useRef(0);
   const isZoomGestureActiveRef = useRef(false);
   const zoomStartYRef = useRef(0);
   const zoomStartLevelRef = useRef(11);
   const gestureContainerRef = useRef(null);
+  const lastZoomUpdateRef = useRef(0);
+  const lastZoomValueRef = useRef(11);
 
   const { isLoaded, loadError } = useJsApiLoader({
     id: 'pineview-google-map',
@@ -122,6 +124,11 @@ export default function MapView({
     // Only handle if zoom gesture is active and single touch
     if (!isZoomGestureActiveRef.current || !mapRef.current || e.touches.length !== 1) return;
     
+    const now = Date.now();
+    // Throttle zoom updates to every 50ms max for smooth performance
+    if (now - lastZoomUpdateRef.current < 50) return;
+    lastZoomUpdateRef.current = now;
+    
     const currentY = e.touches[0].clientY;
     const deltaY = zoomStartYRef.current - currentY; // Positive = up (zoom in), negative = down (zoom out)
     
@@ -129,7 +136,11 @@ export default function MapView({
     const zoomChange = deltaY / 25;
     const newZoom = Math.max(1, Math.min(20, zoomStartLevelRef.current + zoomChange));
     
-    mapRef.current.setZoom(newZoom);
+    // Only update if zoom actually changed (avoid redundant renders)
+    if (newZoom !== lastZoomValueRef.current) {
+      lastZoomValueRef.current = newZoom;
+      mapRef.current.setZoom(newZoom);
+    }
     e.preventDefault();
   };
 
