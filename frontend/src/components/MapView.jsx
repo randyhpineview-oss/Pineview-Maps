@@ -125,8 +125,8 @@ export default function MapView({
     const currentY = e.touches[0].clientY;
     const deltaY = zoomStartYRef.current - currentY; // Positive = up (zoom in), negative = down (zoom out)
     
-    // Map vertical movement to zoom (every 50px = 1 zoom level)
-    const zoomChange = Math.round(deltaY / 50);
+    // Smooth continuous zoom - every 25px = 1 zoom level, no rounding
+    const zoomChange = deltaY / 25;
     const newZoom = Math.max(1, Math.min(20, zoomStartLevelRef.current + zoomChange));
     
     mapRef.current.setZoom(newZoom);
