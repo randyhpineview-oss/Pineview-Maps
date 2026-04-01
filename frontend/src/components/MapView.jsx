@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { GoogleMap, OverlayView, useJsApiLoader } from '@react-google-maps/api';
 
-import { buildMarkerIcon, pinTypeLabel } from '../lib/mapUtils';
+import { buildMarkerSvg, pinTypeLabel } from '../lib/mapUtils';
 
 const mapContainerStyle = { width: '100%', height: '100%' };
 
@@ -63,7 +63,7 @@ export default function MapView({
       const isSelected = (popupSite && String(popupSite.id ?? popupSite.cacheId) === String(site.id ?? site.cacheId)) ||
                         (selectedSite && String(selectedSite.id ?? selectedSite.cacheId) === String(site.id ?? site.cacheId));
       
-      const iconSvg = buildMarkerIcon(site, isSelected);
+      const iconSvg = buildMarkerSvg(site, isSelected);
       
       if (existingMarker) {
         // Update position if changed

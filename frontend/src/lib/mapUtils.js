@@ -110,6 +110,23 @@ function treeSvg(site, isSelected) {
   </svg>`;
 }
 
+// Returns raw SVG string for AdvancedMarkerElement
+export function buildMarkerSvg(site, isSelected = false) {
+  if (site.approval_state === 'pending_review') {
+    return pendingSvg();
+  }
+  switch (site.pin_type) {
+    case 'water':
+      return waterSvg(isSelected);
+    case 'quad_access':
+      return atvSvg(isSelected);
+    case 'reclaimed':
+      return treeSvg(site, isSelected);
+    default:
+      return lsdSvg(site, isSelected);
+  }
+}
+
 export function buildMarkerIcon(site, isSelected = false) {
   if (site.approval_state === 'pending_review') {
     const svg = pendingSvg();
