@@ -52,11 +52,11 @@ export default function MapView({
     if (!isLoaded || !userLocation) return null;
     return {
       path: window.google.maps.SymbolPath.CIRCLE,
-      scale: 12,
+      scale: 6,
       fillColor: '#3b82f6',
       fillOpacity: 1,
       strokeColor: '#ffffff',
-      strokeWeight: 3,
+      strokeWeight: 2,
     };
   }, [isLoaded, userLocation]);
 
