@@ -703,11 +703,6 @@ export default function App() {
           <button className="float-btn" type="button" onClick={() => setIsFilterOpen((c) => !c)}>
             ☰ Filters
           </button>
-          {isOnline ? (
-            <div className="badge" style={{ background: '#22c55e', color: 'white' }}>Online</div>
-          ) : (
-            <div className="badge offline">Offline</div>
-          )}
         </div>
 
         {isFilterOpen ? (
