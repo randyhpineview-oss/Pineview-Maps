@@ -85,8 +85,8 @@ export default function App() {
   const [addPinLocation, setAddPinLocation] = useState(null);
   const [addPinForm, setAddPinForm] = useState({ lsd: '', client: '', area: '' });
   const [zoomTarget, setZoomTarget] = useState(null);
-  const [editPickMode, setEditPickMode] = useState(false);
-  const [editPickedLocation, setEditPickedLocation] = useState(null);
+  const [userLocation, setUserLocation] = useState(null);
+  const [userLocationMarker, setUserLocationMarker] = useState(null);
 
   const userRole = session?.user?.user_metadata?.role || 'worker';
   const canManagePins = userRole === 'admin' || userRole === 'office';
@@ -406,10 +406,27 @@ export default function App() {
     }
   }
 
-  function handleEditPickRequest() {
-    setEditPickMode(true);
-    setEditPickedLocation(null);
-    setDetailOpen(false);
+  function handleCenterOnUserLocation() {
+    if (!navigator.geolocation) {
+      setMessage('Geolocation not supported');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const location = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        };
+        setUserLocation(location);
+        // Center map on user location with zoom level 15
+        setZoomTarget({ latitude: location.lat, longitude: location.lng, _ts: Date.now() });
+        setMessage('Location found');
+      },
+      (error) => {
+        setMessage('Location error: ' + error.message);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
   }
 
   function handleMapDismiss() {
@@ -695,6 +712,7 @@ export default function App() {
             onOpenDetail={handleOpenDetail}
             zoomToSite={zoomTarget}
             onMapClick={handleMapDismiss}
+            userLocation={userLocation}
           />
         </div>
 
@@ -760,6 +778,17 @@ export default function App() {
         {/* FAB + type menu */}
         {activeTab === TAB_MAP && !isPlacingPin && !showAddPopup ? (
           <>
+            <button 
+              className="fab location-fab" 
+              type="button" 
+              onClick={handleCenterOnUserLocation}
+              title="Center on my location"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>
+              </svg>
+            </button>
             <button className="fab" type="button" onClick={() => setFabOpen((c) => !c)}>+</button>
             {fabOpen ? (
               <div className="fab-menu">

@@ -20,6 +20,7 @@ export default function MapView({
   onPickLocation,
   zoomToSite = null,
   onMapClick,
+  userLocation = null,
 }) {
   const mapRef = useRef(null);
   const lastFittedBoundsKey = useRef('');
@@ -46,6 +47,18 @@ export default function MapView({
     () => sites.map((s) => `${s.id ?? s.cacheId}:${s.latitude}:${s.longitude}`).join('|'),
     [sites]
   );
+
+  const userLocationIcon = useMemo(() => {
+    if (!isLoaded || !userLocation) return null;
+    return {
+      path: window.google.maps.SymbolPath.CIRCLE,
+      scale: 12,
+      fillColor: '#3b82f6',
+      fillOpacity: 1,
+      strokeColor: '#ffffff',
+      strokeWeight: 3,
+    };
+  }, [isLoaded, userLocation]);
 
   const pickedLocationIcon = useMemo(() => {
     if (!isLoaded || !pickedLocation) return null;
@@ -197,6 +210,14 @@ export default function MapView({
           draggableCursor: isPickingLocation ? 'crosshair' : undefined,
         }}
       >
+        {userLocation ? (
+          <Marker
+            position={{ lat: userLocation.lat, lng: userLocation.lng }}
+            icon={userLocationIcon || undefined}
+            zIndex={1000}
+          />
+        ) : null}
+
         {pickedLocation ? (
           <Marker
             position={{ lat: pickedLocation.latitude, lng: pickedLocation.longitude }}

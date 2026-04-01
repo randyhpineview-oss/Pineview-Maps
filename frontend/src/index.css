@@ -163,6 +163,16 @@ button { cursor: pointer; }
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
+.fab.location-fab {
+  background: #ffffff;
+  color: #1f2937;
+  bottom: calc(1.25rem + 64px);
+}
+
+.fab.location-fab:hover {
+  background: #f3f4f6;
+}
+
 .fab-menu {
   position: absolute;
   bottom: 72px;
