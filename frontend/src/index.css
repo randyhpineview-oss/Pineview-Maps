@@ -11,14 +11,14 @@
 
 * { box-sizing: border-box; margin: 0; }
 
-html, body, #root { height: auto; min-height: 100%; }
+html, body, #root { height: 100%; width: 100%; overflow: hidden; }
 
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 
 /* ───── App shell ───── */
 .app-shell {
-  min-height: 100vh;
+  height: 100dvh;
   display: grid;
   grid-template-rows: var(--topbar-height) 1fr var(--tab-height);
 }
