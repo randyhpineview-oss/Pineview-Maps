@@ -33,8 +33,6 @@ export default function MapView({
     googleMapsApiKey: apiKey,
   });
 
-  const firstSite = sites[0] || null;
-  const firstSiteKey = firstSite ? String(firstSite.id ?? firstSite.cacheId) : '';
   const siteBoundsKey = useMemo(
     () => sites.map((s) => `${s.id ?? s.cacheId}:${s.latitude}:${s.longitude}`).join('|'),
     [sites]
@@ -52,20 +50,13 @@ export default function MapView({
     };
   }, [isLoaded, pickedLocation?.latitude, pickedLocation?.longitude]);
 
-  const center = useMemo(() => {
-    if (firstSite) return { lat: firstSite.latitude, lng: firstSite.longitude };
-    return defaultCenter;
-  }, [firstSite?.latitude, firstSite?.longitude, firstSiteKey]);
+  const center = useMemo(() => defaultCenter, []);
 
   useEffect(() => {
     if (!isLoaded || !mapRef.current || !sites.length || !siteBoundsKey) return;
     // Skip fitBounds - users control their own zoom level
-    // Only set initial center once if no sites were loaded before
-    if (!hasInitiallyFitted.current && sites.length > 0) {
-      hasInitiallyFitted.current = true;
-      // Just center on first site, don't zoom out
-      mapRef.current.panTo({ lat: sites[0].latitude, lng: sites[0].longitude });
-    }
+    // Center remains at Fort St. John on load
+    hasInitiallyFitted.current = true;
   }, [isLoaded, siteBoundsKey, sites]);
 
   useEffect(() => {
