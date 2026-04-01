@@ -1,12 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { GoogleMap, OverlayView, useJsApiLoader } from '@react-google-maps/api';
+import { GoogleMap, Marker, OverlayView, useJsApiLoader } from '@react-google-maps/api';
 
-import { buildMarkerSvg, pinTypeLabel } from '../lib/mapUtils';
+import { buildMarkerIcon, pinTypeLabel } from '../lib/mapUtils';
 
 const mapContainerStyle = { width: '100%', height: '100%' };
-
-// Google Maps libraries - static to prevent reloads
-const GOOGLE_MAPS_LIBRARIES = ['marker'];
 
 // Fort St. John, BC coordinates
 const defaultCenter = { lat: 56.2498, lng: -120.8464 };
@@ -34,7 +31,6 @@ export default function MapView({
   const { isLoaded, loadError } = useJsApiLoader({
     id: 'pineview-google-map',
     googleMapsApiKey: apiKey,
-    libraries: GOOGLE_MAPS_LIBRARIES,
   });
 
   const firstSite = sites[0] || null;
@@ -44,144 +40,22 @@ export default function MapView({
     [sites]
   );
 
-  // Refs to track marker elements for cleanup
-  const siteMarkersRef = useRef(new Map());
-  const pickedMarkerRef = useRef(null);
-
-  // Effect to render AdvancedMarkerElement for sites
-  useEffect(() => {
-    if (!isLoaded || !mapRef.current) return;
-    
-    const map = mapRef.current;
-    const { AdvancedMarkerElement } = window.google.maps.marker;
-    
-    // Create or update site markers
-    sites.forEach((site) => {
-      const key = `${site.id || site.cacheId}`;
-      const existingMarker = siteMarkersRef.current.get(key);
-      
-      const isSelected = (popupSite && String(popupSite.id ?? popupSite.cacheId) === String(site.id ?? site.cacheId)) ||
-                        (selectedSite && String(selectedSite.id ?? selectedSite.cacheId) === String(site.id ?? site.cacheId));
-      
-      const iconSvg = buildMarkerSvg(site, isSelected);
-      
-      // Calculate size based on pin type (matching old buildMarkerIcon logic)
-      let size;
-      const scale = isSelected ? 1.5 : 1;
-      if (site.approval_state === 'pending_review') {
-        size = 16 * scale;
-      } else {
-        switch (site.pin_type) {
-          case 'water':
-            size = 24 * scale;
-            break;
-          case 'quad_access':
-            size = 24 * scale;
-            break;
-          case 'reclaimed':
-            size = 28 * scale;
-            break;
-          default:
-            size = 28 * scale;
-            break;
-        }
-      }
-      
-      if (existingMarker) {
-        // Update position if changed
-        existingMarker.position = { lat: site.latitude, lng: site.longitude };
-        // Update content if needed (rebuild the icon)
-        existingMarker.content = createMarkerElement(iconSvg, size);
-      } else {
-        // Create new marker
-        const marker = new AdvancedMarkerElement({
-          position: { lat: site.latitude, lng: site.longitude },
-          map: map,
-          content: createMarkerElement(iconSvg, size),
-        });
-        
-        marker.addEventListener('gmp-click', (e) => {
-          e.stopPropagation();
-          setPopupSite(site);
-        });
-        
-        siteMarkersRef.current.set(key, marker);
-      }
-    });
-    
-    // Remove markers for sites that no longer exist
-    const currentSiteKeys = new Set(sites.map(s => `${s.id || s.cacheId}`));
-    siteMarkersRef.current.forEach((marker, key) => {
-      if (!currentSiteKeys.has(key)) {
-        marker.map = null;
-        siteMarkersRef.current.delete(key);
-      }
-    });
-  }, [isLoaded, sites, popupSite, selectedSite]);
-
-  // Effect to render AdvancedMarkerElement for picked location
-  useEffect(() => {
-    if (!isLoaded || !mapRef.current || !pickedLocation) return;
-    
-    const map = mapRef.current;
-    const { AdvancedMarkerElement } = window.google.maps.marker;
-    
-    if (pickedMarkerRef.current) {
-      pickedMarkerRef.current.position = { lat: pickedLocation.latitude, lng: pickedLocation.longitude };
-    } else {
-      const marker = new AdvancedMarkerElement({
-        position: { lat: pickedLocation.latitude, lng: pickedLocation.longitude },
-        map: map,
-        content: createPickedLocationElement(),
-      });
-      pickedMarkerRef.current = marker;
-    }
-    
-    return () => {
-      if (pickedMarkerRef.current) {
-        pickedMarkerRef.current.map = null;
-        pickedMarkerRef.current = null;
-      }
+  const pickedLocationIcon = useMemo(() => {
+    if (!isLoaded || !pickedLocation) return null;
+    return {
+      path: window.google.maps.SymbolPath.CIRCLE,
+      scale: 9,
+      fillColor: '#60a5fa',
+      fillOpacity: 1,
+      strokeColor: '#ffffff',
+      strokeWeight: 2,
     };
-  }, [isLoaded, pickedLocation]);
+  }, [isLoaded, pickedLocation?.latitude, pickedLocation?.longitude]);
 
   const center = useMemo(() => {
     if (firstSite) return { lat: firstSite.latitude, lng: firstSite.longitude };
     return defaultCenter;
   }, [firstSite?.latitude, firstSite?.longitude, firstSiteKey]);
-
-  // Helper function to create marker element
-  function createMarkerElement(svgHtml, size = 40) {
-    const div = document.createElement('div');
-    div.style.width = `${size}px`;
-    div.style.height = `${size}px`;
-    div.style.cursor = 'pointer';
-    div.style.display = 'flex';
-    div.style.alignItems = 'center';
-    div.style.justifyContent = 'center';
-    div.innerHTML = svgHtml;
-    // Ensure SVG scales to fit container
-    const svg = div.querySelector('svg');
-    if (svg) {
-      svg.style.width = '100%';
-      svg.style.height = '100%';
-      svg.setAttribute('width', '100%');
-      svg.setAttribute('height', '100%');
-    }
-    return div;
-  }
-
-  // Helper function to create picked location element
-  function createPickedLocationElement() {
-    const div = document.createElement('div');
-    div.style.width = '18px';
-    div.style.height = '18px';
-    div.style.borderRadius = '50%';
-    div.style.backgroundColor = '#60a5fa';
-    div.style.border = '2px solid #ffffff';
-    div.style.boxShadow = '0 0 4px rgba(0,0,0,0.3)';
-    return div;
-  }
 
   useEffect(() => {
     if (!isLoaded || !mapRef.current || !sites.length || !siteBoundsKey) return;
@@ -243,7 +117,6 @@ export default function MapView({
         zoom={11}
         options={{
           mapTypeId: 'hybrid',
-          mapId: 'pineview-maps',
           mapTypeControl: false,
           streetViewControl: false,
           fullscreenControl: false,
@@ -253,6 +126,25 @@ export default function MapView({
           draggableCursor: isPickingLocation ? 'crosshair' : undefined,
         }}
       >
+        {pickedLocation ? (
+          <Marker
+            position={{ lat: pickedLocation.latitude, lng: pickedLocation.longitude }}
+            icon={pickedLocationIcon || undefined}
+          />
+        ) : null}
+
+        {sites.map((site) => (
+          <Marker
+            key={`${site.id || site.cacheId}-${site.approval_state || ''}`}
+            position={{ lat: site.latitude, lng: site.longitude }}
+            icon={buildMarkerIcon(site,
+              (popupSite && String(popupSite.id ?? popupSite.cacheId) === String(site.id ?? site.cacheId)) ||
+              (selectedSite && String(selectedSite.id ?? selectedSite.cacheId) === String(site.id ?? site.cacheId))
+            )}
+            onClick={() => setPopupSite(site)}
+          />
+        ))}
+
         {popupSite ? (
           <OverlayView
             position={{ lat: popupSite.latitude, lng: popupSite.longitude }}
