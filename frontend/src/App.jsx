@@ -86,12 +86,11 @@ export default function App() {
   const [addPinForm, setAddPinForm] = useState({ lsd: '', client: '', area: '' });
   const [zoomTarget, setZoomTarget] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
-  const [userLocationMarker, setUserLocationMarker] = useState(null);
 
   const userRole = session?.user?.user_metadata?.role || 'worker';
   const canManagePins = userRole === 'admin' || userRole === 'office';
   const roleCanAdmin = userRole === 'admin' || userRole === 'office';
-  const isPlacingPin = (addPinType !== null && addPinLocation === null) || editPickMode;
+  const isPlacingPin = addPinType !== null && addPinLocation === null;
   const showAddPopup = addPinType !== null && addPinLocation !== null;
 
   const serverFilters = useMemo(
@@ -395,16 +394,10 @@ export default function App() {
   }
 
   function handleMapLocationPick(location) {
-    if (editPickMode) {
-      setEditPickedLocation(location);
-      setEditPickMode(false);
-      setDetailOpen(true);
-      return;
-    }
-    if (addPinType !== null && addPinLocation === null) {
-      setAddPinLocation(location);
-    }
+  if (addPinType !== null && addPinLocation === null) {
+    setAddPinLocation(location);
   }
+}
 
   function handleCenterOnUserLocation() {
     if (!navigator.geolocation) {
@@ -430,16 +423,12 @@ export default function App() {
   }
 
   function handleMapDismiss() {
-    setIsFilterOpen(false);
-    setFabOpen(false);
-    setDetailOpen(false);
-    setSelectedSite(null);
-    if (editPickMode) {
-      setEditPickMode(false);
-      setDetailOpen(true);
-    }
-    if (activeTab !== TAB_MAP) setActiveTab(TAB_MAP);
-  }
+  setIsFilterOpen(false);
+  setFabOpen(false);
+  setDetailOpen(false);
+  setSelectedSite(null);
+  if (activeTab !== TAB_MAP) setActiveTab(TAB_MAP);
+}
 
   function handleSearchSelect(site) {
     setSelectedSite(site);
@@ -742,17 +731,8 @@ export default function App() {
         {/* Place-pin banner */}
         {isPlacingPin ? (
           <div className="place-banner">
-            {editPickMode
-              ? 'Tap map to set new pin location'
-              : `Tap map to place ${pinTypeLabel(addPinType)} pin`}
-            <button className="cancel-btn" type="button" onClick={() => {
-              if (editPickMode) {
-                setEditPickMode(false);
-                setDetailOpen(true);
-              } else {
-                handleCancelAdd();
-              }
-            }}>Cancel</button>
+            {`Tap map to place ${pinTypeLabel(addPinType)} pin`}
+            <button className="cancel-btn" type="button" onClick={handleCancelAdd}>Cancel</button>
           </div>
         ) : null}
 
@@ -820,8 +800,6 @@ export default function App() {
                 onRequestTypeChange={handleRequestTypeChange}
                 onQuickEdit={handleQuickEdit}
                 adminBusy={adminBusy}
-                onRequestMapPick={canManagePins ? handleEditPickRequest : undefined}
-                pickedLocation={editPickedLocation}
               />
             ) : null}
           </div>
