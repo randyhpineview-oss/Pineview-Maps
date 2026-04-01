@@ -97,6 +97,9 @@ export default function MapView({
 
   // Double-tap hold zoom gesture handlers
   const handleTouchStart = (e) => {
+    // Only handle single touch (ignore multi-touch pinch)
+    if (e.touches.length !== 1) return;
+    
     const now = Date.now();
     const timeSinceLastTap = now - lastTapTimeRef.current;
     
@@ -116,7 +119,8 @@ export default function MapView({
   };
 
   const handleTouchMove = (e) => {
-    if (!isZoomGestureActiveRef.current || !mapRef.current) return;
+    // Only handle if zoom gesture is active and single touch
+    if (!isZoomGestureActiveRef.current || !mapRef.current || e.touches.length !== 1) return;
     
     const currentY = e.touches[0].clientY;
     const deltaY = zoomStartYRef.current - currentY; // Positive = up (zoom in), negative = down (zoom out)
@@ -129,7 +133,7 @@ export default function MapView({
     e.preventDefault();
   };
 
-  const handleTouchEnd = () => {
+  const handleTouchEnd = (e) => {
     if (isZoomGestureActiveRef.current) {
       isZoomGestureActiveRef.current = false;
       lastTapTimeRef.current = 0; // Reset tap timer
