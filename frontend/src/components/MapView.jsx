@@ -27,6 +27,13 @@ export default function MapView({
   const [popupSite, setPopupSite] = useState(null);
   const lastZoomTarget = useRef(null);
   const lastZoomTime = useRef(0);
+  
+  // Double-tap zoom gesture refs
+  const lastTapTimeRef = useRef(0);
+  const isZoomGestureActiveRef = useRef(false);
+  const zoomStartYRef = useRef(0);
+  const zoomStartLevelRef = useRef(11);
+  const gestureContainerRef = useRef(null);
 
   const { isLoaded, loadError } = useJsApiLoader({
     id: 'pineview-google-map',
@@ -88,10 +95,68 @@ export default function MapView({
     return <div className="map-fallback"><div><h3>Loading map…</h3></div></div>;
   }
 
+  // Double-tap hold zoom gesture handlers
+  const handleTouchStart = (e) => {
+    const now = Date.now();
+    const timeSinceLastTap = now - lastTapTimeRef.current;
+    
+    // Check if this is a double-tap (within 300ms)
+    if (timeSinceLastTap < 300) {
+      // Double-tap detected - enter zoom gesture mode
+      isZoomGestureActiveRef.current = true;
+      zoomStartYRef.current = e.touches[0].clientY;
+      if (mapRef.current) {
+        zoomStartLevelRef.current = mapRef.current.getZoom() || 11;
+      }
+      e.preventDefault();
+    } else {
+      // Single tap - just record timestamp
+      lastTapTimeRef.current = now;
+    }
+  };
+
+  const handleTouchMove = (e) => {
+    if (!isZoomGestureActiveRef.current || !mapRef.current) return;
+    
+    const currentY = e.touches[0].clientY;
+    const deltaY = zoomStartYRef.current - currentY; // Positive = up (zoom in), negative = down (zoom out)
+    
+    // Map vertical movement to zoom (every 50px = 1 zoom level)
+    const zoomChange = Math.round(deltaY / 50);
+    const newZoom = Math.max(1, Math.min(20, zoomStartLevelRef.current + zoomChange));
+    
+    mapRef.current.setZoom(newZoom);
+    e.preventDefault();
+  };
+
+  const handleTouchEnd = () => {
+    if (isZoomGestureActiveRef.current) {
+      isZoomGestureActiveRef.current = false;
+      lastTapTimeRef.current = 0; // Reset tap timer
+    }
+  };
+
   return (
-    <div className="map-shell">
+    <div className="map-shell" ref={gestureContainerRef}>
       <GoogleMap
-        onLoad={(map) => { mapRef.current = map; }}
+        onLoad={(map) => { 
+          mapRef.current = map;
+          // Set up zoom gesture handlers on the map container
+          const mapContainer = gestureContainerRef.current;
+          if (mapContainer) {
+            mapContainer.addEventListener('touchstart', handleTouchStart, { passive: false });
+            mapContainer.addEventListener('touchmove', handleTouchMove, { passive: false });
+            mapContainer.addEventListener('touchend', handleTouchEnd, { passive: false });
+          }
+        }}
+        onUnmount={() => {
+          const mapContainer = gestureContainerRef.current;
+          if (mapContainer) {
+            mapContainer.removeEventListener('touchstart', handleTouchStart);
+            mapContainer.removeEventListener('touchmove', handleTouchMove);
+            mapContainer.removeEventListener('touchend', handleTouchEnd);
+          }
+        }}
         onClick={(event) => {
           if (isPickingLocation && onPickLocation && event.latLng) {
             onPickLocation({
