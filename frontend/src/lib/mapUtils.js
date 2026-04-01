@@ -169,15 +169,7 @@ export function getDirectionsUrl(site) {
   const lat = site.latitude;
   const lng = site.longitude;
   const label = encodeURIComponent(site.lsd || site.client || 'Pineview site');
-  const userAgent = window.navigator.userAgent || '';
 
-  if (/iPhone|iPad|iPod/i.test(userAgent)) {
-    return `https://maps.apple.com/?daddr=${lat},${lng}&q=${label}`;
-  }
-
-  if (/Android/i.test(userAgent)) {
-    return `geo:0,0?q=${lat},${lng}(${label})`;
-  }
-
-  return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+  // Use Google Maps for all devices (including iPhone)
+  return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&destination_place_id=${label}`;
 }
