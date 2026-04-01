@@ -65,20 +65,43 @@ export default function MapView({
       
       const iconSvg = buildMarkerSvg(site, isSelected);
       
+      // Calculate size based on pin type (matching old buildMarkerIcon logic)
+      let size;
+      const scale = isSelected ? 1.5 : 1;
+      if (site.approval_state === 'pending_review') {
+        size = 16 * scale;
+      } else {
+        switch (site.pin_type) {
+          case 'water':
+            size = 24 * scale;
+            break;
+          case 'quad_access':
+            size = 24 * scale;
+            break;
+          case 'reclaimed':
+            size = 28 * scale;
+            break;
+          default:
+            size = 28 * scale;
+            break;
+        }
+      }
+      
       if (existingMarker) {
         // Update position if changed
         existingMarker.position = { lat: site.latitude, lng: site.longitude };
         // Update content if needed (rebuild the icon)
-        existingMarker.content.innerHTML = iconSvg;
+        existingMarker.content = createMarkerElement(iconSvg, size);
       } else {
         // Create new marker
         const marker = new AdvancedMarkerElement({
           position: { lat: site.latitude, lng: site.longitude },
           map: map,
-          content: createMarkerElement(iconSvg),
+          content: createMarkerElement(iconSvg, size),
         });
         
-        marker.addEventListener('gmp-click', () => {
+        marker.addEventListener('gmp-click', (e) => {
+          e.stopPropagation();
           setPopupSite(site);
         });
         
@@ -128,10 +151,23 @@ export default function MapView({
   }, [firstSite?.latitude, firstSite?.longitude, firstSiteKey]);
 
   // Helper function to create marker element
-  function createMarkerElement(svgHtml) {
+  function createMarkerElement(svgHtml, size = 40) {
     const div = document.createElement('div');
-    div.innerHTML = svgHtml;
+    div.style.width = `${size}px`;
+    div.style.height = `${size}px`;
     div.style.cursor = 'pointer';
+    div.style.display = 'flex';
+    div.style.alignItems = 'center';
+    div.style.justifyContent = 'center';
+    div.innerHTML = svgHtml;
+    // Ensure SVG scales to fit container
+    const svg = div.querySelector('svg');
+    if (svg) {
+      svg.style.width = '100%';
+      svg.style.height = '100%';
+      svg.setAttribute('width', '100%');
+      svg.setAttribute('height', '100%');
+    }
     return div;
   }
 
