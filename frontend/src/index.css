@@ -523,3 +523,33 @@ button.site-row { cursor: pointer; }
   .topbar-right { gap: 0.25rem; flex-shrink: 1; min-width: 0; overflow: hidden; flex-wrap: wrap; justify-content: flex-end; }
   .topbar-right .badge { font-size: 0.62rem; padding: 0.15rem 0.4rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
 }
+
+/* Hide Google Maps attribution elements */
+.gm-style-cc,
+.gm-style-cc a,
+.gmnoprint,
+gmnoscreen,
+.gm-control-active,
+.gm-fullscreen-control,
+.gm-svpc,
+.gm-style-mtc,
+.gm-bundled-control,
+.gm-bundled-control-on-bottom,
+button[title="Toggle fullscreen view"],
+button[title="Open keyboard shortcuts"],
+.gm-iv-shortcut {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* Hide zoom buttons */
+.gm-bundled-control .gm-control-active,
+.gm-bundled-control-on-bottom {
+  display: none !important;
+}
+
+/* Hide all Google Maps UI controls */
+.gm-style .gm-control-active.gmnoprint,
+.gm-style .gmnoprint {
+  display: none !important;
+}
