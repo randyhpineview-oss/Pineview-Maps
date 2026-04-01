@@ -5,6 +5,9 @@ import { buildMarkerIcon, pinTypeLabel } from '../lib/mapUtils';
 
 const mapContainerStyle = { width: '100%', height: '100%' };
 
+// Google Maps libraries - static to prevent reloads
+const GOOGLE_MAPS_LIBRARIES = ['marker'];
+
 // Fort St. John, BC coordinates
 const defaultCenter = { lat: 56.2498, lng: -120.8464 };
 
@@ -31,7 +34,7 @@ export default function MapView({
   const { isLoaded, loadError } = useJsApiLoader({
     id: 'pineview-google-map',
     googleMapsApiKey: apiKey,
-    libraries: ['marker'],
+    libraries: GOOGLE_MAPS_LIBRARIES,
   });
 
   const firstSite = sites[0] || null;
@@ -75,7 +78,7 @@ export default function MapView({
           content: createMarkerElement(iconSvg),
         });
         
-        marker.addEventListener('click', () => {
+        marker.addEventListener('gmp-click', () => {
           setPopupSite(site);
         });
         
@@ -204,6 +207,7 @@ export default function MapView({
         zoom={11}
         options={{
           mapTypeId: 'hybrid',
+          mapId: 'pineview-maps',
           mapTypeControl: false,
           streetViewControl: false,
           fullscreenControl: false,
