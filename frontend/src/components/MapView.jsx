@@ -91,7 +91,13 @@ export default function MapView({
     const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) && 
                     /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     
-    // Only zoom/center on phones - PC/iPad/tablet should stay put with side panel
+    // Handle PC/iPad sites list click - center only, no zoom
+    if (zoomToSite._centerOnly) {
+      mapRef.current.panTo({ lat: zoomToSite.latitude, lng: zoomToSite.longitude });
+      return;
+    }
+    
+    // Only zoom/center on phones - PC/iPad/tablet pin taps should stay put
     if (!isPhone) {
       return;
     }

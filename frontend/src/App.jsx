@@ -339,11 +339,15 @@ export default function App() {
     [sites]
   );
 
-  function handleOpenDetail(site) {
+  function handleOpenDetail(site, options = {}) {
     setSelectedSite(site);
     setDetailOpen(true);
-    // Also trigger zoomToSite for consistent mobile offset behavior
-    setZoomTarget({ ...site, _ts: Date.now() });
+    // Only trigger zoomToSite on phones, or on PC/iPad if coming from sites list (just center, no zoom)
+    const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) && 
+                    /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    if (isPhone || options.fromSitesList) {
+      setZoomTarget({ ...site, _ts: Date.now(), _centerOnly: options.fromSitesList && !isPhone });
+    }
   }
 
   const touchStartY = useRef(null);
@@ -937,7 +941,7 @@ export default function App() {
                 <div className="site-row small-text">No sites match filters.</div>
               ) : (
                 visibleSites.map((site) => (
-                  <button className="site-row" key={site.id || site.cacheId} type="button" onClick={() => { handleOpenDetail(site); setZoomTarget({ ...site, _ts: Date.now() }); setActiveTab(TAB_MAP); }}>
+                  <button className="site-row" key={site.id || site.cacheId} type="button" onClick={() => { handleOpenDetail(site, { fromSitesList: true }); setActiveTab(TAB_MAP); }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
                       <strong>{site.lsd || 'Unnamed'}</strong>
                       {site.approval_state === 'pending_review' ? <span className="pending-badge">Pending</span> : null}
