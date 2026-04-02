@@ -831,7 +831,7 @@ export default function App() {
             </span>
           ) : null}
           {queuedCount > 0 ? <span className="badge">Queued: {queuedCount}</span> : null}
-          <span className="badge">{user?.email}</span>
+          <span className="badge">{user?.user_metadata?.name || user?.email?.split('@')[0]?.title() || user?.email}</span>
           <button 
             onClick={() => signOut()}
             className="badge"

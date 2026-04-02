@@ -47,6 +47,7 @@ class SiteRead(BaseModel):
     last_inspected_at: datetime | None
     last_inspected_by_user_id: int | None
     last_inspected_by_email: str | None
+    last_inspected_by_name: str | None
     created_at: datetime
     updated_at: datetime
     created_by_user_id: int | None

@@ -82,6 +82,7 @@ class Site(Base):
     last_inspected_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_inspected_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     last_inspected_by_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    last_inspected_by_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,

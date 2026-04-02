@@ -189,10 +189,10 @@ export default function SiteDetailSheet({
               <strong>Last inspected</strong>
               {formatDate(site.last_inspected_at)}
             </div>
-            {site.last_inspected_at && (site.last_inspected_by_user || site.last_inspected_by_email) && (
+            {site.last_inspected_at && (site.last_inspected_by_user || site.last_inspected_by_name || site.last_inspected_by_email) && (
               <div className="meta-item">
                 <strong>Last inspected by</strong>
-                {site.last_inspected_by_email || site.last_inspected_by_user?.name || site.last_inspected_by_user?.email || 'Unknown'}
+                {site.last_inspected_by_name || site.last_inspected_by_user?.name || site.last_inspected_by_email || 'Unknown'}
               </div>
             )}
             <div className="meta-item">
