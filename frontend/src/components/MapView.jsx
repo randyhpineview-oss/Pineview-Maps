@@ -120,8 +120,17 @@ export default function MapView({
         lng: selectedSite.longitude 
       });
     }
+    // If detail panel just opened (not via zoomToSite), apply offset on mobile
+    if (!prevDetailOpen.current && detailOpen && !zoomToSite) {
+      const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) && 
+                      /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      if (isPhone) {
+        const offsetLat = selectedSite.latitude - 0.0045;
+        mapRef.current.panTo({ lat: offsetLat, lng: selectedSite.longitude });
+      }
+    }
     prevDetailOpen.current = detailOpen;
-  }, [isLoaded, detailOpen, selectedSite]);
+  }, [isLoaded, detailOpen, selectedSite, zoomToSite]);
 
   if (!apiKey) {
     return (
