@@ -19,9 +19,11 @@ function roleBadgeStyle(role) {
   }
 }
 
-function UserRow({ user, busy, onUpdateRole, onDelete, currentUserEmail }) {
+function UserRow({ user, busy, onUpdateRole, onUpdateName, onDelete, currentUserEmail }) {
   const [editingRole, setEditingRole] = useState(false);
+  const [editingName, setEditingName] = useState(false);
   const [selectedRole, setSelectedRole] = useState(user.role);
+  const [editedName, setEditedName] = useState(user.name || '');
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const isSelf = currentUserEmail && user.email === currentUserEmail;
@@ -31,6 +33,13 @@ function UserRow({ user, busy, onUpdateRole, onDelete, currentUserEmail }) {
       onUpdateRole(user.id, selectedRole);
     }
     setEditingRole(false);
+  }
+
+  function handleSaveName() {
+    if (editedName.trim() !== (user.name || '')) {
+      onUpdateName(user.id, editedName.trim());
+    }
+    setEditingName(false);
   }
 
   function handleDelete() {
@@ -46,7 +55,24 @@ function UserRow({ user, busy, onUpdateRole, onDelete, currentUserEmail }) {
     <div className="site-row">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.75rem' }}>
         <div style={{ minWidth: 0 }}>
-          <strong style={{ wordBreak: 'break-all' }}>{user.name || user.email.split('@')[0]}</strong>
+          {editingName ? (
+            <input
+              type="text"
+              value={editedName}
+              onChange={(e) => setEditedName(e.target.value)}
+              placeholder="Enter name"
+              style={{ 
+                fontWeight: 'bold', 
+                wordBreak: 'break-all',
+                border: '1px solid #2563eb',
+                borderRadius: '4px',
+                padding: '2px 6px',
+                fontSize: '0.9rem'
+              }}
+            />
+          ) : (
+            <strong style={{ wordBreak: 'break-all' }}>{user.name || user.email.split('@')[0]}</strong>
+          )}
           <div className="small-text" style={{ wordBreak: 'break-all' }}>{user.email}</div>
         </div>
         <span
@@ -80,8 +106,26 @@ function UserRow({ user, busy, onUpdateRole, onDelete, currentUserEmail }) {
             Cancel
           </button>
         </div>
+      ) : editingName ? (
+        <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <button className="primary-button" type="button" disabled={busy} onClick={handleSaveName} style={{ padding: '4px 12px', fontSize: '0.8rem' }}>
+            Save
+          </button>
+          <button className="secondary-button" type="button" onClick={() => { setEditingName(false); setEditedName(user.name || ''); }} style={{ padding: '4px 12px', fontSize: '0.8rem' }}>
+            Cancel
+          </button>
+        </div>
       ) : (
         <div className="button-row" style={{ marginTop: '0.55rem' }}>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={busy}
+            onClick={() => setEditingName(true)}
+            style={{ fontSize: '0.8rem' }}
+          >
+            Edit name
+          </button>
           <button
             className="secondary-button"
             type="button"
@@ -237,6 +281,20 @@ export default function UserManagementPanel({ busy: externalBusy, currentUserEma
     }
   }
 
+  async function handleUpdateName(userId, newName) {
+    clearMessages();
+    setBusy(true);
+    try {
+      await api.updateUser(userId, { name: newName });
+      setSuccess('User name updated');
+      await loadUsers();
+    } catch (err) {
+      setError(err.message || 'Failed to update user');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleDeleteUser(userId) {
     clearMessages();
     setBusy(true);
@@ -348,6 +406,7 @@ export default function UserManagementPanel({ busy: externalBusy, currentUserEma
                 user={user}
                 busy={isBusy}
                 onUpdateRole={handleUpdateRole}
+                onUpdateName={handleUpdateName}
                 onDelete={handleDeleteUser}
                 currentUserEmail={currentUserEmail}
               />
