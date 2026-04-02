@@ -527,9 +527,37 @@ export default function App() {
     mapRef.current = map;
   }
 
+  function handleUserPan() {
+    // User manually panned the map, disable follow mode
+    setIsFollowingUser(false);
+    setMessage('Follow mode off');
+  }
+
   function handleCenterOnUserLocation() {
     if (!userLocation) {
       setMessage('Getting location...');
+      // Request current position if we don't have one
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const location = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          };
+          setUserLocation(location);
+          setIsFollowingUser(true);
+          setZoomTarget({ latitude: location.lat, longitude: location.lng, _ts: Date.now() });
+          setMessage('Follow mode on');
+        },
+        (error) => {
+          console.error('Error getting location:', error);
+          setMessage('Unable to get location. Check GPS permissions.');
+        },
+        { 
+          enableHighAccuracy: true, 
+          timeout: 15000, 
+          maximumAge: 0 
+        }
+      );
       return;
     }
     
@@ -836,6 +864,7 @@ export default function App() {
             onMapClick={handleMapDismiss}
             userLocation={userLocation}
             onMapLoad={handleMapLoad}
+            onUserPan={handleUserPan}
             detailOpen={detailOpen}
           />
         </div>
