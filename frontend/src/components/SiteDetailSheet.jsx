@@ -189,6 +189,12 @@ export default function SiteDetailSheet({
               <strong>Last inspected</strong>
               {formatDate(site.last_inspected_at)}
             </div>
+            {site.last_inspected_at && site.last_inspected_by_user && (
+              <div className="meta-item">
+                <strong>Last inspected by</strong>
+                {site.last_inspected_by_user.name || site.last_inspected_by_user.email}
+              </div>
+            )}
             <div className="meta-item">
               <strong>Client</strong>
               {site.client || 'Not set'}

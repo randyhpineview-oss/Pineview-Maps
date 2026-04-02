@@ -45,12 +45,17 @@ class SiteRead(BaseModel):
     source_name: str | None
     raw_attributes: dict | None
     last_inspected_at: datetime | None
+    last_inspected_by_user_id: int | None
     created_at: datetime
     updated_at: datetime
     created_by_user_id: int | None
     approved_by_user_id: int | None
     pending_pin_type: PinType | None = None
     updates: list[SiteUpdateRead] = Field(default_factory=list)
+    # Nested user objects for convenience
+    created_by_user: UserRead | None = None
+    approved_by_user: UserRead | None = None
+    last_inspected_by_user: UserRead | None = None
 
     @field_validator('raw_attributes', mode='before')
     @classmethod

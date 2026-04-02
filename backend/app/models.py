@@ -78,6 +78,7 @@ class Site(Base):
     source_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     raw_attributes: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     last_inspected_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_inspected_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
@@ -98,6 +99,9 @@ class Site(Base):
     approved_by_user: Mapped[User | None] = relationship(
         back_populates="approved_sites",
         foreign_keys=[approved_by_user_id],
+    )
+    last_inspected_by_user: Mapped[User | None] = relationship(
+        foreign_keys=[last_inspected_by_user_id],
     )
     updates: Mapped[list["SiteUpdate"]] = relationship(
         back_populates="site",

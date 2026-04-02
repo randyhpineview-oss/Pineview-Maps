@@ -144,7 +144,12 @@ def list_sites(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[SiteRead]:
-    query = db.query(Site).options(joinedload(Site.updates)).filter(Site.deleted_at.is_(None)).order_by(Site.updated_at.desc())
+    query = db.query(Site).options(
+        joinedload(Site.updates),
+        joinedload(Site.created_by_user),
+        joinedload(Site.approved_by_user),
+        joinedload(Site.last_inspected_by_user)
+    ).filter(Site.deleted_at.is_(None)).order_by(Site.updated_at.desc())
 
     if client:
         query = query.filter(Site.client == client)
@@ -293,6 +298,7 @@ def update_site_status(
     site.updated_at = datetime.utcnow()
     if payload.status == SiteStatus.inspected:
         site.last_inspected_at = datetime.utcnow()
+        site.last_inspected_by_user_id = current_user.id
 
     update = SiteUpdate(
         site_id=site.id,
