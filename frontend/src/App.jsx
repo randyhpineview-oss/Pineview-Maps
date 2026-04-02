@@ -894,7 +894,7 @@ export default function App() {
                 <div className="site-row small-text">No sites match filters.</div>
               ) : (
                 visibleSites.map((site) => (
-                  <button className="site-row" key={site.id || site.cacheId} type="button" onClick={() => { handleOpenDetail(site); setActiveTab(TAB_MAP); }}>
+                  <button className="site-row" key={site.id || site.cacheId} type="button" onClick={() => { handleOpenDetail(site); setZoomTarget({ ...site, _ts: Date.now() }); setActiveTab(TAB_MAP); }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
                       <strong>{site.lsd || 'Unnamed'}</strong>
                       {site.approval_state === 'pending_review' ? <span className="pending-badge">Pending</span> : null}
