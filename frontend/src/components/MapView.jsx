@@ -42,7 +42,6 @@ export default function MapView({
   const lastZoomUpdateRef = useRef(0);
   const lastZoomValueRef = useRef(11);
   const isFollowModeRef = useRef(false);
-  const lastPanCenterRef = useRef(null);
 
   const { isLoaded, loadError } = useJsApiLoader({
     id: 'pineview-google-map',
@@ -103,7 +102,6 @@ export default function MapView({
     // Always center for follow mode (user location tracking) regardless of device
     if (zoomToSite._isFollowMode) {
       isFollowModeRef.current = true;
-      lastPanCenterRef.current = { lat: zoomToSite.latitude, lng: zoomToSite.longitude };
       mapRef.current.panTo({ lat: zoomToSite.latitude, lng: zoomToSite.longitude });
       mapRef.current.setZoom(15);
       return;
@@ -311,26 +309,7 @@ export default function MapView({
             }
           };
           
-          const handleCenterChanged = () => {
-            if (isFollowModeRef.current && mapRef.current) {
-              const currentCenter = mapRef.current.getCenter();
-              const lastCenter = lastPanCenterRef.current;
-              
-              if (lastCenter && currentCenter) {
-                const latDiff = Math.abs(currentCenter.lat() - lastCenter.lat);
-                const lngDiff = Math.abs(currentCenter.lng() - lastCenter.lng);
-                
-                // If center changed significantly (not just GPS updates), disable follow mode
-                if (latDiff > 0.0001 || lngDiff > 0.0001) {
-                  isFollowModeRef.current = false;
-                  if (onUserPan) onUserPan();
-                }
-              }
-            }
-          };
-          
           map.addListener('dragstart', handleDragStart);
-          map.addListener('center_changed', handleCenterChanged);
           
           // Set up zoom gesture handlers on the map container (capture phase)
           const mapContainer = gestureContainerRef.current;
