@@ -385,6 +385,10 @@ export default function App() {
     adminPanelTouchStartX.current = null;
   };
 
+  function handleCloseDetail() {
+    setDetailOpen(false);
+  }
+
   function handleTouchStart(e) {
     touchStartY.current = e.touches[0].clientY;
     touchStartScrollTop.current = detailBodyRef.current?.scrollTop || 0;
