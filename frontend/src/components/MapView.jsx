@@ -97,6 +97,13 @@ export default function MapView({
       return;
     }
     
+    // Always center for follow mode (user location tracking) regardless of device
+    if (zoomToSite._isFollowMode) {
+      mapRef.current.panTo({ lat: zoomToSite.latitude, lng: zoomToSite.longitude });
+      mapRef.current.setZoom(15);
+      return;
+    }
+    
     // Only zoom/center on phones - PC/iPad/tablet pin taps should stay put
     if (!isPhone) {
       return;
