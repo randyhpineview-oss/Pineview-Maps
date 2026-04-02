@@ -69,3 +69,12 @@ export function onAuthStateChange(callback) {
   if (!supabase) return { data: { subscription: { unsubscribe: () => {} } } };
   return supabase.auth.onAuthStateChange(callback);
 }
+
+export async function resetPassword(email) {
+  if (!supabase) throw new Error('Supabase not configured');
+  const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: `${window.location.origin}/reset-password`,
+  });
+  if (error) throw error;
+  return data;
+}

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { signInWithEmail } from '../lib/supabaseClient';
+import { signInWithEmail, resetPassword } from '../lib/supabaseClient';
 
 const MapIcon = () => (
   <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -13,11 +13,14 @@ export default function LoginPage({ onLoginSuccess }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [showResetSent, setShowResetSent] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setSuccess('');
     setIsLoading(true);
 
     try {
@@ -28,6 +31,27 @@ export default function LoginPage({ onLoginSuccess }) {
       }
     } catch (err) {
       setError(err.message || 'Authentication failed');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email.trim()) {
+      setError('Please enter your email address first');
+      return;
+    }
+
+    setError('');
+    setSuccess('');
+    setIsLoading(true);
+
+    try {
+      await resetPassword(email.trim());
+      setSuccess(`Password reset link sent to ${email.trim()}`);
+      setShowResetSent(true);
+    } catch (err) {
+      setError(err.message || 'Failed to send reset email');
     } finally {
       setIsLoading(false);
     }
@@ -82,13 +106,32 @@ export default function LoginPage({ onLoginSuccess }) {
               </div>
             )}
 
+            {success && (
+              <div style={{ padding: '1rem', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '0.5rem', fontSize: '0.875rem', color: '#166534' }}>
+                {success}
+              </div>
+            )}
+
             <button
               type="submit"
-              disabled={isLoading}
-              style={{ width: '100%', background: isLoading ? '#9ca3af' : 'linear-gradient(90deg, #2563eb, #4f46e5)', color: 'white', fontWeight: 600, padding: '0.75rem 1rem', borderRadius: '0.5rem', border: 'none', fontSize: '1rem', cursor: isLoading ? 'default' : 'pointer' }}
+              disabled={isLoading || showResetSent}
+              style={{ width: '100%', background: isLoading ? '#9ca3af' : 'linear-gradient(90deg, #2563eb, #4f46e5)', color: 'white', fontWeight: 600, padding: '0.75rem 1rem', borderRadius: '0.5rem', border: 'none', fontSize: '1rem', cursor: isLoading || showResetSent ? 'default' : 'pointer' }}
             >
               {isLoading ? 'Loading...' : 'Sign In'}
             </button>
+
+            {!showResetSent && (
+              <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+                <button
+                  type="button"
+                  onClick={handleForgotPassword}
+                  disabled={isLoading}
+                  style={{ background: 'none', border: 'none', color: '#2563eb', fontSize: '0.875rem', cursor: isLoading ? 'default' : 'pointer', textDecoration: 'underline' }}
+                >
+                  Forgot your password?
+                </button>
+              </div>
+            )}
           </form>
 
           {/* Footer */}

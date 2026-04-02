@@ -4,6 +4,7 @@ import AdminPanel from './components/AdminPanel';
 import FilterBar from './components/FilterBar';
 import LoginPage from './components/LoginPage';
 import MapView from './components/MapView';
+import ResetPasswordPage from './components/ResetPasswordPage';
 import SiteDetailSheet from './components/SiteDetailSheet';
 import { api } from './lib/api';
 import { onAuthStateChange, signOut } from './lib/supabaseClient';
@@ -62,6 +63,7 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [session, setSession] = useState(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [showResetPassword, setShowResetPassword] = useState(false);
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [sites, setSites] = useState([]);
   const [pendingSites, setPendingSites] = useState([]);
@@ -110,6 +112,19 @@ export default function App() {
     setQueuedCount(queuedActions.length);
     return queuedActions;
   }, []);
+
+  // Check if we're on the reset password route
+  useEffect(() => {
+    if (window.location.pathname === '/reset-password') {
+      setShowResetPassword(true);
+    }
+  }, []);
+
+  const handleResetSuccess = () => {
+    setShowResetPassword(false);
+    window.history.replaceState({}, document.title, '/');
+    refreshAllData();
+  };
 
   const loadPendingSites = useCallback(async () => {
     if (!roleCanAdmin || !window.navigator.onLine) {
@@ -770,6 +785,9 @@ export default function App() {
   }
 
   if (!user) {
+    if (showResetPassword) {
+      return <ResetPasswordPage onResetSuccess={handleResetSuccess} />;
+    }
     return <LoginPage onLoginSuccess={() => void refreshAllData()} />;
   }
 
