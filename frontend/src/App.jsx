@@ -89,6 +89,8 @@ export default function App() {
   const [isFollowingUser, setIsFollowingUser] = useState(false);
   const mapRef = useRef(null);
   const lastFollowUpdateRef = useRef(0);
+  const smoothedLocationRef = useRef(null);
+  const lastLocationUpdateRef = useRef(0);
 
   const userRole = session?.user?.user_metadata?.role || 'worker';
   const canManagePins = userRole === 'admin' || userRole === 'office';
@@ -402,30 +404,50 @@ export default function App() {
   }
 }
 
+  // Smooth location transition function
+  function smoothLocationTransition(currentLocation, targetLocation, factor = 0.3) {
+    if (!currentLocation) return targetLocation;
+    return {
+      lat: currentLocation.lat + (targetLocation.lat - currentLocation.lat) * factor,
+      lng: currentLocation.lng + (targetLocation.lng - currentLocation.lng) * factor,
+    };
+  }
+
   useEffect(() => {
     if (!navigator.geolocation) return;
     
     // Initial location fetch
     const watchId = navigator.geolocation.watchPosition(
       (position) => {
-        const location = {
+        const rawLocation = {
           lat: position.coords.latitude,
           lng: position.coords.longitude,
         };
-        setUserLocation(location);
         
-        // Auto-center on user if follow mode is enabled (throttled for smoothness)
-        if (isFollowingUser && mapRef.current) {
-          const now = Date.now();
-          // Throttle follow updates to every 500ms for smooth tracking
-          if (now - lastFollowUpdateRef.current > 500) {
-            lastFollowUpdateRef.current = now;
-            setZoomTarget({ 
-              latitude: location.lat, 
-              longitude: location.lng, 
-              _ts: Date.now(),
-              _isFollowMode: true // Mark as follow mode update
-            });
+        // Smooth location updates
+        const now = Date.now();
+        const timeSinceLastUpdate = now - lastLocationUpdateRef.current;
+        
+        // Update smoothing more frequently for smooth movement
+        if (timeSinceLastUpdate > 100) { // Update every 100ms for smooth animation
+          lastLocationUpdateRef.current = now;
+          
+          const smoothedLocation = smoothLocationTransition(smoothedLocationRef.current, rawLocation);
+          smoothedLocationRef.current = smoothedLocation;
+          setUserLocation(smoothedLocation);
+          
+          // Auto-center on user if follow mode is enabled
+          if (isFollowingUser && mapRef.current) {
+            // Throttle follow updates to every 500ms for smooth tracking
+            if (now - lastFollowUpdateRef.current > 500) {
+              lastFollowUpdateRef.current = now;
+              setZoomTarget({ 
+                latitude: smoothedLocation.lat, 
+                longitude: smoothedLocation.lng, 
+                _ts: Date.now(),
+                _isFollowMode: true // Mark as follow mode update
+              });
+            }
           }
         }
       },
