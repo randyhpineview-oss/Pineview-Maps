@@ -96,8 +96,8 @@ export default function MapView({
     
     // Check if mobile and adjust center upward to account for bottom panel
     if (window.innerHeight <= 768) {
-      // Offset by ~0.008 degrees latitude (roughly 800m) to move site well above panel
-      const offsetLat = targetLat + 0.008;
+      // Offset by ~0.015 degrees latitude (roughly 1.5km) to move site well above panel
+      const offsetLat = targetLat + 0.015;
       mapRef.current.panTo({ lat: offsetLat, lng: targetLng });
     } else {
       mapRef.current.panTo({ lat: targetLat, lng: targetLng });
