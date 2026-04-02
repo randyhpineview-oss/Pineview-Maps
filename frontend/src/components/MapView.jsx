@@ -99,7 +99,7 @@ export default function MapView({
       // In PWA fullscreen: slide-up takes ~50% of screen
       // In browser: slide-up takes less due to browser UI, so adjust accordingly
       const isPWA = window.matchMedia('(display-mode: standalone)').matches;
-      const visibleHeight = isPWA ? window.innerHeight * 0.45 : window.innerHeight * 0.35; // Less offset in browser
+      const visibleHeight = isPWA ? window.innerHeight * 0.45 : window.innerHeight * 0.55; // More offset in browser
       const centerLat = targetLat + (visibleHeight / 111000); // Move center north so pin appears in visible area
       mapRef.current.panTo({ lat: centerLat, lng: targetLng });
     } else {
