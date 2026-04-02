@@ -112,20 +112,31 @@ export default function MapView({
   // Re-center map when detail panel closes (without offset)
   const prevDetailOpen = useRef(detailOpen);
   const prevSelectedSiteId = useRef(null);
+  const originalSitePosition = useRef(null);
+  
   useEffect(() => {
     if (!isLoaded || !mapRef.current || !selectedSite) return;
     
-    // If detail panel just closed, re-center on the site without offset
+    // If detail panel just closed, re-center on the original site position
     if (prevDetailOpen.current && !detailOpen) {
-      mapRef.current.panTo({ 
-        lat: selectedSite.latitude, 
-        lng: selectedSite.longitude 
-      });
+      if (originalSitePosition.current) {
+        mapRef.current.panTo({ 
+          lat: originalSitePosition.current.lat, 
+          lng: originalSitePosition.current.lng 
+        });
+      }
+      originalSitePosition.current = null;
     }
     
-    // If site changed while detail panel is open, apply offset on mobile
+    // If site changed while detail panel is open, store original position and apply offset on mobile
     const siteId = selectedSite.id || selectedSite.cacheId;
     if (detailOpen && siteId !== prevSelectedSiteId.current) {
+      // Store original position for re-centering later
+      originalSitePosition.current = {
+        lat: selectedSite.latitude,
+        lng: selectedSite.longitude
+      };
+      
       const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) && 
                       /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
       if (isPhone) {
