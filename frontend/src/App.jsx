@@ -498,6 +498,7 @@ export default function App() {
             // Throttle follow updates to every 500ms for smooth tracking
             if (now - lastFollowUpdateRef.current > 500) {
               lastFollowUpdateRef.current = now;
+              console.log('[APP] Sending follow mode update:', smoothedLocation.lat, smoothedLocation.lng);
               setZoomTarget({ 
                 latitude: smoothedLocation.lat, 
                 longitude: smoothedLocation.lng, 

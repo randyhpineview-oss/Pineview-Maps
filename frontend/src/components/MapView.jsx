@@ -101,6 +101,7 @@ export default function MapView({
     // Always center for follow mode (user location tracking) regardless of device
     if (zoomToSite._isFollowMode) {
       isFollowModeRef.current = true;
+      console.log('[MAP] Centering on follow mode location:', zoomToSite.latitude, zoomToSite.longitude);
       mapRef.current.panTo({ lat: zoomToSite.latitude, lng: zoomToSite.longitude });
       // Don't force zoom level - allow user to zoom in/out while following
       return;
