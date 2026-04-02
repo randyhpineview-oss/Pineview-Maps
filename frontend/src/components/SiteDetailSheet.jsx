@@ -238,11 +238,11 @@ export default function SiteDetailSheet({
               </button>
             ) : null}
             <button
-              className="secondary-button"
+              className="primary-button"
               type="button"
               onClick={() => window.location.assign(getDirectionsUrl(site))}
             >
-              Get Directions
+              🧭 Get Directions
             </button>
             {canManagePin ? (
               <>
