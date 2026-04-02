@@ -399,27 +399,41 @@ export default function App() {
   }
 }
 
-  function handleCenterOnUserLocation() {
-    if (!navigator.geolocation) {
-      setMessage('Geolocation not supported');
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    
+    // Initial location fetch
+    const watchId = navigator.geolocation.watchPosition(
       (position) => {
         const location = {
           lat: position.coords.latitude,
           lng: position.coords.longitude,
         };
         setUserLocation(location);
-        // Center map on user location with zoom level 15
-        setZoomTarget({ latitude: location.lat, longitude: location.lng, _ts: Date.now() });
-        setMessage('Location found');
       },
       (error) => {
-        setMessage('Location error: ' + error.message);
+        console.error('Location tracking error:', error);
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      { 
+        enableHighAccuracy: true, 
+        timeout: 10000, 
+        maximumAge: 5000 // Accept positions up to 5 seconds old
+      }
     );
+    
+    return () => {
+      navigator.geolocation.clearWatch(watchId);
+    };
+  }, []);
+
+  function handleCenterOnUserLocation() {
+    if (!userLocation) {
+      setMessage('Getting location...');
+      return;
+    }
+    // Center map on current user location with zoom level 15
+    setZoomTarget({ latitude: userLocation.lat, longitude: userLocation.lng, _ts: Date.now() });
+    setMessage('Centered on your location');
   }
 
   function handleMapDismiss() {
