@@ -114,17 +114,6 @@ export default function App() {
     return queuedActions;
   }, []);
 
-  // Reset edit pick mode after location is selected
-  useEffect(() => {
-    if (editPickLocation !== null && editPickLocation !== 'requested') {
-      // Reset after a short delay to allow the location to be applied
-      const timeout = setTimeout(() => {
-        setEditPickLocation(null);
-      }, 200);
-      return () => clearTimeout(timeout);
-    }
-  }, [editPickLocation]);
-
   const loadPendingSites = useCallback(async () => {
     if (!roleCanAdmin || !window.navigator.onLine) {
       setPendingSites([]);
@@ -897,7 +886,7 @@ export default function App() {
             selectedSite={selectedSite}
             onSelectSite={handleOpenDetail}
             isPickingLocation={isPlacingPin || isPickingLocationForEdit}
-            pickedLocation={isPickingLocationForEdit ? (editPickLocation && editPickLocation !== 'requested' ? editPickLocation : null) : addPinLocation}
+            pickedLocation={addPinLocation}
             onPickLocation={handleMapLocationPick}
             onOpenDetail={handleOpenDetail}
             zoomToSite={zoomTarget}
