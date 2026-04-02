@@ -93,11 +93,17 @@ export const api = {
     });
     const query = searchParams.toString();
     return request(`/api/sites${query ? `?${query}` : ''}`, { demoUser }).then(data => {
-      console.log('[API] listSites response sample:', data.slice(0, 2).map(s => ({ 
+      const sample = data.slice(0, 2).map(s => ({ 
         id: s.id, 
         last_inspected_by_user_id: s.last_inspected_by_user_id,
-        last_inspected_by_user: s.last_inspected_by_user 
-      })));
+        last_inspected_by_user: s.last_inspected_by_user ? {
+          name: s.last_inspected_by_user.name,
+          email: s.last_inspected_by_user.email
+        } : null,
+        last_inspected_at: s.last_inspected_at
+      }));
+      console.log('[API] listSites response sample:', sample);
+      console.log('[API] Full first site data:', data[0]);
       return data;
     });
   },
@@ -158,5 +164,16 @@ export const api = {
   },
   deleteUser(userId) {
     return request(`/api/admin/users/${userId}`, { method: 'DELETE' });
+  },
+
+  // ── Password reset (6-digit code flow) ──
+  requestResetCode(email) {
+    return request('/api/auth/forgot-password', { method: 'POST', body: { email } });
+  },
+  verifyResetCode(email, code) {
+    return request('/api/auth/verify-reset-code', { method: 'POST', body: { email, code } });
+  },
+  resetPasswordWithToken(resetToken, newPassword) {
+    return request('/api/auth/reset-password', { method: 'POST', body: { reset_token: resetToken, new_password: newPassword } });
   },
 };
