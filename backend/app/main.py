@@ -298,13 +298,10 @@ def update_site_status(
     site.updated_at = datetime.utcnow()
     if payload.status == SiteStatus.inspected:
         site.last_inspected_at = datetime.utcnow()
-        # Only set last_inspected_by_user_id if it's a valid ID (> 0)
-        print(f"[DEBUG] Current user ID: {current_user.id}, User: {current_user}")
-        if current_user.id and current_user.id > 0:
+        # Only set last_inspected_by_user_id if it's a valid ID (> 0) AND not using Supabase
+        # (Supabase users don't exist in local database)
+        if not settings.use_supabase and current_user.id and current_user.id > 0:
             site.last_inspected_by_user_id = current_user.id
-            print(f"[DEBUG] Set last_inspected_by_user_id to {current_user.id}")
-        else:
-            print(f"[DEBUG] NOT setting last_inspected_by_user_id - invalid ID: {current_user.id}")
 
     update = SiteUpdate(
         site_id=site.id,
