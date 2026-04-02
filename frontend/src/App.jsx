@@ -349,9 +349,41 @@ export default function App() {
   const pullDistance = useRef(0);
   const detailBodyRef = useRef(null);
 
-  function handleCloseDetail() {
-    setDetailOpen(false);
-  }
+  // Swipe detection refs for side panels
+  const sitesPanelTouchStartX = useRef(null);
+  const adminPanelTouchStartX = useRef(null);
+  const SWIPE_THRESHOLD = 50;
+
+  // Swipe handlers for side panels (left-to-right swipe to close)
+  const handleSitesPanelTouchStart = (e) => {
+    sitesPanelTouchStartX.current = e.touches[0].clientX;
+  };
+
+  const handleSitesPanelTouchEnd = (e) => {
+    if (sitesPanelTouchStartX.current === null) return;
+    const endX = e.changedTouches[0].clientX;
+    const diff = endX - sitesPanelTouchStartX.current;
+    // Left-to-right swipe (positive diff) closes the panel
+    if (diff > SWIPE_THRESHOLD && activeTab === TAB_SITES) {
+      setActiveTab(TAB_MAP);
+    }
+    sitesPanelTouchStartX.current = null;
+  };
+
+  const handleAdminPanelTouchStart = (e) => {
+    adminPanelTouchStartX.current = e.touches[0].clientX;
+  };
+
+  const handleAdminPanelTouchEnd = (e) => {
+    if (adminPanelTouchStartX.current === null) return;
+    const endX = e.changedTouches[0].clientX;
+    const diff = endX - adminPanelTouchStartX.current;
+    // Left-to-right swipe (positive diff) closes the panel
+    if (diff > SWIPE_THRESHOLD && activeTab === TAB_ADMIN) {
+      setActiveTab(TAB_MAP);
+    }
+    adminPanelTouchStartX.current = null;
+  };
 
   function handleTouchStart(e) {
     touchStartY.current = e.touches[0].clientY;
@@ -873,7 +905,11 @@ export default function App() {
         </div>
 
         {/* ── Sites list panel ── */}
-        <div className={`side-panel ${activeTab === TAB_SITES ? 'open' : ''}`}>
+        <div 
+          className={`side-panel ${activeTab === TAB_SITES ? 'open' : ''}`}
+          onTouchStart={handleSitesPanelTouchStart}
+          onTouchEnd={handleSitesPanelTouchEnd}
+        >
           <div className="side-panel-header">
             <h2>Sites</h2>
             <span className="small-text">
@@ -908,7 +944,11 @@ export default function App() {
         </div>
 
         {/* ── Admin panel ── */}
-        <div className={`side-panel ${activeTab === TAB_ADMIN && roleCanAdmin ? 'open' : ''}`}>
+        <div 
+          className={`side-panel ${activeTab === TAB_ADMIN && roleCanAdmin ? 'open' : ''}`}
+          onTouchStart={handleAdminPanelTouchStart}
+          onTouchEnd={handleAdminPanelTouchEnd}
+        >
           <div className="side-panel-header">
             <h2>Admin</h2>
           </div>
