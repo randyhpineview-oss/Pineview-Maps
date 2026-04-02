@@ -10,6 +10,7 @@ from app.auth import get_current_user, require_roles, seed_demo_users
 from app.config import get_settings
 from app.database import Base, SessionLocal, engine, get_db
 from app.kml_import import parse_kml_file
+from app.password_reset import router as password_reset_router
 from app.user_management import router as user_management_router
 from app.models import ApprovalState, PinType, RoleEnum, Site, SiteStatus, SiteUpdate, User
 from app.schemas import (
@@ -41,6 +42,7 @@ app.add_middleware(
 
 # Include routers AFTER middleware is set up
 app.include_router(user_management_router)
+app.include_router(password_reset_router)
 
 
 # Global exception handler to ensure CORS headers on errors
@@ -298,9 +300,11 @@ def update_site_status(
     site.updated_at = datetime.utcnow()
     if payload.status == SiteStatus.inspected:
         site.last_inspected_at = datetime.utcnow()
-        # Store user ID who inspected (works for both Supabase and local users now)
+        # Store user ID and email who inspected
         if current_user.id and current_user.id > 0:
             site.last_inspected_by_user_id = current_user.id
+        if current_user.email:
+            site.last_inspected_by_email = current_user.email
 
     update = SiteUpdate(
         site_id=site.id,
