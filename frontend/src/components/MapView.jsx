@@ -98,7 +98,7 @@ export default function MapView({
       // Center pin in visible map area (above slide-up panel)
       // Slide-up panel takes ~50% of screen, so center pin in top 45% of view
       const visibleHeight = window.innerHeight * 0.45; // Top 45% of screen
-      const centerLat = targetLat - (visibleHeight / 111000); // Move center north so pin appears in visible area
+      const centerLat = targetLat + (visibleHeight / 111000); // Move center north so pin appears in visible area
       mapRef.current.panTo({ lat: centerLat, lng: targetLng });
     } else {
       // Desktop, tablets, or no detail panel - center exactly
