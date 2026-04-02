@@ -61,9 +61,23 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
                     except ValueError:
                         role_enum = RoleEnum.worker
                     
+                    # Extract actual user ID from Supabase JWT
+                    # Supabase uses 'sub' claim for user ID
+                    user_id = payload.get("sub")
+                    if user_id:
+                        try:
+                            # Convert string ID to integer if possible
+                            actual_id = int(user_id) if user_id.isdigit() else hash(user_id) % 1000000
+                        except (ValueError, AttributeError):
+                            # Fallback to hash of email
+                            actual_id = hash(user_email) % 1000000
+                    else:
+                        # Fallback to hash of email
+                        actual_id = hash(user_email) % 1000000
+                    
                     # Return a user-like object (doesn't need to be persisted in production)
                     user = User(
-                        id=0,  # Placeholder ID
+                        id=actual_id,  # Use actual user ID instead of placeholder
                         email=user_email,
                         name=user_email.split("@")[0].title() or "User",
                         role=role_enum
