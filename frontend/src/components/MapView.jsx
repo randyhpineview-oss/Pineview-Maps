@@ -96,10 +96,8 @@ export default function MapView({
                     /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     if (isPhone && detailOpen) {
       // Center pin in visible map area (above slide-up panel)
-      // In PWA fullscreen: slide-up takes ~50% of screen
-      // In browser: slide-up takes less due to browser UI, so adjust accordingly
-      const isPWA = window.matchMedia('(display-mode: standalone)').matches;
-      const visibleHeight = isPWA ? window.innerHeight * 0.45 : window.innerHeight * 0.55; // More offset in browser
+      // Use larger offset to ensure pin is visible above slide-up panel
+      const visibleHeight = window.innerHeight * 0.6; // 60% of screen height for all mobile
       const centerLat = targetLat + (visibleHeight / 111000); // Move center north so pin appears in visible area
       mapRef.current.panTo({ lat: centerLat, lng: targetLng });
     } else {
