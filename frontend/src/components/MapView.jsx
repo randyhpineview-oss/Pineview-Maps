@@ -39,7 +39,6 @@ export default function MapView({
   const gestureContainerRef = useRef(null);
   const lastZoomUpdateRef = useRef(0);
   const lastZoomValueRef = useRef(11);
-  const [isGesturing, setIsGesturing] = useState(false);
 
   const { isLoaded, loadError } = useJsApiLoader({
     id: 'pineview-google-map',
@@ -128,15 +127,11 @@ export default function MapView({
     if (timeSinceLastTap < 300) {
       // Double-tap detected - enter zoom gesture mode
       isZoomGestureActiveRef.current = true;
-      setIsGesturing(true);
       zoomStartYRef.current = e.touches[0].clientY;
       if (mapRef.current) {
         zoomStartLevelRef.current = mapRef.current.getZoom() || 11;
-        // Disable map gestures during our custom zoom
-        mapRef.current.setOptions({ gestureHandling: 'none', draggable: false });
       }
       e.preventDefault();
-      e.stopPropagation();
     } else {
       // Single tap - just record timestamp
       lastTapTimeRef.current = now;
@@ -155,11 +150,9 @@ export default function MapView({
     const currentY = e.touches[0].clientY;
     const deltaY = zoomStartYRef.current - currentY; // Positive = up (zoom in), negative = down (zoom out)
     
-    // Smooth continuous zoom - every 25px = 1 zoom level, but limit max change per frame
+    // Smooth continuous zoom - every 25px = 1 zoom level, no rounding
     const zoomChange = deltaY / 25;
-    // Limit zoom change to 0.3 levels per update to slow down without causing residual issues
-    const clampedZoomChange = Math.max(-0.3, Math.min(0.3, zoomChange));
-    const newZoom = Math.max(1, Math.min(20, zoomStartLevelRef.current + clampedZoomChange));
+    const newZoom = Math.max(1, Math.min(20, zoomStartLevelRef.current + zoomChange));
     
     // Only update if zoom actually changed (avoid redundant renders)
     if (newZoom !== lastZoomValueRef.current) {
@@ -167,18 +160,12 @@ export default function MapView({
       mapRef.current.setZoom(newZoom);
     }
     e.preventDefault();
-    e.stopPropagation();
   };
 
   const handleTouchEnd = (e) => {
     if (isZoomGestureActiveRef.current) {
       isZoomGestureActiveRef.current = false;
-      setIsGesturing(false);
       lastTapTimeRef.current = 0; // Reset tap timer
-      // Re-enable map gestures
-      if (mapRef.current) {
-        mapRef.current.setOptions({ gestureHandling: 'greedy', draggable: true });
-      }
     }
   };
 
@@ -231,8 +218,7 @@ export default function MapView({
           zoomControl: false,
           clickableIcons: false,
           draggableCursor: isPickingLocation ? 'crosshair' : undefined,
-          gestureHandling: isGesturing ? 'none' : 'greedy',
-          draggable: !isGesturing,
+          gestureHandling: 'greedy',
         }}
       >
         {userLocation ? (
