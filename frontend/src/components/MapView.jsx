@@ -111,8 +111,10 @@ export default function MapView({
 
   // Re-center map when detail panel closes (without offset)
   const prevDetailOpen = useRef(detailOpen);
+  const prevSelectedSiteId = useRef(null);
   useEffect(() => {
     if (!isLoaded || !mapRef.current || !selectedSite) return;
+    
     // If detail panel just closed, re-center on the site without offset
     if (prevDetailOpen.current && !detailOpen) {
       mapRef.current.panTo({ 
@@ -120,8 +122,10 @@ export default function MapView({
         lng: selectedSite.longitude 
       });
     }
-    // If detail panel just opened (not via zoomToSite), apply offset on mobile
-    if (!prevDetailOpen.current && detailOpen && !zoomToSite) {
+    
+    // If site selected while detail panel is already open (pin tap), apply offset on mobile
+    const siteId = selectedSite.id || selectedSite.cacheId;
+    if (detailOpen && siteId !== prevSelectedSiteId.current && !zoomToSite) {
       const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) && 
                       /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
       if (isPhone) {
@@ -129,7 +133,9 @@ export default function MapView({
         mapRef.current.panTo({ lat: offsetLat, lng: selectedSite.longitude });
       }
     }
+    
     prevDetailOpen.current = detailOpen;
+    prevSelectedSiteId.current = siteId;
   }, [isLoaded, detailOpen, selectedSite, zoomToSite]);
 
   if (!apiKey) {
