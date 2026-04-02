@@ -94,7 +94,7 @@ export default function MapView({
     const isMobile = window.innerHeight <= 768 || window.innerWidth <= 768 || /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     if (isMobile) {
       // Offset by ~0.015 degrees latitude (roughly 1.5km) to move site well above panel
-      const offsetLat = targetLat + 0.015;
+      const offsetLat = targetLat - 0.015;
       mapRef.current.panTo({ lat: offsetLat, lng: targetLng });
     } else {
       mapRef.current.panTo({ lat: targetLat, lng: targetLng });
