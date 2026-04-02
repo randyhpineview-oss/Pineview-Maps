@@ -385,7 +385,11 @@ def update_site_approval(
 ) -> SiteRead:
     site = get_site_or_404(db, site_id)
 
-    site.approved_by_user_id = current_user.id if current_user.id else None
+    # Only set approved_by_user_id if user exists in local DB to avoid FK constraint
+    if current_user.id:
+        local_user = db.query(User).filter(User.id == current_user.id).first()
+        if local_user:
+            site.approved_by_user_id = current_user.id
     site.updated_at = datetime.utcnow()
 
     if payload.approval_state == ApprovalState.approved:
