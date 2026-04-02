@@ -39,7 +39,6 @@ export default function MapView({
   const gestureContainerRef = useRef(null);
   const lastZoomUpdateRef = useRef(0);
   const lastZoomValueRef = useRef(11);
-  const gestureEndRef = useRef(0); // Track when gesture ended for cooldown
 
   const { isLoaded, loadError } = useJsApiLoader({
     id: 'pineview-google-map',
@@ -122,12 +121,6 @@ export default function MapView({
     if (e.touches.length !== 1) return;
     
     const now = Date.now();
-    
-    // Check if we're in cooldown period after a zoom gesture (500ms)
-    if (now - gestureEndRef.current < 500) {
-      return; // Ignore touches during cooldown
-    }
-    
     const timeSinceLastTap = now - lastTapTimeRef.current;
     
     // Check if this is a double-tap (within 300ms)
@@ -142,7 +135,8 @@ export default function MapView({
           gestureHandling: 'none',
           draggable: false,
           scrollwheel: false,
-          disableDoubleClickZoom: true
+          disableDoubleClickZoom: true,
+          keyboardShortcuts: false
         });
       }
       e.preventDefault();
@@ -182,19 +176,40 @@ export default function MapView({
     if (isZoomGestureActiveRef.current) {
       isZoomGestureActiveRef.current = false;
       lastTapTimeRef.current = 0; // Reset tap timer
-      gestureEndRef.current = Date.now(); // Mark when gesture ended
       
-      // Re-enable map interactions with delay to ensure clean state
-      setTimeout(() => {
-        if (mapRef.current) {
-          mapRef.current.setOptions({ 
-            gestureHandling: 'greedy',
-            draggable: true,
-            scrollwheel: true,
-            disableDoubleClickZoom: false
-          });
-        }
-      }, 100);
+      // Force complete map state reset to clear any stored gesture momentum
+      if (mapRef.current) {
+        // Store current center and zoom
+        const currentCenter = mapRef.current.getCenter();
+        const currentZoom = mapRef.current.getZoom();
+        
+        // Completely disable the map
+        mapRef.current.setOptions({ 
+          gestureHandling: 'none',
+          draggable: false,
+          scrollwheel: false,
+          disableDoubleClickZoom: true,
+          keyboardShortcuts: false
+        });
+        
+        // Force re-render to clear internal state
+        setTimeout(() => {
+          if (mapRef.current) {
+            // Re-enable with same center/zoom to ensure no momentum
+            mapRef.current.setOptions({ 
+              gestureHandling: 'greedy',
+              draggable: true,
+              scrollwheel: true,
+              disableDoubleClickZoom: false,
+              keyboardShortcuts: true
+            });
+            
+            // Force set center and zoom again to clear any residual state
+            mapRef.current.setCenter(currentCenter);
+            mapRef.current.setZoom(currentZoom);
+          }
+        }, 50);
+      }
       
       e.preventDefault();
       e.stopPropagation();
