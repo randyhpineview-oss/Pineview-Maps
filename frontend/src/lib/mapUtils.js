@@ -128,6 +128,38 @@ export function buildMarkerSvg(site, isSelected = false) {
 }
 
 export function buildMarkerIcon(site, isSelected = false) {
+  // Special handling for preview sites
+  if (site._isPreview) {
+    let svg;
+    let size;
+    const scale = isSelected ? 1.5 : 1;
+
+    switch (site.pin_type) {
+      case 'water':
+        svg = waterSvg(isSelected).replace(/fill="#3b82f6"/g, 'fill="#60a5fa"').replace(/stroke-width="[^"]*"/g, 'stroke-width="3" stroke-dasharray="5,5"');
+        size = [18 * scale, 24 * scale];
+        break;
+      case 'quad_access':
+        svg = atvSvg(isSelected).replace(/fill="#eab308"/g, 'fill="#fbbf24"').replace(/stroke-width="[^"]*"/g, 'stroke-width="3" stroke-dasharray="5,5"');
+        size = [24 * scale, 18 * scale];
+        break;
+      case 'reclaimed':
+        svg = treeSvg(site, isSelected).replace(/fill="#22c55e"/g, 'fill="#4ade80"').replace(/fill="#ef4444"/g, 'fill="#f87171"').replace(/stroke-width="[^"]*"/g, 'stroke-width="3" stroke-dasharray="5,5"');
+        size = [19 * scale, 25 * scale];
+        break;
+      default:
+        svg = lsdSvg(site, isSelected).replace(/fill="#22c55e"/g, 'fill="#4ade80"').replace(/fill="#ef4444"/g, 'fill="#f87171"').replace(/stroke-width="[^"]*"/g, 'stroke-width="3" stroke-dasharray="5,5"');
+        size = [21 * scale, 26 * scale];
+        break;
+    }
+
+    return {
+      url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+      scaledSize: window.google ? new window.google.maps.Size(size[0], size[1]) : undefined,
+      anchor: window.google ? new window.google.maps.Point(size[0] / 2, size[1]) : undefined,
+    };
+  }
+
   if (site.approval_state === 'pending_review') {
     const svg = pendingSvg();
     return {

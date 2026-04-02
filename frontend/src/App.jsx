@@ -85,6 +85,7 @@ export default function App() {
   const [addPinLocation, setAddPinLocation] = useState(null);
   const [addPinForm, setAddPinForm] = useState({ lsd: '', client: '', area: '' });
   const [editPickLocation, setEditPickLocation] = useState(null);
+  const [previewSiteLocation, setPreviewSiteLocation] = useState(null);
   const [zoomTarget, setZoomTarget] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const [isFollowingUser, setIsFollowingUser] = useState(false);
@@ -335,13 +336,31 @@ export default function App() {
 
   const mapSites = useMemo(() => {
     const hideWater = filters.pin_type && filters.pin_type !== 'water';
-    if (hideWater) {
-      const visibleIds = new Set(visibleSites.map((s) => s.id ?? s.cacheId));
-      const waterOverlay = sites.filter((s) => s.pin_type === 'water' && !visibleIds.has(s.id ?? s.cacheId));
-      return [...visibleSites, ...waterOverlay];
+    let baseSites = visibleSites;
+    
+    // Add preview location when in edit mode
+    if (isPickingLocationForEdit && editPickLocation && editPickLocation !== 'requested' && selectedSite) {
+      const previewSite = {
+        ...selectedSite,
+        latitude: editPickLocation.latitude,
+        longitude: editPickLocation.longitude,
+        id: `preview-${selectedSite.id}`,
+        cacheId: `preview-${selectedSite.id}`,
+        _isPreview: true
+      };
+      
+      // Filter out the original site and add the preview
+      baseSites = baseSites.filter(s => (s.id ?? s.cacheId) !== (selectedSite.id ?? selectedSite.cacheId));
+      baseSites = [...baseSites, previewSite];
     }
-    return visibleSites;
-  }, [visibleSites, sites, filters.pin_type]);
+    
+    if (hideWater) {
+      const visibleIds = new Set(baseSites.map((s) => s.id ?? s.cacheId));
+      const waterOverlay = sites.filter((s) => s.pin_type === 'water' && !visibleIds.has(s.id ?? s.cacheId));
+      return [...baseSites, ...waterOverlay];
+    }
+    return baseSites;
+  }, [visibleSites, sites, filters.pin_type, isPickingLocationForEdit, editPickLocation, selectedSite]);
 
   const clients = useMemo(
     () => [...new Set(sites.map((site) => site.client).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
@@ -459,6 +478,7 @@ export default function App() {
 
   function handleCancelEditMapPick() {
     setEditPickLocation(null);
+    setPreviewSiteLocation(null);
   }
 
   function handleMapLocationPick(location) {
@@ -600,6 +620,7 @@ export default function App() {
   setDetailOpen(false);
   setSelectedSite(null);
   setEditPickLocation(null); // Reset edit pick mode
+  setPreviewSiteLocation(null); // Reset preview location
   if (activeTab !== TAB_MAP) setActiveTab(TAB_MAP);
 }
 
@@ -876,7 +897,7 @@ export default function App() {
             selectedSite={selectedSite}
             onSelectSite={handleOpenDetail}
             isPickingLocation={isPlacingPin || isPickingLocationForEdit}
-            pickedLocation={isPickingLocationForEdit ? null : addPinLocation}
+            pickedLocation={isPickingLocationForEdit ? (editPickLocation && editPickLocation !== 'requested' ? editPickLocation : null) : addPinLocation}
             onPickLocation={handleMapLocationPick}
             onOpenDetail={handleOpenDetail}
             zoomToSite={zoomTarget}
