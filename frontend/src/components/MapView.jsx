@@ -123,14 +123,18 @@ export default function MapView({
       });
     }
     
-    // If site selected while detail panel is already open (pin tap), apply offset on mobile
+    // If site changed while detail panel is open, apply offset on mobile
     const siteId = selectedSite.id || selectedSite.cacheId;
-    if (detailOpen && siteId !== prevSelectedSiteId.current && !zoomToSite) {
+    if (detailOpen && siteId !== prevSelectedSiteId.current) {
       const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) && 
                       /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
       if (isPhone) {
+        // Use the same offset calculation as zoomToSite effect
         const offsetLat = selectedSite.latitude - 0.0045;
         mapRef.current.panTo({ lat: offsetLat, lng: selectedSite.longitude });
+      } else {
+        // Non-mobile: center exactly
+        mapRef.current.panTo({ lat: selectedSite.latitude, lng: selectedSite.longitude });
       }
     }
     
