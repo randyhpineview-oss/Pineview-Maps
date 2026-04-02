@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { signInWithEmail, signUpWithEmail } from '../lib/supabaseClient';
+import { signInWithEmail } from '../lib/supabaseClient';
 
 const MapIcon = () => (
   <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -12,30 +12,19 @@ const MapIcon = () => (
 export default function LoginPage({ onLoginSuccess }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [isSignUp, setIsSignUp] = useState(false);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-    setSuccess('');
     setIsLoading(true);
 
     try {
-      if (isSignUp) {
-        await signUpWithEmail(email, password);
-        setSuccess('Check your email to confirm your account before signing in.');
-        setEmail('');
-        setPassword('');
-        setIsSignUp(false);
-      } else {
-        const { session } = await signInWithEmail(email, password);
-        if (session) {
-          localStorage.setItem('supabase-access-token', session.access_token);
-          onLoginSuccess();
-        }
+      const { session } = await signInWithEmail(email, password);
+      if (session) {
+        localStorage.setItem('supabase-access-token', session.access_token);
+        onLoginSuccess();
       }
     } catch (err) {
       setError(err.message || 'Authentication failed');
@@ -93,38 +82,14 @@ export default function LoginPage({ onLoginSuccess }) {
               </div>
             )}
 
-            {success && (
-              <div style={{ padding: '1rem', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '0.5rem', fontSize: '0.875rem', color: '#15803d' }}>
-                {success}
-              </div>
-            )}
-
             <button
               type="submit"
               disabled={isLoading}
               style={{ width: '100%', background: isLoading ? '#9ca3af' : 'linear-gradient(90deg, #2563eb, #4f46e5)', color: 'white', fontWeight: 600, padding: '0.75rem 1rem', borderRadius: '0.5rem', border: 'none', fontSize: '1rem', cursor: isLoading ? 'default' : 'pointer' }}
             >
-              {isLoading ? 'Loading...' : isSignUp ? 'Create Account' : 'Sign In'}
+              {isLoading ? 'Loading...' : 'Sign In'}
             </button>
           </form>
-
-          {/* Toggle */}
-          <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
-            <p style={{ color: '#6b7280', fontSize: '0.875rem', marginBottom: '0.75rem' }}>
-              {isSignUp ? 'Already have an account?' : "Don't have an account?"}
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                setIsSignUp(!isSignUp);
-                setError('');
-                setSuccess('');
-              }}
-              style={{ color: '#2563eb', fontWeight: 600, fontSize: '0.875rem', background: 'none', border: 'none', cursor: 'pointer' }}
-            >
-              {isSignUp ? 'Sign In' : 'Sign Up'}
-            </button>
-          </div>
 
           {/* Footer */}
           <div style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid #e5e7eb' }}>
