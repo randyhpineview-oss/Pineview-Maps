@@ -90,16 +90,16 @@ export default function MapView({
     const targetLat = zoomToSite.latitude;
     const targetLng = zoomToSite.longitude;
     
-    // Check if mobile phone (not tablet/iPad) and adjust center to account for bottom panel
-    // Tablets and desktops center normally, phones offset slightly
+    // Check if mobile phone (not tablet/iPad) and not follow mode, then adjust center
+    // Tablets and desktops center normally, phones offset slightly for site panels only
     const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) && 
                     /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    if (isPhone) {
+    if (isPhone && !zoomToSite._isFollowMode) {
       // Small offset to move site just above the slide-up panel
       const offsetLat = targetLat - 0.0045;
       mapRef.current.panTo({ lat: offsetLat, lng: targetLng });
     } else {
-      // Desktop, iPad, tablets - center exactly on the site
+      // Desktop, iPad, tablets, and follow mode - center exactly
       mapRef.current.panTo({ lat: targetLat, lng: targetLng });
     }
     
