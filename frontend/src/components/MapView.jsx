@@ -39,6 +39,7 @@ export default function MapView({
   const gestureContainerRef = useRef(null);
   const lastZoomUpdateRef = useRef(0);
   const lastZoomValueRef = useRef(11);
+  const gestureEndRef = useRef(0); // Track when gesture ended for cooldown
 
   const { isLoaded, loadError } = useJsApiLoader({
     id: 'pineview-google-map',
@@ -121,6 +122,12 @@ export default function MapView({
     if (e.touches.length !== 1) return;
     
     const now = Date.now();
+    
+    // Check if we're in cooldown period after a zoom gesture (500ms)
+    if (now - gestureEndRef.current < 500) {
+      return; // Ignore touches during cooldown
+    }
+    
     const timeSinceLastTap = now - lastTapTimeRef.current;
     
     // Check if this is a double-tap (within 300ms)
@@ -130,8 +137,16 @@ export default function MapView({
       zoomStartYRef.current = e.touches[0].clientY;
       if (mapRef.current) {
         zoomStartLevelRef.current = mapRef.current.getZoom() || 11;
+        // Completely disable map interactions during our gesture
+        mapRef.current.setOptions({ 
+          gestureHandling: 'none',
+          draggable: false,
+          scrollwheel: false,
+          disableDoubleClickZoom: true
+        });
       }
       e.preventDefault();
+      e.stopPropagation();
     } else {
       // Single tap - just record timestamp
       lastTapTimeRef.current = now;
@@ -160,31 +175,26 @@ export default function MapView({
       mapRef.current.setZoom(newZoom);
     }
     e.preventDefault();
+    e.stopPropagation();
   };
 
   const handleTouchEnd = (e) => {
     if (isZoomGestureActiveRef.current) {
       isZoomGestureActiveRef.current = false;
       lastTapTimeRef.current = 0; // Reset tap timer
+      gestureEndRef.current = Date.now(); // Mark when gesture ended
       
-      // Force map to reset its internal gesture state
-      if (mapRef.current) {
-        // Temporarily disable then re-enable gestures to reset internal state
-        mapRef.current.setOptions({ 
-          gestureHandling: 'none',
-          draggable: false 
-        });
-        
-        // Small delay to ensure state reset
-        setTimeout(() => {
-          if (mapRef.current) {
-            mapRef.current.setOptions({ 
-              gestureHandling: 'greedy',
-              draggable: true 
-            });
-          }
-        }, 50);
-      }
+      // Re-enable map interactions with delay to ensure clean state
+      setTimeout(() => {
+        if (mapRef.current) {
+          mapRef.current.setOptions({ 
+            gestureHandling: 'greedy',
+            draggable: true,
+            scrollwheel: true,
+            disableDoubleClickZoom: false
+          });
+        }
+      }, 100);
       
       e.preventDefault();
       e.stopPropagation();
