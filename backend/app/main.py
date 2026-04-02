@@ -298,16 +298,15 @@ def update_site_status(
     site.updated_at = datetime.utcnow()
     if payload.status == SiteStatus.inspected:
         site.last_inspected_at = datetime.utcnow()
-        # Only set last_inspected_by_user_id if it's a valid ID (> 0) AND not using Supabase
-        # (Supabase users don't exist in local database)
-        if not settings.use_supabase and current_user.id and current_user.id > 0:
+        # Store user ID who inspected (works for both Supabase and local users now)
+        if current_user.id and current_user.id > 0:
             site.last_inspected_by_user_id = current_user.id
 
     update = SiteUpdate(
         site_id=site.id,
         status=payload.status,
         note=payload.note,
-        created_by_user_id=None if settings.use_supabase else (current_user.id if current_user.id else None),
+        created_by_user_id=current_user.id if current_user.id else None,
         sync_status="synced",
     )
     db.add(update)
