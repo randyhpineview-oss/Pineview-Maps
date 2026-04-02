@@ -116,13 +116,18 @@ export default function MapView({
   const originalSitePosition = useRef(null);
   
   useEffect(() => {
+    console.log('[DEBUG] Detail panel effect:', { detailOpen, prevDetailOpen: prevDetailOpen.current, selectedSite: selectedSite?.id });
+    
     if (!isLoaded || !mapRef.current || !selectedSite) return;
     
     const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) && 
                     /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     
+    console.log('[DEBUG] Phone check:', { isPhone, innerHeight: window.innerHeight, innerWidth: window.innerWidth });
+    
     // If detail panel just opened, store position and apply offset on mobile
     if (detailOpen && !prevDetailOpen.current) {
+      console.log('[DEBUG] Panel just opened, applying offset');
       originalSitePosition.current = {
         lat: selectedSite.latitude,
         lng: selectedSite.longitude
@@ -131,12 +136,14 @@ export default function MapView({
       if (isPhone) {
         const visibleHeight = window.innerHeight * 0.45;
         const centerLat = selectedSite.latitude - (visibleHeight / 111000);
+        console.log('[DEBUG] Applying mobile offset:', { originalLat: selectedSite.latitude, centerLat });
         mapRef.current.panTo({ lat: centerLat, lng: selectedSite.longitude });
       }
     }
     
     // If detail panel just closed, re-center to original position
     if (!detailOpen && prevDetailOpen.current && originalSitePosition.current) {
+      console.log('[DEBUG] Panel just closed, re-centering');
       mapRef.current.panTo({ 
         lat: originalSitePosition.current.lat, 
         lng: originalSitePosition.current.lng 
