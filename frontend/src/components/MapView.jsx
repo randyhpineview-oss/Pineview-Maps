@@ -39,6 +39,7 @@ export default function MapView({
   const gestureContainerRef = useRef(null);
   const lastZoomUpdateRef = useRef(0);
   const lastZoomValueRef = useRef(11);
+  const [isGesturing, setIsGesturing] = useState(false);
 
   const { isLoaded, loadError } = useJsApiLoader({
     id: 'pineview-google-map',
@@ -127,9 +128,12 @@ export default function MapView({
     if (timeSinceLastTap < 300) {
       // Double-tap detected - enter zoom gesture mode
       isZoomGestureActiveRef.current = true;
+      setIsGesturing(true);
       zoomStartYRef.current = e.touches[0].clientY;
       if (mapRef.current) {
         zoomStartLevelRef.current = mapRef.current.getZoom() || 11;
+        // Disable map gestures during our custom zoom
+        mapRef.current.setOptions({ gestureHandling: 'none', draggable: false });
       }
       e.preventDefault();
       e.stopPropagation();
@@ -167,7 +171,12 @@ export default function MapView({
   const handleTouchEnd = (e) => {
     if (isZoomGestureActiveRef.current) {
       isZoomGestureActiveRef.current = false;
+      setIsGesturing(false);
       lastTapTimeRef.current = 0; // Reset tap timer
+      // Re-enable map gestures
+      if (mapRef.current) {
+        mapRef.current.setOptions({ gestureHandling: 'greedy', draggable: true });
+      }
     }
   };
 
@@ -220,7 +229,8 @@ export default function MapView({
           zoomControl: false,
           clickableIcons: false,
           draggableCursor: isPickingLocation ? 'crosshair' : undefined,
-          gestureHandling: 'greedy', // Ensure consistent gesture handling
+          gestureHandling: isGesturing ? 'none' : 'greedy',
+          draggable: !isGesturing,
         }}
       >
         {userLocation ? (
