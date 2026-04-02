@@ -90,8 +90,9 @@ export default function MapView({
     const targetLat = zoomToSite.latitude;
     const targetLng = zoomToSite.longitude;
     
-    // Check if mobile and adjust center upward to account for bottom panel
-    if (window.innerHeight <= 768) {
+    // Check if mobile (browser or PWA) and adjust center upward to account for bottom panel
+    const isMobile = window.innerHeight <= 768 || window.innerWidth <= 768 || /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    if (isMobile) {
       // Offset by ~0.015 degrees latitude (roughly 1.5km) to move site well above panel
       const offsetLat = targetLat + 0.015;
       mapRef.current.panTo({ lat: offsetLat, lng: targetLng });
