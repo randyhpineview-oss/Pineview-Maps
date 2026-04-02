@@ -432,7 +432,7 @@ export default function App() {
         if (timeSinceLastUpdate > 50) { // Update every 50ms for smooth animation
           lastLocationUpdateRef.current = now;
           
-          const smoothedLocation = smoothLocationTransition(smoothedLocationRef.current, rawLocation, 0.15);
+          const smoothedLocation = smoothLocationTransition(smoothedLocationRef.current, rawLocation, 0.08);
           smoothedLocationRef.current = smoothedLocation;
           setUserLocation(smoothedLocation);
           
