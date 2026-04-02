@@ -97,7 +97,7 @@ export default function App() {
   const canManagePins = userRole === 'admin' || userRole === 'office';
   const roleCanAdmin = userRole === 'admin' || userRole === 'office';
   const isPlacingPin = addPinType !== null && addPinLocation === null;
-  const isPickingLocationForEdit = editPickLocation !== null && editPickLocation !== 'requested';
+  const isPickingLocationForEdit = editPickLocation === 'requested';
   const showAddPopup = addPinType !== null && addPinLocation !== null;
 
   const serverFilters = useMemo(
@@ -112,6 +112,17 @@ export default function App() {
     setQueuedCount(queuedActions.length);
     return queuedActions;
   }, []);
+
+  // Reset edit pick mode after location is selected
+  useEffect(() => {
+    if (editPickLocation !== null && editPickLocation !== 'requested') {
+      // Reset after a short delay to allow the location to be applied
+      const timeout = setTimeout(() => {
+        setEditPickLocation(null);
+      }, 200);
+      return () => clearTimeout(timeout);
+    }
+  }, [editPickLocation]);
 
   const loadPendingSites = useCallback(async () => {
     if (!roleCanAdmin || !window.navigator.onLine) {
@@ -453,7 +464,7 @@ export default function App() {
   function handleMapLocationPick(location) {
     if (addPinType !== null && addPinLocation === null) {
       setAddPinLocation(location);
-    } else if (editPickLocation !== null) {
+    } else if (editPickLocation === 'requested') {
       setEditPickLocation(location);
     }
   }
@@ -588,6 +599,7 @@ export default function App() {
   setFabOpen(false);
   setDetailOpen(false);
   setSelectedSite(null);
+  setEditPickLocation(null); // Reset edit pick mode
   if (activeTab !== TAB_MAP) setActiveTab(TAB_MAP);
 }
 
@@ -864,7 +876,7 @@ export default function App() {
             selectedSite={selectedSite}
             onSelectSite={handleOpenDetail}
             isPickingLocation={isPlacingPin || isPickingLocationForEdit}
-            pickedLocation={isPickingLocationForEdit ? editPickLocation : addPinLocation}
+            pickedLocation={isPickingLocationForEdit ? null : addPinLocation}
             onPickLocation={handleMapLocationPick}
             onOpenDetail={handleOpenDetail}
             zoomToSite={zoomTarget}

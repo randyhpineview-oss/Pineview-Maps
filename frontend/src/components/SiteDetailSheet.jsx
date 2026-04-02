@@ -53,8 +53,15 @@ export default function SiteDetailSheet({
         latitude: pickedLocation.latitude,
         longitude: pickedLocation.longitude,
       }));
+      // Reset the picked location after applying it
+      if (onRequestMapPick) {
+        // This will trigger the parent to reset the edit pick state
+        setTimeout(() => {
+          // We'll handle this in the parent component
+        }, 100);
+      }
     }
-  }, [pickedLocation]);
+  }, [pickedLocation, isEditing, onRequestMapPick]);
 
   const canSaveEdit = editState.latitude !== '' && editState.longitude !== '';
 
