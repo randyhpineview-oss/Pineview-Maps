@@ -39,6 +39,12 @@ class UserCreate(BaseModel):
     name: str = ""
 
 
+class UserInvite(BaseModel):
+    email: str
+    role: RoleEnum = RoleEnum.worker
+    name: str = ""
+
+
 class UserUpdate(BaseModel):
     role: Optional[RoleEnum] = None
     name: Optional[str] = None
@@ -124,6 +130,45 @@ def create_user(payload: UserCreate) -> UserResponse:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create user: {error_msg}",
+        )
+
+
+@router.post(
+    "/invite",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_roles(RoleEnum.admin))],
+)
+def invite_user(payload: UserInvite) -> UserResponse:
+    """Invite a new user via email - they'll set their own password."""
+    client = get_supabase_admin()
+    try:
+        print(f"[USER_MGMT] Inviting user: {payload.email} with role {payload.role.value}")
+        result = client.auth.admin.create_user(
+            {
+                "email": payload.email,
+                "email_confirm": True,
+                "user_metadata": {
+                    "role": payload.role.value,
+                    "name": payload.name or payload.email.split("@")[0].title(),
+                },
+                "generate_link": True,
+                "send_invite_email": True,
+            }
+        )
+        print(f"[USER_MGMT] User invited successfully: {result.user.id}")
+        return _format_user(result.user)
+    except Exception as exc:
+        error_msg = str(exc)
+        print(f"[USER_MGMT] Error inviting user: {error_msg}")
+        if "already been registered" in error_msg.lower() or "already exists" in error_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A user with this email already exists",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to invite user: {error_msg}",
         )
 
 
