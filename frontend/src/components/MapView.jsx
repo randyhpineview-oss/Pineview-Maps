@@ -39,9 +39,6 @@ export default function MapView({
   const gestureContainerRef = useRef(null);
   const lastZoomUpdateRef = useRef(0);
   const lastZoomValueRef = useRef(11);
-  const gestureCooldownRef = useRef(0);
-  const ZOOM_COOLDOWN_MS = 400; // Cooldown before new double-tap can be detected
-  const ZOOM_SENSITIVITY = 60; // Pixels per zoom level
 
   const { isLoaded, loadError } = useJsApiLoader({
     id: 'pineview-google-map',
@@ -124,12 +121,6 @@ export default function MapView({
     if (e.touches.length !== 1) return;
     
     const now = Date.now();
-    
-    // Check if we're in cooldown period after a zoom gesture
-    if (now - gestureCooldownRef.current < ZOOM_COOLDOWN_MS) {
-      return; // Ignore touches during cooldown
-    }
-    
     const timeSinceLastTap = now - lastTapTimeRef.current;
     
     // Check if this is a double-tap (within 300ms)
@@ -139,7 +130,6 @@ export default function MapView({
       zoomStartYRef.current = e.touches[0].clientY;
       if (mapRef.current) {
         zoomStartLevelRef.current = mapRef.current.getZoom() || 11;
-        lastZoomValueRef.current = zoomStartLevelRef.current; // Reset last zoom value
       }
       e.preventDefault();
     } else {
@@ -161,7 +151,7 @@ export default function MapView({
     const deltaY = zoomStartYRef.current - currentY; // Positive = up (zoom in), negative = down (zoom out)
     
     // Smooth continuous zoom - every 60px = 1 zoom level, no rounding
-    const zoomChange = deltaY / ZOOM_SENSITIVITY;
+    const zoomChange = deltaY / 60;
     const newZoom = Math.max(1, Math.min(20, zoomStartLevelRef.current + zoomChange));
     
     // Only update if zoom actually changed (avoid redundant renders)
@@ -175,9 +165,7 @@ export default function MapView({
   const handleTouchEnd = (e) => {
     if (isZoomGestureActiveRef.current) {
       isZoomGestureActiveRef.current = false;
-      gestureCooldownRef.current = Date.now(); // Set cooldown timestamp
-      lastTapTimeRef.current = 0; // Reset tap timer completely
-      lastZoomUpdateRef.current = 0; // Reset zoom throttle
+      lastTapTimeRef.current = 0; // Reset tap timer
     }
   };
 
@@ -189,9 +177,9 @@ export default function MapView({
           // Set up zoom gesture handlers on the map container
           const mapContainer = gestureContainerRef.current;
           if (mapContainer) {
-            mapContainer.addEventListener('touchstart', handleTouchStart, { passive: true });
+            mapContainer.addEventListener('touchstart', handleTouchStart, { passive: false });
             mapContainer.addEventListener('touchmove', handleTouchMove, { passive: false });
-            mapContainer.addEventListener('touchend', handleTouchEnd, { passive: true });
+            mapContainer.addEventListener('touchend', handleTouchEnd, { passive: false });
           }
           
           // Store current zoom when entering follow mode
