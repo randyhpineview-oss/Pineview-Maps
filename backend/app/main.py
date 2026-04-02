@@ -336,11 +336,14 @@ def delete_site(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
+    print(f"[DEBUG] delete_site called for site_id: {site_id} by user: {current_user.email}")
     site = get_site_or_404(db, site_id)
+    print(f"[DEBUG] Found site: {site.id}, marking as deleted")
     site.deleted_at = datetime.utcnow()
     site.deleted_by_user_id = current_user.id if current_user.id else None
     site.updated_at = datetime.utcnow()
     db.commit()
+    print(f"[DEBUG] Site {site_id} marked as deleted successfully")
 
 
 @app.delete(
@@ -551,3 +554,14 @@ def restore_site(
     db.commit()
     db.refresh(site)
     return SiteRead.model_validate(site)
+
+
+@app.exception_handler(Exception)
+def global_exception_handler(request: Request, exc: Exception):
+    print(f"[ERROR] Global exception: {type(exc).__name__}: {str(exc)}")
+    print(f"[ERROR] Request path: {request.url.path}")
+    print(f"[ERROR] Request method: {request.method}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {str(exc)}"}
+    )
