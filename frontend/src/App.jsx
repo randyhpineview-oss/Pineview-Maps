@@ -85,6 +85,7 @@ export default function App() {
   const [addPinLocation, setAddPinLocation] = useState(null);
   const [addPinForm, setAddPinForm] = useState({ lsd: '', client: '', area: '' });
   const [editPickLocation, setEditPickLocation] = useState(null);
+  const [isEditPickingMode, setIsEditPickingMode] = useState(false);
   const [previewSiteLocation, setPreviewSiteLocation] = useState(null);
   const [zoomTarget, setZoomTarget] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
@@ -98,7 +99,7 @@ export default function App() {
   const canManagePins = userRole === 'admin' || userRole === 'office';
   const roleCanAdmin = userRole === 'admin' || userRole === 'office';
   const isPlacingPin = addPinType !== null && addPinLocation === null;
-  const isPickingLocationForEdit = editPickLocation === 'requested';
+  const isPickingLocationForEdit = isEditPickingMode;
   const showAddPopup = addPinType !== null && addPinLocation !== null;
 
   const serverFilters = useMemo(
@@ -462,10 +463,12 @@ export default function App() {
   }
 
   function handleRequestEditMapPick() {
-    setEditPickLocation('requested');
+    setIsEditPickingMode(true);
+    setEditPickLocation(null);
   }
 
   function handleCancelEditMapPick() {
+    setIsEditPickingMode(false);
     setEditPickLocation(null);
     setPreviewSiteLocation(null);
   }
@@ -473,7 +476,7 @@ export default function App() {
   function handleMapLocationPick(location) {
     if (addPinType !== null && addPinLocation === null) {
       setAddPinLocation(location);
-    } else if (editPickLocation === 'requested') {
+    } else if (isEditPickingMode) {
       setEditPickLocation(location);
     }
   }
@@ -608,7 +611,8 @@ export default function App() {
   setFabOpen(false);
   setDetailOpen(false);
   setSelectedSite(null);
-  setEditPickLocation(null); // Reset edit pick mode
+  setIsEditPickingMode(false); // Reset edit picking mode
+  setEditPickLocation(null);
   setPreviewSiteLocation(null); // Reset preview location
   if (activeTab !== TAB_MAP) setActiveTab(TAB_MAP);
 }
