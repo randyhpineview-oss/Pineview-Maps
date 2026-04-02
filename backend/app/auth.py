@@ -52,6 +52,8 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
                 payload = json.loads(payload_bytes)
                 
                 user_email = payload.get("email")
+                print(f"[AUTH DEBUG] JWT payload email: {user_email}")
+                print(f"[AUTH DEBUG] Full JWT payload keys: {list(payload.keys())}")
                 if user_email:
                     # Create a temporary user object from JWT payload
                     user_metadata = payload.get("user_metadata", {})
@@ -82,6 +84,7 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
                         name=user_email.split("@")[0].title() or "User",
                         role=role_enum
                     )
+                    print(f"[AUTH DEBUG] Created user object - ID: {user.id}, Email: {user.email}, Name: {user.name}")
                     return user
             except Exception:
                 pass
