@@ -324,6 +324,20 @@ def delete_site(
     db.commit()
 
 
+@app.delete(
+    "/api/sites/{site_id}/permanent",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(RoleEnum.admin))],
+)
+def delete_site_permanent(
+    site_id: int,
+    db: Session = Depends(get_db),
+) -> None:
+    site = get_site_or_404(db, site_id)
+    db.delete(site)
+    db.commit()
+
+
 @app.post(
     "/api/sites/{site_id}/approval",
     response_model=SiteRead,

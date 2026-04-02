@@ -753,7 +753,7 @@ export default function App() {
 
   async function handleDeletePermanent(siteId) {
     await runAdminAction(
-      () => api.deleteSite(siteId),
+      () => api.deleteSitePermanent(siteId),
       'Pin permanently deleted.'
     );
   }
