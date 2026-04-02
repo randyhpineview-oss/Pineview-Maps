@@ -342,6 +342,8 @@ export default function App() {
   function handleOpenDetail(site) {
     setSelectedSite(site);
     setDetailOpen(true);
+    // Also trigger zoomToSite for consistent mobile offset behavior
+    setZoomTarget({ ...site, _ts: Date.now() });
   }
 
   const touchStartY = useRef(null);
