@@ -231,8 +231,14 @@ def create_site(
         approval_state=ApprovalState.pending_review,
         status=payload.status,
         last_inspected_at=created_at if payload.status == SiteStatus.inspected else None,
-        created_by_user_id=current_user.id if current_user.id else None,
     )
+    
+    # Only set created_by_user_id if user exists in local DB to avoid FK constraint
+    if current_user.id:
+        local_user = db.query(User).filter(User.id == current_user.id).first()
+        if local_user:
+            site.created_by_user_id = current_user.id
+    
     db.add(site)
     db.flush()
     db.add(
@@ -240,7 +246,6 @@ def create_site(
             site_id=site.id,
             status=payload.status,
             note="Initial submission",
-            created_by_user_id=current_user.id if current_user.id else None,
             sync_status="synced",
             created_at=created_at,
         )
@@ -303,7 +308,10 @@ def update_site_status(
         # Store user ID, email, and name who inspected
         print(f"[DEBUG] Storing inspection data - User ID: {current_user.id}, Email: {current_user.email}, Name: {current_user.name}")
         if current_user.id and current_user.id > 0:
-            site.last_inspected_by_user_id = current_user.id
+            # Only set FK if user exists in local DB
+            local_user = db.query(User).filter(User.id == current_user.id).first()
+            if local_user:
+                site.last_inspected_by_user_id = current_user.id
         if current_user.email:
             site.last_inspected_by_email = current_user.email
             print(f"[DEBUG] Set last_inspected_by_email to {current_user.email}")
@@ -317,7 +325,6 @@ def update_site_status(
         site_id=site.id,
         status=payload.status,
         note=payload.note,
-        created_by_user_id=current_user.id if current_user.id else None,
         sync_status="synced",
     )
     db.add(update)
