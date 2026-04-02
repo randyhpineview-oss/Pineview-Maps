@@ -111,66 +111,41 @@ export default function MapView({
     }
   }, [isLoaded, zoomToSite, detailOpen]);
 
-  // Re-center map when detail panel closes (without offset)
+  // Simplified: whenever detail panel is open on mobile, center pin in visible area
   const prevDetailOpen = useRef(detailOpen);
-  const prevSelectedSiteId = useRef(null);
   const originalSitePosition = useRef(null);
   
   useEffect(() => {
     if (!isLoaded || !mapRef.current || !selectedSite) return;
     
-    // If detail panel just closed, re-center on the original site position
-    if (prevDetailOpen.current && !detailOpen) {
-      if (originalSitePosition.current) {
-        mapRef.current.panTo({ 
-          lat: originalSitePosition.current.lat, 
-          lng: originalSitePosition.current.lng 
-        });
-      }
-      originalSitePosition.current = null;
-    }
+    const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) && 
+                    /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     
-    // If site changed while detail panel is open, center pin in visible map area
-    const siteId = selectedSite.id || selectedSite.cacheId;
-    if (detailOpen && siteId !== prevSelectedSiteId.current) {
-      // Store original position for re-centering later
+    // If detail panel just opened, store position and apply offset on mobile
+    if (detailOpen && !prevDetailOpen.current) {
       originalSitePosition.current = {
         lat: selectedSite.latitude,
         lng: selectedSite.longitude
       };
       
-      const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) && 
-                      /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-      if (isPhone) {
-        // Center pin in visible map area (above slide-up panel)
-        const visibleHeight = window.innerHeight * 0.45;
-        const centerLat = selectedSite.latitude - (visibleHeight / 111000); // Move center north
-        mapRef.current.panTo({ lat: centerLat, lng: selectedSite.longitude });
-      } else {
-        // Non-mobile: center exactly
-        mapRef.current.panTo({ lat: selectedSite.latitude, lng: selectedSite.longitude });
-      }
-    }
-    
-    // Also handle case where detail panel opens with a site (pin tap)
-    if (detailOpen && !prevDetailOpen.current && selectedSite && !zoomToSite) {
-      const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) && 
-                      /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
       if (isPhone) {
         const visibleHeight = window.innerHeight * 0.45;
         const centerLat = selectedSite.latitude - (visibleHeight / 111000);
         mapRef.current.panTo({ lat: centerLat, lng: selectedSite.longitude });
-        // Store original position for re-centering later
-        originalSitePosition.current = {
-          lat: selectedSite.latitude,
-          lng: selectedSite.longitude
-        };
       }
     }
     
+    // If detail panel just closed, re-center to original position
+    if (!detailOpen && prevDetailOpen.current && originalSitePosition.current) {
+      mapRef.current.panTo({ 
+        lat: originalSitePosition.current.lat, 
+        lng: originalSitePosition.current.lng 
+      });
+      originalSitePosition.current = null;
+    }
+    
     prevDetailOpen.current = detailOpen;
-    prevSelectedSiteId.current = siteId;
-  }, [isLoaded, detailOpen, selectedSite, zoomToSite]);
+  }, [isLoaded, detailOpen, selectedSite]);
 
   if (!apiKey) {
     return (
