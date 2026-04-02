@@ -751,6 +751,13 @@ export default function App() {
     );
   }
 
+  async function handleDeletePermanent(siteId) {
+    await runAdminAction(
+      () => api.deleteSite(siteId),
+      'Pin permanently deleted.'
+    );
+  }
+
   if (isAuthLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 flex items-center justify-center">
@@ -977,6 +984,7 @@ export default function App() {
               onBulkReset={(payload) => runAdminAction(() => api.bulkResetStatus(payload), 'Reset complete.')}
               onImport={(file) => runAdminAction(() => api.importKml(file), 'KML imported.')}
               onRestore={handleRestoreSite}
+              onDeletePermanent={handleDeletePermanent}
               onSelectSite={(site) => { setZoomTarget({ ...site, _ts: Date.now() }); setActiveTab(TAB_MAP); setSelectedSite(site); setDetailOpen(true); }}
               currentUserEmail={user?.email}
             />

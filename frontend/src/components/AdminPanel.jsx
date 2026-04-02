@@ -121,6 +121,7 @@ export default function AdminPanel({
   onBulkReset,
   onImport,
   onRestore,
+  onDeletePermanent,
   onSelectSite,
   currentUserEmail,
 }) {
@@ -182,7 +183,7 @@ export default function AdminPanel({
               </div>
             ) : (
               deletedSites.map((site) => (
-                <div key={site.id} className="site-row">
+                  <div className="site-row" key={site.id}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
                     <div>
                       <strong>{site.lsd || 'Unnamed pin'}</strong>
@@ -193,6 +194,9 @@ export default function AdminPanel({
                   <div className="button-row" style={{ marginTop: '0.75rem' }}>
                     <button className="primary-button" type="button" disabled={busy} onClick={() => onRestore(site.id)}>
                       Restore
+                    </button>
+                    <button className="danger-button" type="button" disabled={busy} onClick={() => onDeletePermanent(site.id)} style={{ marginLeft: '0.5rem' }}>
+                      Delete
                     </button>
                   </div>
                 </div>
