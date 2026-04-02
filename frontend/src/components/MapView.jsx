@@ -90,13 +90,16 @@ export default function MapView({
     const targetLat = zoomToSite.latitude;
     const targetLng = zoomToSite.longitude;
     
-    // Check if mobile (browser or PWA) and adjust center upward to account for bottom panel
-    const isMobile = window.innerHeight <= 768 || window.innerWidth <= 768 || /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    if (isMobile) {
-      // Offset by ~0.015 degrees latitude (roughly 1.5km) to move site well above panel
-      const offsetLat = targetLat - 0.015;
+    // Check if mobile phone (not tablet/iPad) and adjust center to account for bottom panel
+    // Tablets and desktops center normally, phones offset slightly
+    const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) && 
+                    /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    if (isPhone) {
+      // Small offset to move site just above the slide-up panel
+      const offsetLat = targetLat - 0.006;
       mapRef.current.panTo({ lat: offsetLat, lng: targetLng });
     } else {
+      // Desktop, iPad, tablets - center exactly on the site
       mapRef.current.panTo({ lat: targetLat, lng: targetLng });
     }
     
