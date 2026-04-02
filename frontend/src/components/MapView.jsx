@@ -152,6 +152,22 @@ export default function MapView({
       }
     }
     
+    // Also handle case where detail panel opens with a site (pin tap)
+    if (detailOpen && !prevDetailOpen.current && selectedSite && !zoomToSite) {
+      const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) && 
+                      /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      if (isPhone) {
+        const visibleHeight = window.innerHeight * 0.45;
+        const centerLat = selectedSite.latitude - (visibleHeight / 111000);
+        mapRef.current.panTo({ lat: centerLat, lng: selectedSite.longitude });
+        // Store original position for re-centering later
+        originalSitePosition.current = {
+          lat: selectedSite.latitude,
+          lng: selectedSite.longitude
+        };
+      }
+    }
+    
     prevDetailOpen.current = detailOpen;
     prevSelectedSiteId.current = siteId;
   }, [isLoaded, detailOpen, selectedSite, zoomToSite]);
