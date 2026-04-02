@@ -128,6 +128,7 @@ export default function AdminPanel({
   const [file, setFile] = useState(null);
   const [resetClient, setResetClient] = useState('');
   const [resetArea, setResetArea] = useState('');
+  const [importing, setImporting] = useState(false);
 
   const canReset = useMemo(() => Boolean(resetClient || resetArea), [resetClient, resetArea]);
 
@@ -140,8 +141,13 @@ export default function AdminPanel({
     if (!file) {
       return;
     }
-    await onImport(file);
-    setFile(null);
+    setImporting(true);
+    try {
+      await onImport(file);
+      setFile(null);
+    } finally {
+      setImporting(false);
+    }
   }
 
   async function handleReset(event) {
@@ -207,10 +213,32 @@ export default function AdminPanel({
 
         <CollapsibleSection title="Import KML" defaultOpen={false}>
           <form onSubmit={handleImport} className="list-grid">
-            <input type="file" accept=".kml" onChange={(event) => setFile(event.target.files?.[0] || null)} />
-            <button className="primary-button" type="submit" disabled={!file || busy}>
-              Import existing KML
+            <input type="file" accept=".kml" onChange={(event) => setFile(event.target.files?.[0] || null)} disabled={importing} />
+            <button className="primary-button" type="submit" disabled={!file || busy || importing}>
+              {importing ? 'Importing...' : 'Import existing KML'}
             </button>
+            {importing && (
+              <div className="progress-bar" style={{ 
+                width: '100%', 
+                height: '8px', 
+                backgroundColor: '#e5e7eb', 
+                borderRadius: '4px', 
+                overflow: 'hidden',
+                marginTop: '0.5rem'
+              }}>
+                <div className="progress-fill" style={{
+                  width: '100%',
+                  height: '100%',
+                  backgroundColor: '#3b82f6',
+                  animation: 'pulse 1.5s ease-in-out infinite'
+                }}></div>
+              </div>
+            )}
+            {importing && (
+              <div className="small-text" style={{ textAlign: 'center', marginTop: '0.5rem', color: '#6b7280' }}>
+                Uploading and processing KML file...
+              </div>
+            )}
           </form>
         </CollapsibleSection>
 
