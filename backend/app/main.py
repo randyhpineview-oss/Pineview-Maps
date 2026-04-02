@@ -340,7 +340,12 @@ def delete_site(
     site = get_site_or_404(db, site_id)
     print(f"[DEBUG] Found site: {site.id}, marking as deleted")
     site.deleted_at = datetime.utcnow()
-    site.deleted_by_user_id = current_user.id if current_user.id else None
+    # Only set deleted_by_user_id if user exists in local DB to avoid FK constraint
+    if current_user.id:
+        # Check if user exists in local database
+        local_user = db.query(User).filter(User.id == current_user.id).first()
+        if local_user:
+            site.deleted_by_user_id = current_user.id
     site.updated_at = datetime.utcnow()
     db.commit()
     print(f"[DEBUG] Site {site_id} marked as deleted successfully")
