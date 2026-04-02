@@ -538,7 +538,7 @@ export default function App() {
           _isFollowMode: true
         });
       }
-    }, 200); // Check every 200ms to keep it centered
+    }, 1000); // Check every 1 second to allow smooth zooming
     
     return () => clearInterval(interval);
   }, [isFollowingUser, userLocation]);
