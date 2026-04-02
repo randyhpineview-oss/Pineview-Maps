@@ -805,6 +805,7 @@ export default function App() {
             onMapClick={handleMapDismiss}
             userLocation={userLocation}
             onMapLoad={handleMapLoad}
+            detailOpen={detailOpen}
           />
         </div>
 
