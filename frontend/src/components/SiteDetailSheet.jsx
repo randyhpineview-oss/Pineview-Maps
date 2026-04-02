@@ -241,8 +241,9 @@ export default function SiteDetailSheet({
               className="primary-button"
               type="button"
               onClick={() => window.location.assign(getDirectionsUrl(site))}
+              style={{ padding: '6px 12px', fontSize: '0.85rem' }}
             >
-              🧭 Get Directions
+              🧭 Directions
             </button>
             {canManagePin ? (
               <>
