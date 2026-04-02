@@ -189,6 +189,7 @@ export default function SiteDetailSheet({
               <strong>Last inspected</strong>
               {formatDate(site.last_inspected_at)}
             </div>
+            {console.log('[SITE] last_inspected_by_user:', site.last_inspected_by_user)}
             {site.last_inspected_at && site.last_inspected_by_user && (
               <div className="meta-item">
                 <strong>Last inspected by</strong>
