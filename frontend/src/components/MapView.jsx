@@ -91,13 +91,15 @@ export default function MapView({
     const targetLat = zoomToSite.latitude;
     const targetLng = zoomToSite.longitude;
     
-    // Check if mobile phone and detail panel is open, then offset to account for bottom panel
+    // Check if mobile phone and detail panel is open, then center pin in visible map area
     const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) && 
                     /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     if (isPhone && detailOpen) {
-      // Small offset to move site just above the slide-up panel
-      const offsetLat = targetLat - 0.0045;
-      mapRef.current.panTo({ lat: offsetLat, lng: targetLng });
+      // Center pin in visible map area (above slide-up panel)
+      // Slide-up panel takes ~50% of screen, so center pin in top 45% of view
+      const visibleHeight = window.innerHeight * 0.45; // Top 45% of screen
+      const centerLat = targetLat + (visibleHeight / 111000); // Convert pixels to lat degrees
+      mapRef.current.panTo({ lat: centerLat, lng: targetLng });
     } else {
       // Desktop, tablets, or no detail panel - center exactly
       mapRef.current.panTo({ lat: targetLat, lng: targetLng });
@@ -128,7 +130,7 @@ export default function MapView({
       originalSitePosition.current = null;
     }
     
-    // If site changed while detail panel is open, store original position and apply offset on mobile
+    // If site changed while detail panel is open, center pin in visible map area
     const siteId = selectedSite.id || selectedSite.cacheId;
     if (detailOpen && siteId !== prevSelectedSiteId.current) {
       // Store original position for re-centering later
@@ -140,9 +142,10 @@ export default function MapView({
       const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) && 
                       /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
       if (isPhone) {
-        // Use the same offset calculation as zoomToSite effect
-        const offsetLat = selectedSite.latitude - 0.0045;
-        mapRef.current.panTo({ lat: offsetLat, lng: selectedSite.longitude });
+        // Center pin in visible map area (above slide-up panel)
+        const visibleHeight = window.innerHeight * 0.45;
+        const centerLat = selectedSite.latitude + (visibleHeight / 111000);
+        mapRef.current.panTo({ lat: centerLat, lng: selectedSite.longitude });
       } else {
         // Non-mobile: center exactly
         mapRef.current.panTo({ lat: selectedSite.latitude, lng: selectedSite.longitude });
