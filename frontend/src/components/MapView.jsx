@@ -103,7 +103,7 @@ export default function MapView({
     if (zoomToSite._isFollowMode) {
       isFollowModeRef.current = true;
       mapRef.current.panTo({ lat: zoomToSite.latitude, lng: zoomToSite.longitude });
-      mapRef.current.setZoom(15);
+      // Don't force zoom level - allow user to zoom in/out while following
       return;
     }
     
