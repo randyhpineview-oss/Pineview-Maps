@@ -107,7 +107,21 @@ export default function MapView({
     if (!zoomToSite._isFollowMode) {
       mapRef.current.setZoom(15);
     }
-  }, [isLoaded, zoomToSite]);
+  }, [isLoaded, zoomToSite, detailOpen]);
+
+  // Re-center map when detail panel closes (without offset)
+  const prevDetailOpen = useRef(detailOpen);
+  useEffect(() => {
+    if (!isLoaded || !mapRef.current || !selectedSite) return;
+    // If detail panel just closed, re-center on the site without offset
+    if (prevDetailOpen.current && !detailOpen) {
+      mapRef.current.panTo({ 
+        lat: selectedSite.latitude, 
+        lng: selectedSite.longitude 
+      });
+    }
+    prevDetailOpen.current = detailOpen;
+  }, [isLoaded, detailOpen, selectedSite]);
 
   if (!apiKey) {
     return (
