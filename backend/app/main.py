@@ -310,7 +310,7 @@ def update_site_status(
         site_id=site.id,
         status=payload.status,
         note=payload.note,
-        created_by_user_id=current_user.id if current_user.id else None,
+        created_by_user_id=None if settings.use_supabase else (current_user.id if current_user.id else None),
         sync_status="synced",
     )
     db.add(update)
