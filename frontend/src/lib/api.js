@@ -92,7 +92,14 @@ export const api = {
       }
     });
     const query = searchParams.toString();
-    return request(`/api/sites${query ? `?${query}` : ''}`, { demoUser });
+    return request(`/api/sites${query ? `?${query}` : ''}`, { demoUser }).then(data => {
+      console.log('[API] listSites response sample:', data.slice(0, 2).map(s => ({ 
+        id: s.id, 
+        last_inspected_by_user_id: s.last_inspected_by_user_id,
+        last_inspected_by_user: s.last_inspected_by_user 
+      })));
+      return data;
+    });
   },
   listPendingSites(demoUser) {
     return request('/api/pending-sites', { demoUser });
