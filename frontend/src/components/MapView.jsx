@@ -132,6 +132,7 @@ export default function MapView({
         zoomStartLevelRef.current = mapRef.current.getZoom() || 11;
       }
       e.preventDefault();
+      e.stopPropagation();
     } else {
       // Single tap - just record timestamp
       lastTapTimeRef.current = now;
@@ -160,6 +161,7 @@ export default function MapView({
       mapRef.current.setZoom(newZoom);
     }
     e.preventDefault();
+    e.stopPropagation();
   };
 
   const handleTouchEnd = (e) => {
@@ -218,6 +220,7 @@ export default function MapView({
           zoomControl: false,
           clickableIcons: false,
           draggableCursor: isPickingLocation ? 'crosshair' : undefined,
+          gestureHandling: 'greedy', // Ensure consistent gesture handling
         }}
       >
         {userLocation ? (
