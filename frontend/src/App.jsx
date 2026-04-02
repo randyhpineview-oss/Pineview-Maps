@@ -355,13 +355,17 @@ export default function App() {
   );
 
   function handleOpenDetail(site, options = {}) {
+    console.log('[APP] handleOpenDetail called:', { siteId: site?.id, options, isPhone: (window.innerWidth <= 480 || window.innerHeight <= 600) && /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) });
     setSelectedSite(site);
     setDetailOpen(true);
     // Only trigger zoomToSite on phones, or on PC/iPad if coming from sites list (just center, no zoom)
     const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) && 
                     /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     if (isPhone || options.fromSitesList) {
+      console.log('[APP] Setting zoomTarget from handleOpenDetail:', { isPhone, fromSitesList: options.fromSitesList });
       setZoomTarget({ ...site, _ts: Date.now(), _centerOnly: options.fromSitesList && !isPhone });
+    } else {
+      console.log('[APP] NOT setting zoomTarget - PC/iPad pin click without centering');
     }
   }
 
@@ -526,9 +530,14 @@ export default function App() {
 
   // Continuous centering when follow mode is enabled (even when location isn't updating)
   useEffect(() => {
-    if (!isFollowingUser || !userLocation) return;
+    console.log('[APP] Continuous centering effect - isFollowingUser:', isFollowingUser, 'userLocation:', !!userLocation);
+    if (!isFollowingUser || !userLocation) {
+      console.log('[APP] Continuous centering SKIPPED - follow mode off or no location');
+      return;
+    }
     
     const interval = setInterval(() => {
+      console.log('[APP] Continuous centering interval check - isFollowingUser:', isFollowingUser);
       if (isFollowingUser && userLocation && mapRef.current) {
         console.log('[APP] Continuous centering to keep blue dot centered:', userLocation.lat, userLocation.lng);
         setZoomTarget({ 
@@ -537,10 +546,15 @@ export default function App() {
           _ts: Date.now(),
           _isFollowMode: true
         });
+      } else {
+        console.log('[APP] Continuous centering condition failed:', { isFollowingUser, hasUserLocation: !!userLocation, hasMapRef: !!mapRef.current });
       }
     }, 1000); // Check every 1 second to allow smooth zooming
     
-    return () => clearInterval(interval);
+    return () => {
+      console.log('[APP] Cleaning up continuous centering interval');
+      clearInterval(interval);
+    };
   }, [isFollowingUser, userLocation]);
 
   function handleMapLoad(map) {
