@@ -329,14 +329,8 @@ export default function App() {
     const hideWater = filters.pin_type && filters.pin_type !== 'water';
     let baseSites = visibleSites;
     
-    console.log('[DEBUG] mapSites recalculated');
-    console.log('[DEBUG] isPickingLocationForEdit:', isPickingLocationForEdit);
-    console.log('[DEBUG] editPickLocation:', editPickLocation);
-    console.log('[DEBUG] selectedSite:', selectedSite?.id);
-    
     // Add preview location when in edit mode
     if (isPickingLocationForEdit && editPickLocation && editPickLocation !== 'requested' && selectedSite) {
-      console.log('[DEBUG] Creating preview site at:', editPickLocation);
       const previewSite = {
         ...selectedSite,
         latitude: editPickLocation.latitude,
@@ -349,7 +343,6 @@ export default function App() {
       // Filter out the original site and add the preview
       baseSites = baseSites.filter(s => (s.id ?? s.cacheId) !== (selectedSite.id ?? selectedSite.cacheId));
       baseSites = [...baseSites, previewSite];
-      console.log('[DEBUG] Preview site added to map');
     }
     
     if (hideWater) {
@@ -471,33 +464,23 @@ export default function App() {
   }
 
   function handleRequestEditMapPick() {
-    console.log('[DEBUG] handleRequestEditMapPick called');
     setIsEditPickingMode(true);
     isEditPickingModeRef.current = true;
     setEditPickLocation(null);
-    console.log('[DEBUG] Edit picking mode enabled');
   }
 
   function handleCancelEditMapPick() {
-    console.log('[DEBUG] handleCancelEditMapPick called');
     setIsEditPickingMode(false);
     isEditPickingModeRef.current = false;
     setEditPickLocation(null);
     setPreviewSiteLocation(null);
-    console.log('[DEBUG] Edit picking mode disabled');
   }
 
   function handleMapLocationPick(location) {
-    console.log('[DEBUG] handleMapLocationPick called:', location);
-    console.log('[DEBUG] isEditPickingModeRef.current:', isEditPickingModeRef.current);
-    console.log('[DEBUG] addPinType:', addPinType, 'addPinLocation:', addPinLocation);
-    
     if (addPinType !== null && addPinLocation === null) {
       setAddPinLocation(location);
-      console.log('[DEBUG] Set addPinLocation');
     } else if (isEditPickingModeRef.current) {
       setEditPickLocation(location);
-      console.log('[DEBUG] Set editPickLocation:', location);
     }
   }
 
@@ -1018,6 +1001,7 @@ export default function App() {
                 adminBusy={adminBusy}
                 onRequestMapPick={handleRequestEditMapPick}
                 pickedLocation={editPickLocation}
+                onCancelEditPick={handleCancelEditMapPick}
               />
             ) : null}
           </div>

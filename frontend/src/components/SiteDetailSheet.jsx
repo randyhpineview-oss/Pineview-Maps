@@ -28,6 +28,7 @@ export default function SiteDetailSheet({
   adminBusy = false,
   onRequestMapPick,
   pickedLocation = null,
+  onCancelEditPick,
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editState, setEditState] = useState(() => buildEditState(site));
@@ -88,6 +89,10 @@ export default function SiteDetailSheet({
 
     if (wasSuccessful) {
       setIsEditing(false);
+      // Reset edit picking mode if it was active
+      if (onCancelEditPick) {
+        onCancelEditPick();
+      }
     }
   }
 
