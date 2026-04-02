@@ -84,6 +84,7 @@ export default function App() {
   const [addPinType, setAddPinType] = useState(null);
   const [addPinLocation, setAddPinLocation] = useState(null);
   const [addPinForm, setAddPinForm] = useState({ lsd: '', client: '', area: '' });
+  const [editPickLocation, setEditPickLocation] = useState(null);
   const [zoomTarget, setZoomTarget] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const [isFollowingUser, setIsFollowingUser] = useState(false);
@@ -96,6 +97,7 @@ export default function App() {
   const canManagePins = userRole === 'admin' || userRole === 'office';
   const roleCanAdmin = userRole === 'admin' || userRole === 'office';
   const isPlacingPin = addPinType !== null && addPinLocation === null;
+  const isPickingLocationForEdit = editPickLocation !== null && editPickLocation !== 'requested';
   const showAddPopup = addPinType !== null && addPinLocation !== null;
 
   const serverFilters = useMemo(
@@ -440,11 +442,21 @@ export default function App() {
     setAddPinForm({ lsd: '', client: '', area: '' });
   }
 
-  function handleMapLocationPick(location) {
-  if (addPinType !== null && addPinLocation === null) {
-    setAddPinLocation(location);
+  function handleRequestEditMapPick() {
+    setEditPickLocation('requested');
   }
-}
+
+  function handleCancelEditMapPick() {
+    setEditPickLocation(null);
+  }
+
+  function handleMapLocationPick(location) {
+    if (addPinType !== null && addPinLocation === null) {
+      setAddPinLocation(location);
+    } else if (editPickLocation !== null) {
+      setEditPickLocation(location);
+    }
+  }
 
   // Smooth location transition function
   function smoothLocationTransition(currentLocation, targetLocation, factor = 0.3) {
@@ -851,8 +863,8 @@ export default function App() {
             sites={mapSites}
             selectedSite={selectedSite}
             onSelectSite={handleOpenDetail}
-            isPickingLocation={isPlacingPin}
-            pickedLocation={addPinLocation}
+            isPickingLocation={isPlacingPin || isPickingLocationForEdit}
+            pickedLocation={isPickingLocationForEdit ? editPickLocation : addPinLocation}
             onPickLocation={handleMapLocationPick}
             onOpenDetail={handleOpenDetail}
             zoomToSite={zoomTarget}
@@ -958,6 +970,8 @@ export default function App() {
                 onRequestTypeChange={handleRequestTypeChange}
                 onQuickEdit={handleQuickEdit}
                 adminBusy={adminBusy}
+                onRequestMapPick={handleRequestEditMapPick}
+                pickedLocation={editPickLocation}
               />
             ) : null}
           </div>
