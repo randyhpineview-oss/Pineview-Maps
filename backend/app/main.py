@@ -301,10 +301,14 @@ def update_site_status(
     if payload.status == SiteStatus.inspected:
         site.last_inspected_at = datetime.utcnow()
         # Store user ID and email who inspected
+        print(f"[DEBUG] Storing inspection data - User ID: {current_user.id}, Email: {current_user.email}")
         if current_user.id and current_user.id > 0:
             site.last_inspected_by_user_id = current_user.id
         if current_user.email:
             site.last_inspected_by_email = current_user.email
+            print(f"[DEBUG] Set last_inspected_by_email to {current_user.email}")
+        else:
+            print(f"[DEBUG] User email is null/empty!")
 
     update = SiteUpdate(
         site_id=site.id,
