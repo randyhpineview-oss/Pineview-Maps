@@ -22,7 +22,6 @@ export default function MapView({
   onMapClick,
   userLocation = null,
   onMapLoad,
-  onUserPan,
   detailOpen = false,
 }) {
   const mapRef = useRef(null);
@@ -301,15 +300,15 @@ export default function MapView({
         onLoad={(map) => { 
           mapRef.current = map;
           
-          // Set up pan detection to disable follow mode
-          const handleDragStart = () => {
-            if (isFollowModeRef.current && onUserPan) {
-              isFollowModeRef.current = false;
-              onUserPan();
-            }
-          };
+          // Set up pan detection - don't disable follow mode on pan, let user manually toggle
+          // const handleDragStart = () => {
+          //   if (isFollowModeRef.current && onUserPan) {
+          //     isFollowModeRef.current = false;
+          //     onUserPan();
+          //   }
+          // };
           
-          map.addListener('dragstart', handleDragStart);
+          // map.addListener('dragstart', handleDragStart);
           
           // Set up zoom gesture handlers on the map container (capture phase)
           const mapContainer = gestureContainerRef.current;

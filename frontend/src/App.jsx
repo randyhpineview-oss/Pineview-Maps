@@ -527,12 +527,6 @@ export default function App() {
     mapRef.current = map;
   }
 
-  function handleUserPan() {
-    // User manually panned the map, disable follow mode
-    setIsFollowingUser(false);
-    setMessage('Follow mode off');
-  }
-
   function handleCenterOnUserLocation() {
     if (!userLocation) {
       setMessage('Getting location...');
@@ -727,7 +721,7 @@ export default function App() {
     try {
       if (window.navigator.onLine) {
         const updated = await api.updateSiteStatus(site.id, { status, note });
-        setSites((current) => current.map((item) => (matchSiteIdentity(item, optimistic) ? updated : item)));
+        setSites((current) => current.map((item) => (matchSiteIdentity(item, site) ? updated : item)));
         await upsertSite(updated);
         setSelectedSite(updated);
         setMessage('Status updated.');
@@ -864,7 +858,6 @@ export default function App() {
             onMapClick={handleMapDismiss}
             userLocation={userLocation}
             onMapLoad={handleMapLoad}
-            onUserPan={handleUserPan}
             detailOpen={detailOpen}
           />
         </div>
