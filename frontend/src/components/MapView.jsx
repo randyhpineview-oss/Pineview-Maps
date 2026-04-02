@@ -85,10 +85,6 @@ export default function MapView({
 
   useEffect(() => {
     if (!isLoaded || !mapRef.current || !zoomToSite) return;
-    const key = zoomToSite._ts ? String(zoomToSite._ts) : String(zoomToSite.id ?? zoomToSite.cacheId);
-    if (lastZoomTarget.current === key) return;
-    lastZoomTarget.current = key;
-    lastZoomTime.current = Date.now();
     
     // Offset center to account for bottom panel on mobile
     const targetLat = zoomToSite.latitude;
