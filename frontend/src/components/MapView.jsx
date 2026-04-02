@@ -87,21 +87,26 @@ export default function MapView({
   useEffect(() => {
     if (!isLoaded || !mapRef.current || !zoomToSite) return;
     
-    // Offset center to account for bottom panel on mobile
+    // Check if mobile phone
+    const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) && 
+                    /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    
+    // Only zoom/center on phones - PC/iPad/tablet should stay put with side panel
+    if (!isPhone) {
+      return;
+    }
+    
+    // On phones, offset center to account for bottom panel
     const targetLat = zoomToSite.latitude;
     const targetLng = zoomToSite.longitude;
     
-    // Check if mobile phone and detail panel is open, then center pin in visible map area
-    const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) && 
-                    /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    if (isPhone && detailOpen) {
+    if (detailOpen) {
       // Center pin in visible map area (above slide-up panel)
-      // Use larger offset to ensure pin is visible above slide-up panel
-      const visibleHeight = window.innerHeight * 0.6; // 60% of screen height for all mobile
+      const visibleHeight = window.innerHeight * 0.6; // 60% of screen height
       const centerLat = targetLat + (visibleHeight / 111000); // Move center north so pin appears in visible area
       mapRef.current.panTo({ lat: centerLat, lng: targetLng });
     } else {
-      // Desktop, tablets, or no detail panel - center exactly
+      // No detail panel - center exactly
       mapRef.current.panTo({ lat: targetLat, lng: targetLng });
     }
     
