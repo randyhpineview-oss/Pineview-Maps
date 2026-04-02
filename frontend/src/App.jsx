@@ -524,6 +524,25 @@ export default function App() {
     };
   }, [isFollowingUser]);
 
+  // Continuous centering when follow mode is enabled (even when location isn't updating)
+  useEffect(() => {
+    if (!isFollowingUser || !userLocation) return;
+    
+    const interval = setInterval(() => {
+      if (isFollowingUser && userLocation && mapRef.current) {
+        console.log('[APP] Continuous centering to keep blue dot centered:', userLocation.lat, userLocation.lng);
+        setZoomTarget({ 
+          latitude: userLocation.lat, 
+          longitude: userLocation.lng, 
+          _ts: Date.now(),
+          _isFollowMode: true
+        });
+      }
+    }, 200); // Check every 200ms to keep it centered
+    
+    return () => clearInterval(interval);
+  }, [isFollowingUser, userLocation]);
+
   function handleMapLoad(map) {
     mapRef.current = map;
   }
