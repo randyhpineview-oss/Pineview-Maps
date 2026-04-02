@@ -96,7 +96,7 @@ export default function MapView({
                     /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     if (isPhone) {
       // Small offset to move site just above the slide-up panel
-      const offsetLat = targetLat - 0.003;
+      const offsetLat = targetLat - 0.0045;
       mapRef.current.panTo({ lat: offsetLat, lng: targetLng });
     } else {
       // Desktop, iPad, tablets - center exactly on the site
