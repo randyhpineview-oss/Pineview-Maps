@@ -150,8 +150,8 @@ export default function MapView({
     const currentY = e.touches[0].clientY;
     const deltaY = zoomStartYRef.current - currentY; // Positive = up (zoom in), negative = down (zoom out)
     
-    // Smooth continuous zoom - every 25px = 1 zoom level, no rounding
-    const zoomChange = deltaY / 25;
+    // Smooth continuous zoom - every 60px = 1 zoom level for controlled zooming
+    const zoomChange = deltaY / 60;
     const newZoom = Math.max(1, Math.min(20, zoomStartLevelRef.current + zoomChange));
     
     // Only update if zoom actually changed (avoid redundant renders)
@@ -166,6 +166,28 @@ export default function MapView({
     if (isZoomGestureActiveRef.current) {
       isZoomGestureActiveRef.current = false;
       lastTapTimeRef.current = 0; // Reset tap timer
+      
+      // Force map to reset its internal gesture state
+      if (mapRef.current) {
+        // Temporarily disable then re-enable gestures to reset internal state
+        mapRef.current.setOptions({ 
+          gestureHandling: 'none',
+          draggable: false 
+        });
+        
+        // Small delay to ensure state reset
+        setTimeout(() => {
+          if (mapRef.current) {
+            mapRef.current.setOptions({ 
+              gestureHandling: 'greedy',
+              draggable: true 
+            });
+          }
+        }, 50);
+      }
+      
+      e.preventDefault();
+      e.stopPropagation();
     }
   };
 
@@ -174,12 +196,13 @@ export default function MapView({
       <GoogleMap
         onLoad={(map) => { 
           mapRef.current = map;
-          // Set up zoom gesture handlers on the map container
+          // Set up zoom gesture handlers on the map container (capture phase)
           const mapContainer = gestureContainerRef.current;
           if (mapContainer) {
-            mapContainer.addEventListener('touchstart', handleTouchStart, { passive: false });
-            mapContainer.addEventListener('touchmove', handleTouchMove, { passive: false });
-            mapContainer.addEventListener('touchend', handleTouchEnd, { passive: false });
+            mapContainer.addEventListener('touchstart', handleTouchStart, { passive: false, capture: true });
+            mapContainer.addEventListener('touchmove', handleTouchMove, { passive: false, capture: true });
+            mapContainer.addEventListener('touchend', handleTouchEnd, { passive: false, capture: true });
+            mapContainer.addEventListener('touchcancel', handleTouchEnd, { passive: false, capture: true });
           }
           
           // Store current zoom when entering follow mode
@@ -193,6 +216,7 @@ export default function MapView({
             mapContainer.removeEventListener('touchstart', handleTouchStart);
             mapContainer.removeEventListener('touchmove', handleTouchMove);
             mapContainer.removeEventListener('touchend', handleTouchEnd);
+            mapContainer.removeEventListener('touchcancel', handleTouchEnd);
           }
         }}
         onClick={(event) => {
