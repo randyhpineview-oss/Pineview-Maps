@@ -58,6 +58,8 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
                     # Create a temporary user object from JWT payload
                     user_metadata = payload.get("user_metadata", {})
                     role_str = user_metadata.get("role", "worker")
+                    # Use user metadata name first, then fall back to email prefix
+                    user_name = user_metadata.get("name", user_email.split("@")[0].title()) if user_email else "User"
                     try:
                         role_enum = RoleEnum(role_str)
                     except ValueError:
@@ -81,7 +83,7 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
                     user = User(
                         id=actual_id,  # Use actual user ID instead of placeholder
                         email=user_email,
-                        name=user_email.split("@")[0].title() or "User",
+                        name=user_name,
                         role=role_enum
                     )
                     print(f"[AUTH DEBUG] Created user object - ID: {user.id}, Email: {user.email}, Name: {user.name}")
