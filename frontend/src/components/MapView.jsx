@@ -21,6 +21,7 @@ export default function MapView({
   zoomToSite = null,
   onMapClick,
   userLocation = null,
+  onMapLoad,
 }) {
   const mapRef = useRef(null);
   const lastFittedBoundsKey = useRef('');
@@ -28,6 +29,7 @@ export default function MapView({
   const [popupSite, setPopupSite] = useState(null);
   const lastZoomTarget = useRef(null);
   const lastZoomTime = useRef(0);
+  const followModeZoomRef = useRef(null); // Store zoom level when entering follow mode
   
   // Double-tap hold zoom gesture refs
   const lastTapTimeRef = useRef(0);
@@ -88,7 +90,10 @@ export default function MapView({
     lastZoomTarget.current = key;
     lastZoomTime.current = Date.now();
     mapRef.current.panTo({ lat: zoomToSite.latitude, lng: zoomToSite.longitude });
-    mapRef.current.setZoom(15);
+    // Only set zoom if this is not a follow mode update
+    if (!zoomToSite._isFollowMode) {
+      mapRef.current.setZoom(15);
+    }
   }, [isLoaded, zoomToSite]);
 
   if (!apiKey) {
@@ -175,6 +180,11 @@ export default function MapView({
             mapContainer.addEventListener('touchstart', handleTouchStart, { passive: false });
             mapContainer.addEventListener('touchmove', handleTouchMove, { passive: false });
             mapContainer.addEventListener('touchend', handleTouchEnd, { passive: false });
+          }
+          
+          // Store current zoom when entering follow mode
+          if (onMapLoad && typeof onMapLoad === 'function') {
+            onMapLoad(map);
           }
         }}
         onUnmount={() => {

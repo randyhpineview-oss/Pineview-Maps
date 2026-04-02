@@ -87,6 +87,8 @@ export default function App() {
   const [zoomTarget, setZoomTarget] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const [isFollowingUser, setIsFollowingUser] = useState(false);
+  const mapRef = useRef(null);
+  const lastFollowUpdateRef = useRef(0);
 
   const userRole = session?.user?.user_metadata?.role || 'worker';
   const canManagePins = userRole === 'admin' || userRole === 'office';
@@ -412,9 +414,19 @@ export default function App() {
         };
         setUserLocation(location);
         
-        // Auto-center on user if follow mode is enabled
-        if (isFollowingUser) {
-          setZoomTarget({ latitude: location.lat, longitude: location.lng, _ts: Date.now() });
+        // Auto-center on user if follow mode is enabled (throttled for smoothness)
+        if (isFollowingUser && mapRef.current) {
+          const now = Date.now();
+          // Throttle follow updates to every 500ms for smooth tracking
+          if (now - lastFollowUpdateRef.current > 500) {
+            lastFollowUpdateRef.current = now;
+            setZoomTarget({ 
+              latitude: location.lat, 
+              longitude: location.lng, 
+              _ts: Date.now(),
+              _isFollowMode: true // Mark as follow mode update
+            });
+          }
         }
       },
       (error) => {
@@ -431,6 +443,10 @@ export default function App() {
       navigator.geolocation.clearWatch(watchId);
     };
   }, [isFollowingUser]);
+
+  function handleMapLoad(map) {
+    mapRef.current = map;
+  }
 
   function handleCenterOnUserLocation() {
     if (!userLocation) {
@@ -730,6 +746,7 @@ export default function App() {
             zoomToSite={zoomTarget}
             onMapClick={handleMapDismiss}
             userLocation={userLocation}
+            onMapLoad={handleMapLoad}
           />
         </div>
 
