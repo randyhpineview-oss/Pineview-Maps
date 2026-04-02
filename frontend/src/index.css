@@ -173,6 +173,15 @@ button { cursor: pointer; }
   background: #f3f4f6;
 }
 
+.fab.location-fab.following {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: white;
+}
+
+.fab.location-fab.following:hover {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+}
+
 .fab-menu {
   position: absolute;
   bottom: 72px;

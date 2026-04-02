@@ -86,6 +86,7 @@ export default function App() {
   const [addPinForm, setAddPinForm] = useState({ lsd: '', client: '', area: '' });
   const [zoomTarget, setZoomTarget] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
+  const [isFollowingUser, setIsFollowingUser] = useState(false);
 
   const userRole = session?.user?.user_metadata?.role || 'worker';
   const canManagePins = userRole === 'admin' || userRole === 'office';
@@ -410,6 +411,11 @@ export default function App() {
           lng: position.coords.longitude,
         };
         setUserLocation(location);
+        
+        // Auto-center on user if follow mode is enabled
+        if (isFollowingUser) {
+          setZoomTarget({ latitude: location.lat, longitude: location.lng, _ts: Date.now() });
+        }
       },
       (error) => {
         console.error('Location tracking error:', error);
@@ -424,16 +430,24 @@ export default function App() {
     return () => {
       navigator.geolocation.clearWatch(watchId);
     };
-  }, []);
+  }, [isFollowingUser]);
 
   function handleCenterOnUserLocation() {
     if (!userLocation) {
       setMessage('Getting location...');
       return;
     }
-    // Center map on current user location with zoom level 15
-    setZoomTarget({ latitude: userLocation.lat, longitude: userLocation.lng, _ts: Date.now() });
-    setMessage('Centered on your location');
+    
+    // Toggle follow mode
+    if (isFollowingUser) {
+      setIsFollowingUser(false);
+      setMessage('Follow mode off');
+    } else {
+      setIsFollowingUser(true);
+      // Center map on current user location
+      setZoomTarget({ latitude: userLocation.lat, longitude: userLocation.lng, _ts: Date.now() });
+      setMessage('Follow mode on');
+    }
   }
 
   function handleMapDismiss() {
@@ -773,10 +787,10 @@ export default function App() {
         {activeTab === TAB_MAP && !isPlacingPin && !showAddPopup ? (
           <>
             <button 
-              className="fab location-fab" 
+              className={`fab location-fab ${isFollowingUser ? 'following' : ''}`} 
               type="button" 
               onClick={handleCenterOnUserLocation}
-              title="Center on my location"
+              title={isFollowingUser ? "Stop following my location" : "Center on my location"}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="3"/>
