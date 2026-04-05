@@ -124,11 +124,22 @@ export default function AdminPanel({
   onDeletePermanent,
   onSelectSite,
   currentUserEmail,
+  // Pipeline props
+  pendingPipelines = [],
+  onApprovePipeline,
+  onRejectPipeline,
+  onImportPipelineKml,
+  onBulkResetPipelines,
+  onSelectPipeline,
 }) {
   const [file, setFile] = useState(null);
+  const [pipelineFile, setPipelineFile] = useState(null);
   const [resetClient, setResetClient] = useState('');
   const [resetArea, setResetArea] = useState('');
+  const [pipelineResetClient, setPipelineResetClient] = useState('');
+  const [pipelineResetArea, setPipelineResetArea] = useState('');
   const [importing, setImporting] = useState(false);
+  const [importingPipeline, setImportingPipeline] = useState(false);
 
   const canReset = useMemo(() => Boolean(resetClient || resetArea), [resetClient, resetArea]);
 
@@ -262,6 +273,94 @@ export default function AdminPanel({
             </select>
             <button className="secondary-button" type="submit" disabled={!canReset || busy}>
               Reset selected sites to Not inspected
+            </button>
+          </form>
+        </CollapsibleSection>
+
+        <CollapsibleSection title="Pending pipelines" count={pendingPipelines.length} defaultOpen={pendingPipelines.length > 0}>
+          <div className="list-grid">
+            {pendingPipelines.length === 0 ? (
+              <div className="site-row">
+                <div className="small-text">No pending pipelines right now.</div>
+              </div>
+            ) : (
+              pendingPipelines.map((pipeline) => (
+                <div className="site-row" key={pipeline.id}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
+                    <div>
+                      <strong>{pipeline.name || 'Unnamed pipeline'}</strong>
+                      <div className="small-text">
+                        {pipeline.client || 'No client'} • {pipeline.area || 'No area'} • {pipeline.total_length_km?.toFixed(2) || '?'} km
+                      </div>
+                    </div>
+                    <span className="pending-badge">Pending</span>
+                  </div>
+                  <div className="button-row" style={{ marginTop: '0.75rem' }}>
+                    <button className="primary-button" type="button" disabled={busy}
+                      onClick={() => onApprovePipeline?.(pipeline.id, { approval_state: 'approved' })}>
+                      Approve
+                    </button>
+                    <button className="danger-button" type="button" disabled={busy}
+                      onClick={() => onRejectPipeline?.(pipeline.id)}>
+                      Reject
+                    </button>
+                    {onSelectPipeline && (
+                      <button className="secondary-button" type="button"
+                        onClick={() => onSelectPipeline(pipeline)}>
+                        View
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </CollapsibleSection>
+
+        <CollapsibleSection title="Import Pipeline KML/KMZ" defaultOpen={false}>
+          <form onSubmit={async (e) => {
+            e.preventDefault();
+            if (!pipelineFile || !onImportPipelineKml) return;
+            setImportingPipeline(true);
+            try {
+              await onImportPipelineKml(pipelineFile);
+              setPipelineFile(null);
+            } finally {
+              setImportingPipeline(false);
+            }
+          }} className="list-grid">
+            <input type="file" accept=".kml,.kmz" onChange={(event) => setPipelineFile(event.target.files?.[0] || null)} disabled={importingPipeline} />
+            <button className="primary-button" type="submit" disabled={!pipelineFile || busy || importingPipeline}>
+              {importingPipeline ? 'Importing...' : 'Import Pipeline KML/KMZ'}
+            </button>
+            {importingPipeline && (
+              <div className="small-text" style={{ textAlign: 'center', marginTop: '0.5rem', color: '#6b7280' }}>
+                Uploading and processing pipeline file...
+              </div>
+            )}
+          </form>
+        </CollapsibleSection>
+
+        <CollapsibleSection title="Bulk reset pipelines (mark not sprayed)" defaultOpen={false}>
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            if (!pipelineResetClient && !pipelineResetArea) return;
+            onBulkResetPipelines?.({ client: pipelineResetClient || null, area: pipelineResetArea || null });
+          }} className="list-grid">
+            <select value={pipelineResetClient} onChange={(event) => setPipelineResetClient(event.target.value)}>
+              <option value="">Select client</option>
+              {clients.map((client) => (
+                <option key={client} value={client}>{client}</option>
+              ))}
+            </select>
+            <select value={pipelineResetArea} onChange={(event) => setPipelineResetArea(event.target.value)}>
+              <option value="">Select area</option>
+              {areas.map((area) => (
+                <option key={area} value={area}>{area}</option>
+              ))}
+            </select>
+            <button className="secondary-button" type="submit" disabled={(!pipelineResetClient && !pipelineResetArea) || busy}>
+              Reset pipelines to Not Sprayed
             </button>
           </form>
         </CollapsibleSection>

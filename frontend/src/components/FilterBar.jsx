@@ -2,6 +2,14 @@ import { useMemo, useRef, useState } from 'react';
 
 import { pinTypeLabel } from '../lib/mapUtils';
 
+const LAYER_OPTIONS = [
+  { key: 'lsd', label: 'LSD' },
+  { key: 'water', label: 'Water' },
+  { key: 'quad_access', label: 'Quad Access' },
+  { key: 'reclaimed', label: 'Reclaimed' },
+  { key: 'pipelines', label: 'Pipelines' },
+];
+
 export default function FilterBar({
   filters,
   clients,
@@ -12,6 +20,8 @@ export default function FilterBar({
   onSyncCurrentView,
   onSearchSelect,
   syncing,
+  layers = { lsd: true, water: true, quad_access: true, reclaimed: true, pipelines: true },
+  onLayerToggle,
 }) {
   const [focused, setFocused] = useState(false);
   const wrapRef = useRef(null);
@@ -99,13 +109,31 @@ export default function FilterBar({
           </option>
         ))}
       </select>
-      <select value={filters.pin_type} onChange={(event) => onChange('pin_type', event.target.value)}>
-        <option value="">All pin types</option>
-        <option value="lsd">LSD</option>
-        <option value="water">Water</option>
-        <option value="quad_access">Quad access</option>
-        <option value="reclaimed">Reclaimed</option>
-      </select>
+      <div style={{ marginTop: '0.25rem' }}>
+        <div className="small-text" style={{ fontWeight: 600, marginBottom: '0.35rem', color: '#9ab1d6' }}>Layers</div>
+        {LAYER_OPTIONS.map(({ key, label }) => (
+          <label
+            key={key}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              padding: '4px 0',
+              cursor: 'pointer',
+              fontSize: '0.85rem',
+              color: '#e5eefb',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={layers[key] ?? true}
+              onChange={() => onLayerToggle?.(key)}
+              style={{ accentColor: '#3b82f6' }}
+            />
+            {label}
+          </label>
+        ))}
+      </div>
       <select value={filters.status} onChange={(event) => onChange('status', event.target.value)}>
         <option value="">All statuses</option>
         <option value="inspected">Inspected</option>

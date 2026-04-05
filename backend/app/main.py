@@ -12,6 +12,8 @@ from app.database import Base, SessionLocal, engine, get_db
 from app.kml_import import parse_kml_file
 from app.password_reset import router as password_reset_router
 from app.user_management import router as user_management_router
+from app.pipeline_routes import router as pipeline_router
+from app.pipeline_models import Pipeline, SprayRecord  # noqa: F401 — ensure tables are registered
 from app.models import ApprovalState, PinType, RoleEnum, Site, SiteStatus, SiteUpdate, User
 from app.schemas import (
     BulkResetRequest,
@@ -43,6 +45,7 @@ app.add_middleware(
 # Include routers AFTER middleware is set up
 app.include_router(user_management_router)
 app.include_router(password_reset_router)
+app.include_router(pipeline_router)
 
 
 # Global exception handler to ensure CORS headers on errors
@@ -69,6 +72,12 @@ def startup_event() -> None:
             seed_demo_users(db)
     # Fix PostgreSQL sequence if needed (for Render deployment)
     elif engine is not None:
+        # Create pipeline tables if they don't exist
+        try:
+            Base.metadata.create_all(bind=engine, tables=[Pipeline.__table__, SprayRecord.__table__], checkfirst=True)
+            print("[STARTUP] Pipeline tables ensured")
+        except Exception as e:
+            print(f"Warning: Could not create pipeline tables: {e}")
         try:
             with engine.begin() as conn:
                 # Get the actual sequence name for the sites.id column

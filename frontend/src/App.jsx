@@ -4,6 +4,7 @@ import AdminPanel from './components/AdminPanel';
 import FilterBar from './components/FilterBar';
 import LoginPage from './components/LoginPage';
 import MapView from './components/MapView';
+import PipelineDetailSheet from './components/PipelineDetailSheet';
 import SiteDetailSheet from './components/SiteDetailSheet';
 import { api } from './lib/api';
 import { onAuthStateChange, signOut } from './lib/supabaseClient';
@@ -20,7 +21,8 @@ import {
 } from './lib/offlineStore';
 import { formatDate, pinTypeLabel, statusLabel } from './lib/mapUtils';
 
-const DEFAULT_FILTERS = { search: '', client: '', area: '', pin_type: '', status: '', approval_state: '' };
+const DEFAULT_FILTERS = { search: '', client: '', area: '', status: '', approval_state: '' };
+const DEFAULT_LAYERS = { lsd: true, water: true, quad_access: true, reclaimed: true, pipelines: true };
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
 
 const TAB_MAP = 'map';
@@ -89,6 +91,24 @@ export default function App() {
   const [previewSiteLocation, setPreviewSiteLocation] = useState(null);
   const [zoomTarget, setZoomTarget] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
+  // Pipeline state
+  const [pipelines, setPipelines] = useState([]);
+  const [pendingPipelines, setPendingPipelines] = useState([]);
+  const [selectedPipeline, setSelectedPipeline] = useState(null);
+  const [pipelineDetailOpen, setPipelineDetailOpen] = useState(false);
+  const [pipelineSprayRecords, setPipelineSprayRecords] = useState([]);
+  const [layers, setLayers] = useState(DEFAULT_LAYERS);
+  // Drawing pipeline state
+  const [isDrawingPipeline, setIsDrawingPipeline] = useState(false);
+  const [drawingPoints, setDrawingPoints] = useState([]);
+  const [drawingForm, setDrawingForm] = useState({ name: '', client: '', area: '' });
+  const [showDrawingForm, setShowDrawingForm] = useState(false);
+  // Spray marking state
+  const [isSprayMarking, setIsSprayMarking] = useState(false);
+  const [sprayStartPoint, setSprayStartPoint] = useState(null);
+  const [sprayEndPoint, setSprayEndPoint] = useState(null);
+  const [showSprayConfirm, setShowSprayConfirm] = useState(false);
+  const [sprayForm, setSprayForm] = useState({ date: new Date().toISOString().split('T')[0], notes: '' });
   const [isFollowingUser, setIsFollowingUser] = useState(false);
   const mapRef = useRef(null);
   const lastFollowUpdateRef = useRef(0);
@@ -154,6 +174,29 @@ export default function App() {
     await loadPendingSites();
   }, [loadPendingSites, serverFilters]);
 
+  const loadPipelines = useCallback(async () => {
+    if (!window.navigator.onLine) return;
+    try {
+      const data = await api.listPipelines();
+      setPipelines(data);
+    } catch {
+      console.error('[PIPELINES] Failed to load pipelines');
+    }
+  }, []);
+
+  const loadPendingPipelines = useCallback(async () => {
+    if (!roleCanAdmin || !window.navigator.onLine) {
+      setPendingPipelines([]);
+      return;
+    }
+    try {
+      const pending = await api.listPendingPipelines();
+      setPendingPipelines(pending);
+    } catch {
+      setPendingPipelines([]);
+    }
+  }, [roleCanAdmin]);
+
   const syncQueuedActions = useCallback(async () => {
     if (!window.navigator.onLine) {
       return;
@@ -185,6 +228,8 @@ export default function App() {
       if (window.navigator.onLine) {
         try {
           await loadServerSites();
+          await loadPipelines();
+          await loadPendingPipelines();
           setMessage('Synced with server');
         } catch (error) {
           setMessage('Using cached data');
@@ -302,6 +347,13 @@ export default function App() {
         } catch {
           // Silently fail on pending sites fetch
         }
+        // Refresh pipelines
+        try {
+          const pipelineData = await api.listPipelines();
+          setPipelines(pipelineData);
+        } catch {
+          // Silently fail pipeline fetch
+        }
       } catch (error) {
         // Silently fail polling to avoid spam
       }
@@ -314,19 +366,33 @@ export default function App() {
     const normalizedSearch = filters.search.trim().toLowerCase();
     return sites.filter((site) => {
       const isWater = site.pin_type === 'water';
+      // Layer visibility check
+      if (site.pin_type && !layers[site.pin_type]) return false;
       if (filters.client && site.client !== filters.client && !isWater) return false;
       if (filters.area && site.area !== filters.area && !isWater) return false;
-      if (filters.pin_type && site.pin_type !== filters.pin_type) return false;
       if (filters.status && site.status !== filters.status && !isWater) return false;
       if (filters.approval_state && site.approval_state !== filters.approval_state) return false;
       if (!normalizedSearch) return true;
       const haystack = [site.lsd, site.client, site.area, site.notes].filter(Boolean).join(' ').toLowerCase();
       return haystack.includes(normalizedSearch);
     });
-  }, [filters, sites]);
+  }, [filters, sites, layers]);
+
+  const visiblePipelines = useMemo(() => {
+    if (!layers.pipelines) return [];
+    const normalizedSearch = filters.search.trim().toLowerCase();
+    return pipelines.filter((p) => {
+      if (p.deleted_at) return false;
+      if (filters.client && p.client !== filters.client) return false;
+      if (filters.area && p.area !== filters.area) return false;
+      if (filters.approval_state && p.approval_state !== filters.approval_state) return false;
+      if (!normalizedSearch) return true;
+      const haystack = [p.name, p.client, p.area].filter(Boolean).join(' ').toLowerCase();
+      return haystack.includes(normalizedSearch);
+    });
+  }, [filters, pipelines, layers.pipelines]);
 
   const mapSites = useMemo(() => {
-    const hideWater = filters.pin_type && filters.pin_type !== 'water';
     let baseSites = visibleSites;
     
     // Add preview location when in edit mode
@@ -345,21 +411,28 @@ export default function App() {
       baseSites = [...baseSites, previewSite];
     }
     
-    if (hideWater) {
+    // Always overlay water pins if their layer is on, even when other filters are active
+    if (layers.water) {
       const visibleIds = new Set(baseSites.map((s) => s.id ?? s.cacheId));
       const waterOverlay = sites.filter((s) => s.pin_type === 'water' && !visibleIds.has(s.id ?? s.cacheId));
-      return [...baseSites, ...waterOverlay];
+      if (waterOverlay.length) return [...baseSites, ...waterOverlay];
     }
     return baseSites;
-  }, [visibleSites, sites, filters.pin_type, isPickingLocationForEdit, editPickLocation, selectedSite]);
+  }, [visibleSites, sites, layers.water, isPickingLocationForEdit, editPickLocation, selectedSite]);
 
   const clients = useMemo(
-    () => [...new Set(sites.map((site) => site.client).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
-    [sites]
+    () => [...new Set([
+      ...sites.map((site) => site.client),
+      ...pipelines.map((p) => p.client),
+    ].filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [sites, pipelines]
   );
   const areas = useMemo(
-    () => [...new Set(sites.map((site) => site.area).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
-    [sites]
+    () => [...new Set([
+      ...sites.map((site) => site.area),
+      ...pipelines.map((p) => p.area),
+    ].filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [sites, pipelines]
   );
 
   function handleOpenDetail(site, options = {}) {
@@ -461,6 +534,234 @@ export default function App() {
     setAddPinType(null);
     setAddPinLocation(null);
     setAddPinForm({ lsd: '', client: '', area: '' });
+  }
+
+  // ── Pipeline handlers ──
+  function handleOpenPipelineDetail(pipeline) {
+    setSelectedPipeline(pipeline);
+    setPipelineDetailOpen(true);
+    setDetailOpen(false);
+    setSelectedSite(null);
+    // Load spray records for this pipeline
+    if (pipeline.id && window.navigator.onLine) {
+      api.getPipeline(pipeline.id).then((full) => {
+        setPipelineSprayRecords(full.spray_records || []);
+        setSelectedPipeline(full);
+      }).catch(() => {});
+    }
+  }
+
+  function handleClosePipelineDetail() {
+    setPipelineDetailOpen(false);
+    setSelectedPipeline(null);
+    setPipelineSprayRecords([]);
+  }
+
+  function handleLayerToggle(layerKey) {
+    setLayers((prev) => ({ ...prev, [layerKey]: !prev[layerKey] }));
+  }
+
+  // Drawing pipeline on map
+  function handleStartDrawingPipeline() {
+    setFabOpen(false);
+    setIsDrawingPipeline(true);
+    setDrawingPoints([]);
+    setDrawingForm({ name: '', client: '', area: '' });
+    setShowDrawingForm(false);
+  }
+
+  function handleDrawingClick(point) {
+    setDrawingPoints((prev) => [...prev, point]);
+  }
+
+  function handleUndoDrawingPoint() {
+    setDrawingPoints((prev) => prev.slice(0, -1));
+  }
+
+  function handleFinishDrawing() {
+    if (drawingPoints.length < 2) {
+      setMessage('Pipeline needs at least 2 points.');
+      return;
+    }
+    setShowDrawingForm(true);
+  }
+
+  function handleCancelDrawing() {
+    setIsDrawingPipeline(false);
+    setDrawingPoints([]);
+    setDrawingForm({ name: '', client: '', area: '' });
+    setShowDrawingForm(false);
+  }
+
+  async function handleSubmitDrawnPipeline() {
+    if (drawingPoints.length < 2) return;
+    setSubmittingPin(true);
+    try {
+      const created = await api.createPipeline({
+        name: drawingForm.name || null,
+        client: drawingForm.client || null,
+        area: drawingForm.area || null,
+        coordinates: drawingPoints,
+      });
+      setPipelines((prev) => [created, ...prev]);
+      await loadPendingPipelines();
+      setMessage(created.approval_state === 'approved' ? 'Pipeline added.' : 'Pipeline submitted for review.');
+      handleCancelDrawing();
+    } catch (error) {
+      setMessage(error.message || 'Failed to create pipeline.');
+    } finally {
+      setSubmittingPin(false);
+    }
+  }
+
+  // Spray marking
+  function handleStartSprayMarking(pipeline) {
+    setIsSprayMarking(true);
+    setSprayStartPoint(null);
+    setSprayEndPoint(null);
+    setShowSprayConfirm(false);
+    setSprayForm({ date: new Date().toISOString().split('T')[0], notes: '' });
+    setPipelineDetailOpen(false); // Slide panel away
+  }
+
+  function handleSprayClick(point) {
+    if (!sprayStartPoint) {
+      setSprayStartPoint(point);
+    } else if (!sprayEndPoint) {
+      setSprayEndPoint(point);
+      setShowSprayConfirm(true);
+    }
+  }
+
+  function handleCancelSprayMarking() {
+    setIsSprayMarking(false);
+    setSprayStartPoint(null);
+    setSprayEndPoint(null);
+    setShowSprayConfirm(false);
+    if (selectedPipeline) {
+      setPipelineDetailOpen(true); // Bring panel back
+    }
+  }
+
+  function _nearestFraction(point, coords) {
+    // Find the nearest point on the polyline and return its fraction (0-1)
+    let minDist = Infinity;
+    let bestFraction = 0;
+    let totalLength = 0;
+    const segLengths = [];
+    for (let i = 1; i < coords.length; i++) {
+      const dx = coords[i][0] - coords[i - 1][0];
+      const dy = coords[i][1] - coords[i - 1][1];
+      const segLen = Math.sqrt(dx * dx + dy * dy);
+      segLengths.push(segLen);
+      totalLength += segLen;
+    }
+    if (totalLength === 0) return 0;
+    let cumLength = 0;
+    for (let i = 0; i < segLengths.length; i++) {
+      const ax = coords[i][0], ay = coords[i][1];
+      const bx = coords[i + 1][0], by = coords[i + 1][1];
+      const dx = bx - ax, dy = by - ay;
+      const segLen = segLengths[i];
+      // Project point onto segment
+      let t = 0;
+      if (segLen > 0) {
+        t = Math.max(0, Math.min(1, ((point.lat - ax) * dx + (point.lng - ay) * dy) / (segLen * segLen)));
+      }
+      const projX = ax + t * dx;
+      const projY = ay + t * dy;
+      const dist = Math.sqrt((point.lat - projX) ** 2 + (point.lng - projY) ** 2);
+      if (dist < minDist) {
+        minDist = dist;
+        bestFraction = (cumLength + t * segLen) / totalLength;
+      }
+      cumLength += segLen;
+    }
+    return Math.max(0, Math.min(1, bestFraction));
+  }
+
+  async function handleConfirmSpray() {
+    if (!selectedPipeline || !sprayStartPoint || !sprayEndPoint) return;
+    const coords = selectedPipeline.coordinates;
+    if (!coords || coords.length < 2) return;
+
+    const startFrac = _nearestFraction(sprayStartPoint, coords);
+    const endFrac = _nearestFraction(sprayEndPoint, coords);
+
+    setAdminBusy(true);
+    try {
+      await api.createSprayRecord(selectedPipeline.id, {
+        start_fraction: Math.min(startFrac, endFrac),
+        end_fraction: Math.max(startFrac, endFrac),
+        spray_date: sprayForm.date,
+        notes: sprayForm.notes || null,
+      });
+      // Refresh pipeline data
+      const updated = await api.getPipeline(selectedPipeline.id);
+      setSelectedPipeline(updated);
+      setPipelineSprayRecords(updated.spray_records || []);
+      setPipelines((prev) => prev.map((p) => (p.id === updated.id ? { ...p, status: updated.status } : p)));
+      setMessage('Spray record saved.');
+      setIsSprayMarking(false);
+      setSprayStartPoint(null);
+      setSprayEndPoint(null);
+      setShowSprayConfirm(false);
+      setPipelineDetailOpen(true); // Bring panel back
+    } catch (error) {
+      setMessage(error.message || 'Failed to save spray record.');
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
+  async function handleDeleteSprayRecord(recordId, pipelineId) {
+    setAdminBusy(true);
+    try {
+      await api.deleteSprayRecord(recordId);
+      const updated = await api.getPipeline(pipelineId);
+      setSelectedPipeline(updated);
+      setPipelineSprayRecords(updated.spray_records || []);
+      setPipelines((prev) => prev.map((p) => (p.id === updated.id ? { ...p, status: updated.status } : p)));
+      setMessage('Spray record deleted.');
+    } catch (error) {
+      setMessage(error.message || 'Failed to delete spray record.');
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
+  async function handleUpdatePipeline(pipeline, payload) {
+    if (!window.navigator.onLine) { setMessage('Online required.'); return false; }
+    setAdminBusy(true);
+    try {
+      const updated = await api.updatePipeline(pipeline.id, payload);
+      setPipelines((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+      setSelectedPipeline((prev) => prev?.id === updated.id ? { ...prev, ...updated } : prev);
+      setMessage('Pipeline updated.');
+      return true;
+    } catch (error) {
+      setMessage(error.message || 'Update failed.');
+      return false;
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
+  async function handleDeletePipeline(pipeline) {
+    if (!window.navigator.onLine) { setMessage('Online required.'); return false; }
+    setAdminBusy(true);
+    try {
+      await api.deletePipeline(pipeline.id);
+      setPipelines((prev) => prev.filter((p) => p.id !== pipeline.id));
+      handleClosePipelineDetail();
+      setMessage('Pipeline deleted.');
+      return true;
+    } catch (error) {
+      setMessage(error.message || 'Delete failed.');
+      return false;
+    } finally {
+      setAdminBusy(false);
+    }
   }
 
   function handleRequestEditMapPick() {
@@ -610,13 +911,17 @@ export default function App() {
   }
 
   function handleMapDismiss() {
+  if (isDrawingPipeline || isSprayMarking) return; // Don't dismiss during drawing/spray
   setIsFilterOpen(false);
   setFabOpen(false);
   setDetailOpen(false);
   setSelectedSite(null);
-  setIsEditPickingMode(false); // Reset edit picking mode
+  setPipelineDetailOpen(false);
+  setSelectedPipeline(null);
+  setPipelineSprayRecords([]);
+  setIsEditPickingMode(false);
   setEditPickLocation(null);
-  setPreviewSiteLocation(null); // Reset preview location
+  setPreviewSiteLocation(null);
   if (activeTab !== TAB_MAP) setActiveTab(TAB_MAP);
 }
 
@@ -862,13 +1167,13 @@ export default function App() {
         <span className="topbar-title">Pineview Maps</span>
         <div className="topbar-right">
           <span className={`badge ${isOnline ? 'online' : 'offline'}`}>{isOnline ? 'Online' : 'Offline'}</span>
-          {roleCanAdmin && pendingSites.length > 0 ? (
+          {roleCanAdmin && (pendingSites.length + pendingPipelines.length) > 0 ? (
             <span 
               className="badge" 
               style={{ background: '#f59e0b', color: '#422006', cursor: 'pointer' }}
               onClick={() => { setDetailOpen(false); setActiveTab(TAB_ADMIN); }}
             >
-              Pending: {pendingSites.length}
+              Pending: {pendingSites.length + pendingPipelines.length}
             </span>
           ) : null}
           {queuedCount > 0 ? <span className="badge">Queued: {queuedCount}</span> : null}
@@ -900,7 +1205,16 @@ export default function App() {
             onMapClick={handleMapDismiss}
             userLocation={userLocation}
             onMapLoad={handleMapLoad}
-            detailOpen={detailOpen}
+            detailOpen={detailOpen || pipelineDetailOpen}
+            pipelines={visiblePipelines}
+            selectedPipeline={selectedPipeline}
+            onSelectPipeline={handleOpenPipelineDetail}
+            isDrawingPipeline={isDrawingPipeline}
+            drawingPoints={drawingPoints}
+            onDrawingClick={handleDrawingClick}
+            isSprayMarking={isSprayMarking}
+            sprayStartPoint={sprayStartPoint}
+            onSprayClick={handleSprayClick}
           />
         </div>
 
@@ -923,6 +1237,8 @@ export default function App() {
               onSyncCurrentView={handleSyncCurrentView}
               onSearchSelect={handleSearchSelect}
               syncing={isSyncing}
+              layers={layers}
+              onLayerToggle={handleLayerToggle}
             />
           </div>
         ) : null}
@@ -932,6 +1248,77 @@ export default function App() {
           <div className="place-banner">
             {`Tap map to place ${pinTypeLabel(addPinType)} pin`}
             <button className="cancel-btn" type="button" onClick={handleCancelAdd}>Cancel</button>
+          </div>
+        ) : null}
+
+        {/* Drawing pipeline banner */}
+        {isDrawingPipeline && !showDrawingForm ? (
+          <div className="place-banner" style={{ flexDirection: 'column', gap: '0.5rem' }}>
+            <div>Tap map to draw pipeline ({drawingPoints.length} point{drawingPoints.length !== 1 ? 's' : ''})</div>
+            <div className="button-row" style={{ justifyContent: 'center' }}>
+              {drawingPoints.length > 0 && (
+                <button className="secondary-button" type="button" onClick={handleUndoDrawingPoint} style={{ fontSize: '0.8rem' }}>
+                  Undo
+                </button>
+              )}
+              {drawingPoints.length >= 2 && (
+                <button className="primary-button" type="button" onClick={handleFinishDrawing} style={{ fontSize: '0.8rem' }}>
+                  Done Drawing
+                </button>
+              )}
+              <button className="cancel-btn" type="button" onClick={handleCancelDrawing}>Cancel</button>
+            </div>
+          </div>
+        ) : null}
+
+        {/* Drawing pipeline form */}
+        {isDrawingPipeline && showDrawingForm ? (
+          <div className="add-pin-popup" style={{ bottom: 80, left: '50%', transform: 'translateX(-50%)' }}>
+            <strong className="small-text">New Pipeline</strong>
+            <input value={drawingForm.name} onChange={(e) => setDrawingForm((c) => ({ ...c, name: e.target.value }))} placeholder="Pipeline name" />
+            <input value={drawingForm.client} onChange={(e) => setDrawingForm((c) => ({ ...c, client: e.target.value }))} placeholder="Client" />
+            <input value={drawingForm.area} onChange={(e) => setDrawingForm((c) => ({ ...c, area: e.target.value }))} placeholder="Area" />
+            <div className="button-row">
+              <button className="primary-button" type="button" disabled={submittingPin} onClick={handleSubmitDrawnPipeline}>
+                {submittingPin ? 'Saving…' : 'Submit'}
+              </button>
+              <button className="secondary-button" type="button" onClick={handleCancelDrawing}>Cancel</button>
+            </div>
+          </div>
+        ) : null}
+
+        {/* Spray marking banner */}
+        {isSprayMarking && !showSprayConfirm ? (
+          <div className="place-banner" style={{ flexDirection: 'column', gap: '0.5rem' }}>
+            <div>
+              {!sprayStartPoint
+                ? 'Tap the START of the sprayed section'
+                : 'Tap the END of the sprayed section'}
+            </div>
+            <button className="cancel-btn" type="button" onClick={handleCancelSprayMarking}>Cancel</button>
+          </div>
+        ) : null}
+
+        {/* Spray confirmation dialog */}
+        {showSprayConfirm ? (
+          <div className="add-pin-popup" style={{ bottom: 80, left: '50%', transform: 'translateX(-50%)' }}>
+            <strong className="small-text">Confirm Spray Record</strong>
+            <input
+              type="date"
+              value={sprayForm.date}
+              onChange={(e) => setSprayForm((c) => ({ ...c, date: e.target.value }))}
+            />
+            <input
+              value={sprayForm.notes}
+              onChange={(e) => setSprayForm((c) => ({ ...c, notes: e.target.value }))}
+              placeholder="Notes (optional)"
+            />
+            <div className="button-row">
+              <button className="primary-button" type="button" disabled={adminBusy} onClick={handleConfirmSpray}>
+                {adminBusy ? 'Saving…' : 'Confirm'}
+              </button>
+              <button className="secondary-button" type="button" onClick={handleCancelSprayMarking}>Cancel</button>
+            </div>
           </div>
         ) : null}
 
@@ -955,7 +1342,7 @@ export default function App() {
         ) : null}
 
         {/* FAB + type menu */}
-        {activeTab === TAB_MAP && !isPlacingPin && !showAddPopup ? (
+        {activeTab === TAB_MAP && !isPlacingPin && !showAddPopup && !isDrawingPipeline && !isSprayMarking ? (
           <>
             <button 
               className={`fab location-fab ${isFollowingUser ? 'following' : ''}`} 
@@ -975,6 +1362,7 @@ export default function App() {
                 <button type="button" onClick={() => handleFabSelect('water')}>Water</button>
                 <button type="button" onClick={() => handleFabSelect('quad_access')}>Quad Access</button>
                 <button type="button" onClick={() => handleFabSelect('reclaimed')}>Reclaimed</button>
+                <button type="button" onClick={handleStartDrawingPipeline} style={{ borderTop: '1px solid rgba(143,182,255,0.2)' }}>Pipeline</button>
               </div>
             ) : null}
           </>
@@ -1002,6 +1390,29 @@ export default function App() {
                 onRequestMapPick={handleRequestEditMapPick}
                 pickedLocation={editPickLocation}
                 onCancelEditPick={handleCancelEditMapPick}
+              />
+            ) : null}
+          </div>
+        </div>
+
+        {/* ── Pipeline detail side panel ── */}
+        <div className={`side-panel detail-priority ${pipelineDetailOpen && selectedPipeline ? 'open' : ''}`}>
+          <div className="side-panel-header">
+            <button className="back-btn" type="button" onClick={handleClosePipelineDetail}>←</button>
+            <h2>Pipeline Details</h2>
+            {canManagePins ? <span className="small-text">Admin</span> : null}
+          </div>
+          <div className="side-panel-body">
+            {selectedPipeline ? (
+              <PipelineDetailSheet
+                pipeline={selectedPipeline}
+                canManage={canManagePins}
+                onSavePipeline={handleUpdatePipeline}
+                onDeletePipeline={handleDeletePipeline}
+                onMarkInspection={handleStartSprayMarking}
+                adminBusy={adminBusy}
+                sprayRecords={pipelineSprayRecords}
+                onDeleteSprayRecord={handleDeleteSprayRecord}
               />
             ) : null}
           </div>
@@ -1072,6 +1483,12 @@ export default function App() {
               onDeletePermanent={handleDeletePermanent}
               onSelectSite={(site) => { setZoomTarget({ ...site, _ts: Date.now() }); setActiveTab(TAB_MAP); setSelectedSite(site); setDetailOpen(true); }}
               currentUserEmail={user?.email}
+              pendingPipelines={pendingPipelines}
+              onApprovePipeline={(pipelineId, payload) => runAdminAction(async () => { await api.approvePipeline(pipelineId, payload); await loadPipelines(); await loadPendingPipelines(); }, 'Pipeline approved.')}
+              onRejectPipeline={(pipelineId) => runAdminAction(async () => { await api.approvePipeline(pipelineId, { approval_state: 'rejected' }); await loadPipelines(); await loadPendingPipelines(); }, 'Pipeline rejected.')}
+              onImportPipelineKml={(file) => runAdminAction(async () => { await api.importPipelineKml(file); await loadPipelines(); }, 'Pipeline KML imported.')}
+              onBulkResetPipelines={(payload) => runAdminAction(async () => { await api.bulkResetPipelines(payload); await loadPipelines(); }, 'Pipelines reset to not sprayed.')}
+              onSelectPipeline={(pipeline) => { handleOpenPipelineDetail(pipeline); setActiveTab(TAB_MAP); }}
             />
           </div>
         </div>

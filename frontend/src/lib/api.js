@@ -166,6 +166,51 @@ export const api = {
     return request(`/api/admin/users/${userId}`, { method: 'DELETE' });
   },
 
+  // ── Pipelines ──
+  listPipelines(filters) {
+    const searchParams = new URLSearchParams();
+    if (filters?.client) searchParams.set('client', filters.client);
+    if (filters?.area) searchParams.set('area', filters.area);
+    const query = searchParams.toString();
+    return request(`/api/pipelines${query ? `?${query}` : ''}`);
+  },
+  listPendingPipelines() {
+    return request('/api/pending-pipelines');
+  },
+  getPipeline(pipelineId) {
+    return request(`/api/pipelines/${pipelineId}`);
+  },
+  createPipeline(payload) {
+    return request('/api/pipelines', { method: 'POST', body: payload });
+  },
+  updatePipeline(pipelineId, payload) {
+    return request(`/api/pipelines/${pipelineId}`, { method: 'PATCH', body: payload });
+  },
+  deletePipeline(pipelineId) {
+    return request(`/api/pipelines/${pipelineId}`, { method: 'DELETE' });
+  },
+  approvePipeline(pipelineId, payload) {
+    return request(`/api/pipelines/${pipelineId}/approval`, { method: 'POST', body: payload });
+  },
+  importPipelineKml(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    return request('/api/pipelines/import', { method: 'POST', formData });
+  },
+  createSprayRecord(pipelineId, payload) {
+    return request(`/api/pipelines/${pipelineId}/spray`, { method: 'POST', body: payload });
+  },
+  listSprayRecords(pipelineId, sprayDate) {
+    const params = sprayDate ? `?spray_date=${sprayDate}` : '';
+    return request(`/api/pipelines/${pipelineId}/spray${params}`);
+  },
+  deleteSprayRecord(recordId) {
+    return request(`/api/spray-records/${recordId}`, { method: 'DELETE' });
+  },
+  bulkResetPipelines(payload) {
+    return request('/api/admin/pipelines/bulk-reset', { method: 'POST', body: payload });
+  },
+
   // ── Password reset (6-digit code flow) ──
   requestResetCode(email) {
     return request('/api/auth/forgot-password', { method: 'POST', body: { email } });

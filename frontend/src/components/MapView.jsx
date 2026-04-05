@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { GoogleMap, Marker, OverlayView, useJsApiLoader } from '@react-google-maps/api';
+import { GoogleMap, Marker, OverlayView, Polyline, useJsApiLoader } from '@react-google-maps/api';
 
 import { buildMarkerIcon, pinTypeLabel } from '../lib/mapUtils';
 
@@ -23,6 +23,18 @@ export default function MapView({
   userLocation = null,
   onMapLoad,
   detailOpen = false,
+  // Pipeline props
+  pipelines = [],
+  selectedPipeline = null,
+  onSelectPipeline,
+  // Drawing mode props
+  isDrawingPipeline = false,
+  drawingPoints = [],
+  onDrawingClick,
+  // Spray marking props
+  isSprayMarking = false,
+  sprayStartPoint = null,
+  onSprayClick,
 }) {
   const mapRef = useRef(null);
   const lastFittedBoundsKey = useRef('');
@@ -334,7 +346,17 @@ export default function MapView({
           }
         }}
         onClick={(event) => {
-          if (isPickingLocation && onPickLocation && event.latLng) {
+          if (isDrawingPipeline && onDrawingClick && event.latLng) {
+            onDrawingClick([
+              Number(event.latLng.lat().toFixed(6)),
+              Number(event.latLng.lng().toFixed(6)),
+            ]);
+          } else if (isSprayMarking && onSprayClick && event.latLng) {
+            onSprayClick({
+              lat: Number(event.latLng.lat().toFixed(6)),
+              lng: Number(event.latLng.lng().toFixed(6)),
+            });
+          } else if (isPickingLocation && onPickLocation && event.latLng) {
             onPickLocation({
               latitude: Number(event.latLng.lat().toFixed(6)),
               longitude: Number(event.latLng.lng().toFixed(6)),
@@ -355,7 +377,7 @@ export default function MapView({
           rotateControl: false,
           zoomControl: false,
           clickableIcons: false,
-          draggableCursor: isPickingLocation ? 'crosshair' : undefined,
+          draggableCursor: (isPickingLocation || isDrawingPipeline || isSprayMarking) ? 'crosshair' : undefined,
           gestureHandling: 'greedy',
         }}
       >
@@ -385,6 +407,108 @@ export default function MapView({
             onClick={() => setPopupSite(site)}
           />
         ))}
+
+        {/* Pipeline polylines */}
+        {pipelines.map((pipeline) => {
+          const isSelected = selectedPipeline && selectedPipeline.id === pipeline.id;
+          const isSprayed = pipeline.status === 'sprayed';
+          const isPending = pipeline.approval_state === 'pending_review';
+          return (
+            <Polyline
+              key={`pipeline-${pipeline.id}`}
+              path={pipeline.coordinates.map(([lat, lng]) => ({ lat, lng }))}
+              options={{
+                strokeColor: isPending ? '#f59e0b' : (isSprayed ? '#22c55e' : '#ef4444'),
+                strokeOpacity: isSelected ? 1.0 : 0.7,
+                strokeWeight: isSelected ? 5 : 3,
+                clickable: true,
+                zIndex: isSelected ? 10 : 1,
+              }}
+              onClick={() => {
+                if (isSprayMarking && onSprayClick) {
+                  // Don't select pipeline during spray marking
+                  return;
+                }
+                if (onSelectPipeline) onSelectPipeline(pipeline);
+              }}
+            />
+          );
+        })}
+
+        {/* Spray record overlays (green sections on pipelines) */}
+        {pipelines.map((pipeline) =>
+          (pipeline.spray_records || []).map((record) => {
+            const coords = pipeline.coordinates;
+            if (!coords || coords.length < 2) return null;
+            // Extract the sub-path for this spray record
+            const totalPoints = coords.length - 1;
+            const startIdx = Math.floor(record.start_fraction * totalPoints);
+            const endIdx = Math.ceil(record.end_fraction * totalPoints);
+            const subPath = coords.slice(startIdx, endIdx + 1).map(([lat, lng]) => ({ lat, lng }));
+            if (subPath.length < 2) return null;
+            return (
+              <Polyline
+                key={`spray-${record.id}`}
+                path={subPath}
+                options={{
+                  strokeColor: '#22c55e',
+                  strokeOpacity: 0.9,
+                  strokeWeight: 5,
+                  zIndex: 5,
+                  clickable: false,
+                }}
+              />
+            );
+          })
+        )}
+
+        {/* Drawing mode polyline */}
+        {isDrawingPipeline && drawingPoints.length >= 2 && (
+          <Polyline
+            path={drawingPoints.map((p) => ({ lat: p[0], lng: p[1] }))}
+            options={{
+              strokeColor: '#60a5fa',
+              strokeOpacity: 1.0,
+              strokeWeight: 4,
+              clickable: false,
+              zIndex: 20,
+            }}
+          />
+        )}
+
+        {/* Drawing mode point markers */}
+        {isDrawingPipeline && drawingPoints.map((p, idx) => (
+          <Marker
+            key={`draw-pt-${idx}`}
+            position={{ lat: p[0], lng: p[1] }}
+            icon={{
+              path: window.google.maps.SymbolPath.CIRCLE,
+              scale: idx === 0 ? 7 : 5,
+              fillColor: idx === 0 ? '#3b82f6' : '#60a5fa',
+              fillOpacity: 1,
+              strokeColor: '#ffffff',
+              strokeWeight: 2,
+            }}
+            clickable={false}
+          />
+        ))}
+
+        {/* Spray marking start point */}
+        {isSprayMarking && sprayStartPoint && (
+          <Marker
+            position={{ lat: sprayStartPoint.lat, lng: sprayStartPoint.lng }}
+            icon={{
+              path: window.google.maps.SymbolPath.CIRCLE,
+              scale: 8,
+              fillColor: '#22c55e',
+              fillOpacity: 1,
+              strokeColor: '#ffffff',
+              strokeWeight: 2,
+            }}
+            clickable={false}
+            zIndex={100}
+          />
+        )}
 
         {popupSite ? (
           <OverlayView
