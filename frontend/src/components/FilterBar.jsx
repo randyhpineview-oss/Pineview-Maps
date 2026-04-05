@@ -24,6 +24,7 @@ export default function FilterBar({
   onLayerToggle,
 }) {
   const [focused, setFocused] = useState(false);
+  const [layersOpen, setLayersOpen] = useState(false);
   const wrapRef = useRef(null);
 
   const query = filters.search.trim().toLowerCase();
@@ -109,31 +110,54 @@ export default function FilterBar({
           </option>
         ))}
       </select>
-      <div style={{ marginTop: '0.25rem' }}>
-        <div className="small-text" style={{ fontWeight: 600, marginBottom: '0.35rem', color: '#9ab1d6' }}>Layers</div>
-        {LAYER_OPTIONS.map(({ key, label }) => (
-          <label
-            key={key}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              padding: '4px 0',
-              cursor: 'pointer',
-              fontSize: '0.85rem',
-              color: '#e5eefb',
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={layers[key] ?? true}
-              onChange={() => onLayerToggle?.(key)}
-              style={{ accentColor: '#3b82f6' }}
-            />
-            {label}
-          </label>
-        ))}
-      </div>
+      <button
+        type="button"
+        onClick={() => setLayersOpen((c) => !c)}
+        style={{
+          width: '100%',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          background: 'rgba(143,182,255,0.08)',
+          border: '1px solid rgba(143,182,255,0.15)',
+          borderRadius: '8px',
+          padding: '8px 10px',
+          cursor: 'pointer',
+          color: '#e5eefb',
+          fontSize: '0.85rem',
+          fontWeight: 600,
+          marginTop: '0.25rem',
+        }}
+      >
+        <span>Layers</span>
+        <span style={{ fontSize: '0.7rem', color: '#9ab1d6' }}>{layersOpen ? '▲' : '▼'}</span>
+      </button>
+      {layersOpen ? (
+        <div style={{ padding: '4px 6px' }}>
+          {LAYER_OPTIONS.map(({ key, label }) => (
+            <label
+              key={key}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                padding: '4px 0',
+                cursor: 'pointer',
+                fontSize: '0.85rem',
+                color: '#e5eefb',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={layers[key] ?? true}
+                onChange={() => onLayerToggle?.(key)}
+                style={{ accentColor: '#3b82f6' }}
+              />
+              {label}
+            </label>
+          ))}
+        </div>
+      ) : null}
       <select value={filters.status} onChange={(event) => onChange('status', event.target.value)}>
         <option value="">All statuses</option>
         <option value="inspected">Inspected</option>
