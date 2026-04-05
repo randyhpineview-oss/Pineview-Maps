@@ -3,7 +3,7 @@ import json
 import math
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.auth import get_current_user, require_roles
 from app.database import get_db
@@ -96,13 +96,13 @@ def list_pipelines(
     current_user: User = Depends(get_current_user),
 ):
     """List all non-deleted pipelines, optionally filtered."""
-    q = db.query(Pipeline).filter(Pipeline.deleted_at.is_(None))
+    q = db.query(Pipeline).options(joinedload(Pipeline.spray_records)).filter(Pipeline.deleted_at.is_(None))
     if client:
         q = q.filter(Pipeline.client == client)
     if area:
         q = q.filter(Pipeline.area == area)
     q = q.order_by(Pipeline.created_at.desc())
-    return [PipelineListRead.model_validate(p) for p in q.all()]
+    return [PipelineListRead.model_validate(p) for p in q.unique().all()]
 
 
 @router.get("/pending-pipelines", response_model=list[PipelineListRead])

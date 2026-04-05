@@ -99,6 +99,7 @@ export default function PipelineDetailSheet({
         <div style={{ marginTop: '0.5rem' }}>
           <div className="small-text" style={{ marginBottom: '0.25rem' }}>
             Spray coverage: {(totalCoverage * 100).toFixed(0)}%
+            {pipeline.total_length_km ? ` (${(totalCoverage * pipeline.total_length_km).toFixed(2)} / ${pipeline.total_length_km.toFixed(2)} km)` : ''}
           </div>
           <div style={{
             width: '100%',

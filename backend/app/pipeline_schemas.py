@@ -88,6 +88,7 @@ class PipelineListRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     created_by_user_id: int | None
+    spray_records: list[SprayRecordRead] = Field(default_factory=list)
 
     @field_validator('coordinates', mode='before')
     @classmethod
