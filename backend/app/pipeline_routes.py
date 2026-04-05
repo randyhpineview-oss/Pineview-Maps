@@ -67,8 +67,8 @@ async def import_pipeline_kml(
             original_point_count=data["original_point_count"],
             simplified_point_count=data["simplified_point_count"],
             total_length_km=data["total_length_km"],
-            status=PipelineStatus.not_sprayed,
-            approval_state=PipelineApprovalState.approved,
+            status="not_sprayed",
+            approval_state="approved",
             source=data["source"],
             source_name=data["source_name"],
             pipeline_metadata=json.loads(data["metadata"]) if data["metadata"] else None,
@@ -113,7 +113,7 @@ def list_pending_pipelines(
     """List pipelines pending approval."""
     pipelines = (
         db.query(Pipeline)
-        .filter(Pipeline.deleted_at.is_(None), Pipeline.approval_state == PipelineApprovalState.pending_review)
+        .filter(Pipeline.deleted_at.is_(None), Pipeline.approval_state == "pending_review")
         .order_by(Pipeline.created_at.desc())
         .all()
     )
@@ -204,7 +204,7 @@ def create_pipeline(
 
     # Workers get pending_review, admin/office get approved
     is_admin = current_user.role in (RoleEnum.admin, RoleEnum.office)
-    approval = PipelineApprovalState.approved if is_admin else PipelineApprovalState.pending_review
+    approval = "approved" if is_admin else "pending_review"
 
     user_id = None
     if current_user.id:
@@ -220,7 +220,7 @@ def create_pipeline(
         original_point_count=original_count,
         simplified_point_count=len(simplified),
         total_length_km=length_km,
-        status=PipelineStatus.not_sprayed,
+        status="not_sprayed",
         approval_state=approval,
         source="field_drawn",
         created_by_user_id=user_id,
@@ -339,7 +339,7 @@ def bulk_reset_pipelines(
     for pipeline in pipelines:
         # Delete all spray records
         db.query(SprayRecord).filter(SprayRecord.pipeline_id == pipeline.id).delete()
-        pipeline.status = PipelineStatus.not_sprayed
+        pipeline.status = "not_sprayed"
         pipeline.updated_at = datetime.utcnow()
         reset_count += 1
 
@@ -351,7 +351,7 @@ def _update_pipeline_spray_status(db: Session, pipeline: Pipeline):
     """Update pipeline status based on spray coverage."""
     records = db.query(SprayRecord).filter(SprayRecord.pipeline_id == pipeline.id).all()
     if not records:
-        pipeline.status = PipelineStatus.not_sprayed
+        pipeline.status = "not_sprayed"
         return
 
     # Merge overlapping spray ranges
@@ -366,6 +366,6 @@ def _update_pipeline_spray_status(db: Session, pipeline: Pipeline):
     total_coverage = sum(end - start for start, end in merged)
     # Consider fully sprayed if coverage >= 95%
     if total_coverage >= 0.95:
-        pipeline.status = PipelineStatus.sprayed
+        pipeline.status = "sprayed"
     else:
-        pipeline.status = PipelineStatus.not_sprayed
+        pipeline.status = "not_sprayed"

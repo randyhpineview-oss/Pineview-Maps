@@ -32,13 +32,15 @@ class Pipeline(Base):
     original_point_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     simplified_point_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_length_km: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    status: Mapped[PipelineStatus] = mapped_column(
-        Enum(PipelineStatus), nullable=False, default=PipelineStatus.not_sprayed
-    )
-    approval_state: Mapped[PipelineApprovalState] = mapped_column(
-        Enum(PipelineApprovalState),
+    status: Mapped[str] = mapped_column(
+        Enum(PipelineStatus, name="pipelinestatus", create_constraint=False, native_enum=False),
         nullable=False,
-        default=PipelineApprovalState.approved,
+        default=PipelineStatus.not_sprayed.value,
+    )
+    approval_state: Mapped[str] = mapped_column(
+        Enum(PipelineApprovalState, name="pipelineapprovalstate", create_constraint=False, native_enum=False),
+        nullable=False,
+        default=PipelineApprovalState.approved.value,
         index=True,
     )
     source: Mapped[str] = mapped_column(String(64), nullable=False, default="imported")

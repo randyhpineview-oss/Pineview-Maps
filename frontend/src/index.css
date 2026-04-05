@@ -145,6 +145,10 @@ button { cursor: pointer; }
   font-size: 0.82rem;
 }
 
+.filter-overlay button {
+  font: inherit;
+}
+
 /* ───── FAB (add pin) ───── */
 .fab {
   position: absolute;

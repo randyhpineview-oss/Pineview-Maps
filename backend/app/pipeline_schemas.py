@@ -38,8 +38,8 @@ class PipelineRead(BaseModel):
     original_point_count: int
     simplified_point_count: int
     total_length_km: float
-    status: PipelineStatus
-    approval_state: PipelineApprovalState
+    status: str
+    approval_state: str
     source: str
     source_name: str | None
     pipeline_metadata: dict | None
@@ -81,8 +81,8 @@ class PipelineListRead(BaseModel):
     original_point_count: int
     simplified_point_count: int
     total_length_km: float
-    status: PipelineStatus
-    approval_state: PipelineApprovalState
+    status: str
+    approval_state: str
     source: str
     source_name: str | None
     created_at: datetime
@@ -115,7 +115,7 @@ class PipelineUpdate(BaseModel):
 
 
 class PipelineApprovalUpdate(BaseModel):
-    approval_state: PipelineApprovalState
+    approval_state: str
     name: str | None = None
     client: str | None = None
     area: str | None = None
