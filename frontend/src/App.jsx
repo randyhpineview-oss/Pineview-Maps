@@ -700,7 +700,7 @@ export default function App() {
       const updated = await api.getPipeline(selectedPipeline.id);
       setSelectedPipeline(updated);
       setPipelineSprayRecords(updated.spray_records || []);
-      setPipelines((prev) => prev.map((p) => (p.id === updated.id ? { ...p, status: updated.status } : p)));
+      setPipelines((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
       setMessage('Spray record saved.');
       setIsSprayMarking(false);
       setSprayStartPoint(null);
@@ -721,7 +721,7 @@ export default function App() {
       const updated = await api.getPipeline(pipelineId);
       setSelectedPipeline(updated);
       setPipelineSprayRecords(updated.spray_records || []);
-      setPipelines((prev) => prev.map((p) => (p.id === updated.id ? { ...p, status: updated.status } : p)));
+      setPipelines((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
       setMessage('Spray record deleted.');
     } catch (error) {
       setMessage(error.message || 'Failed to delete spray record.');

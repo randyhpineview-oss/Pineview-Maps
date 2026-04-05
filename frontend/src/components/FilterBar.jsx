@@ -110,54 +110,61 @@ export default function FilterBar({
           </option>
         ))}
       </select>
-      <button
-        type="button"
-        onClick={() => setLayersOpen((c) => !c)}
-        style={{
-          width: '100%',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          background: 'rgba(143,182,255,0.08)',
-          border: '1px solid rgba(143,182,255,0.15)',
-          borderRadius: '8px',
-          padding: '8px 10px',
-          cursor: 'pointer',
-          color: '#e5eefb',
-          fontSize: '0.85rem',
-          fontWeight: 600,
-          marginTop: '0.25rem',
-        }}
-      >
-        <span>Layers</span>
-        <span style={{ fontSize: '0.7rem', color: '#9ab1d6' }}>{layersOpen ? '▲' : '▼'}</span>
-      </button>
-      {layersOpen ? (
-        <div style={{ padding: '4px 6px' }}>
-          {LAYER_OPTIONS.map(({ key, label }) => (
-            <label
-              key={key}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                padding: '4px 0',
-                cursor: 'pointer',
-                fontSize: '0.85rem',
-                color: '#e5eefb',
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={layers[key] ?? true}
-                onChange={() => onLayerToggle?.(key)}
-                style={{ accentColor: '#3b82f6' }}
-              />
-              {label}
-            </label>
-          ))}
-        </div>
-      ) : null}
+      <div style={{
+        borderRadius: '10px',
+        border: '1px solid rgba(143,182,255,0.16)',
+        background: 'rgba(9,17,31,0.85)',
+        overflow: 'hidden',
+      }}>
+        <button
+          type="button"
+          onClick={() => setLayersOpen((c) => !c)}
+          style={{
+            width: '100%',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            background: 'transparent',
+            border: 'none',
+            padding: '0.5rem 0.65rem',
+            cursor: 'pointer',
+            color: '#f5f8ff',
+            fontSize: '0.82rem',
+          }}
+        >
+          <span>Layers</span>
+          <span style={{ fontSize: '0.65rem', color: '#9ab1d6', transition: 'transform 0.2s', transform: layersOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}>▼</span>
+        </button>
+        {layersOpen ? (
+          <div style={{ padding: '0 0.65rem 0.5rem', display: 'grid', gap: '2px' }}>
+            {LAYER_OPTIONS.map(({ key, label }) => (
+              <label
+                key={key}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  padding: '0.35rem 0.4rem',
+                  cursor: 'pointer',
+                  fontSize: '0.82rem',
+                  color: '#e5eefb',
+                  borderRadius: '8px',
+                  background: (layers[key] ?? true) ? 'rgba(59,130,246,0.1)' : 'transparent',
+                  transition: 'background 0.15s',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={layers[key] ?? true}
+                  onChange={() => onLayerToggle?.(key)}
+                  style={{ accentColor: '#3b82f6', width: '14px', height: '14px' }}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+        ) : null}
+      </div>
       <select value={filters.status} onChange={(event) => onChange('status', event.target.value)}>
         <option value="">All statuses</option>
         <option value="inspected">Inspected</option>
