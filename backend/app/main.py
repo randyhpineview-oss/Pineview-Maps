@@ -14,7 +14,7 @@ from app.password_reset import router as password_reset_router
 from app.user_management import router as user_management_router
 from app.pipeline_routes import router as pipeline_router
 from app.pipeline_models import Pipeline, SprayRecord  # noqa: F401 — ensure tables are registered
-from app.models import ApprovalState, PinType, RoleEnum, Site, SiteStatus, SiteUpdate, User
+from app.models import ApprovalState, PinType, RoleEnum, Site, SiteSprayRecord, SiteStatus, SiteUpdate, User
 from app.schemas import (
     BulkResetRequest,
     BulkResetResponse,
@@ -25,6 +25,8 @@ from app.schemas import (
     SiteCreate,
     SiteQuickEdit,
     SiteRead,
+    SiteSprayRecordRead,
+    SiteSprayRecordCreate,
     SiteStatusUpdate,
     TypeChangeRequest,
 )
@@ -74,10 +76,15 @@ def startup_event() -> None:
     elif engine is not None:
         # Create pipeline tables if they don't exist
         try:
-            Base.metadata.create_all(bind=engine, tables=[Pipeline.__table__, SprayRecord.__table__], checkfirst=True)
-            print("[STARTUP] Pipeline tables ensured")
+            Base.metadata.create_all(bind=engine, tables=[Pipeline.__table__, SprayRecord.__table__, SiteSprayRecord.__table__], checkfirst=True)
+            print("[STARTUP] Pipeline and SiteSprayRecord tables ensured")
         except Exception as e:
             print(f"Warning: Could not create pipeline tables: {e}")
+        # Run column migrations on Postgres too
+        try:
+            _migrate_add_columns()
+        except Exception as e:
+            print(f"Warning: Column migration failed: {e}")
         try:
             with engine.begin() as conn:
                 # Get the actual sequence name for the sites.id column
@@ -97,26 +104,49 @@ def startup_event() -> None:
 def _migrate_add_columns() -> None:
     """Add columns that create_all() won't add to existing tables."""
     if engine is None:
-        return  # Production mode: skip migrations
-    insp = inspect(engine)
-    if not insp.has_table("sites"):
         return
-    existing = {col["name"] for col in insp.get_columns("sites")}
+    insp = inspect(engine)
+    
     is_sqlite = str(engine.url).startswith("sqlite")
     with engine.begin() as conn:
-        if "deleted_at" not in existing:
-            conn.execute(text("ALTER TABLE sites ADD COLUMN deleted_at TIMESTAMP"))
-        if "deleted_by_user_id" not in existing:
-            if is_sqlite:
-                conn.execute(text("ALTER TABLE sites ADD COLUMN deleted_by_user_id INTEGER"))
-            else:
-                conn.execute(text("ALTER TABLE sites ADD COLUMN deleted_by_user_id INTEGER REFERENCES users(id)"))
+        # Sites migrations
+        if insp.has_table("sites"):
+            existing_sites = {col["name"] for col in insp.get_columns("sites")}
+            if "deleted_at" not in existing_sites:
+                conn.execute(text("ALTER TABLE sites ADD COLUMN deleted_at TIMESTAMP"))
+            if "deleted_by_user_id" not in existing_sites:
+                if is_sqlite:
+                    conn.execute(text("ALTER TABLE sites ADD COLUMN deleted_by_user_id INTEGER"))
+                else:
+                    conn.execute(text("ALTER TABLE sites ADD COLUMN deleted_by_user_id INTEGER REFERENCES users(id)"))
+                    
+        # Pipelines migrations
+        if insp.has_table("pipelines"):
+            existing_pipelines = {col["name"] for col in insp.get_columns("pipelines")}
+            if "deleted_by_user_id" not in existing_pipelines:
+                if is_sqlite:
+                    conn.execute(text("ALTER TABLE pipelines ADD COLUMN deleted_by_user_id INTEGER"))
+                else:
+                    conn.execute(text("ALTER TABLE pipelines ADD COLUMN deleted_by_user_id INTEGER REFERENCES users(id)"))
+                    
+        # SiteSprayRecords table creation (since create_all might not catch it if added late)
+        if not insp.has_table("site_spray_records"):
+            # We let create_all handle it at startup, but just in case:
+            pass
+        if insp.has_table("spray_records"):
+            existing_records = {col["name"] for col in insp.get_columns("spray_records")}
+            if "is_avoided" not in existing_records:
+                if is_sqlite:
+                    conn.execute(text("ALTER TABLE spray_records ADD COLUMN is_avoided BOOLEAN NOT NULL DEFAULT 0"))
+                else:
+                    conn.execute(text("ALTER TABLE spray_records ADD COLUMN is_avoided BOOLEAN NOT NULL DEFAULT FALSE"))
 
 
 def get_site_or_404(db: Session, site_id: int) -> Site:
     site = (
         db.query(Site)
         .options(joinedload(Site.updates))
+        .options(joinedload(Site.spray_records))
         .filter(Site.id == site_id)
         .first()
     )
@@ -157,6 +187,7 @@ def list_sites(
 ) -> list[SiteRead]:
     query = db.query(Site).options(
         joinedload(Site.updates),
+        joinedload(Site.spray_records),
         joinedload(Site.created_by_user),
         joinedload(Site.approved_by_user),
         joinedload(Site.last_inspected_by_user)
@@ -300,6 +331,70 @@ def quick_edit_site(
     db.commit()
     db.refresh(site)
     return SiteRead.model_validate(site)
+
+
+@app.get("/api/sites/{site_id}/spray", response_model=list[SiteSprayRecordRead])
+def list_site_spray_records(
+    site_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List spray records for a site."""
+    get_site_or_404(db, site_id)
+    q = db.query(SiteSprayRecord).filter(SiteSprayRecord.site_id == site_id)
+    return [SiteSprayRecordRead.model_validate(r) for r in q.order_by(SiteSprayRecord.created_at.desc()).all()]
+
+
+@app.post("/api/sites/{site_id}/spray", response_model=SiteSprayRecordRead)
+def create_site_spray_record(
+    site_id: int,
+    payload: SiteSprayRecordCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a new spray record for a site."""
+    site = get_site_or_404(db, site_id)
+    
+    user_id = None
+    if current_user.id:
+        local_user = db.query(User).filter(User.id == current_user.id).first()
+        if local_user:
+            user_id = current_user.id
+
+    user_name = getattr(current_user, 'name', None) or (current_user.email.split('@')[0].title() if current_user.email else None)
+
+    record = SiteSprayRecord(
+        site_id=site_id,
+        spray_date=payload.spray_date,
+        sprayed_by_user_id=user_id,
+        sprayed_by_name=user_name,
+        notes=payload.notes,
+        is_avoided=payload.is_avoided,
+    )
+    db.add(record)
+    
+    # Auto-update site status if marking as sprayed or issue
+    site.status = SiteStatus.issue if payload.is_avoided else SiteStatus.inspected
+    site.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(record)
+    return SiteSprayRecordRead.model_validate(record)
+
+
+@app.delete("/api/site-spray-records/{record_id}", status_code=204)
+def delete_site_spray_record(
+    record_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
+):
+    """Delete a site spray record."""
+    record = db.query(SiteSprayRecord).filter(SiteSprayRecord.id == record_id).first()
+    if not record:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Site spray record not found")
+    
+    db.delete(record)
+    db.commit()
 
 
 @app.patch("/api/sites/{site_id}/status", response_model=SiteRead)

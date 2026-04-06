@@ -109,7 +109,7 @@ export default function App() {
   const [sprayStartPoint, setSprayStartPoint] = useState(null);
   const [sprayEndPoint, setSprayEndPoint] = useState(null);
   const [showSprayConfirm, setShowSprayConfirm] = useState(false);
-  const [sprayForm, setSprayForm] = useState({ date: new Date().toISOString().split('T')[0], notes: '' });
+  const [sprayForm, setSprayForm] = useState({ date: new Date().toISOString().split('T')[0], notes: '', is_avoided: false });
   const [highlightedSprayRecordId, setHighlightedSprayRecordId] = useState(null);
   const [isFollowingUser, setIsFollowingUser] = useState(false);
   const mapRef = useRef(null);
@@ -742,6 +742,7 @@ export default function App() {
         end_fraction: Math.max(startFrac, endFrac),
         spray_date: sprayForm.date,
         notes: sprayForm.notes || null,
+        is_avoided: sprayForm.is_avoided,
       });
       // Refresh pipeline data
       const updated = await api.getPipeline(selectedPipeline.id);
@@ -815,6 +816,37 @@ export default function App() {
     setIsEditPickingMode(true);
     isEditPickingModeRef.current = true;
     setEditPickLocation(null);
+  }
+
+  async function handleCreateSiteSprayRecord(site, payload) {
+    setStatusSaving(true);
+    try {
+      await api.createSiteSprayRecord(site.id, payload);
+      // Refresh site data
+      const updated = await api.getSite(site.id);
+      setSelectedSite(updated);
+      setSites((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+      setMessage(payload.is_avoided ? 'Issue recorded.' : 'Spray record saved.');
+    } catch (error) {
+      setMessage(error.message || 'Failed to save spray record.');
+    } finally {
+      setStatusSaving(false);
+    }
+  }
+
+  async function handleDeleteSiteSprayRecord(recordId, siteId) {
+    setAdminBusy(true);
+    try {
+      await api.deleteSiteSprayRecord(recordId);
+      const updated = await api.getSite(siteId);
+      setSelectedSite(updated);
+      setSites((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+      setMessage('Spray record deleted.');
+    } catch (error) {
+      setMessage(error.message || 'Failed to delete spray record.');
+    } finally {
+      setAdminBusy(false);
+    }
   }
 
   function handleCancelEditMapPick() {
@@ -1364,6 +1396,14 @@ export default function App() {
               onChange={(e) => setSprayForm((c) => ({ ...c, notes: e.target.value }))}
               placeholder="Notes (optional)"
             />
+            <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+              <input
+                type="checkbox"
+                checked={sprayForm.is_avoided}
+                onChange={(e) => setSprayForm((c) => ({ ...c, is_avoided: e.target.checked }))}
+              />
+              <span className="small-text">Mark as Issue / Not Sprayed</span>
+            </label>
             <div className="button-row">
               <button className="primary-button" type="button" disabled={adminBusy} onClick={handleConfirmSpray}>
                 {adminBusy ? 'Saving…' : 'Confirm'}
@@ -1441,6 +1481,9 @@ export default function App() {
                 onRequestMapPick={handleRequestEditMapPick}
                 pickedLocation={editPickLocation}
                 onCancelEditPick={handleCancelEditMapPick}
+                sprayRecords={selectedSite?.spray_records || []}
+                onCreateSprayRecord={handleCreateSiteSprayRecord}
+                onDeleteSprayRecord={handleDeleteSiteSprayRecord}
               />
             ) : null}
           </div>

@@ -5,7 +5,7 @@ import secrets
 import string
 from datetime import datetime, timedelta
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, String, Text, Boolean
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -21,6 +21,7 @@ class RoleEnum(str, enum.Enum):
 class SiteStatus(str, enum.Enum):
     not_inspected = "not_inspected"
     inspected = "inspected"
+    issue = "issue"
 
 
 class ApprovalState(str, enum.Enum):
@@ -96,6 +97,12 @@ class Site(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     deleted_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 
+    spray_records: Mapped[list["SiteSprayRecord"]] = relationship(
+        back_populates="site",
+        cascade="all, delete-orphan",
+        order_by="desc(SiteSprayRecord.created_at)",
+    )
+
     created_by_user: Mapped[User | None] = relationship(
         back_populates="created_sites",
         foreign_keys=[created_by_user_id],
@@ -127,6 +134,21 @@ class SiteUpdate(Base):
 
     site: Mapped[Site] = relationship(back_populates="updates")
     created_by_user: Mapped[User | None] = relationship(back_populates="updates")
+
+
+class SiteSprayRecord(Base):
+    __tablename__ = "site_spray_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    site_id: Mapped[int] = mapped_column(ForeignKey("sites.id"), nullable=False, index=True)
+    spray_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    sprayed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    sprayed_by_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_avoided: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    site: Mapped[Site] = relationship(back_populates="spray_records")
 
 
 class PasswordResetCode(Base):

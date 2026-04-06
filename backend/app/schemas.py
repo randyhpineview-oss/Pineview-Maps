@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 import json
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -13,6 +13,25 @@ class UserRead(BaseModel):
     name: str
     email: str
     role: RoleEnum
+
+
+class SiteSprayRecordRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    site_id: int
+    spray_date: date
+    sprayed_by_user_id: int | None
+    sprayed_by_name: str | None
+    notes: str | None
+    is_avoided: bool
+    created_at: datetime
+
+
+class SiteSprayRecordCreate(BaseModel):
+    spray_date: date
+    notes: str | None = None
+    is_avoided: bool = False
 
 
 class SiteUpdateRead(BaseModel):
@@ -54,6 +73,7 @@ class SiteRead(BaseModel):
     approved_by_user_id: int | None
     pending_pin_type: PinType | None = None
     updates: list[SiteUpdateRead] = Field(default_factory=list)
+    spray_records: list[SiteSprayRecordRead] = Field(default_factory=list)
     # Nested user objects for convenience
     created_by_user: UserRead | None = None
     approved_by_user: UserRead | None = None

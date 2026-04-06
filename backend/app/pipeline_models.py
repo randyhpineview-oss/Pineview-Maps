@@ -47,6 +47,7 @@ class Pipeline(Base):
     )
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    deleted_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 
     spray_records: Mapped[list["SprayRecord"]] = relationship(
         back_populates="pipeline",
@@ -66,6 +67,7 @@ class SprayRecord(Base):
     sprayed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     sprayed_by_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_avoided: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     pipeline: Mapped[Pipeline] = relationship(back_populates="spray_records")

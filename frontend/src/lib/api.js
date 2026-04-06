@@ -119,6 +119,9 @@ export const api = {
   deleteSite(siteId, demoUser) {
     return request(`/api/sites/${siteId}`, { method: 'DELETE', demoUser });
   },
+  getSite(siteId) {
+    return request(`/api/sites/${siteId}`);
+  },
   updateSiteStatus(siteId, payload, demoUser) {
     return request(`/api/sites/${siteId}/status`, { method: 'PATCH', body: payload, demoUser });
   },
@@ -206,6 +209,15 @@ export const api = {
   },
   deleteSprayRecord(recordId) {
     return request(`/api/spray-records/${recordId}`, { method: 'DELETE' });
+  },
+  createSiteSprayRecord(siteId, payload) {
+    return request(`/api/sites/${siteId}/spray`, { method: 'POST', body: payload });
+  },
+  listSiteSprayRecords(siteId) {
+    return request(`/api/sites/${siteId}/spray`);
+  },
+  deleteSiteSprayRecord(recordId) {
+    return request(`/api/site-spray-records/${recordId}`, { method: 'DELETE' });
   },
   bulkResetPipelines(payload) {
     return request('/api/admin/pipelines/bulk-reset', { method: 'POST', body: payload });

@@ -210,6 +210,7 @@ export default function PipelineDetailSheet({
                           const sectionLength = Math.abs(record.end_fraction - record.start_fraction) * (pipeline.total_length_km || 0);
                           return `${(sectionLength * 1000).toFixed(0)}m`;
                         })()}
+                        {record.is_avoided ? ' (Not Sprayed/Issue)' : ''}
                       </div>
                       <div className="small-text">
                         By: {record.sprayed_by_name || 'Unknown'}

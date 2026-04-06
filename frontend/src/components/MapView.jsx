@@ -534,7 +534,7 @@ export default function MapView({
                 key={`spray-${record.id}`}
                 path={subPath}
                 options={{
-                  strokeColor: isHighlighted ? '#eab308' : '#22c55e',
+                  strokeColor: isHighlighted ? '#eab308' : (record.is_avoided ? '#94a3b8' : '#22c55e'),
                   strokeOpacity: isHighlighted ? 1.0 : 0.9,
                   strokeWeight: isHighlighted ? 7 : 5,
                   zIndex: isHighlighted ? 20 : 10,

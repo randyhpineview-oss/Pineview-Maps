@@ -17,6 +17,7 @@ class SprayRecordRead(BaseModel):
     sprayed_by_user_id: int | None
     sprayed_by_name: str | None
     notes: str | None
+    is_avoided: bool
     created_at: datetime
 
 
@@ -25,6 +26,7 @@ class SprayRecordCreate(BaseModel):
     end_fraction: float = Field(ge=0.0, le=1.0)
     spray_date: date
     notes: str | None = None
+    is_avoided: bool = False
 
 
 class PipelineRead(BaseModel):

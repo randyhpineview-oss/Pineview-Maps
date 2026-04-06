@@ -2,6 +2,9 @@ export function statusLabel(status) {
   if (status === 'inspected') {
     return 'Inspected';
   }
+  if (status === 'issue') {
+    return 'Issue';
+  }
   return 'Not inspected';
 }
 
@@ -51,7 +54,7 @@ function pendingSvg() {
 }
 
 function lsdSvg(site, isSelected) {
-  const fill = site.status === 'inspected' ? '#22c55e' : '#ef4444';
+  const fill = site.status === 'inspected' ? '#22c55e' : site.status === 'issue' ? '#94a3b8' : '#ef4444';
   const s = stroke(isSelected);
   const sw = strokeWidth(isSelected);
   return `<svg xmlns="http://www.w3.org/2000/svg" width="42" height="52" viewBox="0 0 42 52">
@@ -100,7 +103,7 @@ function atvSvg(isSelected) {
 }
 
 function treeSvg(site, isSelected) {
-  const fill = site.status === 'inspected' ? '#22c55e' : '#ef4444';
+  const fill = site.status === 'inspected' ? '#22c55e' : site.status === 'issue' ? '#94a3b8' : '#ef4444';
   const s = stroke(isSelected);
   const sw = strokeWidth(isSelected);
   return `<svg xmlns="http://www.w3.org/2000/svg" width="38" height="50" viewBox="0 0 38 50">

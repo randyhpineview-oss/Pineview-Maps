@@ -259,6 +259,7 @@ def create_spray_record(
         sprayed_by_user_id=user_id,
         sprayed_by_name=user_name,
         notes=payload.notes,
+        is_avoided=payload.is_avoided,
     )
     db.add(record)
 

@@ -29,6 +29,9 @@ export default function SiteDetailSheet({
   onRequestMapPick,
   pickedLocation = null,
   onCancelEditPick,
+  sprayRecords = [],
+  onCreateSprayRecord,
+  onDeleteSprayRecord,
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editState, setEditState] = useState(() => buildEditState(site));
@@ -313,6 +316,70 @@ export default function SiteDetailSheet({
                     ? 'Unmark Reclaimed'
                     : 'Mark as Reclaimed'}
               </button>
+            </div>
+          ) : null}
+
+          {/* Spray History */}
+          {!isInfoOnlyPin(site.pin_type) && onCreateSprayRecord ? (
+            <div style={{ borderTop: '1px solid rgba(143,182,255,0.1)', marginTop: '1rem', paddingTop: '0.75rem' }}>
+              <div className="small-text" style={{ fontWeight: 600, marginBottom: '0.5rem' }}>
+                Spray History ({sprayRecords.length})
+              </div>
+              <div className="button-row" style={{ marginBottom: '0.5rem' }}>
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={statusSaving}
+                  onClick={() => onCreateSprayRecord(site, { spray_date: new Date().toISOString().split('T')[0], notes: '', is_avoided: false })}
+                  style={{ flex: 1, fontSize: '0.8rem' }}
+                >
+                  ✓ Mark Sprayed
+                </button>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={statusSaving}
+                  onClick={() => {
+                    const note = window.prompt('Why was this site not sprayed?');
+                    if (note !== null) {
+                      onCreateSprayRecord(site, { spray_date: new Date().toISOString().split('T')[0], notes: note, is_avoided: true });
+                    }
+                  }}
+                  style={{ flex: 1, fontSize: '0.8rem', background: '#64748b' }}
+                >
+                  ⚠ Issue with Site
+                </button>
+              </div>
+              {sprayRecords.length > 0 && (
+                <div className="list-grid">
+                  {sprayRecords.map((record) => (
+                    <div key={record.id} className="site-row" style={{ padding: '0.5rem', borderRadius: '6px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <div className="small-text" style={{ fontWeight: 600 }}>
+                            {record.spray_date}{record.is_avoided ? ' — Issue/Not Sprayed' : ' — Sprayed'}
+                          </div>
+                          <div className="small-text">
+                            By: {record.sprayed_by_name || 'Unknown'}
+                            {record.notes ? ` — ${record.notes}` : ''}
+                          </div>
+                        </div>
+                        {canManagePin && onDeleteSprayRecord && (
+                          <button
+                            className="danger-button"
+                            type="button"
+                            disabled={adminBusy}
+                            onClick={() => onDeleteSprayRecord(record.id, site.id)}
+                            style={{ padding: '2px 8px', fontSize: '0.7rem' }}
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           ) : null}
         </>
