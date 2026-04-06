@@ -192,6 +192,15 @@ export const api = {
   deletePipeline(pipelineId) {
     return request(`/api/pipelines/${pipelineId}`, { method: 'DELETE' });
   },
+  listDeletedPipelines() {
+    return request('/api/deleted-pipelines');
+  },
+  restorePipeline(pipelineId) {
+    return request(`/api/pipelines/${pipelineId}/restore`, { method: 'POST' });
+  },
+  deletePipelinePermanent(pipelineId) {
+    return request(`/api/pipelines/${pipelineId}/permanent`, { method: 'DELETE' });
+  },
   approvePipeline(pipelineId, payload) {
     return request(`/api/pipelines/${pipelineId}/approval`, { method: 'POST', body: payload });
   },

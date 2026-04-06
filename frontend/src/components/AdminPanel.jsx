@@ -131,6 +131,9 @@ export default function AdminPanel({
   onImportPipelineKml,
   onBulkResetPipelines,
   onSelectPipeline,
+  deletedPipelines = [],
+  onRestorePipeline,
+  onDeletePipelinePermanent,
 }) {
   const [file, setFile] = useState(null);
   const [pipelineFile, setPipelineFile] = useState(null);
@@ -214,6 +217,42 @@ export default function AdminPanel({
                     </button>
                     <button className="danger-button" type="button" disabled={busy} onClick={() => onDeletePermanent(site.id)} style={{ marginLeft: '0.5rem' }}>
                       Delete
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </CollapsibleSection>
+
+        <CollapsibleSection title="Deleted pipelines" count={deletedPipelines.length} defaultOpen={false}>
+          <div className="list-grid">
+            {deletedPipelines.length === 0 ? (
+              <div className="site-row">
+                <div className="small-text">No deleted pipelines.</div>
+              </div>
+            ) : (
+              deletedPipelines.map((pipeline) => (
+                <div className="site-row" key={pipeline.id}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
+                    <div>
+                      <strong>{pipeline.name || 'Unnamed pipeline'}</strong>
+                      <div className="small-text">
+                        {pipeline.client || 'No client'} • {pipeline.area || 'No area'} • {pipeline.total_length_km?.toFixed(2) || '?'} km
+                      </div>
+                    </div>
+                    <span className="pending-badge" style={{ background: '#64748b' }}>Deleted</span>
+                  </div>
+                  <div className="button-row" style={{ marginTop: '0.75rem' }}>
+                    <button className="primary-button" type="button" disabled={busy} onClick={() => onRestorePipeline?.(pipeline.id)}>
+                      Restore
+                    </button>
+                    <button className="danger-button" type="button" disabled={busy} onClick={() => {
+                      if (window.confirm(`Permanently delete "${pipeline.name || 'Unnamed pipeline'}"? This cannot be undone.`)) {
+                        onDeletePipelinePermanent?.(pipeline.id);
+                      }
+                    }} style={{ marginLeft: '0.5rem' }}>
+                      Delete Forever
                     </button>
                   </div>
                 </div>

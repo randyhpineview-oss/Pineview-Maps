@@ -95,6 +95,7 @@ export default function App() {
   // Pipeline state
   const [pipelines, setPipelines] = useState([]);
   const [pendingPipelines, setPendingPipelines] = useState([]);
+  const [deletedPipelines, setDeletedPipelines] = useState([]);
   const [selectedPipeline, setSelectedPipeline] = useState(null);
   const [pipelineDetailOpen, setPipelineDetailOpen] = useState(false);
   const [pipelineSprayRecords, setPipelineSprayRecords] = useState([]);
@@ -199,6 +200,19 @@ export default function App() {
     }
   }, [roleCanAdmin]);
 
+  const loadDeletedPipelines = useCallback(async () => {
+    if (!roleCanAdmin || !window.navigator.onLine) {
+      setDeletedPipelines([]);
+      return;
+    }
+    try {
+      const deleted = await api.listDeletedPipelines();
+      setDeletedPipelines(deleted);
+    } catch {
+      setDeletedPipelines([]);
+    }
+  }, [roleCanAdmin]);
+
   const syncQueuedActions = useCallback(async () => {
     if (!window.navigator.onLine) {
       return;
@@ -232,6 +246,7 @@ export default function App() {
           await loadServerSites();
           await loadPipelines();
           await loadPendingPipelines();
+          await loadDeletedPipelines();
           setMessage('Synced with server');
         } catch (error) {
           setMessage('Using cached data');
@@ -797,12 +812,14 @@ export default function App() {
 
   async function handleDeletePipeline(pipeline) {
     if (!window.navigator.onLine) { setMessage('Online required.'); return false; }
+    if (!window.confirm(`Delete pipeline "${pipeline.name || 'Unnamed'}"? It will be moved to Recent Deletes.`)) return false;
     setAdminBusy(true);
     try {
       await api.deletePipeline(pipeline.id);
       setPipelines((prev) => prev.filter((p) => p.id !== pipeline.id));
       handleClosePipelineDetail();
-      setMessage('Pipeline deleted.');
+      setMessage('Pipeline moved to Recent Deletes.');
+      loadDeletedPipelines();
       return true;
     } catch (error) {
       setMessage(error.message || 'Delete failed.');
@@ -1591,6 +1608,9 @@ export default function App() {
               onImportPipelineKml={(file) => runAdminAction(async () => { await api.importPipelineKml(file); await loadPipelines(); }, 'Pipeline KML imported.')}
               onBulkResetPipelines={(payload) => runAdminAction(async () => { await api.bulkResetPipelines(payload); await loadPipelines(); }, 'Pipelines reset to not sprayed.')}
               onSelectPipeline={(pipeline) => { handleOpenPipelineDetail(pipeline); setActiveTab(TAB_MAP); }}
+              deletedPipelines={deletedPipelines}
+              onRestorePipeline={(pipelineId) => runAdminAction(async () => { await api.restorePipeline(pipelineId); await loadPipelines(); await loadDeletedPipelines(); }, 'Pipeline restored.')}
+              onDeletePipelinePermanent={(pipelineId) => runAdminAction(async () => { await api.deletePipelinePermanent(pipelineId); await loadDeletedPipelines(); }, 'Pipeline permanently deleted.')}
             />
           </div>
         </div>

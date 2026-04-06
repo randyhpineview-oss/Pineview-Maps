@@ -161,7 +161,60 @@ def delete_pipeline(
     """Soft-delete a pipeline."""
     pipeline = _get_pipeline_or_404(db, pipeline_id)
     pipeline.deleted_at = datetime.utcnow()
+    # Store who deleted it
+    if current_user.id:
+        local_user = db.query(User).filter(User.id == current_user.id).first()
+        if local_user:
+            pipeline.deleted_by_user_id = current_user.id
     pipeline.updated_at = datetime.utcnow()
+    db.commit()
+
+
+@router.get("/deleted-pipelines", response_model=list[PipelineListRead])
+def list_deleted_pipelines(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
+):
+    """List soft-deleted pipelines."""
+    pipelines = (
+        db.query(Pipeline)
+        .options(joinedload(Pipeline.spray_records))
+        .filter(Pipeline.deleted_at.isnot(None))
+        .order_by(Pipeline.deleted_at.desc())
+        .all()
+    )
+    return [PipelineListRead.model_validate(p) for p in pipelines]
+
+
+@router.post("/pipelines/{pipeline_id}/restore", response_model=PipelineListRead)
+def restore_pipeline(
+    pipeline_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
+):
+    """Restore a soft-deleted pipeline."""
+    pipeline = db.query(Pipeline).options(joinedload(Pipeline.spray_records)).filter(Pipeline.id == pipeline_id).first()
+    if not pipeline:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+    pipeline.deleted_at = None
+    pipeline.deleted_by_user_id = None
+    pipeline.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(pipeline)
+    return PipelineListRead.model_validate(pipeline)
+
+
+@router.delete("/pipelines/{pipeline_id}/permanent", status_code=204)
+def delete_pipeline_permanent(
+    pipeline_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(RoleEnum.admin)),
+):
+    """Permanently delete a pipeline."""
+    pipeline = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+    if not pipeline:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+    db.delete(pipeline)
     db.commit()
 
 
