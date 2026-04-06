@@ -3,7 +3,7 @@ from __future__ import annotations
 import enum
 from datetime import datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -33,15 +33,10 @@ class Pipeline(Base):
     simplified_point_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_length_km: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     status: Mapped[str] = mapped_column(
-        Enum(PipelineStatus, name="pipelinestatus", create_constraint=False, native_enum=False),
-        nullable=False,
-        default=PipelineStatus.not_sprayed.value,
+        String(32), nullable=False, default="not_sprayed"
     )
     approval_state: Mapped[str] = mapped_column(
-        Enum(PipelineApprovalState, name="pipelineapprovalstate", create_constraint=False, native_enum=False),
-        nullable=False,
-        default=PipelineApprovalState.approved.value,
-        index=True,
+        String(32), nullable=False, default="approved", index=True
     )
     source: Mapped[str] = mapped_column(String(64), nullable=False, default="imported")
     source_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
