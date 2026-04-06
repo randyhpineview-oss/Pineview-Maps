@@ -596,6 +596,7 @@ export default function App() {
     setPipelineDetailOpen(false);
     setSelectedPipeline(null);
     setPipelineSprayRecords([]);
+    setHighlightedSprayRecordId(null);
   }
 
   function handleLayerToggle(layerKey) {
