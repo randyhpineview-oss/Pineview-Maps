@@ -13,6 +13,7 @@ from app.kml_import import parse_kml_file
 from app.password_reset import router as password_reset_router
 from app.user_management import router as user_management_router
 from app.pipeline_routes import router as pipeline_router
+from app.lookup_routes import router as lookup_router
 from app.pipeline_models import Pipeline, SprayRecord  # noqa: F401 — ensure tables are registered
 from app.models import ApprovalState, PinType, RoleEnum, Site, SiteSprayRecord, SiteStatus, SiteUpdate, User
 from app.schemas import (
@@ -48,6 +49,7 @@ app.add_middleware(
 app.include_router(user_management_router)
 app.include_router(password_reset_router)
 app.include_router(pipeline_router)
+app.include_router(lookup_router)
 
 
 # Global exception handler to ensure CORS headers on errors

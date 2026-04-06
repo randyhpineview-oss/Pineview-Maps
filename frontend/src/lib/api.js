@@ -237,6 +237,56 @@ export const api = {
     return request('/api/sync-status');
   },
 
+  // ── Lookup tables (herbicides, applicators, noxious weeds, location types) ──
+  listHerbicides() {
+    return request('/api/lookups/herbicides');
+  },
+  createHerbicide(payload) {
+    return request('/api/lookups/herbicides', { method: 'POST', body: payload });
+  },
+  updateHerbicide(id, payload) {
+    return request(`/api/lookups/herbicides/${id}`, { method: 'PATCH', body: payload });
+  },
+  deleteHerbicide(id) {
+    return request(`/api/lookups/herbicides/${id}`, { method: 'DELETE' });
+  },
+  listApplicators() {
+    return request('/api/lookups/applicators');
+  },
+  createApplicator(payload) {
+    return request('/api/lookups/applicators', { method: 'POST', body: payload });
+  },
+  updateApplicator(id, payload) {
+    return request(`/api/lookups/applicators/${id}`, { method: 'PATCH', body: payload });
+  },
+  deleteApplicator(id) {
+    return request(`/api/lookups/applicators/${id}`, { method: 'DELETE' });
+  },
+  listNoxiousWeeds() {
+    return request('/api/lookups/noxious-weeds');
+  },
+  createNoxiousWeed(payload) {
+    return request('/api/lookups/noxious-weeds', { method: 'POST', body: payload });
+  },
+  updateNoxiousWeed(id, payload) {
+    return request(`/api/lookups/noxious-weeds/${id}`, { method: 'PATCH', body: payload });
+  },
+  deleteNoxiousWeed(id) {
+    return request(`/api/lookups/noxious-weeds/${id}`, { method: 'DELETE' });
+  },
+  listLocationTypes() {
+    return request('/api/lookups/location-types');
+  },
+  createLocationType(payload) {
+    return request('/api/lookups/location-types', { method: 'POST', body: payload });
+  },
+  updateLocationType(id, payload) {
+    return request(`/api/lookups/location-types/${id}`, { method: 'PATCH', body: payload });
+  },
+  deleteLocationType(id) {
+    return request(`/api/lookups/location-types/${id}`, { method: 'DELETE' });
+  },
+
   // ── Password reset (6-digit code flow) ──
   requestResetCode(email) {
     return request('/api/auth/forgot-password', { method: 'POST', body: { email } });
