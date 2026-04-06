@@ -258,13 +258,16 @@ export default function MapView({
       }
     }
     
-    // If detail panel just closed, re-center to original position
-    if (!detailOpen && prevDetailOpen.current && originalSitePosition.current) {
+    // If detail panel just closed, re-center to original position (only if same site still selected)
+    if (!detailOpen && prevDetailOpen.current && originalSitePosition.current && selectedSite) {
       console.log('[DEBUG] Panel just closed, re-centering');
       mapRef.current.panTo({ 
         lat: originalSitePosition.current.lat, 
         lng: originalSitePosition.current.lng 
       });
+      originalSitePosition.current = null;
+    }
+    if (!selectedSite) {
       originalSitePosition.current = null;
     }
     

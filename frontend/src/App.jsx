@@ -598,6 +598,13 @@ export default function App() {
     setPipelineDetailOpen(true);
     setDetailOpen(false);
     setSelectedSite(null);
+    setZoomTarget(null); // Clear any pending site zoom
+    // Fit pipeline bounds on map
+    if (pipeline.coordinates && pipeline.coordinates.length >= 2 && mapRef.current && window.google) {
+      const bounds = new window.google.maps.LatLngBounds();
+      pipeline.coordinates.forEach(([lat, lng]) => bounds.extend({ lat, lng }));
+      mapRef.current.fitBounds(bounds, { top: 50, bottom: 300, left: 50, right: 50 });
+    }
     // Load spray records for this pipeline
     if (pipeline.id && window.navigator.onLine) {
       api.getPipeline(pipeline.id).then((full) => {
@@ -1554,6 +1561,7 @@ export default function App() {
             <div className="legend" style={{ marginBottom: '0.75rem' }}>
               <span className="legend-chip"><span className="legend-dot" style={{ background: '#22c55e' }} /> Inspected</span>
               <span className="legend-chip"><span className="legend-dot" style={{ background: '#ef4444' }} /> Not inspected</span>
+              <span className="legend-chip"><span className="legend-dot" style={{ background: '#94a3b8' }} /> Issue</span>
               <span className="legend-chip"><span className="legend-dot" style={{ background: '#3b82f6' }} /> Water</span>
               <span className="legend-chip"><span className="legend-dot" style={{ background: '#eab308' }} /> Quad</span>
               <span className="legend-chip"><span className="legend-dot" style={{ background: '#f59e0b' }} /> Pending</span>

@@ -283,7 +283,12 @@ export default function SiteDetailSheet({
                 className="status-button green"
                 type="button"
                 disabled={statusSaving}
-                onClick={() => onStatusChange(site, 'inspected', '')}
+                onClick={() => {
+                  onStatusChange(site, 'inspected', '');
+                  if (onCreateSprayRecord) {
+                    onCreateSprayRecord(site, { spray_date: new Date().toISOString().split('T')[0], notes: '', is_avoided: false });
+                  }
+                }}
               >
                 Mark Inspected
               </button>
@@ -316,6 +321,23 @@ export default function SiteDetailSheet({
                     ? 'Unmark Reclaimed'
                     : 'Mark as Reclaimed'}
               </button>
+              {!isInfoOnlyPin(site.pin_type) && onCreateSprayRecord ? (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={statusSaving}
+                  onClick={() => {
+                    const note = window.prompt('Why is there an issue with this site?');
+                    if (note !== null) {
+                      onStatusChange(site, 'issue', '');
+                      onCreateSprayRecord(site, { spray_date: new Date().toISOString().split('T')[0], notes: note, is_avoided: true });
+                    }
+                  }}
+                  style={{ background: '#64748b' }}
+                >
+                  ⚠ Issue with Site
+                </button>
+              ) : null}
             </div>
           ) : null}
 
@@ -324,31 +346,6 @@ export default function SiteDetailSheet({
             <div style={{ borderTop: '1px solid rgba(143,182,255,0.1)', marginTop: '1rem', paddingTop: '0.75rem' }}>
               <div className="small-text" style={{ fontWeight: 600, marginBottom: '0.5rem' }}>
                 Spray History ({sprayRecords.length})
-              </div>
-              <div className="button-row" style={{ marginBottom: '0.5rem' }}>
-                <button
-                  className="primary-button"
-                  type="button"
-                  disabled={statusSaving}
-                  onClick={() => onCreateSprayRecord(site, { spray_date: new Date().toISOString().split('T')[0], notes: '', is_avoided: false })}
-                  style={{ flex: 1, fontSize: '0.8rem' }}
-                >
-                  ✓ Mark Sprayed
-                </button>
-                <button
-                  className="secondary-button"
-                  type="button"
-                  disabled={statusSaving}
-                  onClick={() => {
-                    const note = window.prompt('Why was this site not sprayed?');
-                    if (note !== null) {
-                      onCreateSprayRecord(site, { spray_date: new Date().toISOString().split('T')[0], notes: note, is_avoided: true });
-                    }
-                  }}
-                  style={{ flex: 1, fontSize: '0.8rem', background: '#64748b' }}
-                >
-                  ⚠ Issue with Site
-                </button>
               </div>
               {sprayRecords.length > 0 && (
                 <div className="list-grid">
