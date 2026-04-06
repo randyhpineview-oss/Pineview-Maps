@@ -8,6 +8,63 @@ const mapContainerStyle = { width: '100%', height: '100%' };
 // Fort St. John, BC coordinates
 const defaultCenter = { lat: 56.2498, lng: -120.8464 };
 
+function getInterpolatedSubPath(coords, startFrac, endFrac) {
+  if (coords.length < 2) return coords;
+  
+  // Calculate total length and segment lengths
+  let totalLength = 0;
+  const segLengths = [];
+  for (let i = 1; i < coords.length; i++) {
+    const dx = coords[i][0] - coords[i - 1][0];
+    const dy = coords[i][1] - coords[i - 1][1];
+    const len = Math.sqrt(dx * dx + dy * dy);
+    segLengths.push(len);
+    totalLength += len;
+  }
+  
+  if (totalLength === 0) return [coords[0], coords[0]];
+  
+  const targetStartDist = startFrac * totalLength;
+  const targetEndDist = endFrac * totalLength;
+  
+  const subPath = [];
+  let cumLength = 0;
+  let started = false;
+  
+  for (let i = 0; i < segLengths.length; i++) {
+    const segLen = segLengths[i];
+    const segStartDist = cumLength;
+    const segEndDist = cumLength + segLen;
+    
+    // Check if start point falls in this segment
+    if (!started && targetStartDist >= segStartDist && targetStartDist <= segEndDist) {
+      started = true;
+      const t = segLen === 0 ? 0 : (targetStartDist - segStartDist) / segLen;
+      const lat = coords[i][0] + t * (coords[i+1][0] - coords[i][0]);
+      const lng = coords[i][1] + t * (coords[i+1][1] - coords[i][1]);
+      subPath.push({ lat, lng });
+    }
+    
+    // Check if end point falls in this segment
+    if (started && targetEndDist >= segStartDist && targetEndDist <= segEndDist) {
+      const t = segLen === 0 ? 0 : (targetEndDist - segStartDist) / segLen;
+      const lat = coords[i][0] + t * (coords[i+1][0] - coords[i][0]);
+      const lng = coords[i][1] + t * (coords[i+1][1] - coords[i][1]);
+      subPath.push({ lat, lng });
+      break; // Reached the end
+    }
+    
+    // If we've started but haven't reached the end yet, and we're at a segment boundary, add the original point
+    if (started && targetEndDist > segEndDist) {
+      subPath.push({ lat: coords[i+1][0], lng: coords[i+1][1] });
+    }
+    
+    cumLength += segLen;
+  }
+  
+  return subPath;
+}
+
 export default function MapView({
   sites,
   selectedSite,
@@ -440,11 +497,8 @@ export default function MapView({
           (pipeline.spray_records || []).map((record) => {
             const coords = pipeline.coordinates;
             if (!coords || coords.length < 2) return null;
-            // Extract the sub-path for this spray record
-            const totalPoints = coords.length - 1;
-            const startIdx = Math.floor(record.start_fraction * totalPoints);
-            const endIdx = Math.ceil(record.end_fraction * totalPoints);
-            const subPath = coords.slice(startIdx, endIdx + 1).map(([lat, lng]) => ({ lat, lng }));
+            // Extract the interpolated sub-path for this spray record
+            const subPath = getInterpolatedSubPath(coords, record.start_fraction, record.end_fraction);
             if (subPath.length < 2) return null;
             return (
               <Polyline
