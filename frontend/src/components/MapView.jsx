@@ -125,6 +125,7 @@ export default function MapView({
   const lastFittedBoundsKey = useRef('');
   const hasInitiallyFitted = useRef(false);
   const [popupSite, setPopupSite] = useState(null);
+  const [popupPipeline, setPopupPipeline] = useState(null);
   const lastZoomTarget = useRef(null);
   const lastZoomTime = useRef(0);
   const followModeZoomRef = useRef(null); // Store zoom level when entering follow mode
@@ -451,6 +452,7 @@ export default function MapView({
             });
           } else {
             setPopupSite(null);
+            setPopupPipeline(null);
             if (onMapClick) onMapClick();
           }
         }}
@@ -492,7 +494,7 @@ export default function MapView({
               (popupSite && String(popupSite.id ?? popupSite.cacheId) === String(site.id ?? site.cacheId)) ||
               (selectedSite && String(selectedSite.id ?? selectedSite.cacheId) === String(site.id ?? site.cacheId))
             )}
-            onClick={() => setPopupSite(site)}
+            onClick={() => { setPopupSite(site); setPopupPipeline(null); }}
           />
         ))}
 
@@ -517,7 +519,10 @@ export default function MapView({
                   onSprayClick({ lat: e.latLng.lat(), lng: e.latLng.lng() });
                   return;
                 }
-                if (onSelectPipeline) onSelectPipeline(pipeline);
+                // Calculate click position for popup
+                const clickPos = e.latLng ? { lat: e.latLng.lat(), lng: e.latLng.lng() } : null;
+                setPopupPipeline({ ...pipeline, _popupLat: clickPos?.lat, _popupLng: clickPos?.lng });
+                setPopupSite(null);
               }}
             />
           );
@@ -548,8 +553,9 @@ export default function MapView({
                     onSprayClick({ lat: e.latLng.lat(), lng: e.latLng.lng() });
                     return;
                   }
-                  // Clicking on spray section opens pipeline detail, not highlight
-                  if (onSelectPipeline) onSelectPipeline(pipeline);
+                  const clickPos = e.latLng ? { lat: e.latLng.lat(), lng: e.latLng.lng() } : null;
+                  setPopupPipeline({ ...pipeline, _popupLat: clickPos?.lat, _popupLng: clickPos?.lng });
+                  setPopupSite(null);
                 }}
               />
             );
@@ -629,6 +635,77 @@ export default function MapView({
             endPoint={sprayEndPoint}
           />
         )}
+
+        {popupPipeline ? (
+          <OverlayView
+            position={{ lat: popupPipeline._popupLat || popupPipeline.coordinates?.[0]?.[0] || 0, lng: popupPipeline._popupLng || popupPipeline.coordinates?.[0]?.[1] || 0 }}
+            mapPaneName={OverlayView.FLOAT_PANE}
+            getPixelPositionOffset={(w, h) => ({ x: -(w / 2), y: -(h + 12) })}
+          >
+            <div
+              style={{
+                background: '#0f172a',
+                color: '#e5eefb',
+                padding: '10px 14px',
+                borderRadius: '10px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                minWidth: '180px',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+                whiteSpace: 'nowrap',
+                position: 'relative',
+                WebkitTapHighlightColor: 'transparent',
+              }}
+              onClick={(e) => e.stopPropagation()}
+              onTouchEnd={(e) => e.stopPropagation()}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>{popupPipeline.name || 'Unnamed pipeline'}</div>
+                <div style={{ fontSize: '0.75rem', color: '#9ab1d6', marginTop: '2px' }}>
+                  {[popupPipeline.client, popupPipeline.area].filter(Boolean).join(' • ') || 'Pipeline'}
+                </div>
+              </div>
+              <button
+                type="button"
+                onTouchStart={(e) => { e.stopPropagation(); }}
+                onTouchEnd={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  const pl = popupPipeline;
+                  setPopupPipeline(null);
+                  if (onSelectPipeline) onSelectPipeline(pl);
+                }}
+                onClick={(e) => {
+                  if (e.detail === 0) return;
+                  e.stopPropagation();
+                  e.preventDefault();
+                  const pl = popupPipeline;
+                  setPopupPipeline(null);
+                  if (onSelectPipeline) onSelectPipeline(pl);
+                }}
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: '50%',
+                  border: '2px solid #3b82f6',
+                  background: 'transparent',
+                  color: '#3b82f6',
+                  fontWeight: 700,
+                  fontSize: '1rem',
+                  display: 'grid',
+                  placeItems: 'center',
+                  cursor: 'pointer',
+                  flexShrink: 0,
+                  WebkitTapHighlightColor: 'transparent',
+                  touchAction: 'manipulation',
+                }}
+              >
+                i
+              </button>
+            </div>
+          </OverlayView>
+        ) : null}
 
         {popupSite ? (
           <OverlayView

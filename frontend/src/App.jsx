@@ -453,6 +453,13 @@ export default function App() {
   );
 
   function handleOpenDetail(site, options = {}) {
+    // Close pipeline detail if open
+    if (pipelineDetailOpen) {
+      setPipelineDetailOpen(false);
+      setSelectedPipeline(null);
+      setPipelineSprayRecords([]);
+      setHighlightedSprayRecordId(null);
+    }
     setSelectedSite(site);
     setDetailOpen(true);
     // Only trigger zoomToSite on phones, or on PC/iPad if coming from sites list (just center, no zoom)
