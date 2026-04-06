@@ -102,7 +102,7 @@ def list_pipelines(
     if area:
         q = q.filter(Pipeline.area == area)
     q = q.order_by(Pipeline.created_at.desc())
-    return [PipelineListRead.model_validate(p) for p in q.unique().all()]
+    return [PipelineListRead.model_validate(p) for p in q.all()]
 
 
 @router.get("/pending-pipelines", response_model=list[PipelineListRead])

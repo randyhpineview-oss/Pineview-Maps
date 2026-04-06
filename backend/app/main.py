@@ -579,14 +579,3 @@ def restore_site(
     db.commit()
     db.refresh(site)
     return SiteRead.model_validate(site)
-
-
-@app.exception_handler(Exception)
-def global_exception_handler(request: Request, exc: Exception):
-    print(f"[ERROR] Global exception: {type(exc).__name__}: {str(exc)}")
-    print(f"[ERROR] Request path: {request.url.path}")
-    print(f"[ERROR] Request method: {request.method}")
-    return JSONResponse(
-        status_code=500,
-        content={"detail": f"Internal server error: {str(exc)}"}
-    )
