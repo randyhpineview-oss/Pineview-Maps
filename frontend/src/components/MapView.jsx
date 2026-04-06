@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { GoogleMap, Marker, OverlayView, Polyline, useJsApiLoader } from '@react-google-maps/api';
 
-import { buildMarkerIcon, pinTypeLabel } from '../lib/mapUtils';
+import { buildMarkerIcon, pinTypeLabel, nearestFraction } from '../lib/mapUtils';
 
 const mapContainerStyle = { width: '100%', height: '100%' };
 
@@ -65,6 +65,31 @@ function getInterpolatedSubPath(coords, startFrac, endFrac) {
   return subPath;
 }
 
+// Preview line component for spray marking
+function SprayPreviewLine({ pipeline, startPoint, endPoint }) {
+  const coords = pipeline?.coordinates;
+  if (!coords || coords.length < 2 || !startPoint) return null;
+  
+  const startFrac = nearestFraction(startPoint, coords);
+  const endFrac = endPoint ? nearestFraction(endPoint, coords) : startFrac;
+  
+  const subPath = getInterpolatedSubPath(coords, startFrac, endFrac);
+  if (subPath.length < 2) return null;
+  
+  return (
+    <Polyline
+      path={subPath}
+      options={{
+        strokeColor: '#f59e0b', // amber/yellow for preview
+        strokeOpacity: 0.8,
+        strokeWeight: 6,
+        zIndex: 15,
+        clickable: false,
+      }}
+    />
+  );
+}
+
 export default function MapView({
   sites,
   selectedSite,
@@ -91,7 +116,10 @@ export default function MapView({
   // Spray marking props
   isSprayMarking = false,
   sprayStartPoint = null,
+  sprayEndPoint = null,
   onSprayClick,
+  highlightedSprayRecordId = null,
+  onSprayRecordClick,
 }) {
   const mapRef = useRef(null);
   const lastFittedBoundsKey = useRef('');
@@ -481,9 +509,9 @@ export default function MapView({
                 clickable: true,
                 zIndex: isSelected ? 10 : 1,
               }}
-              onClick={() => {
-                if (isSprayMarking && onSprayClick) {
-                  // Don't select pipeline during spray marking
+              onClick={(e) => {
+                if (isSprayMarking && onSprayClick && e.latLng) {
+                  onSprayClick({ lat: e.latLng.lat(), lng: e.latLng.lng() });
                   return;
                 }
                 if (onSelectPipeline) onSelectPipeline(pipeline);
@@ -500,16 +528,26 @@ export default function MapView({
             // Extract the interpolated sub-path for this spray record
             const subPath = getInterpolatedSubPath(coords, record.start_fraction, record.end_fraction);
             if (subPath.length < 2) return null;
+            const isHighlighted = highlightedSprayRecordId === record.id;
             return (
               <Polyline
                 key={`spray-${record.id}`}
                 path={subPath}
                 options={{
-                  strokeColor: '#22c55e',
-                  strokeOpacity: 0.9,
-                  strokeWeight: 5,
-                  zIndex: 5,
-                  clickable: false,
+                  strokeColor: isHighlighted ? '#eab308' : '#22c55e', // yellow if highlighted, otherwise green
+                  strokeOpacity: isHighlighted ? 1.0 : 0.9,
+                  strokeWeight: isHighlighted ? 7 : 5,
+                  zIndex: isHighlighted ? 6 : 5,
+                  clickable: !!onSprayRecordClick,
+                }}
+                onClick={(e) => {
+                  if (isSprayMarking && onSprayClick && e.latLng) {
+                    onSprayClick({ lat: e.latLng.lat(), lng: e.latLng.lng() });
+                    return;
+                  }
+                  if (onSprayRecordClick) {
+                    onSprayRecordClick(record);
+                  }
                 }}
               />
             );
@@ -561,6 +599,32 @@ export default function MapView({
             }}
             clickable={false}
             zIndex={100}
+          />
+        )}
+
+        {/* Spray marking end point */}
+        {isSprayMarking && sprayEndPoint && (
+          <Marker
+            position={{ lat: sprayEndPoint.lat, lng: sprayEndPoint.lng }}
+            icon={{
+              path: window.google.maps.SymbolPath.CIRCLE,
+              scale: 8,
+              fillColor: '#ef4444',
+              fillOpacity: 1,
+              strokeColor: '#ffffff',
+              strokeWeight: 2,
+            }}
+            clickable={false}
+            zIndex={100}
+          />
+        )}
+
+        {/* Spray marking preview line between start and end points */}
+        {isSprayMarking && selectedPipeline && sprayStartPoint && (
+          <SprayPreviewLine
+            pipeline={selectedPipeline}
+            startPoint={sprayStartPoint}
+            endPoint={sprayEndPoint}
           />
         )}
 

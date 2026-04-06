@@ -197,6 +197,42 @@ export function buildMarkerIcon(site, isSelected = false) {
   };
 }
 
+export function nearestFraction(point, coords) {
+  if (!coords || coords.length < 2) return 0;
+  let minDist = Infinity;
+  let bestFraction = 0;
+  let totalLength = 0;
+  const segLengths = [];
+  for (let i = 1; i < coords.length; i++) {
+    const dx = coords[i][0] - coords[i - 1][0];
+    const dy = coords[i][1] - coords[i - 1][1];
+    const segLen = Math.sqrt(dx * dx + dy * dy);
+    segLengths.push(segLen);
+    totalLength += segLen;
+  }
+  if (totalLength === 0) return 0;
+  let cumLength = 0;
+  for (let i = 0; i < segLengths.length; i++) {
+    const ax = coords[i][0], ay = coords[i][1];
+    const bx = coords[i + 1][0], by = coords[i + 1][1];
+    const dx = bx - ax, dy = by - ay;
+    const segLen = segLengths[i];
+    let t = 0;
+    if (segLen > 0) {
+      t = Math.max(0, Math.min(1, ((point.lat - ax) * dx + (point.lng - ay) * dy) / (segLen * segLen)));
+    }
+    const projX = ax + t * dx;
+    const projY = ay + t * dy;
+    const dist = Math.sqrt((point.lat - projX) ** 2 + (point.lng - projY) ** 2);
+    if (dist < minDist) {
+      minDist = dist;
+      bestFraction = (cumLength + t * segLen) / totalLength;
+    }
+    cumLength += segLen;
+  }
+  return Math.max(0, Math.min(1, bestFraction));
+}
+
 export function getDirectionsUrl(site) {
   const lat = site.latitude;
   const lng = site.longitude;

@@ -17,6 +17,8 @@ export default function PipelineDetailSheet({
   adminBusy = false,
   sprayRecords = [],
   onDeleteSprayRecord,
+  highlightedSprayRecordId = null,
+  onHighlightSprayRecord,
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editState, setEditState] = useState(() => buildEditState(pipeline));
@@ -186,32 +188,49 @@ export default function PipelineDetailSheet({
             Spray History ({sprayRecords.length})
           </div>
           <div className="list-grid">
-            {sprayRecords.map((record) => (
-              <div key={record.id} className="site-row" style={{ padding: '0.5rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <div className="small-text" style={{ fontWeight: 600 }}>
-                      {record.spray_date} — {((record.end_fraction - record.start_fraction) * 100).toFixed(0)}% section
+            {sprayRecords.map((record) => {
+              const isHighlighted = highlightedSprayRecordId === record.id;
+              return (
+                <div 
+                  key={record.id} 
+                  className="site-row" 
+                  style={{ 
+                    padding: '0.5rem',
+                    background: isHighlighted ? 'rgba(234, 179, 8, 0.2)' : undefined,
+                    border: isHighlighted ? '1px solid rgba(234, 179, 8, 0.5)' : undefined,
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                  }}
+                  onClick={() => onHighlightSprayRecord?.(isHighlighted ? null : record.id)}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div className="small-text" style={{ fontWeight: 600 }}>
+                        {record.spray_date} — {((record.end_fraction - record.start_fraction) * 100).toFixed(0)}% section
+                      </div>
+                      <div className="small-text">
+                        By: {record.sprayed_by_name || 'Unknown'}
+                        {record.notes ? ` — ${record.notes}` : ''}
+                      </div>
                     </div>
-                    <div className="small-text">
-                      By: {record.sprayed_by_name || 'Unknown'}
-                      {record.notes ? ` — ${record.notes}` : ''}
-                    </div>
+                    {canManage && (
+                      <button
+                        className="danger-button"
+                        type="button"
+                        disabled={adminBusy}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteSprayRecord?.(record.id, pipeline.id);
+                        }}
+                        style={{ padding: '2px 8px', fontSize: '0.7rem' }}
+                      >
+                        ✕
+                      </button>
+                    )}
                   </div>
-                  {canManage && (
-                    <button
-                      className="danger-button"
-                      type="button"
-                      disabled={adminBusy}
-                      onClick={() => onDeleteSprayRecord?.(record.id, pipeline.id)}
-                      style={{ padding: '2px 8px', fontSize: '0.7rem' }}
-                    >
-                      ✕
-                    </button>
-                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

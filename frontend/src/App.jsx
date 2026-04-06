@@ -7,6 +7,7 @@ import MapView from './components/MapView';
 import PipelineDetailSheet from './components/PipelineDetailSheet';
 import SiteDetailSheet from './components/SiteDetailSheet';
 import { api } from './lib/api';
+import { nearestFraction } from './lib/mapUtils';
 import { onAuthStateChange, signOut } from './lib/supabaseClient';
 import {
   getLastSyncAt,
@@ -109,6 +110,7 @@ export default function App() {
   const [sprayEndPoint, setSprayEndPoint] = useState(null);
   const [showSprayConfirm, setShowSprayConfirm] = useState(false);
   const [sprayForm, setSprayForm] = useState({ date: new Date().toISOString().split('T')[0], notes: '' });
+  const [highlightedSprayRecordId, setHighlightedSprayRecordId] = useState(null);
   const [isFollowingUser, setIsFollowingUser] = useState(false);
   const mapRef = useRef(null);
   const lastFollowUpdateRef = useRef(0);
@@ -451,6 +453,12 @@ export default function App() {
   const pullDistance = useRef(0);
   const detailBodyRef = useRef(null);
 
+  // Touch handlers for pipeline detail panel (swipe down to dismiss)
+  const pipelineTouchStartY = useRef(null);
+  const pipelineTouchStartScrollTop = useRef(0);
+  const pipelinePullDistance = useRef(0);
+  const pipelineDetailBodyRef = useRef(null);
+
   // Swipe detection refs for side panels
   const sitesPanelTouchStartX = useRef(null);
   const adminPanelTouchStartX = useRef(null);
@@ -521,6 +529,39 @@ export default function App() {
     touchStartY.current = null;
     pullDistance.current = 0;
     touchStartScrollTop.current = 0;
+  }
+
+  // Touch handlers for pipeline detail panel (swipe down to dismiss)
+  function handlePipelineTouchStart(e) {
+    pipelineTouchStartY.current = e.touches[0].clientY;
+    pipelineTouchStartScrollTop.current = pipelineDetailBodyRef.current?.scrollTop || 0;
+    pipelinePullDistance.current = 0;
+  }
+
+  function handlePipelineTouchMove(e) {
+    if (pipelineTouchStartY.current === null) return;
+    const currentY = e.touches[0].clientY;
+    const delta = currentY - pipelineTouchStartY.current;
+    
+    // If at top of scroll and pulling down (delta > 0), track as pull distance
+    if (pipelineTouchStartScrollTop.current <= 0 && delta > 0) {
+      pipelinePullDistance.current = delta;
+      // Prevent default to stop scroll bounce, but only if we're pulling to dismiss
+      if (delta > 10) {
+        e.preventDefault();
+      }
+    }
+  }
+
+  function handlePipelineTouchEnd(e) {
+    if (pipelineTouchStartY.current === null) return;
+    // Require a significant pull (100px) to dismiss
+    if (pipelinePullDistance.current > 100 && pipelineDetailOpen) {
+      handleClosePipelineDetail();
+    }
+    pipelineTouchStartY.current = null;
+    pipelinePullDistance.current = 0;
+    pipelineTouchStartScrollTop.current = 0;
   }
 
   function handleFabSelect(pinType) {
@@ -643,41 +684,46 @@ export default function App() {
     }
   }
 
-  function _nearestFraction(point, coords) {
-    // Find the nearest point on the polyline and return its fraction (0-1)
-    let minDist = Infinity;
-    let bestFraction = 0;
-    let totalLength = 0;
-    const segLengths = [];
-    for (let i = 1; i < coords.length; i++) {
-      const dx = coords[i][0] - coords[i - 1][0];
-      const dy = coords[i][1] - coords[i - 1][1];
-      const segLen = Math.sqrt(dx * dx + dy * dy);
-      segLengths.push(segLen);
-      totalLength += segLen;
+  function handleSprayClick(point) {
+    if (!selectedPipeline || !selectedPipeline.coordinates) return;
+    const coords = selectedPipeline.coordinates;
+    const frac = nearestFraction(point, coords);
+
+    // Prevent selecting a point that is inside an existing green area
+    const isPointInside = selectedPipeline.spray_records?.some(r => {
+      const minF = Math.min(r.start_fraction, r.end_fraction);
+      const maxF = Math.max(r.start_fraction, r.end_fraction);
+      return frac > minF + 0.001 && frac < maxF - 0.001;
+    });
+
+    if (isPointInside) {
+      setMessage('Cannot select a point inside an already sprayed section.');
+      return;
     }
-    if (totalLength === 0) return 0;
-    let cumLength = 0;
-    for (let i = 0; i < segLengths.length; i++) {
-      const ax = coords[i][0], ay = coords[i][1];
-      const bx = coords[i + 1][0], by = coords[i + 1][1];
-      const dx = bx - ax, dy = by - ay;
-      const segLen = segLengths[i];
-      // Project point onto segment
-      let t = 0;
-      if (segLen > 0) {
-        t = Math.max(0, Math.min(1, ((point.lat - ax) * dx + (point.lng - ay) * dy) / (segLen * segLen)));
+
+    if (!sprayStartPoint) {
+      setSprayStartPoint(point);
+    } else if (!sprayEndPoint) {
+      const startFrac = nearestFraction(sprayStartPoint, coords);
+      const endFrac = frac;
+      const minF = Math.min(startFrac, endFrac);
+      const maxF = Math.max(startFrac, endFrac);
+
+      // Prevent selecting a section that overlaps with an existing green area
+      const segmentOverlaps = selectedPipeline.spray_records?.some(r => {
+        const rMin = Math.min(r.start_fraction, r.end_fraction);
+        const rMax = Math.max(r.start_fraction, r.end_fraction);
+        return Math.max(minF, rMin) < Math.min(maxF, rMax) - 0.001;
+      });
+
+      if (segmentOverlaps) {
+        setMessage('The selected section overlaps with an already sprayed area.');
+        return;
       }
-      const projX = ax + t * dx;
-      const projY = ay + t * dy;
-      const dist = Math.sqrt((point.lat - projX) ** 2 + (point.lng - projY) ** 2);
-      if (dist < minDist) {
-        minDist = dist;
-        bestFraction = (cumLength + t * segLen) / totalLength;
-      }
-      cumLength += segLen;
+
+      setSprayEndPoint(point);
+      setShowSprayConfirm(true);
     }
-    return Math.max(0, Math.min(1, bestFraction));
   }
 
   async function handleConfirmSpray() {
@@ -685,8 +731,8 @@ export default function App() {
     const coords = selectedPipeline.coordinates;
     if (!coords || coords.length < 2) return;
 
-    const startFrac = _nearestFraction(sprayStartPoint, coords);
-    const endFrac = _nearestFraction(sprayEndPoint, coords);
+    const startFrac = nearestFraction(sprayStartPoint, coords);
+    const endFrac = nearestFraction(sprayEndPoint, coords);
 
     setAdminBusy(true);
     try {
@@ -1402,7 +1448,13 @@ export default function App() {
             <h2>Pipeline Details</h2>
             {canManagePins ? <span className="small-text">Admin</span> : null}
           </div>
-          <div className="side-panel-body">
+          <div 
+            className="side-panel-body"
+            ref={pipelineDetailBodyRef}
+            onTouchStart={handlePipelineTouchStart}
+            onTouchMove={handlePipelineTouchMove}
+            onTouchEnd={handlePipelineTouchEnd}
+          >
             {selectedPipeline ? (
               <PipelineDetailSheet
                 pipeline={selectedPipeline}
@@ -1413,6 +1465,8 @@ export default function App() {
                 adminBusy={adminBusy}
                 sprayRecords={pipelineSprayRecords}
                 onDeleteSprayRecord={handleDeleteSprayRecord}
+                highlightedSprayRecordId={highlightedSprayRecordId}
+                onHighlightSprayRecord={setHighlightedSprayRecordId}
               />
             ) : null}
           </div>
