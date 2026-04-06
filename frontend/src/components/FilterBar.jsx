@@ -136,32 +136,26 @@ export default function FilterBar({
           <span style={{ fontSize: '0.65rem', color: '#9ab1d6', transition: 'transform 0.2s', transform: layersOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}>▼</span>
         </button>
         {layersOpen ? (
-          <div style={{ padding: '0 0.65rem 0.5rem', display: 'grid', gap: '2px' }}>
-            {LAYER_OPTIONS.map(({ key, label }) => (
-              <label
-                key={key}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                  padding: '0.35rem 0.4rem',
-                  cursor: 'pointer',
-                  fontSize: '0.82rem',
-                  color: '#e5eefb',
-                  borderRadius: '8px',
-                  background: (layers[key] ?? true) ? 'rgba(59,130,246,0.1)' : 'transparent',
-                  transition: 'background 0.15s',
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={layers[key] ?? true}
-                  onChange={() => onLayerToggle?.(key)}
-                  style={{ accentColor: '#3b82f6', width: '14px', height: '14px' }}
-                />
-                {label}
-              </label>
-            ))}
+          <div style={{ padding: '0 0.35rem 0.5rem', display: 'grid', gap: '2px' }}>
+            {LAYER_OPTIONS.map(({ key, label }) => {
+              const isOn = layers[key] ?? true;
+              return (
+                <div
+                  key={key}
+                  className="layer-item"
+                  onClick={() => onLayerToggle?.(key)}
+                >
+                  <div className={`layer-item-check ${isOn ? 'checked' : ''}`}>
+                    {isOn ? (
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M3.5 8.5L6.5 11.5L12.5 4.5" />
+                      </svg>
+                    ) : null}
+                  </div>
+                  {label}
+                </div>
+              );
+            })}
           </div>
         ) : null}
       </div>
