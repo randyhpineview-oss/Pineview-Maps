@@ -1278,6 +1278,17 @@ export default function App() {
         <span className="topbar-title">Pineview Maps</span>
         <div className="topbar-right">
           <span className={`badge ${isOnline ? 'online' : 'offline'}`}>{isOnline ? 'Online' : 'Offline'}</span>
+          {queuedCount > 0 ? (
+            <button 
+              className="badge" 
+              style={{ background: '#3b82f6', color: 'white', cursor: 'pointer', border: 'none' }}
+              onClick={handleSyncCurrentView}
+              disabled={isSyncing || !isOnline}
+              title={!isOnline ? "Must be online to sync" : "Sync queued offline changes"}
+            >
+              {isSyncing ? 'Syncing...' : `Sync (${queuedCount})`}
+            </button>
+          ) : null}
           {roleCanAdmin && (pendingSites.length + pendingPipelines.length) > 0 ? (
             <span 
               className="badge" 
@@ -1287,7 +1298,6 @@ export default function App() {
               Pending: {pendingSites.length + pendingPipelines.length}
             </span>
           ) : null}
-          {queuedCount > 0 ? <span className="badge">Queued: {queuedCount}</span> : null}
           <span className="badge">{user?.user_metadata?.name || user?.name || user?.email?.split('@')[0]?.charAt(0).toUpperCase() + user?.email?.split('@')[0]?.slice(1) || user?.email}</span>
           <button 
             onClick={() => signOut()}
