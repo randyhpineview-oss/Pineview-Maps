@@ -504,10 +504,10 @@ export default function MapView({
               path={pipeline.coordinates.map(([lat, lng]) => ({ lat, lng }))}
               options={{
                 strokeColor: isPending ? '#f59e0b' : (isSprayed ? '#22c55e' : '#ef4444'),
-                strokeOpacity: isSelected ? 1.0 : 0.7,
-                strokeWeight: isSelected ? 5 : 3,
+                strokeOpacity: 0.7,
+                strokeWeight: 3,
                 clickable: true,
-                zIndex: isSelected ? 10 : 1,
+                zIndex: 1,
               }}
               onClick={(e) => {
                 if (isSprayMarking && onSprayClick && e.latLng) {
@@ -534,10 +534,10 @@ export default function MapView({
                 key={`spray-${record.id}`}
                 path={subPath}
                 options={{
-                  strokeColor: isHighlighted ? '#eab308' : '#22c55e', // yellow if highlighted, otherwise green
+                  strokeColor: isHighlighted ? '#eab308' : '#22c55e',
                   strokeOpacity: isHighlighted ? 1.0 : 0.9,
                   strokeWeight: isHighlighted ? 7 : 5,
-                  zIndex: isHighlighted ? 15 : 5, // higher zIndex when highlighted to show above selected pipeline
+                  zIndex: isHighlighted ? 20 : 10,
                   clickable: !!onSprayRecordClick,
                 }}
                 onClick={(e) => {

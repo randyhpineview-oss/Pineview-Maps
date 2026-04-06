@@ -206,7 +206,10 @@ export default function PipelineDetailSheet({
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
                       <div className="small-text" style={{ fontWeight: 600 }}>
-                        {record.spray_date} — {((record.end_fraction - record.start_fraction) * 100).toFixed(0)}% section
+                        {record.spray_date} — {(() => {
+                          const sectionLength = Math.abs(record.end_fraction - record.start_fraction) * (pipeline.total_length_km || 0);
+                          return `${(sectionLength * 1000).toFixed(0)}m`;
+                        })()}
                       </div>
                       <div className="small-text">
                         By: {record.sprayed_by_name || 'Unknown'}
