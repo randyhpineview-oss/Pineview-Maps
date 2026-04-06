@@ -174,6 +174,39 @@ def session(current_user: User = Depends(get_current_user)) -> SessionResponse:
     return SessionResponse(user=current_user)
 
 
+@app.get("/api/sync-status")
+def sync_status(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Return lightweight sync status to reduce bandwidth usage."""
+    # Get max updated_at timestamps
+    sites_updated = db.execute(text("SELECT MAX(updated_at) FROM sites WHERE deleted_at IS NULL")).scalar()
+    pipelines_updated = db.execute(text("SELECT MAX(updated_at) FROM pipelines WHERE deleted_at IS NULL")).scalar()
+    
+    # Get pending counts for admins
+    pending_sites_count = 0
+    pending_pipelines_count = 0
+    if current_user.role in (RoleEnum.admin, RoleEnum.office):
+        pending_sites_count = db.query(Site).filter(
+            Site.approval_state == ApprovalState.pending_review,
+            Site.deleted_at.is_(None)
+        ).count()
+        # Import pipeline model for count
+        from app.pipeline_models import Pipeline as PipelineModel
+        pending_pipelines_count = db.query(PipelineModel).filter(
+            PipelineModel.approval_state == "pending_review",
+            PipelineModel.deleted_at.is_(None)
+        ).count()
+    
+    return {
+        "sites_last_updated": sites_updated.isoformat() if sites_updated else None,
+        "pipelines_last_updated": pipelines_updated.isoformat() if pipelines_updated else None,
+        "pending_sites_count": pending_sites_count,
+        "pending_pipelines_count": pending_pipelines_count,
+    }
+
+
 @app.get("/api/sites", response_model=list[SiteRead])
 def list_sites(
     search: str | None = Query(default=None),

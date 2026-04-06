@@ -232,6 +232,11 @@ export const api = {
     return request('/api/admin/pipelines/bulk-reset', { method: 'POST', body: payload });
   },
 
+  // ── Sync status (bandwidth-efficient polling) ──
+  getSyncStatus() {
+    return request('/api/sync-status');
+  },
+
   // ── Password reset (6-digit code flow) ──
   requestResetCode(email) {
     return request('/api/auth/forgot-password', { method: 'POST', body: { email } });

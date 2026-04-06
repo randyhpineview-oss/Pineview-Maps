@@ -62,6 +62,7 @@ export default function App() {
     }
   }, []);
   const wasOnline = useRef(window.navigator.onLine);
+  const lastSyncStatusRef = useRef(null);
   const [user, setUser] = useState(null);
   const [session, setSession] = useState(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
@@ -339,37 +340,74 @@ export default function App() {
     })();
   }, [isOnline, refreshAllData, syncQueuedActions]);
 
-  // Auto-poll for real-time updates every 10 seconds when online
+  // Auto-poll for real-time updates every 10 seconds when online using bandwidth-efficient sync-status
   useEffect(() => {
     if (!isOnline) return;
 
     const pollInterval = setInterval(async () => {
       try {
-        const sitesPayload = await api.listSites(serverFilters);
-        setSites(sitesPayload);
-        await replaceSites(sitesPayload);
+        // Get lightweight sync status (~200 bytes vs ~100KB-1MB for full data)
+        const syncStatus = await api.getSyncStatus();
         
-        // Update selectedSite if it exists in the new payload
-        if (selectedSite && Number.isInteger(selectedSite.id)) {
-          const updated = sitesPayload.find((s) => s.id === selectedSite.id);
-          if (updated) {
-            setSelectedSite(updated);
+        // Check if data has changed by comparing timestamps
+        const sitesChanged = !lastSyncStatusRef.current?.sites_last_updated || 
+                           syncStatus.sites_last_updated !== lastSyncStatusRef.current.sites_last_updated;
+        const pipelinesChanged = !lastSyncStatusRef.current?.pipelines_last_updated || 
+                               syncStatus.pipelines_last_updated !== lastSyncStatusRef.current.pipelines_last_updated;
+        
+        // Update stored sync status
+        lastSyncStatusRef.current = syncStatus;
+        
+        // Only fetch full data if something changed
+        if (sitesChanged) {
+          try {
+            const sitesPayload = await api.listSites(serverFilters);
+            setSites(sitesPayload);
+            await replaceSites(sitesPayload);
+            
+            // Update selectedSite if it exists in the new payload
+            if (selectedSite && Number.isInteger(selectedSite.id)) {
+              const updated = sitesPayload.find((s) => s.id === selectedSite.id);
+              if (updated) {
+                setSelectedSite(updated);
+              }
+            }
+          } catch {
+            // Silently fail
           }
         }
         
-        // Always refresh pending sites (admins need this, others get empty list)
-        try {
-          const pending = await api.listPendingSites();
-          setPendingSites(pending);
-        } catch {
-          // Silently fail on pending sites fetch
+        if (pipelinesChanged) {
+          try {
+            const pipelineData = await api.listPipelines();
+            setPipelines(pipelineData);
+          } catch {
+            // Silently fail
+          }
         }
-        // Refresh pipelines
-        try {
-          const pipelineData = await api.listPipelines();
-          setPipelines(pipelineData);
-        } catch {
-          // Silently fail pipeline fetch
+        
+        // Always refresh pending counts (lightweight from sync status)
+        if (syncStatus.pending_sites_count !== undefined) {
+          setPendingSitesCount(syncStatus.pending_sites_count);
+        }
+        if (syncStatus.pending_pipelines_count !== undefined) {
+          setPendingPipelinesCount(syncStatus.pending_pipelines_count);
+        }
+        
+        // Also fetch pending lists if admin and counts changed
+        if ((syncStatus.pending_sites_count > 0 || syncStatus.pending_pipelines_count > 0) && roleCanAdmin) {
+          try {
+            const pending = await api.listPendingSites();
+            setPendingSites(pending);
+          } catch {
+            // Silently fail
+          }
+          try {
+            const pendingPipes = await api.listPendingPipelines();
+            setPendingPipelines(pendingPipes);
+          } catch {
+            // Silently fail
+          }
         }
       } catch (error) {
         // Silently fail polling to avoid spam
@@ -377,7 +415,7 @@ export default function App() {
     }, 10000); // Poll every 10 seconds for updates
 
     return () => clearInterval(pollInterval);
-  }, [isOnline, serverFilters]);
+  }, [isOnline, serverFilters, roleCanAdmin, selectedSite]);
 
   const visibleSites = useMemo(() => {
     const normalizedSearch = filters.search.trim().toLowerCase();
