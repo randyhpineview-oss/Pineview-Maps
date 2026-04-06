@@ -538,16 +538,15 @@ export default function MapView({
                   strokeOpacity: isHighlighted ? 1.0 : 0.9,
                   strokeWeight: isHighlighted ? 7 : 5,
                   zIndex: isHighlighted ? 20 : 10,
-                  clickable: !!onSprayRecordClick,
+                  clickable: true,
                 }}
                 onClick={(e) => {
                   if (isSprayMarking && onSprayClick && e.latLng) {
                     onSprayClick({ lat: e.latLng.lat(), lng: e.latLng.lng() });
                     return;
                   }
-                  if (onSprayRecordClick) {
-                    onSprayRecordClick(record);
-                  }
+                  // Clicking on spray section opens pipeline detail, not highlight
+                  if (onSelectPipeline) onSelectPipeline(pipeline);
                 }}
               />
             );
