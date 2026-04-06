@@ -966,6 +966,7 @@ export default function App() {
   setPipelineDetailOpen(false);
   setSelectedPipeline(null);
   setPipelineSprayRecords([]);
+  setHighlightedSprayRecordId(null);
   setIsEditPickingMode(false);
   setEditPickLocation(null);
   setPreviewSiteLocation(null);
