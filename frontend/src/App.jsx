@@ -1260,7 +1260,10 @@ export default function App() {
             onDrawingClick={handleDrawingClick}
             isSprayMarking={isSprayMarking}
             sprayStartPoint={sprayStartPoint}
+            sprayEndPoint={sprayEndPoint}
             onSprayClick={handleSprayClick}
+            highlightedSprayRecordId={highlightedSprayRecordId}
+            onSprayRecordClick={(record) => setHighlightedSprayRecordId(prev => prev === record.id ? null : record.id)}
           />
         </div>
 

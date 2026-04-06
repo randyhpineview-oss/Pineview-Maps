@@ -537,7 +537,7 @@ export default function MapView({
                   strokeColor: isHighlighted ? '#eab308' : '#22c55e', // yellow if highlighted, otherwise green
                   strokeOpacity: isHighlighted ? 1.0 : 0.9,
                   strokeWeight: isHighlighted ? 7 : 5,
-                  zIndex: isHighlighted ? 6 : 5,
+                  zIndex: isHighlighted ? 15 : 5, // higher zIndex when highlighted to show above selected pipeline
                   clickable: !!onSprayRecordClick,
                 }}
                 onClick={(e) => {
