@@ -21,8 +21,16 @@ from app.pipeline_schemas import (
     SprayRecordCreate,
     SprayRecordRead,
 )
+from sqlalchemy import text
 
 router = APIRouter(prefix="/api", tags=["pipelines"])
+
+
+def generate_ticket_number(db) -> str:
+    """Generate a unique ticket number using the database sequence."""
+    result = db.execute(text("SELECT nextval('ticket_seq')"))
+    seq_value = result.scalar()
+    return f"T{seq_value:06d}"
 
 
 def _get_pipeline_or_404(db: Session, pipeline_id: int) -> Pipeline:
@@ -313,6 +321,8 @@ def create_spray_record(
         sprayed_by_name=user_name,
         notes=payload.notes,
         is_avoided=payload.is_avoided,
+        lease_sheet_data=payload.lease_sheet_data,
+        ticket_number=generate_ticket_number(db),
     )
     db.add(record)
 

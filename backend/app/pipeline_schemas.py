@@ -19,6 +19,9 @@ class SprayRecordRead(BaseModel):
     notes: str | None
     is_avoided: bool
     created_at: datetime
+    ticket_number: str | None = None
+    lease_sheet_data: dict | None = None
+    photo_urls: list[str] | None = None
 
 
 class SprayRecordCreate(BaseModel):
@@ -27,6 +30,7 @@ class SprayRecordCreate(BaseModel):
     spray_date: date
     notes: str | None = None
     is_avoided: bool = False
+    lease_sheet_data: dict | None = None
 
 
 class PipelineRead(BaseModel):
