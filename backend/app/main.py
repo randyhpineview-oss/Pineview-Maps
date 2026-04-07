@@ -142,6 +142,24 @@ def _migrate_add_columns() -> None:
                     conn.execute(text("ALTER TABLE spray_records ADD COLUMN is_avoided BOOLEAN NOT NULL DEFAULT 0"))
                 else:
                     conn.execute(text("ALTER TABLE spray_records ADD COLUMN is_avoided BOOLEAN NOT NULL DEFAULT FALSE"))
+            
+            # Lease sheet fields migration
+            if "ticket_number" not in existing_records:
+                conn.execute(text("ALTER TABLE spray_records ADD COLUMN ticket_number VARCHAR(20)"))
+            if "lease_sheet_data" not in existing_records:
+                conn.execute(text("ALTER TABLE spray_records ADD COLUMN lease_sheet_data JSONB"))
+            if "pdf_url" not in existing_records:
+                conn.execute(text("ALTER TABLE spray_records ADD COLUMN pdf_url TEXT"))
+            if "photo_urls" not in existing_records:
+                if is_sqlite:
+                    conn.execute(text("ALTER TABLE spray_records ADD COLUMN photo_urls TEXT DEFAULT '[]'"))
+                else:
+                    conn.execute(text("ALTER TABLE spray_records ADD COLUMN photo_urls JSONB DEFAULT '[]'"))
+            
+            # Create index for ticket_number if it doesn't exist
+            indexes = {idx["name"] for idx in insp.get_indexes("spray_records")}
+            if "idx_spray_records_ticket_number" not in indexes:
+                conn.execute(text("CREATE INDEX idx_spray_records_ticket_number ON spray_records(ticket_number)"))
 
 
 def get_site_or_404(db: Session, site_id: int) -> Site:
