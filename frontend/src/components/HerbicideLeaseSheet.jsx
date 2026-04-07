@@ -164,26 +164,14 @@ export default function HerbicideLeaseSheet({
   if (!isOpen) return null;
 
   return (
-    <div className="lease-sheet-overlay" style={{
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      backgroundColor: 'rgba(0, 0, 0, 0.8)',
-      zIndex: 1000,
-      display: 'flex',
-      flexDirection: 'column',
-      justifyContent: 'flex-end',
+    <div className="lease-sheet" style={{
+      backgroundColor: '#1f2937',
+      color: '#f9fafb',
+      borderRadius: '16px 16px 0 0',
+      maxHeight: '90vh',
+      overflow: 'auto',
+      padding: '20px',
     }}>
-      <div className="lease-sheet" style={{
-        backgroundColor: '#1f2937',
-        color: '#f9fafb',
-        borderRadius: '16px 16px 0 0',
-        maxHeight: '90vh',
-        overflow: 'auto',
-        padding: '20px',
-      }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
           <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600 }}>Herbicide Lease Sheet</h2>
           <button onClick={onCancel} style={{
@@ -764,6 +752,5 @@ export default function HerbicideLeaseSheet({
           </div>
         )}
       </div>
-    </div>
   );
 }

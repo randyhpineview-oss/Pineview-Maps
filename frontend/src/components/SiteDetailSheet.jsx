@@ -32,6 +32,7 @@ export default function SiteDetailSheet({
   sprayRecords = [],
   onCreateSprayRecord,
   onDeleteSprayRecord,
+  onStartInspection,
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editState, setEditState] = useState(() => buildEditState(site));
@@ -284,10 +285,8 @@ export default function SiteDetailSheet({
                 type="button"
                 disabled={statusSaving}
                 onClick={() => {
-                  onStatusChange(site, 'inspected', '');
-                  if (onCreateSprayRecord) {
-                    onCreateSprayRecord(site, { spray_date: new Date().toISOString().split('T')[0], notes: '', is_avoided: false });
-                  }
+                  // Trigger lease sheet via parent
+                  onStartInspection?.(site);
                 }}
               >
                 Mark Inspected

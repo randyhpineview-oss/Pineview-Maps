@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import AdminPanel from './components/AdminPanel';
 import FilterBar from './components/FilterBar';
+import HerbicideLeaseSheet from './components/HerbicideLeaseSheet';
 import LoginPage from './components/LoginPage';
 import MapView from './components/MapView';
 import PipelineDetailSheet from './components/PipelineDetailSheet';
@@ -114,6 +115,9 @@ export default function App() {
   const [sprayForm, setSprayForm] = useState({ date: new Date().toISOString().split('T')[0], notes: '', is_avoided: false });
   const [highlightedSprayRecordId, setHighlightedSprayRecordId] = useState(null);
   const [isFollowingUser, setIsFollowingUser] = useState(false);
+  // Lease sheet inspection state
+  const [inspectionSite, setInspectionSite] = useState(null);
+  const [inspectionPipeline, setInspectionPipeline] = useState(null);
   const mapRef = useRef(null);
   const lastFollowUpdateRef = useRef(0);
   const smoothedLocationRef = useRef(null);
@@ -918,6 +922,56 @@ export default function App() {
     }
   }
 
+  // Lease sheet inspection handlers
+  function handleStartInspection(siteOrPipeline) {
+    // Close any open panels
+    setDetailOpen(false);
+    setPipelineDetailOpen(false);
+    // Set the inspection target
+    if (siteOrPipeline?.lsd !== undefined) {
+      // It's a site
+      setInspectionSite(siteOrPipeline);
+      setInspectionPipeline(null);
+    } else {
+      // It's a pipeline
+      setInspectionPipeline(siteOrPipeline);
+      setInspectionSite(null);
+    }
+  }
+
+  async function handleLeaseSheetSubmit(payload) {
+    setStatusSaving(true);
+    try {
+      if (inspectionSite) {
+        await api.createSiteSprayRecord(inspectionSite.id, payload);
+        // Refresh site data
+        const updated = await api.getSite(inspectionSite.id);
+        setSelectedSite(updated);
+        setSites((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+      } else if (inspectionPipeline) {
+        await api.createSprayRecord(inspectionPipeline.id, payload);
+        // Refresh pipeline data
+        const updated = await api.getPipeline(inspectionPipeline.id);
+        setSelectedPipeline(updated);
+        setPipelineSprayRecords(updated.spray_records || []);
+        setPipelines((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+      }
+      setMessage(payload.is_avoided ? 'Issue recorded.' : 'Spray record saved.');
+      // Clear inspection state
+      setInspectionSite(null);
+      setInspectionPipeline(null);
+    } catch (error) {
+      setMessage(error.message || 'Failed to save spray record.');
+    } finally {
+      setStatusSaving(false);
+    }
+  }
+
+  function handleLeaseSheetCancel() {
+    setInspectionSite(null);
+    setInspectionPipeline(null);
+  }
+
   function handleCancelEditMapPick() {
     setIsEditPickingMode(false);
     isEditPickingModeRef.current = false;
@@ -1405,6 +1459,30 @@ export default function App() {
           </div>
         ) : null}
 
+        {/* ── Lease Sheet overlay ── */}
+        {(inspectionSite || inspectionPipeline) && (
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 30,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'flex-end',
+          }}>
+            <HerbicideLeaseSheet
+              site={inspectionSite}
+              pipeline={inspectionPipeline}
+              isOpen={true}
+              onSubmit={handleLeaseSheetSubmit}
+              onCancel={handleLeaseSheetCancel}
+            />
+          </div>
+        )}
+
         {/* Place-pin banner */}
         {isPlacingPin ? (
           <div className="place-banner">
@@ -1563,6 +1641,7 @@ export default function App() {
                 sprayRecords={selectedSite?.spray_records || []}
                 onCreateSprayRecord={handleCreateSiteSprayRecord}
                 onDeleteSprayRecord={handleDeleteSiteSprayRecord}
+                onStartInspection={handleStartInspection}
               />
             ) : null}
           </div>
@@ -1588,12 +1667,13 @@ export default function App() {
                 canManage={canManagePins}
                 onSavePipeline={handleUpdatePipeline}
                 onDeletePipeline={handleDeletePipeline}
-                onMarkInspection={handleStartSprayMarking}
+                onMarkInspection={handleStartInspection}
                 adminBusy={adminBusy}
                 sprayRecords={pipelineSprayRecords}
                 onDeleteSprayRecord={handleDeleteSprayRecord}
                 highlightedSprayRecordId={highlightedSprayRecordId}
                 onHighlightSprayRecord={setHighlightedSprayRecordId}
+                onStartInspection={handleStartInspection}
               />
             ) : null}
           </div>
