@@ -21,6 +21,7 @@ class SprayRecordRead(BaseModel):
     created_at: datetime
     ticket_number: str | None = None
     lease_sheet_data: dict | None = None
+    pdf_url: str | None = None
     photo_urls: list[str] | None = None
 
 

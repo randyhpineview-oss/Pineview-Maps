@@ -156,9 +156,28 @@ export default function HerbicideLeaseSheet({
   const handleSubmit = async () => {
     setIsSubmitting(true);
     try {
+      // Convert photos to base64
+      const photoPromises = photos.map(async (p) => {
+        return new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            resolve({
+              name: p.file.name,
+              data: reader.result.split(',')[1], // Remove the data:image/...;base64, prefix
+              type: p.file.type,
+            });
+          };
+          reader.readAsDataURL(p.file);
+        });
+      });
+      
+      const photoData = await Promise.all(photoPromises);
+      
       const payload = {
-        lease_sheet_data: form,
-        photos: photos.map(p => p.file),
+        lease_sheet_data: {
+          ...form,
+          photos: photoData,
+        },
         spray_date: form.date,
         notes: form.comments,
         is_avoided: false,

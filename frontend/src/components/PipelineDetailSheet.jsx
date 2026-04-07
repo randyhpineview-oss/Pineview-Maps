@@ -211,11 +211,26 @@ export default function PipelineDetailSheet({
                           return `${(sectionLength * 1000).toFixed(0)}m`;
                         })()}
                         {record.is_avoided ? ' (Not Sprayed/Issue)' : ''}
+                        {record.lease_sheet_data ? ' 📄' : ''}
                       </div>
                       <div className="small-text">
                         By: {record.sprayed_by_name || 'Unknown'}
+                        {record.ticket_number ? ` — Ticket: ${record.ticket_number}` : ''}
                         {record.notes ? ` — ${record.notes}` : ''}
                       </div>
+                      {record.pdf_url && (
+                        <div className="small-text" style={{ marginTop: '0.25rem' }}>
+                          <a 
+                            href={record.pdf_url} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            style={{ color: '#3b82f6', textDecoration: 'underline' }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            📄 View Lease Sheet PDF
+                          </a>
+                        </div>
+                      )}
                     </div>
                     {canManage && (
                       <button
