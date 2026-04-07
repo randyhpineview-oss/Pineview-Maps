@@ -169,8 +169,13 @@ export default function HerbicideLeaseSheet({
       color: '#f9fafb',
       borderRadius: '16px 16px 0 0',
       maxHeight: '90vh',
-      overflow: 'auto',
+      overflowY: 'auto',
+      overflowX: 'hidden',
       padding: '20px',
+      maxWidth: '600px',
+      margin: '0 auto',
+      width: '100%',
+      boxSizing: 'border-box',
     }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
           <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600 }}>Herbicide Lease Sheet</h2>
