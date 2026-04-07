@@ -53,9 +53,15 @@ export default function HerbicideLeaseSheet({
 
   // Auto-populate from site or pipeline
   useEffect(() => {
+    // Always update time when lease sheet opens
+    const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const currentDate = new Date().toISOString().split('T')[0];
+    
     if (site) {
       setForm(prev => ({
         ...prev,
+        time: currentTime,
+        date: currentDate,
         customer: site.client || '',
         area: site.area || '',
         lsdOrPipeline: site.lsd || '',
@@ -63,6 +69,8 @@ export default function HerbicideLeaseSheet({
     } else if (pipeline) {
       setForm(prev => ({
         ...prev,
+        time: currentTime,
+        date: currentDate,
         customer: pipeline.client || '',
         area: pipeline.area || '',
         lsdOrPipeline: pipeline.name || '',
