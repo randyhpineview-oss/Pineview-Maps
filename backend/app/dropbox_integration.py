@@ -68,6 +68,48 @@ def build_photo_path(ticket: str, index: int) -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"/Pineview Maps/Form Photos/{_safe_name(ticket)}_{timestamp}_{index}.jpg"
 
+def _get_or_create_shared_link(dbx, file_path: str) -> Optional[str]:
+    """Try to create a shared link, or retrieve existing one. Returns URL or None."""
+    # Attempt 1: create a new shared link
+    try:
+        shared_link = dbx.sharing_create_shared_link_with_settings(file_path)
+        print(f"[DROPBOX] Shared link created: {shared_link.url}")
+        return shared_link.url
+    except dropbox.exceptions.ApiError as link_err:
+        print(f"[DROPBOX] sharing_create_shared_link_with_settings error: {link_err}")
+        # If shared link already exists (re-upload), retrieve the existing one
+        if hasattr(link_err, 'error') and hasattr(link_err.error, 'is_shared_link_already_exists'):
+            try:
+                if link_err.error.is_shared_link_already_exists():
+                    existing = link_err.error.get_shared_link_already_exists().metadata
+                    print(f"[DROPBOX] Using existing shared link: {existing.url}")
+                    return existing.url
+            except Exception as inner_err:
+                print(f"[DROPBOX] Error extracting existing link: {inner_err}")
+    except Exception as e:
+        print(f"[DROPBOX] Unexpected error creating shared link: {type(e).__name__}: {e}")
+
+    # Attempt 2: list existing shared links for the path
+    try:
+        links = dbx.sharing_list_shared_links(path=file_path, direct_only=True)
+        if links.links:
+            print(f"[DROPBOX] Found existing shared link: {links.links[0].url}")
+            return links.links[0].url
+    except Exception as e:
+        print(f"[DROPBOX] sharing_list_shared_links error: {type(e).__name__}: {e}")
+
+    # Attempt 3: get a temporary link (no sharing.write scope needed)
+    try:
+        temp_link = dbx.files_get_temporary_link(file_path)
+        print(f"[DROPBOX] Using temporary link (4hr expiry): {temp_link.link[:60]}...")
+        return temp_link.link
+    except Exception as e:
+        print(f"[DROPBOX] files_get_temporary_link error: {type(e).__name__}: {e}")
+
+    print(f"[DROPBOX] All link methods failed for: {file_path}")
+    return None
+
+
 def upload_pdf_to_dropbox(pdf_content: bytes, file_path: str) -> Optional[str]:
     """Upload a PDF to Dropbox at the given path and return the shared link."""
     try:
@@ -78,27 +120,7 @@ def upload_pdf_to_dropbox(pdf_content: bytes, file_path: str) -> Optional[str]:
         
         dbx.files_upload(pdf_content, file_path, mode=dropbox.files.WriteMode.overwrite)
         print(f"[DROPBOX] PDF uploaded successfully, creating shared link...")
-        try:
-            shared_link = dbx.sharing_create_shared_link_with_settings(file_path)
-            print(f"[DROPBOX] Shared link created: {shared_link.url}")
-            return shared_link.url
-        except dropbox.exceptions.ApiError as link_err:
-            # If shared link already exists (re-upload), retrieve the existing one
-            if hasattr(link_err, 'error') and hasattr(link_err.error, 'is_shared_link_already_exists'):
-                if link_err.error.is_shared_link_already_exists():
-                    existing = link_err.error.get_shared_link_already_exists().metadata
-                    print(f"[DROPBOX] Using existing shared link: {existing.url}")
-                    return existing.url
-            # Fallback: list shared links for the path
-            try:
-                links = dbx.sharing_list_shared_links(path=file_path, direct_only=True)
-                if links.links:
-                    print(f"[DROPBOX] Found existing shared link: {links.links[0].url}")
-                    return links.links[0].url
-            except Exception:
-                pass
-            print(f"[DROPBOX] Could not get shared link: {link_err}")
-            return None
+        return _get_or_create_shared_link(dbx, file_path)
     except Exception as e:
         print(f"[DROPBOX] Error uploading PDF: {type(e).__name__}: {e}")
         return None
@@ -112,9 +134,8 @@ def upload_photo_to_dropbox(photo_content: bytes, file_path: str) -> Optional[st
         _ensure_folder(dbx, folder)
         
         dbx.files_upload(photo_content, file_path, mode=dropbox.files.WriteMode.overwrite)
-        shared_link = dbx.sharing_create_shared_link_with_settings(file_path)
-        print(f"[DROPBOX] Photo shared link: {shared_link.url}")
-        return shared_link.url
+        print(f"[DROPBOX] Photo uploaded successfully, creating shared link...")
+        return _get_or_create_shared_link(dbx, file_path)
     except Exception as e:
         print(f"[DROPBOX] Error uploading photo: {type(e).__name__}: {e}")
         return None

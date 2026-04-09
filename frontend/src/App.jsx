@@ -583,6 +583,7 @@ export default function App() {
 
   // Swipe detection refs for side panels
   const sitesPanelTouchStartX = useRef(null);
+  const recentsPanelTouchStartX = useRef(null);
   const adminPanelTouchStartX = useRef(null);
   const SWIPE_THRESHOLD = 50;
 
@@ -600,6 +601,20 @@ export default function App() {
       setActiveTab(TAB_MAP);
     }
     sitesPanelTouchStartX.current = null;
+  };
+
+  const handleRecentsPanelTouchStart = (e) => {
+    recentsPanelTouchStartX.current = e.touches[0].clientX;
+  };
+
+  const handleRecentsPanelTouchEnd = (e) => {
+    if (recentsPanelTouchStartX.current === null) return;
+    const endX = e.changedTouches[0].clientX;
+    const diff = endX - recentsPanelTouchStartX.current;
+    if (diff > SWIPE_THRESHOLD && activeTab === TAB_RECENTS) {
+      setActiveTab(TAB_MAP);
+    }
+    recentsPanelTouchStartX.current = null;
   };
 
   const handleAdminPanelTouchStart = (e) => {
@@ -1873,7 +1888,11 @@ export default function App() {
         </div>
 
         {/* ── Recents panel ── */}
-        <div className={`side-panel ${activeTab === TAB_RECENTS ? 'open' : ''}`}>
+        <div 
+          className={`side-panel ${activeTab === TAB_RECENTS ? 'open' : ''}`}
+          onTouchStart={handleRecentsPanelTouchStart}
+          onTouchEnd={handleRecentsPanelTouchEnd}
+        >
           <div className="side-panel-header">
             <h2>Recents</h2>
           </div>
