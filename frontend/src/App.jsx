@@ -1616,32 +1616,50 @@ export default function App() {
         )}
 
         {/* ── PDF Preview overlay ── */}
-        {previewingPdfUrl && (
-          <div style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            zIndex: 50,
-            backgroundColor: '#1f2937',
-            display: 'flex',
-            flexDirection: 'column',
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #374151' }}>
-              <span style={{ color: '#f9fafb', fontWeight: 600 }}>PDF Preview</span>
-              <button
-                onClick={() => setPreviewingPdfUrl(null)}
-                style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer' }}
-              >×</button>
+        {previewingPdfUrl && (() => {
+          // Convert Dropbox shared link to a direct-content URL for iframe embedding
+          let embedUrl = previewingPdfUrl;
+          if (embedUrl.includes('dropbox.com')) {
+            // Replace www.dropbox.com with dl.dropboxusercontent.com for raw content
+            embedUrl = embedUrl
+              .replace('www.dropbox.com', 'dl.dropboxusercontent.com')
+              .replace('&dl=0', '').replace('?dl=0', '?').replace('dl=1', '').replace(/[?&]$/, '');
+          }
+          // Wrap in Google Docs Viewer as reliable cross-browser PDF renderer
+          const googleViewerUrl = `https://docs.google.com/gview?embedded=true&url=${encodeURIComponent(embedUrl)}`;
+          return (
+            <div style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 50,
+              backgroundColor: '#1f2937',
+              display: 'flex',
+              flexDirection: 'column',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #374151', gap: '8px' }}>
+                <span style={{ color: '#f9fafb', fontWeight: 600, flex: 1 }}>PDF Preview</span>
+                <a
+                  href={embedUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: '#60a5fa', fontSize: '0.85rem', textDecoration: 'none', whiteSpace: 'nowrap' }}
+                >Open in tab ↗</a>
+                <button
+                  onClick={() => setPreviewingPdfUrl(null)}
+                  style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer', marginLeft: '4px' }}
+                >×</button>
+              </div>
+              <iframe
+                src={googleViewerUrl}
+                style={{ flex: 1, border: 'none', width: '100%' }}
+                title="PDF Preview"
+              />
             </div>
-            <iframe
-              src={previewingPdfUrl}
-              style={{ flex: 1, border: 'none', width: '100%' }}
-              title="PDF Preview"
-            />
-          </div>
-        )}
+          );
+        })()}
 
         {/* Place-pin banner */}
         {isPlacingPin ? (
@@ -1804,9 +1822,7 @@ export default function App() {
                 onStartInspection={handleStartInspection}
                 onViewPdf={(record) => {
                   if (record.pdf_url) {
-                    // Convert Dropbox shared link to direct download for iframe embed
-                    const url = record.pdf_url.replace('dl=0', 'dl=1').replace('?raw=1', '?dl=1');
-                    setPreviewingPdfUrl(url);
+                    setPreviewingPdfUrl(record.pdf_url);
                   }
                 }}
                 onEditRecord={(record) => setEditingSprayRecord({ ...record, site_lsd: selectedSite?.lsd, site_client: selectedSite?.client, site_area: selectedSite?.area })}
@@ -1901,8 +1917,7 @@ export default function App() {
               visible={activeTab === TAB_RECENTS}
               onViewPdf={(record) => {
                 if (record.pdf_url) {
-                  const url = record.pdf_url.replace('dl=0', 'dl=1').replace('?raw=1', '?dl=1');
-                  setPreviewingPdfUrl(url);
+                  setPreviewingPdfUrl(record.pdf_url);
                 }
               }}
               onEditRecord={(record) => setEditingSprayRecord(record)}
