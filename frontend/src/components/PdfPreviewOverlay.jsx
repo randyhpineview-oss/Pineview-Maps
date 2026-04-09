@@ -6,22 +6,6 @@ const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 4;
 const ZOOM_STEP = 0.25;
 
-const btnStyle = {
-  width: '40px',
-  height: '40px',
-  borderRadius: '50%',
-  border: 'none',
-  backgroundColor: 'rgba(55,65,81,0.9)',
-  color: '#f9fafb',
-  fontSize: '1.3rem',
-  fontWeight: 700,
-  cursor: 'pointer',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
-};
-
 export default function PdfPreviewOverlay({ pdfUrl, onClose }) {
   const [blobUrl, setBlobUrl] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -77,10 +61,16 @@ export default function PdfPreviewOverlay({ pdfUrl, onClose }) {
     };
   }, [blobUrl]);
 
-  // Zoom helpers
-  const zoomIn = useCallback(() => setZoom(z => Math.min(MAX_ZOOM, z + ZOOM_STEP)), []);
-  const zoomOut = useCallback(() => setZoom(z => Math.max(MIN_ZOOM, z - ZOOM_STEP)), []);
-  const resetZoom = useCallback(() => { setZoom(1); setPan({ x: 0, y: 0 }); }, []);
+  // Double-tap to reset zoom
+  const lastTapTime = useRef(0);
+  const handleDoubleTap = useCallback(() => {
+    const now = Date.now();
+    if (now - lastTapTime.current < 300) {
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+    }
+    lastTapTime.current = now;
+  }, []);
 
   // Touch handlers for pinch-to-zoom and pan
   const handleTouchStart = useCallback((e) => {
@@ -125,8 +115,9 @@ export default function PdfPreviewOverlay({ pdfUrl, onClose }) {
     if (e.touches.length === 0) {
       isPanning.current = false;
       lastTouch.current = null;
+      handleDoubleTap();
     }
-  }, []);
+  }, [handleDoubleTap]);
 
   // Mouse wheel zoom (desktop)
   const handleWheel = useCallback((e) => {
@@ -215,23 +206,6 @@ export default function PdfPreviewOverlay({ pdfUrl, onClose }) {
               style={{ width: '100%', height: '100%', border: 'none', pointerEvents: zoom > 1 ? 'none' : 'auto' }}
               title="PDF Preview"
             />
-          </div>
-
-          {/* Zoom controls */}
-          <div style={{
-            position: 'absolute',
-            bottom: '20px',
-            right: '16px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '8px',
-            zIndex: 10,
-          }}>
-            <button onClick={zoomIn} style={btnStyle} title="Zoom in">+</button>
-            <button onClick={resetZoom} style={{ ...btnStyle, fontSize: '0.7rem', fontWeight: 600 }} title="Reset zoom">
-              {Math.round(zoom * 100)}%
-            </button>
-            <button onClick={zoomOut} style={btnStyle} title="Zoom out">−</button>
           </div>
         </div>
       )}
