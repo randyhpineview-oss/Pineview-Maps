@@ -4,13 +4,14 @@ import dropbox
 from datetime import datetime
 from typing import Optional, List
 
-DROPBOX_ACCESS_TOKEN = os.getenv("DROPBOX_ACCESS_TOKEN")
-
 def get_dropbox_client():
     """Get an authenticated Dropbox client."""
-    if not DROPBOX_ACCESS_TOKEN:
+    token = os.getenv("DROPBOX_ACCESS_TOKEN")
+    if not token:
+        print("[DROPBOX] DROPBOX_ACCESS_TOKEN not set in environment")
         raise ValueError("Dropbox access token not configured")
-    return dropbox.Dropbox(DROPBOX_ACCESS_TOKEN)
+    print(f"[DROPBOX] Using token starting with: {token[:8]}...")
+    return dropbox.Dropbox(token)
 
 def _safe_name(name: str) -> str:
     """Sanitize a string for use in a Dropbox path."""
@@ -51,28 +52,32 @@ def build_photo_path(ticket: str, index: int) -> str:
 def upload_pdf_to_dropbox(pdf_content: bytes, file_path: str) -> Optional[str]:
     """Upload a PDF to Dropbox at the given path and return the shared link."""
     try:
+        print(f"[DROPBOX] Uploading PDF ({len(pdf_content)} bytes) to: {file_path}")
         dbx = get_dropbox_client()
-        # Ensure parent folder exists
         folder = '/'.join(file_path.split('/')[:-1])
         _ensure_folder(dbx, folder)
         
         dbx.files_upload(pdf_content, file_path, mode=dropbox.files.WriteMode.overwrite)
+        print(f"[DROPBOX] PDF uploaded successfully, creating shared link...")
         shared_link = dbx.sharing_create_shared_link_with_settings(file_path)
+        print(f"[DROPBOX] Shared link created: {shared_link.url}")
         return shared_link.url
     except Exception as e:
-        print(f"Error uploading PDF to Dropbox: {e}")
+        print(f"[DROPBOX] Error uploading PDF: {type(e).__name__}: {e}")
         return None
 
 def upload_photo_to_dropbox(photo_content: bytes, file_path: str) -> Optional[str]:
     """Upload a photo to Dropbox at the given path and return the shared link."""
     try:
+        print(f"[DROPBOX] Uploading photo ({len(photo_content)} bytes) to: {file_path}")
         dbx = get_dropbox_client()
         folder = '/'.join(file_path.split('/')[:-1])
         _ensure_folder(dbx, folder)
         
         dbx.files_upload(photo_content, file_path, mode=dropbox.files.WriteMode.overwrite)
         shared_link = dbx.sharing_create_shared_link_with_settings(file_path)
+        print(f"[DROPBOX] Photo shared link: {shared_link.url}")
         return shared_link.url
     except Exception as e:
-        print(f"Error uploading photo to Dropbox: {e}")
+        print(f"[DROPBOX] Error uploading photo: {type(e).__name__}: {e}")
         return None

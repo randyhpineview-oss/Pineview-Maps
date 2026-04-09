@@ -154,11 +154,14 @@ export default function HerbicideLeaseSheet({
 
   const handlePhotoUpload = (e) => {
     const files = Array.from(e.target.files);
-    const newPhotos = files.map(file => ({
+    // Limit: only take what's needed to reach max 2
+    const spotsLeft = 2 - photos.length;
+    if (spotsLeft <= 0) return;
+    const toAdd = files.slice(0, spotsLeft).map(file => ({
       file,
       preview: URL.createObjectURL(file),
     }));
-    setPhotos(prev => [...prev, ...newPhotos]);
+    setPhotos(prev => [...prev, ...toAdd]);
   };
 
   const removePhoto = (index) => {
@@ -170,13 +173,20 @@ export default function HerbicideLeaseSheet({
     });
   };
 
-  const handlePreview = () => {
+  const handlePreview = async () => {
+    // Build photo data URLs for embedding in PDF
+    const photoDataUrls = await Promise.all(
+      photos.map(p => new Promise(resolve => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.readAsDataURL(p.file);
+      }))
+    );
     const pdfData = {
       ...form,
       ticket_number: ticketNumber,
-      photoCount: photos.length,
     };
-    const { blob, base64 } = generateLeaseSheetPdf(pdfData);
+    const { blob, base64 } = await generateLeaseSheetPdf(pdfData, photoDataUrls);
     setPdfBase64(base64);
     setPreviewUrl(URL.createObjectURL(blob));
   };
@@ -214,11 +224,12 @@ export default function HerbicideLeaseSheet({
         is_avoided: false,
       };
       await onSubmit(payload);
-    } finally {
-      setIsSubmitting(false);
+      // Success — parent will close the sheet, clean up
       if (previewUrl) URL.revokeObjectURL(previewUrl);
-      setPreviewUrl(null);
-      setPdfBase64(null);
+    } catch (err) {
+      // Stay on preview, show error
+      alert('Upload failed: ' + (err.message || 'Unknown error'));
+      setIsSubmitting(false);
     }
   };
 
@@ -233,37 +244,37 @@ export default function HerbicideLeaseSheet({
   // ── Preview overlay ──
   if (previewUrl) {
     return (
-      <div className="lease-sheet" style={{
+      <div style={{
         backgroundColor: '#1f2937',
         color: '#f9fafb',
-        borderRadius: '16px 16px 0 0',
-        maxHeight: '90vh',
-        overflowY: 'auto',
-        overflowX: 'hidden',
-        padding: '20px',
-        maxWidth: '600px',
-        margin: '0 auto',
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
         width: '100%',
         boxSizing: 'border-box',
       }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-          <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600 }}>Preview — {ticketNumber}</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', flexShrink: 0 }}>
+          <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600 }}>Preview — {ticketNumber}</h2>
         </div>
         <div style={{
-          width: '100%',
-          height: '60vh',
-          backgroundColor: '#fff',
-          borderRadius: '8px',
-          overflow: 'hidden',
-          marginBottom: '16px',
+          flex: 1,
+          overflow: 'auto',
+          WebkitOverflowScrolling: 'touch',
+          padding: '0 8px',
         }}>
-          <iframe
-            src={previewUrl}
-            title="PDF Preview"
-            style={{ width: '100%', height: '100%', border: 'none' }}
-          />
+          <object
+            data={previewUrl}
+            type="application/pdf"
+            style={{ width: '100%', height: '100%', minHeight: '70vh', border: 'none', borderRadius: '6px' }}
+          >
+            <iframe
+              src={previewUrl}
+              title="PDF Preview"
+              style={{ width: '100%', height: '100%', minHeight: '70vh', border: 'none' }}
+            />
+          </object>
         </div>
-        <div style={{ display: 'flex', gap: '12px' }}>
+        <div style={{ display: 'flex', gap: '10px', padding: '12px 16px', flexShrink: 0 }}>
           <button
             onClick={handleConfirmSubmit}
             disabled={isSubmitting}
@@ -806,71 +817,41 @@ export default function HerbicideLeaseSheet({
               />
             </div>
 
-            {/* Photos */}
+            {/* Photos — max 2 */}
             <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '8px' }}>Location Photos</label>
-              <input
-                type="file"
-                accept="image/*"
-                multiple
-                onChange={handlePhotoUpload}
-                style={{ display: 'none' }}
-                id="photo-upload"
-              />
-              <label
-                htmlFor="photo-upload"
-                style={{
-                  display: 'inline-block',
-                  padding: '8px 16px',
-                  backgroundColor: '#374151',
-                  color: '#f9fafb',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontSize: '0.875rem',
-                }}
-              >
-                Add Photos
-              </label>
-              
-              {photos.length > 0 && (
-                <div style={{ display: 'flex', gap: '8px', marginTop: '12px', flexWrap: 'wrap' }}>
-                  {photos.map((photo, idx) => (
-                    <div key={idx} style={{ position: 'relative' }}>
-                      <img
-                        src={photo.preview}
-                        alt={`Photo ${idx + 1}`}
-                        style={{
-                          width: '80px',
-                          height: '80px',
-                          objectFit: 'cover',
-                          borderRadius: '6px',
-                        }}
-                      />
-                      <button
-                        onClick={() => removePhoto(idx)}
-                        style={{
-                          position: 'absolute',
-                          top: '-8px',
-                          right: '-8px',
-                          width: '20px',
-                          height: '20px',
-                          borderRadius: '50%',
-                          backgroundColor: '#ef4444',
-                          color: 'white',
-                          border: 'none',
-                          cursor: 'pointer',
-                          fontSize: '12px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}
-                      >
-                        ×
-                      </button>
+              <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '8px' }}>Photos (max 2)</label>
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                {/* Slot 1: LSD / Location ID */}
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginBottom: '4px' }}>LSD / Location ID</div>
+                  {photos[0] ? (
+                    <div style={{ position: 'relative', display: 'inline-block' }}>
+                      <img src={photos[0].preview} alt="LSD Photo" style={{ width: '100px', height: '100px', objectFit: 'cover', borderRadius: '6px' }} />
+                      <button onClick={() => removePhoto(0)} style={{ position: 'absolute', top: '-8px', right: '-8px', width: '20px', height: '20px', borderRadius: '50%', backgroundColor: '#ef4444', color: 'white', border: 'none', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
                     </div>
-                  ))}
+                  ) : (
+                    <>
+                      <input type="file" accept="image/*" capture="environment" onChange={handlePhotoUpload} style={{ display: 'none' }} id="photo-lsd" />
+                      <label htmlFor="photo-lsd" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100px', height: '100px', backgroundColor: '#374151', borderRadius: '6px', cursor: 'pointer', fontSize: '2rem', color: '#6b7280' }}>+</label>
+                    </>
+                  )}
                 </div>
-              )}
+                {/* Slot 2: Site Photo */}
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginBottom: '4px' }}>Site Photo</div>
+                  {photos[1] ? (
+                    <div style={{ position: 'relative', display: 'inline-block' }}>
+                      <img src={photos[1].preview} alt="Site Photo" style={{ width: '100px', height: '100px', objectFit: 'cover', borderRadius: '6px' }} />
+                      <button onClick={() => removePhoto(1)} style={{ position: 'absolute', top: '-8px', right: '-8px', width: '20px', height: '20px', borderRadius: '50%', backgroundColor: '#ef4444', color: 'white', border: 'none', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+                    </div>
+                  ) : (
+                    <>
+                      <input type="file" accept="image/*" capture="environment" onChange={handlePhotoUpload} style={{ display: 'none' }} id="photo-site" />
+                      <label htmlFor="photo-site" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100px', height: '100px', backgroundColor: '#374151', borderRadius: '6px', cursor: photos.length >= 2 ? 'not-allowed' : 'pointer', fontSize: '2rem', color: '#6b7280' }}>+</label>
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
 
             {/* Submit buttons */}
