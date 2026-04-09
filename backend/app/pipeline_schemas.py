@@ -32,6 +32,8 @@ class SprayRecordCreate(BaseModel):
     notes: str | None = None
     is_avoided: bool = False
     lease_sheet_data: dict | None = None
+    pdf_base64: str | None = None
+    ticket_number: str | None = None
 
 
 class PipelineRead(BaseModel):

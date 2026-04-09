@@ -237,6 +237,11 @@ export const api = {
     return request('/api/sync-status');
   },
 
+  // ── Ticket number ──
+  getNextTicket() {
+    return request('/api/next-ticket');
+  },
+
   // ── Lookup tables (herbicides, applicators, noxious weeds, location types) ──
   listHerbicides() {
     return request('/api/lookups/herbicides');

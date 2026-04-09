@@ -1,4 +1,5 @@
 import os
+import re
 import dropbox
 from datetime import datetime
 from typing import Optional, List
@@ -11,85 +12,67 @@ def get_dropbox_client():
         raise ValueError("Dropbox access token not configured")
     return dropbox.Dropbox(DROPBOX_ACCESS_TOKEN)
 
-def upload_pdf_to_dropbox(pdf_content: bytes, filename: str, folder: str = "/lease_sheets") -> Optional[str]:
+def _safe_name(name: str) -> str:
+    """Sanitize a string for use in a Dropbox path."""
+    return re.sub(r'[<>:"/\\|?*]', '_', (name or 'Unknown').strip()) or 'Unknown'
+
+def _ensure_folder(dbx, folder: str):
+    """Create folder if it doesn't exist."""
+    try:
+        dbx.files_create_folder_v2(folder)
+    except dropbox.exceptions.ApiError:
+        pass  # folder already exists or parent path issue — either way continue
+
+def build_pdf_path(date_str: str, client: str, area: str, ticket: str, lsd_or_pipeline: str) -> str:
     """
-    Upload a PDF to Dropbox and return the shared link.
-    
-    Args:
-        pdf_content: PDF file content as bytes
-        filename: Name for the file
-        folder: Dropbox folder path (default: /lease_sheets)
-    
-    Returns:
-        Shared URL for the uploaded file or None if upload fails
+    Build Dropbox path:
+    /{YYYY} Spray Records/{YYYY-MM-DD}/Herbicide Lease Sheet/{Client}/{Area}/{Ticket}_{LSD}.pdf
     """
     try:
+        dt = datetime.strptime(date_str, '%Y-%m-%d')
+    except (ValueError, TypeError):
+        dt = datetime.utcnow()
+    year = dt.strftime('%Y')
+    date_folder = dt.strftime('%Y-%m-%d')
+    return (
+        f"/{year} Spray Records/{date_folder}/Herbicide Lease Sheet"
+        f"/{_safe_name(client)}/{_safe_name(area)}"
+        f"/{_safe_name(ticket)}_{_safe_name(lsd_or_pipeline)}.pdf"
+    )
+
+def build_photo_path(ticket: str, index: int) -> str:
+    """
+    Build Dropbox path:
+    /Pineview Maps/Form Photos/{Ticket}_{timestamp}_{index}.jpg
+    """
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"/Pineview Maps/Form Photos/{_safe_name(ticket)}_{timestamp}_{index}.jpg"
+
+def upload_pdf_to_dropbox(pdf_content: bytes, file_path: str) -> Optional[str]:
+    """Upload a PDF to Dropbox at the given path and return the shared link."""
+    try:
         dbx = get_dropbox_client()
+        # Ensure parent folder exists
+        folder = '/'.join(file_path.split('/')[:-1])
+        _ensure_folder(dbx, folder)
         
-        # Ensure folder exists
-        try:
-            dbx.files_create_folder_v2(folder)
-        except dropbox.exceptions.ApiError as e:
-            if not isinstance(e.error, dropbox.files.CreateFolderError):
-                raise
-        
-        # Upload file
-        file_path = f"{folder}/{filename}"
-        dbx.files_upload(
-            pdf_content,
-            file_path,
-            mode=dropbox.files.WriteMode.overwrite
-        )
-        
-        # Create shared link
+        dbx.files_upload(pdf_content, file_path, mode=dropbox.files.WriteMode.overwrite)
         shared_link = dbx.sharing_create_shared_link_with_settings(file_path)
         return shared_link.url
-        
     except Exception as e:
-        print(f"Error uploading to Dropbox: {e}")
+        print(f"Error uploading PDF to Dropbox: {e}")
         return None
 
-def upload_photo_to_dropbox(photo_content: bytes, filename: str, folder: str = "/lease_sheet_photos") -> Optional[str]:
-    """
-    Upload a photo to Dropbox and return the shared link.
-    
-    Args:
-        photo_content: Photo file content as bytes
-        filename: Name for the file
-        folder: Dropbox folder path (default: /lease_sheet_photos)
-    
-    Returns:
-        Shared URL for the uploaded file or None if upload fails
-    """
+def upload_photo_to_dropbox(photo_content: bytes, file_path: str) -> Optional[str]:
+    """Upload a photo to Dropbox at the given path and return the shared link."""
     try:
         dbx = get_dropbox_client()
+        folder = '/'.join(file_path.split('/')[:-1])
+        _ensure_folder(dbx, folder)
         
-        # Ensure folder exists
-        try:
-            dbx.files_create_folder_v2(folder)
-        except dropbox.exceptions.ApiError as e:
-            if not isinstance(e.error, dropbox.files.CreateFolderError):
-                raise
-        
-        # Upload file
-        file_path = f"{folder}/{filename}"
-        dbx.files_upload(
-            photo_content,
-            file_path,
-            mode=dropbox.files.WriteMode.overwrite
-        )
-        
-        # Create shared link
+        dbx.files_upload(photo_content, file_path, mode=dropbox.files.WriteMode.overwrite)
         shared_link = dbx.sharing_create_shared_link_with_settings(file_path)
         return shared_link.url
-        
     except Exception as e:
         print(f"Error uploading photo to Dropbox: {e}")
         return None
-
-def generate_filename(prefix: str, extension: str, ticket_number: str = None) -> str:
-    """Generate a unique filename with timestamp and optional ticket number."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    if ticket_number:
-        return f"{prefix}_{ticket_number}_{timestamp}.{extension}"
-    return f"{prefix}_{timestamp}.{extension}"

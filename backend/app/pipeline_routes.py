@@ -1,14 +1,14 @@
 from datetime import datetime
 import json
 import math
+import base64
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session, joinedload
 
 from app.auth import get_current_user, require_roles
 from app.database import get_db
-from app.dropbox_integration import upload_pdf_to_dropbox, upload_photo_to_dropbox, generate_filename
-from app.pdf_generator import generate_lease_sheet_pdf
+from app.dropbox_integration import upload_pdf_to_dropbox, upload_photo_to_dropbox, build_pdf_path, build_photo_path
 from app.kml_pipeline_import import parse_pipeline_kml, simplify_coordinates, _total_length_km
 from app.models import RoleEnum, User
 from app.pipeline_models import Pipeline, PipelineApprovalState, PipelineStatus, SprayRecord
@@ -314,35 +314,39 @@ def create_spray_record(
 
     user_name = getattr(current_user, 'name', None) or (current_user.email.split('@')[0].title() if current_user.email else None)
 
-    # Generate ticket number first
-    ticket_number = generate_ticket_number(db)
+    # Use ticket number from frontend or generate one
+    ticket_number = payload.ticket_number or generate_ticket_number(db)
     
-    # Handle lease sheet data and PDF generation
+    # Handle Dropbox uploads
     pdf_url = None
     photo_urls = []
     
     if payload.lease_sheet_data:
-        # Add ticket number to lease sheet data
         lease_sheet_data = payload.lease_sheet_data.copy()
         lease_sheet_data['ticket_number'] = ticket_number
         
-        # Generate and upload PDF
-        try:
-            pdf_content = generate_lease_sheet_pdf(lease_sheet_data)
-            pdf_filename = generate_filename("lease_sheet", "pdf", ticket_number)
-            pdf_url = upload_pdf_to_dropbox(pdf_content, pdf_filename)
-        except Exception as e:
-            print(f"Error generating/uploading PDF: {e}")
+        # Upload frontend-generated PDF if provided
+        if payload.pdf_base64:
+            try:
+                pdf_content = base64.b64decode(payload.pdf_base64)
+                pdf_path = build_pdf_path(
+                    date_str=str(payload.spray_date),
+                    client=lease_sheet_data.get('customer', ''),
+                    area=lease_sheet_data.get('area', ''),
+                    ticket=ticket_number,
+                    lsd_or_pipeline=lease_sheet_data.get('lsdOrPipeline', ''),
+                )
+                pdf_url = upload_pdf_to_dropbox(pdf_content, pdf_path)
+            except Exception as e:
+                print(f"Error uploading PDF: {e}")
         
         # Upload photos if present
         if lease_sheet_data.get('photos'):
             for i, photo_data in enumerate(lease_sheet_data.get('photos', [])):
                 try:
-                    # Assuming photo_data contains base64 image data
-                    import base64
                     photo_content = base64.b64decode(photo_data.get('data', ''))
-                    photo_filename = generate_filename(f"photo_{i+1}", "jpg", ticket_number)
-                    photo_url = upload_photo_to_dropbox(photo_content, photo_filename)
+                    photo_path = build_photo_path(ticket_number, i + 1)
+                    photo_url = upload_photo_to_dropbox(photo_content, photo_path)
                     if photo_url:
                         photo_urls.append(photo_url)
                 except Exception as e:

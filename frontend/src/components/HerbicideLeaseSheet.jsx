@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api';
+import { generateLeaseSheetPdf } from '../lib/pdfGenerator';
+
+function get24hTime() {
+  const now = new Date();
+  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+}
 
 export default function HerbicideLeaseSheet({
   site,
@@ -15,10 +21,13 @@ export default function HerbicideLeaseSheet({
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [photos, setPhotos] = useState([]);
+  const [ticketNumber, setTicketNumber] = useState('');
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const [pdfBase64, setPdfBase64] = useState(null);
 
   // Form state
   const [form, setForm] = useState({
-    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    time: get24hTime(),
     date: new Date().toISOString().split('T')[0],
     customer: '',
     area: '',
@@ -53,8 +62,7 @@ export default function HerbicideLeaseSheet({
 
   // Auto-populate from site or pipeline
   useEffect(() => {
-    // Always update time when lease sheet opens
-    const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const currentTime = get24hTime();
     const currentDate = new Date().toISOString().split('T')[0];
     
     if (site) {
@@ -77,6 +85,15 @@ export default function HerbicideLeaseSheet({
       }));
     }
   }, [site, pipeline]);
+
+  // Fetch ticket number when sheet opens
+  useEffect(() => {
+    if (isOpen) {
+      api.getNextTicket()
+        .then(res => setTicketNumber(res.ticket_number))
+        .catch(() => setTicketNumber(`LOCAL-${Date.now()}`));
+    }
+  }, [isOpen]);
 
   // Load lookup tables
   useEffect(() => {
@@ -153,7 +170,18 @@ export default function HerbicideLeaseSheet({
     });
   };
 
-  const handleSubmit = async () => {
+  const handlePreview = () => {
+    const pdfData = {
+      ...form,
+      ticket_number: ticketNumber,
+      photoCount: photos.length,
+    };
+    const { blob, base64 } = generateLeaseSheetPdf(pdfData);
+    setPdfBase64(base64);
+    setPreviewUrl(URL.createObjectURL(blob));
+  };
+
+  const handleConfirmSubmit = async () => {
     setIsSubmitting(true);
     try {
       // Convert photos to base64
@@ -163,7 +191,7 @@ export default function HerbicideLeaseSheet({
           reader.onloadend = () => {
             resolve({
               name: p.file.name,
-              data: reader.result.split(',')[1], // Remove the data:image/...;base64, prefix
+              data: reader.result.split(',')[1],
               type: p.file.type,
             });
           };
@@ -176,8 +204,11 @@ export default function HerbicideLeaseSheet({
       const payload = {
         lease_sheet_data: {
           ...form,
+          ticket_number: ticketNumber,
           photos: photoData,
         },
+        pdf_base64: pdfBase64,
+        ticket_number: ticketNumber,
         spray_date: form.date,
         notes: form.comments,
         is_avoided: false,
@@ -185,11 +216,94 @@ export default function HerbicideLeaseSheet({
       await onSubmit(payload);
     } finally {
       setIsSubmitting(false);
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(null);
+      setPdfBase64(null);
     }
+  };
+
+  const handleBackToEdit = () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(null);
+    setPdfBase64(null);
   };
 
   if (!isOpen) return null;
 
+  // ── Preview overlay ──
+  if (previewUrl) {
+    return (
+      <div className="lease-sheet" style={{
+        backgroundColor: '#1f2937',
+        color: '#f9fafb',
+        borderRadius: '16px 16px 0 0',
+        maxHeight: '90vh',
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        padding: '20px',
+        maxWidth: '600px',
+        margin: '0 auto',
+        width: '100%',
+        boxSizing: 'border-box',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+          <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600 }}>Preview — {ticketNumber}</h2>
+        </div>
+        <div style={{
+          width: '100%',
+          height: '60vh',
+          backgroundColor: '#fff',
+          borderRadius: '8px',
+          overflow: 'hidden',
+          marginBottom: '16px',
+        }}>
+          <iframe
+            src={previewUrl}
+            title="PDF Preview"
+            style={{ width: '100%', height: '100%', border: 'none' }}
+          />
+        </div>
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <button
+            onClick={handleConfirmSubmit}
+            disabled={isSubmitting}
+            style={{
+              flex: 1,
+              padding: '12px',
+              backgroundColor: '#22c55e',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '1rem',
+              fontWeight: 600,
+              cursor: isSubmitting ? 'not-allowed' : 'pointer',
+              opacity: isSubmitting ? 0.7 : 1,
+            }}
+          >
+            {isSubmitting ? 'Uploading...' : 'Confirm & Submit'}
+          </button>
+          <button
+            onClick={handleBackToEdit}
+            disabled={isSubmitting}
+            style={{
+              flex: 1,
+              padding: '12px',
+              backgroundColor: '#374151',
+              color: '#f9fafb',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '1rem',
+              cursor: isSubmitting ? 'not-allowed' : 'pointer',
+            }}
+          >
+            Back to Edit
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Form ──
   return (
     <div className="lease-sheet" style={{
       backgroundColor: '#1f2937',
@@ -204,7 +318,7 @@ export default function HerbicideLeaseSheet({
       width: '100%',
       boxSizing: 'border-box',
     }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
           <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600 }}>Herbicide Lease Sheet</h2>
           <button onClick={onCancel} style={{
             background: 'none',
@@ -214,6 +328,21 @@ export default function HerbicideLeaseSheet({
             cursor: 'pointer',
           }}>×</button>
         </div>
+        {ticketNumber && (
+          <div style={{
+            backgroundColor: '#111827',
+            border: '1px solid #3b82f6',
+            borderRadius: '6px',
+            padding: '8px 12px',
+            marginBottom: '16px',
+            fontSize: '1rem',
+            fontWeight: 700,
+            color: '#3b82f6',
+            textAlign: 'center',
+          }}>
+            Ticket: {ticketNumber}
+          </div>
+        )}
 
         {isLoading ? (
           <div style={{ textAlign: 'center', padding: '40px' }}>Loading form...</div>
@@ -747,26 +876,23 @@ export default function HerbicideLeaseSheet({
             {/* Submit buttons */}
             <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
               <button
-                onClick={handleSubmit}
-                disabled={isSubmitting}
+                onClick={handlePreview}
                 style={{
                   flex: 1,
                   padding: '12px',
-                  backgroundColor: '#22c55e',
+                  backgroundColor: '#3b82f6',
                   color: 'white',
                   border: 'none',
                   borderRadius: '8px',
                   fontSize: '1rem',
                   fontWeight: 600,
-                  cursor: isSubmitting ? 'not-allowed' : 'pointer',
-                  opacity: isSubmitting ? 0.7 : 1,
+                  cursor: 'pointer',
                 }}
               >
-                {isSubmitting ? 'Submitting...' : 'Submit & Mark Inspected'}
+                Preview PDF
               </button>
               <button
                 onClick={onCancel}
-                disabled={isSubmitting}
                 style={{
                   flex: 1,
                   padding: '12px',
@@ -775,7 +901,7 @@ export default function HerbicideLeaseSheet({
                   border: 'none',
                   borderRadius: '8px',
                   fontSize: '1rem',
-                  cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                  cursor: 'pointer',
                 }}
               >
                 Cancel

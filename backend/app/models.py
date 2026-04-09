@@ -147,6 +147,10 @@ class SiteSprayRecord(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_avoided: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    ticket_number: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    lease_sheet_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    pdf_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    photo_urls: Mapped[list | None] = mapped_column(JSONB, nullable=True, default=list)
 
     site: Mapped[Site] = relationship(back_populates="spray_records")
 

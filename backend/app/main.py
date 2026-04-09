@@ -135,6 +135,22 @@ def _migrate_add_columns() -> None:
         if not insp.has_table("site_spray_records"):
             # We let create_all handle it at startup, but just in case:
             pass
+        
+        # site_spray_records migrations
+        if insp.has_table("site_spray_records"):
+            existing_site_records = {col["name"] for col in insp.get_columns("site_spray_records")}
+            if "ticket_number" not in existing_site_records:
+                conn.execute(text("ALTER TABLE site_spray_records ADD COLUMN ticket_number VARCHAR(50)"))
+            if "lease_sheet_data" not in existing_site_records:
+                conn.execute(text("ALTER TABLE site_spray_records ADD COLUMN lease_sheet_data JSONB"))
+            if "pdf_url" not in existing_site_records:
+                conn.execute(text("ALTER TABLE site_spray_records ADD COLUMN pdf_url TEXT"))
+            if "photo_urls" not in existing_site_records:
+                if is_sqlite:
+                    conn.execute(text("ALTER TABLE site_spray_records ADD COLUMN photo_urls TEXT DEFAULT '[]'"))
+                else:
+                    conn.execute(text("ALTER TABLE site_spray_records ADD COLUMN photo_urls JSONB DEFAULT '[]'"))
+
         if insp.has_table("spray_records"):
             existing_records = {col["name"] for col in insp.get_columns("spray_records")}
             if "is_avoided" not in existing_records:
@@ -192,6 +208,17 @@ def health_check() -> dict[str, str]:
 @app.get("/api/session", response_model=SessionResponse)
 def session(current_user: User = Depends(get_current_user)) -> SessionResponse:
     return SessionResponse(user=current_user)
+
+
+@app.get("/api/next-ticket")
+def next_ticket(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get the next ticket number from the sequence."""
+    result = db.execute(text("SELECT nextval('ticket_seq')"))
+    seq_value = result.scalar()
+    return {"ticket_number": f"T{seq_value:06d}"}
 
 
 @app.get("/api/sync-status")
@@ -406,6 +433,9 @@ def create_site_spray_record(
     current_user: User = Depends(get_current_user),
 ):
     """Create a new spray record for a site."""
+    import base64
+    from app.dropbox_integration import upload_pdf_to_dropbox, upload_photo_to_dropbox, build_pdf_path, build_photo_path
+
     site = get_site_or_404(db, site_id)
     
     user_id = None
@@ -416,6 +446,48 @@ def create_site_spray_record(
 
     user_name = getattr(current_user, 'name', None) or (current_user.email.split('@')[0].title() if current_user.email else None)
 
+    # Use ticket number from frontend or generate one
+    ticket_number = payload.ticket_number
+    if not ticket_number:
+        result = db.execute(text("SELECT nextval('ticket_seq')"))
+        seq_value = result.scalar()
+        ticket_number = f"T{seq_value:06d}"
+
+    # Handle Dropbox uploads
+    pdf_url = None
+    photo_urls = []
+
+    if payload.lease_sheet_data:
+        lease_sheet_data = payload.lease_sheet_data.copy()
+        lease_sheet_data['ticket_number'] = ticket_number
+
+        # Upload frontend-generated PDF if provided
+        if payload.pdf_base64:
+            try:
+                pdf_content = base64.b64decode(payload.pdf_base64)
+                pdf_path = build_pdf_path(
+                    date_str=str(payload.spray_date),
+                    client=lease_sheet_data.get('customer', ''),
+                    area=lease_sheet_data.get('area', ''),
+                    ticket=ticket_number,
+                    lsd_or_pipeline=lease_sheet_data.get('lsdOrPipeline', ''),
+                )
+                pdf_url = upload_pdf_to_dropbox(pdf_content, pdf_path)
+            except Exception as e:
+                print(f"Error uploading PDF: {e}")
+
+        # Upload photos if present
+        if lease_sheet_data.get('photos'):
+            for i, photo_data in enumerate(lease_sheet_data.get('photos', [])):
+                try:
+                    photo_content = base64.b64decode(photo_data.get('data', ''))
+                    photo_path = build_photo_path(ticket_number, i + 1)
+                    photo_url = upload_photo_to_dropbox(photo_content, photo_path)
+                    if photo_url:
+                        photo_urls.append(photo_url)
+                except Exception as e:
+                    print(f"Error uploading photo {i+1}: {e}")
+
     record = SiteSprayRecord(
         site_id=site_id,
         spray_date=payload.spray_date,
@@ -423,6 +495,10 @@ def create_site_spray_record(
         sprayed_by_name=user_name,
         notes=payload.notes,
         is_avoided=payload.is_avoided,
+        ticket_number=ticket_number,
+        lease_sheet_data=payload.lease_sheet_data,
+        pdf_url=pdf_url,
+        photo_urls=photo_urls if photo_urls else None,
     )
     db.add(record)
     

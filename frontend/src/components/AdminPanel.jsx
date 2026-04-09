@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 
 import { pinTypeLabel } from '../lib/mapUtils';
 import UserManagementPanel from './UserManagementPanel';
+import LookupManager from './LookupManager';
 
 function PendingSiteCard({ site, busy, onApprove, onReject, onApproveAndEdit, onSelectSite }) {
   const [editing, setEditing] = useState(false);
@@ -371,6 +372,10 @@ export default function AdminPanel({
 
         <CollapsibleSection title="User Management" defaultOpen={false}>
           <UserManagementPanel busy={busy} currentUserEmail={currentUserEmail} />
+        </CollapsibleSection>
+
+        <CollapsibleSection title="Lookup Tables" defaultOpen={false}>
+          <LookupManager />
         </CollapsibleSection>
       </div>
     </div>
