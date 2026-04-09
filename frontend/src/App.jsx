@@ -1786,7 +1786,13 @@ export default function App() {
                 onCreateSprayRecord={handleCreateSiteSprayRecord}
                 onDeleteSprayRecord={handleDeleteSiteSprayRecord}
                 onStartInspection={handleStartInspection}
-                onViewPdf={(record) => record.pdf_url && setPreviewingPdfUrl(record.pdf_url)}
+                onViewPdf={(record) => {
+                  if (record.pdf_url) {
+                    // Convert Dropbox shared link to direct download for iframe embed
+                    const url = record.pdf_url.replace('dl=0', 'dl=1').replace('?raw=1', '?dl=1');
+                    setPreviewingPdfUrl(url);
+                  }
+                }}
                 onEditRecord={(record) => setEditingSprayRecord({ ...record, site_lsd: selectedSite?.lsd, site_client: selectedSite?.client, site_area: selectedSite?.area })}
               />
             ) : null}
@@ -1875,7 +1881,8 @@ export default function App() {
               visible={activeTab === TAB_RECENTS}
               onViewPdf={(record) => {
                 if (record.pdf_url) {
-                  setPreviewingPdfUrl(record.pdf_url);
+                  const url = record.pdf_url.replace('dl=0', 'dl=1').replace('?raw=1', '?dl=1');
+                  setPreviewingPdfUrl(url);
                 }
               }}
               onEditRecord={(record) => setEditingSprayRecord(record)}

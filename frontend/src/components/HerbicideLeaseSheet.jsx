@@ -95,6 +95,27 @@ export default function HerbicideLeaseSheet({
         comments: d.comments || '',
       });
       setTicketNumber(editingRecord.ticket_number || d.ticket_number || '');
+
+      // Restore photos from saved base64 data
+      if (d.photos && d.photos.length > 0) {
+        const restored = d.photos.map((p) => {
+          const dataUrl = `data:${p.type || 'image/jpeg'};base64,${p.data}`;
+          return {
+            file: null,
+            preview: dataUrl,
+            existingBase64: p,
+          };
+        });
+        setPhotos(restored);
+      } else if (editingRecord.photo_urls && editingRecord.photo_urls.length > 0) {
+        // Fallback: use Dropbox photo URLs as previews
+        const restored = editingRecord.photo_urls.map((url) => ({
+          file: null,
+          preview: url.replace('dl=0', 'raw=1'),
+          existingUrl: url,
+        }));
+        setPhotos(restored);
+      }
       return;
     }
 
@@ -203,7 +224,8 @@ export default function HerbicideLeaseSheet({
   const removePhoto = (index) => {
     setPhotos(prev => {
       const updated = [...prev];
-      URL.revokeObjectURL(updated[index].preview);
+      // Only revoke if it's an object URL (not a data URL or external URL)
+      if (updated[index].file) URL.revokeObjectURL(updated[index].preview);
       updated.splice(index, 1);
       return updated;
     });
@@ -212,11 +234,20 @@ export default function HerbicideLeaseSheet({
   const handlePreview = async () => {
     // Build photo data URLs for embedding in PDF
     const photoDataUrls = await Promise.all(
-      photos.map(p => new Promise(resolve => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result);
-        reader.readAsDataURL(p.file);
-      }))
+      photos.map(p => {
+        if (p.file) {
+          return new Promise(resolve => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.readAsDataURL(p.file);
+          });
+        }
+        // Pre-existing photo (edit mode) — already a data URL or Dropbox URL
+        if (p.existingBase64) {
+          return `data:${p.existingBase64.type || 'image/jpeg'};base64,${p.existingBase64.data}`;
+        }
+        return p.preview;
+      })
     );
     const pdfData = {
       ...form,
@@ -232,20 +263,28 @@ export default function HerbicideLeaseSheet({
     try {
       // Convert photos to base64
       const photoPromises = photos.map(async (p) => {
-        return new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            resolve({
-              name: p.file.name,
-              data: reader.result.split(',')[1],
-              type: p.file.type,
-            });
-          };
-          reader.readAsDataURL(p.file);
-        });
+        if (p.existingBase64) {
+          // Already have base64 data from edit mode
+          return p.existingBase64;
+        }
+        if (p.file) {
+          return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              resolve({
+                name: p.file.name,
+                data: reader.result.split(',')[1],
+                type: p.file.type,
+              });
+            };
+            reader.readAsDataURL(p.file);
+          });
+        }
+        // Fallback: no data available
+        return null;
       });
       
-      const photoData = await Promise.all(photoPromises);
+      const photoData = (await Promise.all(photoPromises)).filter(Boolean);
       
       const payload = {
         lease_sheet_data: {
