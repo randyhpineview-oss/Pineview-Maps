@@ -363,17 +363,19 @@ export default function SiteDetailSheet({
                             {record.ticket_number ? ` — Ticket: ${record.ticket_number}` : ''}
                             {record.notes ? ` — ${record.notes}` : ''}
                           </div>
-                          {record.pdf_url && (
+                          {(record.pdf_url || record.lease_sheet_data) && (
                             <div style={{ display: 'flex', gap: '6px', marginTop: '0.25rem' }}>
-                              <button
-                                className="secondary-button"
-                                type="button"
-                                onClick={() => onViewPdf?.(record)}
-                                style={{ padding: '2px 8px', fontSize: '0.7rem' }}
-                              >
-                                📄 View PDF
-                              </button>
-                              {canManagePin && onEditRecord && (
+                              {record.pdf_url && (
+                                <button
+                                  className="secondary-button"
+                                  type="button"
+                                  onClick={() => onViewPdf?.(record)}
+                                  style={{ padding: '2px 8px', fontSize: '0.7rem' }}
+                                >
+                                  📄 View PDF
+                                </button>
+                              )}
+                              {canManagePin && onEditRecord && record.lease_sheet_data && (
                                 <button
                                   className="secondary-button"
                                   type="button"

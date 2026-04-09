@@ -247,10 +247,11 @@ export default function App() {
         try {
           if (item.targetType === 'site') {
             await api.createSiteSprayRecord(item.targetId, item.payload);
-            // Refresh the site data in background
+            // Refresh the site data in background (including pdf_url from Dropbox)
             try {
               const updated = await api.getSite(item.targetId);
               setSites((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+              setSelectedSite((prev) => prev && prev.id === updated.id ? updated : prev);
               await upsertSite(updated);
             } catch { /* ignore refresh failure */ }
           } else if (item.targetType === 'pipeline') {

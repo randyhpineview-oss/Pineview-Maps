@@ -232,14 +232,32 @@ export async function generateLeaseSheetPdf(data, photoDataUrls = []) {
     doc.text('Photos:', marginL, y + 10);
     y += 14;
 
-    const maxPhotoH = pageH - y - 20; // remaining space
-    const photoW = Math.min(halfW - 10, 250);
-    const photoH = Math.min(maxPhotoH, 180);
+    const maxPhotoH = pageH - y - 30; // remaining space minus label
+    const slotW = Math.min(halfW - 10, 250);
+
+    // Get actual image dimensions to preserve aspect ratio
+    const photoDims = await Promise.all(
+      fixedPhotos.slice(0, 2).map(src => new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
+        img.onerror = () => resolve({ w: 1, h: 1 });
+        img.src = src;
+      }))
+    );
 
     for (let i = 0; i < Math.min(fixedPhotos.length, 2); i++) {
-      const px = marginL + i * (photoW + 10);
+      const px = marginL + i * (slotW + 10);
+      const dim = photoDims[i];
+      const ratio = dim.h / dim.w;
+      // Fit within slotW width, but respect maxPhotoH
+      let drawW = slotW;
+      let drawH = slotW * ratio;
+      if (drawH > maxPhotoH) {
+        drawH = maxPhotoH;
+        drawW = maxPhotoH / ratio;
+      }
       try {
-        doc.addImage(fixedPhotos[i], 'JPEG', px, y, photoW, photoH);
+        doc.addImage(fixedPhotos[i], 'JPEG', px, y, drawW, drawH);
       } catch {
         doc.setFont('helvetica', 'italic');
         doc.setFontSize(7);
@@ -249,7 +267,7 @@ export async function generateLeaseSheetPdf(data, photoDataUrls = []) {
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(7);
       const label = i === 0 ? 'LSD / Location ID' : 'Site Photo';
-      doc.text(label, px, y + photoH + 10);
+      doc.text(label, px, y + drawH + 10);
     }
   }
 
