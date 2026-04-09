@@ -22,12 +22,46 @@ async function loadLogo() {
 }
 
 /**
+ * Read EXIF orientation and return a correctly-oriented data URL.
+ */
+function fixPhotoOrientation(dataUrl) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      // Draw to canvas at correct orientation
+      const canvas = document.createElement('canvas');
+      const maxDim = 800; // Reduce resolution for PDF embedding
+      let w = img.width;
+      let h = img.height;
+      // Scale down
+      if (w > maxDim || h > maxDim) {
+        const ratio = Math.min(maxDim / w, maxDim / h);
+        w = Math.round(w * ratio);
+        h = Math.round(h * ratio);
+      }
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL('image/jpeg', 0.85));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+/**
  * Generate a Herbicide Application Ticket PDF.
  * @param {object} data - form data
  * @param {string[]} [photoDataUrls] - array of data URLs for photos (max 2)
  * Returns { blob, base64 }
  */
 export async function generateLeaseSheetPdf(data, photoDataUrls = []) {
+  // Fix photo orientations first
+  const fixedPhotos = await Promise.all(
+    photoDataUrls.slice(0, 2).map(url => fixPhotoOrientation(url))
+  );
+
   const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
   const pageW = doc.internal.pageSize.getWidth();   // 612
   const pageH = doc.internal.pageSize.getHeight();  // 792
@@ -49,22 +83,24 @@ export async function generateLeaseSheetPdf(data, photoDataUrls = []) {
     doc.addImage(logoData, 'PNG', marginL, y, 100, 100);
   }
 
-  // ── Title (right of logo) ──
+  // ── Title + Ticket No (aligned on same baseline) ──
+  const titleY = y + 45;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(16);
   doc.setTextColor(50, 80, 50);
-  doc.text('Herbicide Application Ticket', marginL + 120, y + 40);
+  doc.text('Herbicide Application Ticket', marginL + 120, titleY);
   doc.setTextColor(0);
 
-  // Ticket No (top-right)
+  // Ticket No (same baseline as title)
   doc.setFontSize(12);
-  doc.text(`No: ${data.ticket_number || ''}`, pageW - marginR, y + 20, { align: 'right' });
+  doc.text(`No: ${data.ticket_number || ''}`, pageW - marginR, titleY, { align: 'right' });
 
   // Address line
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7.5);
   doc.setTextColor(100);
-  doc.text('7077 – 252Rd., Pineview, BC, V1J 8E3 | Tel: 250.261.9544 | www.pineviewvegetation.com', marginL + 120, y + 55);
+  doc.text('7077 252 Road, Pineview, BC, Canada, V1J 8E3', marginL + 120, titleY + 14);
+  doc.text('Tel: 250.261.9544 | info@pineviewvegetation.com', marginL + 120, titleY + 24);
   doc.setTextColor(0);
 
   y += 110;
@@ -189,7 +225,7 @@ export async function generateLeaseSheetPdf(data, photoDataUrls = []) {
   y += commH;
 
   // ── Photos at bottom ──
-  if (photoDataUrls.length > 0) {
+  if (fixedPhotos.length > 0) {
     y += 6;
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8);
@@ -200,10 +236,10 @@ export async function generateLeaseSheetPdf(data, photoDataUrls = []) {
     const photoW = Math.min(halfW - 10, 250);
     const photoH = Math.min(maxPhotoH, 180);
 
-    for (let i = 0; i < Math.min(photoDataUrls.length, 2); i++) {
+    for (let i = 0; i < Math.min(fixedPhotos.length, 2); i++) {
       const px = marginL + i * (photoW + 10);
       try {
-        doc.addImage(photoDataUrls[i], 'JPEG', px, y, photoW, photoH);
+        doc.addImage(fixedPhotos[i], 'JPEG', px, y, photoW, photoH);
       } catch {
         doc.setFont('helvetica', 'italic');
         doc.setFontSize(7);

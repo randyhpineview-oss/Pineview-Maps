@@ -150,6 +150,15 @@ def _migrate_add_columns() -> None:
                     conn.execute(text("ALTER TABLE site_spray_records ADD COLUMN photo_urls TEXT DEFAULT '[]'"))
                 else:
                     conn.execute(text("ALTER TABLE site_spray_records ADD COLUMN photo_urls JSONB DEFAULT '[]'"))
+            elif not is_sqlite:
+                # Fix: convert text[] to JSONB if needed
+                for col in insp.get_columns("site_spray_records"):
+                    if col["name"] == "photo_urls" and "ARRAY" in str(col.get("type", "")):
+                        conn.execute(text(
+                            "ALTER TABLE site_spray_records ALTER COLUMN photo_urls TYPE JSONB "
+                            "USING COALESCE(to_jsonb(photo_urls), '[]'::jsonb)"
+                        ))
+                        break
 
         if insp.has_table("spray_records"):
             existing_records = {col["name"] for col in insp.get_columns("spray_records")}
@@ -171,6 +180,15 @@ def _migrate_add_columns() -> None:
                     conn.execute(text("ALTER TABLE spray_records ADD COLUMN photo_urls TEXT DEFAULT '[]'"))
                 else:
                     conn.execute(text("ALTER TABLE spray_records ADD COLUMN photo_urls JSONB DEFAULT '[]'"))
+            elif not is_sqlite:
+                # Fix: convert text[] to JSONB if needed
+                for col in insp.get_columns("spray_records"):
+                    if col["name"] == "photo_urls" and "ARRAY" in str(col.get("type", "")):
+                        conn.execute(text(
+                            "ALTER TABLE spray_records ALTER COLUMN photo_urls TYPE JSONB "
+                            "USING COALESCE(to_jsonb(photo_urls), '[]'::jsonb)"
+                        ))
+                        break
             
             # Create index for ticket_number if it doesn't exist
             indexes = {idx["name"] for idx in insp.get_indexes("spray_records")}
