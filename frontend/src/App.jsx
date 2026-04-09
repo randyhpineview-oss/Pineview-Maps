@@ -6,6 +6,7 @@ import HerbicideLeaseSheet from './components/HerbicideLeaseSheet';
 import LoginPage from './components/LoginPage';
 import MapView from './components/MapView';
 import PipelineDetailSheet from './components/PipelineDetailSheet';
+import PdfPreviewOverlay from './components/PdfPreviewOverlay';
 import RecentsPanel from './components/RecentsPanel';
 import SiteDetailSheet from './components/SiteDetailSheet';
 import { api } from './lib/api';
@@ -1616,50 +1617,12 @@ export default function App() {
         )}
 
         {/* ── PDF Preview overlay ── */}
-        {previewingPdfUrl && (() => {
-          // Convert Dropbox shared link to a direct-content URL for iframe embedding
-          let embedUrl = previewingPdfUrl;
-          if (embedUrl.includes('dropbox.com')) {
-            // Replace www.dropbox.com with dl.dropboxusercontent.com for raw content
-            embedUrl = embedUrl
-              .replace('www.dropbox.com', 'dl.dropboxusercontent.com')
-              .replace('&dl=0', '').replace('?dl=0', '?').replace('dl=1', '').replace(/[?&]$/, '');
-          }
-          // Wrap in Google Docs Viewer as reliable cross-browser PDF renderer
-          const googleViewerUrl = `https://docs.google.com/gview?embedded=true&url=${encodeURIComponent(embedUrl)}`;
-          return (
-            <div style={{
-              position: 'fixed',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              zIndex: 50,
-              backgroundColor: '#1f2937',
-              display: 'flex',
-              flexDirection: 'column',
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #374151', gap: '8px' }}>
-                <span style={{ color: '#f9fafb', fontWeight: 600, flex: 1 }}>PDF Preview</span>
-                <a
-                  href={embedUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ color: '#60a5fa', fontSize: '0.85rem', textDecoration: 'none', whiteSpace: 'nowrap' }}
-                >Open in tab ↗</a>
-                <button
-                  onClick={() => setPreviewingPdfUrl(null)}
-                  style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer', marginLeft: '4px' }}
-                >×</button>
-              </div>
-              <iframe
-                src={googleViewerUrl}
-                style={{ flex: 1, border: 'none', width: '100%' }}
-                title="PDF Preview"
-              />
-            </div>
-          );
-        })()}
+        {previewingPdfUrl && (
+          <PdfPreviewOverlay
+            pdfUrl={previewingPdfUrl}
+            onClose={() => setPreviewingPdfUrl(null)}
+          />
+        )}
 
         {/* Place-pin banner */}
         {isPlacingPin ? (

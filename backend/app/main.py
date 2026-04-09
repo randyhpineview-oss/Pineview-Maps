@@ -2,7 +2,7 @@ from datetime import datetime
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import inspect, or_, text
 from sqlalchemy.orm import Session, joinedload
 
@@ -915,3 +915,39 @@ def restore_site(
     db.commit()
     db.refresh(site)
     return SiteRead.model_validate(site)
+
+
+@app.get("/api/pdf-proxy")
+async def pdf_proxy(
+    url: str = Query(..., description="Dropbox shared link URL"),
+    current_user: User = Depends(get_current_user),
+):
+    """Proxy a Dropbox PDF to avoid CORS/iframe issues. Returns raw PDF bytes."""
+    import httpx
+
+    # Convert Dropbox shared link to direct download URL
+    download_url = url
+    if 'dropbox.com' in download_url:
+        download_url = (
+            download_url
+            .replace('www.dropbox.com', 'dl.dropboxusercontent.com')
+            .replace('&dl=0', '').replace('?dl=0', '?').replace('dl=1', '')
+        )
+        # Clean trailing ? or &
+        download_url = download_url.rstrip('?&')
+
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+            resp = await client.get(download_url)
+            if resp.status_code != 200:
+                raise HTTPException(status_code=502, detail=f"Dropbox returned {resp.status_code}")
+            return StreamingResponse(
+                iter([resp.content]),
+                media_type="application/pdf",
+                headers={"Content-Disposition": "inline; filename=lease_sheet.pdf"},
+            )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Timeout fetching PDF from Dropbox")
+    except Exception as e:
+        print(f"[PDF_PROXY] Error: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=502, detail="Failed to fetch PDF")
