@@ -1,12 +1,42 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/$/, '') || '';
+
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 4;
+const ZOOM_STEP = 0.25;
+
+const btnStyle = {
+  width: '40px',
+  height: '40px',
+  borderRadius: '50%',
+  border: 'none',
+  backgroundColor: 'rgba(55,65,81,0.9)',
+  color: '#f9fafb',
+  fontSize: '1.3rem',
+  fontWeight: 700,
+  cursor: 'pointer',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+};
 
 export default function PdfPreviewOverlay({ pdfUrl, onClose }) {
   const [blobUrl, setBlobUrl] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
 
+  // Refs for gesture tracking
+  const containerRef = useRef(null);
+  const isPanning = useRef(false);
+  const lastTouch = useRef(null);
+  const lastPinchDist = useRef(null);
+  const lastPinchZoom = useRef(1);
+
+  // Fetch PDF via backend proxy
   useEffect(() => {
     let cancelled = false;
     let objectUrl = null;
@@ -47,6 +77,64 @@ export default function PdfPreviewOverlay({ pdfUrl, onClose }) {
     };
   }, [blobUrl]);
 
+  // Zoom helpers
+  const zoomIn = useCallback(() => setZoom(z => Math.min(MAX_ZOOM, z + ZOOM_STEP)), []);
+  const zoomOut = useCallback(() => setZoom(z => Math.max(MIN_ZOOM, z - ZOOM_STEP)), []);
+  const resetZoom = useCallback(() => { setZoom(1); setPan({ x: 0, y: 0 }); }, []);
+
+  // Touch handlers for pinch-to-zoom and pan
+  const handleTouchStart = useCallback((e) => {
+    if (e.touches.length === 2) {
+      // Pinch start
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      lastPinchDist.current = Math.hypot(dx, dy);
+      lastPinchZoom.current = zoom;
+      e.preventDefault();
+    } else if (e.touches.length === 1 && zoom > 1) {
+      // Pan start (only when zoomed in)
+      isPanning.current = true;
+      lastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    }
+  }, [zoom]);
+
+  const handleTouchMove = useCallback((e) => {
+    if (e.touches.length === 2 && lastPinchDist.current !== null) {
+      // Pinch zoom
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      const scale = dist / lastPinchDist.current;
+      const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, lastPinchZoom.current * scale));
+      setZoom(newZoom);
+      e.preventDefault();
+    } else if (e.touches.length === 1 && isPanning.current && lastTouch.current) {
+      // Pan
+      const dx = e.touches[0].clientX - lastTouch.current.x;
+      const dy = e.touches[0].clientY - lastTouch.current.y;
+      setPan(prev => ({ x: prev.x + dx, y: prev.y + dy }));
+      lastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      e.preventDefault();
+    }
+  }, []);
+
+  const handleTouchEnd = useCallback((e) => {
+    if (e.touches.length < 2) {
+      lastPinchDist.current = null;
+    }
+    if (e.touches.length === 0) {
+      isPanning.current = false;
+      lastTouch.current = null;
+    }
+  }, []);
+
+  // Mouse wheel zoom (desktop)
+  const handleWheel = useCallback((e) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
+    setZoom(z => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z + delta)));
+  }, []);
+
   // Build a direct Dropbox download link for "Open in tab" fallback
   let directUrl = pdfUrl;
   if (directUrl.includes('dropbox.com')) {
@@ -67,7 +155,8 @@ export default function PdfPreviewOverlay({ pdfUrl, onClose }) {
       display: 'flex',
       flexDirection: 'column',
     }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #374151', gap: '8px' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #374151', gap: '8px', flexShrink: 0 }}>
         <span style={{ color: '#f9fafb', fontWeight: 600, flex: 1 }}>PDF Preview</span>
         <a
           href={directUrl}
@@ -81,6 +170,7 @@ export default function PdfPreviewOverlay({ pdfUrl, onClose }) {
         >×</button>
       </div>
 
+      {/* Content area */}
       {loading && (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af' }}>
           <span>Loading PDF…</span>
@@ -100,11 +190,50 @@ export default function PdfPreviewOverlay({ pdfUrl, onClose }) {
       )}
 
       {blobUrl && !loading && (
-        <iframe
-          src={blobUrl}
-          style={{ flex: 1, border: 'none', width: '100%' }}
-          title="PDF Preview"
-        />
+        <div
+          ref={containerRef}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onWheel={handleWheel}
+          style={{
+            flex: 1,
+            overflow: 'hidden',
+            position: 'relative',
+            touchAction: 'none',
+          }}
+        >
+          <div style={{
+            width: '100%',
+            height: '100%',
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+            transformOrigin: 'center top',
+            transition: isPanning.current ? 'none' : 'transform 0.1s ease-out',
+          }}>
+            <iframe
+              src={blobUrl}
+              style={{ width: '100%', height: '100%', border: 'none', pointerEvents: zoom > 1 ? 'none' : 'auto' }}
+              title="PDF Preview"
+            />
+          </div>
+
+          {/* Zoom controls */}
+          <div style={{
+            position: 'absolute',
+            bottom: '20px',
+            right: '16px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '8px',
+            zIndex: 10,
+          }}>
+            <button onClick={zoomIn} style={btnStyle} title="Zoom in">+</button>
+            <button onClick={resetZoom} style={{ ...btnStyle, fontSize: '0.7rem', fontWeight: 600 }} title="Reset zoom">
+              {Math.round(zoom * 100)}%
+            </button>
+            <button onClick={zoomOut} style={btnStyle} title="Zoom out">−</button>
+          </div>
+        </div>
       )}
     </div>
   );
