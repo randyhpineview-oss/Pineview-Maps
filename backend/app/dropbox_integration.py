@@ -5,13 +5,32 @@ from datetime import datetime
 from typing import Optional, List
 
 def get_dropbox_client():
-    """Get an authenticated Dropbox client."""
+    """
+    Get an authenticated Dropbox client.
+    Supports two modes:
+    1. Refresh token flow (recommended): DROPBOX_REFRESH_TOKEN + DROPBOX_APP_KEY + DROPBOX_APP_SECRET
+    2. Short-lived access token (legacy): DROPBOX_ACCESS_TOKEN
+    """
+    refresh_token = os.getenv("DROPBOX_REFRESH_TOKEN")
+    app_key = os.getenv("DROPBOX_APP_KEY")
+    app_secret = os.getenv("DROPBOX_APP_SECRET")
+    
+    if refresh_token and app_key and app_secret:
+        print(f"[DROPBOX] Using refresh token flow (app_key: {app_key[:6]}...)")
+        return dropbox.Dropbox(
+            oauth2_refresh_token=refresh_token,
+            app_key=app_key,
+            app_secret=app_secret,
+        )
+    
+    # Fallback to short-lived access token
     token = os.getenv("DROPBOX_ACCESS_TOKEN")
-    if not token:
-        print("[DROPBOX] DROPBOX_ACCESS_TOKEN not set in environment")
-        raise ValueError("Dropbox access token not configured")
-    print(f"[DROPBOX] Using token starting with: {token[:8]}...")
-    return dropbox.Dropbox(token)
+    if token:
+        print(f"[DROPBOX] Using short-lived access token (starts: {token[:8]}...)")
+        return dropbox.Dropbox(token)
+    
+    print("[DROPBOX] No Dropbox credentials configured")
+    raise ValueError("Dropbox credentials not configured. Set DROPBOX_REFRESH_TOKEN + DROPBOX_APP_KEY + DROPBOX_APP_SECRET, or DROPBOX_ACCESS_TOKEN.")
 
 def _safe_name(name: str) -> str:
     """Sanitize a string for use in a Dropbox path."""

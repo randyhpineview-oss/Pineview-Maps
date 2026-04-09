@@ -100,7 +100,7 @@ export async function generateLeaseSheetPdf(data, photoDataUrls = []) {
   doc.setFontSize(7.5);
   doc.setTextColor(100);
   doc.text('7077 252 Road, Pineview, BC, Canada, V1J 8E3', marginL + 120, titleY + 14);
-  doc.text('Tel: 250.261.9544 | info@pineviewvegetation.com', marginL + 120, titleY + 24);
+  doc.text('Tel: 250.261.9544 | office@pineviewmanagement.com', marginL + 120, titleY + 24);
   doc.setTextColor(0);
 
   y += 110;
