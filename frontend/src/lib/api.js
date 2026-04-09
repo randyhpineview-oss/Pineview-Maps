@@ -228,6 +228,13 @@ export const api = {
   deleteSiteSprayRecord(recordId) {
     return request(`/api/site-spray-records/${recordId}`, { method: 'DELETE' });
   },
+  updateSiteSprayRecord(recordId, payload) {
+    return request(`/api/site-spray-records/${recordId}`, { method: 'PATCH', body: payload });
+  },
+  listRecentSubmissions(search) {
+    const params = search ? `?search=${encodeURIComponent(search)}` : '';
+    return request(`/api/recent-submissions${params}`);
+  },
   bulkResetPipelines(payload) {
     return request('/api/admin/pipelines/bulk-reset', { method: 'POST', body: payload });
   },

@@ -2,9 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api';
 import { generateLeaseSheetPdf } from '../lib/pdfGenerator';
 
-function get24hTime() {
+function get12hTime() {
   const now = new Date();
-  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  let hours = now.getHours();
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12 || 12;
+  return `${hours}:${minutes} ${ampm}`;
 }
 
 export default function HerbicideLeaseSheet({
@@ -13,7 +17,9 @@ export default function HerbicideLeaseSheet({
   onSubmit,
   onCancel,
   isOpen,
+  editingRecord = null,
 }) {
+  const isEditMode = !!editingRecord;
   const [herbicides, setHerbicides] = useState([]);
   const [applicators, setApplicators] = useState([]);
   const [noxiousWeeds, setNoxiousWeeds] = useState([]);
@@ -27,7 +33,7 @@ export default function HerbicideLeaseSheet({
 
   // Form state
   const [form, setForm] = useState({
-    time: get24hTime(),
+    time: get12hTime(),
     date: new Date().toISOString().split('T')[0],
     customer: '',
     area: '',
@@ -60,9 +66,39 @@ export default function HerbicideLeaseSheet({
     form.locationTypes.some(type => accessRoadTypes.includes(type)),
   [form.locationTypes, accessRoadTypes]);
 
-  // Auto-populate from site or pipeline
+  // Auto-populate from site, pipeline, or editing record
   useEffect(() => {
-    const currentTime = get24hTime();
+    if (isEditMode && editingRecord?.lease_sheet_data) {
+      const d = editingRecord.lease_sheet_data;
+      setForm({
+        time: d.time || get12hTime(),
+        date: d.date || editingRecord.spray_date || new Date().toISOString().split('T')[0],
+        customer: d.customer || '',
+        area: d.area || '',
+        lsdOrPipeline: d.lsdOrPipeline || '',
+        applicators: d.applicators || [],
+        locationTypes: d.locationTypes || [],
+        temperature: d.temperature || '',
+        windSpeed: d.windSpeed || '',
+        windDirection: d.windDirection || [],
+        sprayType: d.sprayType || [],
+        sprayMethod: d.sprayMethod || [],
+        noxiousWeedsSelected: d.noxiousWeedsSelected || [],
+        herbicidesUsed: d.herbicidesUsed || [],
+        totalLiters: d.totalLiters || '',
+        areaTreated: d.areaTreated || '',
+        isAccessRoad: d.isAccessRoad || false,
+        roadsideKm: d.roadsideKm || '',
+        roadsideHerbicides: d.roadsideHerbicides || [],
+        roadsideLiters: d.roadsideLiters || '',
+        roadsideAreaTreated: d.roadsideAreaTreated || '',
+        comments: d.comments || '',
+      });
+      setTicketNumber(editingRecord.ticket_number || d.ticket_number || '');
+      return;
+    }
+
+    const currentTime = get12hTime();
     const currentDate = new Date().toISOString().split('T')[0];
     
     if (site) {
@@ -84,16 +120,16 @@ export default function HerbicideLeaseSheet({
         lsdOrPipeline: pipeline.name || '',
       }));
     }
-  }, [site, pipeline]);
+  }, [site, pipeline, isEditMode, editingRecord]);
 
-  // Fetch ticket number when sheet opens
+  // Fetch ticket number when sheet opens (skip in edit mode — we keep the original)
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !isEditMode) {
       api.getNextTicket()
         .then(res => setTicketNumber(res.ticket_number))
         .catch(() => setTicketNumber(`LOCAL-${Date.now()}`));
     }
-  }, [isOpen]);
+  }, [isOpen, isEditMode]);
 
   // Load lookup tables
   useEffect(() => {
@@ -291,7 +327,7 @@ export default function HerbicideLeaseSheet({
               opacity: isSubmitting ? 0.7 : 1,
             }}
           >
-            {isSubmitting ? 'Uploading...' : 'Confirm & Submit'}
+            {isSubmitting ? 'Uploading...' : isEditMode ? 'Update & Re-Submit' : 'Confirm & Submit'}
           </button>
           <button
             onClick={handleBackToEdit}
@@ -330,7 +366,7 @@ export default function HerbicideLeaseSheet({
       boxSizing: 'border-box',
     }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-          <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600 }}>Herbicide Lease Sheet</h2>
+          <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600 }}>{isEditMode ? 'Edit Lease Sheet' : 'Herbicide Lease Sheet'}</h2>
           <button onClick={onCancel} style={{
             background: 'none',
             border: 'none',
@@ -364,9 +400,9 @@ export default function HerbicideLeaseSheet({
               <div>
                 <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Time</label>
                 <input
-                  type="time"
+                  type="text"
                   value={form.time}
-                  onChange={e => setForm(prev => ({ ...prev, time: e.target.value }))}
+                  readOnly
                   style={{
                     width: '100%',
                     padding: '8px 12px',

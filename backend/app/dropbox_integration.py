@@ -78,9 +78,27 @@ def upload_pdf_to_dropbox(pdf_content: bytes, file_path: str) -> Optional[str]:
         
         dbx.files_upload(pdf_content, file_path, mode=dropbox.files.WriteMode.overwrite)
         print(f"[DROPBOX] PDF uploaded successfully, creating shared link...")
-        shared_link = dbx.sharing_create_shared_link_with_settings(file_path)
-        print(f"[DROPBOX] Shared link created: {shared_link.url}")
-        return shared_link.url
+        try:
+            shared_link = dbx.sharing_create_shared_link_with_settings(file_path)
+            print(f"[DROPBOX] Shared link created: {shared_link.url}")
+            return shared_link.url
+        except dropbox.exceptions.ApiError as link_err:
+            # If shared link already exists (re-upload), retrieve the existing one
+            if hasattr(link_err, 'error') and hasattr(link_err.error, 'is_shared_link_already_exists'):
+                if link_err.error.is_shared_link_already_exists():
+                    existing = link_err.error.get_shared_link_already_exists().metadata
+                    print(f"[DROPBOX] Using existing shared link: {existing.url}")
+                    return existing.url
+            # Fallback: list shared links for the path
+            try:
+                links = dbx.sharing_list_shared_links(path=file_path, direct_only=True)
+                if links.links:
+                    print(f"[DROPBOX] Found existing shared link: {links.links[0].url}")
+                    return links.links[0].url
+            except Exception:
+                pass
+            print(f"[DROPBOX] Could not get shared link: {link_err}")
+            return None
     except Exception as e:
         print(f"[DROPBOX] Error uploading PDF: {type(e).__name__}: {e}")
         return None

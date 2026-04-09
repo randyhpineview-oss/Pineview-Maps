@@ -41,6 +41,36 @@ class SiteSprayRecordCreate(BaseModel):
     ticket_number: str | None = None
 
 
+class SiteSprayRecordUpdate(BaseModel):
+    spray_date: date | None = None
+    notes: str | None = None
+    is_avoided: bool | None = None
+    lease_sheet_data: dict | None = None
+    pdf_base64: str | None = None
+    ticket_number: str | None = None
+
+
+class RecentSubmissionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    site_id: int
+    spray_date: date
+    sprayed_by_user_id: int | None
+    sprayed_by_name: str | None
+    notes: str | None
+    is_avoided: bool
+    created_at: datetime
+    ticket_number: str | None = None
+    lease_sheet_data: dict | None = None
+    pdf_url: str | None = None
+    photo_urls: list[str] | None = None
+    # Joined site context
+    site_lsd: str | None = None
+    site_client: str | None = None
+    site_area: str | None = None
+
+
 class SiteUpdateRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

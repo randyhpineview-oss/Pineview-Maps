@@ -20,6 +20,7 @@ from app.schemas import (
     BulkResetRequest,
     BulkResetResponse,
     KmlImportResponse,
+    RecentSubmissionRead,
     SessionResponse,
     SiteAdminUpdate,
     SiteApprovalUpdate,
@@ -28,6 +29,7 @@ from app.schemas import (
     SiteRead,
     SiteSprayRecordRead,
     SiteSprayRecordCreate,
+    SiteSprayRecordUpdate,
     SiteStatusUpdate,
     TypeChangeRequest,
 )
@@ -542,6 +544,98 @@ def delete_site_spray_record(
     
     db.delete(record)
     db.commit()
+
+
+@app.patch("/api/site-spray-records/{record_id}", response_model=SiteSprayRecordRead)
+def update_site_spray_record(
+    record_id: int,
+    payload: SiteSprayRecordUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
+):
+    """Update a site spray record (admin/office edit & re-submit)."""
+    import base64
+    from app.dropbox_integration import upload_pdf_to_dropbox, build_pdf_path
+
+    record = db.query(SiteSprayRecord).filter(SiteSprayRecord.id == record_id).first()
+    if not record:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Site spray record not found")
+
+    # Update simple fields
+    if payload.spray_date is not None:
+        record.spray_date = payload.spray_date
+    if payload.notes is not None:
+        record.notes = payload.notes
+    if payload.is_avoided is not None:
+        record.is_avoided = payload.is_avoided
+    if payload.lease_sheet_data is not None:
+        record.lease_sheet_data = payload.lease_sheet_data
+
+    # Re-upload PDF if new base64 is provided (replaces old PDF on Dropbox)
+    if payload.pdf_base64:
+        try:
+            pdf_content = base64.b64decode(payload.pdf_base64)
+            lease_data = payload.lease_sheet_data or record.lease_sheet_data or {}
+            ticket = payload.ticket_number or record.ticket_number or ''
+            pdf_path = build_pdf_path(
+                date_str=str(payload.spray_date or record.spray_date),
+                client=lease_data.get('customer', ''),
+                area=lease_data.get('area', ''),
+                ticket=ticket,
+                lsd_or_pipeline=lease_data.get('lsdOrPipeline', ''),
+            )
+            new_pdf_url = upload_pdf_to_dropbox(pdf_content, pdf_path)
+            if new_pdf_url:
+                record.pdf_url = new_pdf_url
+        except Exception as e:
+            print(f"Error re-uploading PDF: {e}")
+
+    db.commit()
+    db.refresh(record)
+    return SiteSprayRecordRead.model_validate(record)
+
+
+@app.get("/api/recent-submissions", response_model=list[RecentSubmissionRead])
+def list_recent_submissions(
+    search: str = Query(default=None),
+    limit: int = Query(default=50, le=200),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List recent lease sheet submissions with search."""
+    q = (
+        db.query(
+            SiteSprayRecord,
+            Site.lsd.label('site_lsd'),
+            Site.client.label('site_client'),
+            Site.area.label('site_area'),
+        )
+        .join(Site, SiteSprayRecord.site_id == Site.id)
+        .filter(SiteSprayRecord.lease_sheet_data.isnot(None))
+    )
+
+    if search:
+        search_term = f"%{search}%"
+        q = q.filter(
+            or_(
+                SiteSprayRecord.ticket_number.ilike(search_term),
+                SiteSprayRecord.sprayed_by_name.ilike(search_term),
+                Site.client.ilike(search_term),
+                Site.area.ilike(search_term),
+                Site.lsd.ilike(search_term),
+            )
+        )
+
+    rows = q.order_by(SiteSprayRecord.created_at.desc()).limit(limit).all()
+
+    results = []
+    for record, site_lsd, site_client, site_area in rows:
+        data = SiteSprayRecordRead.model_validate(record).model_dump()
+        data['site_lsd'] = site_lsd
+        data['site_client'] = site_client
+        data['site_area'] = site_area
+        results.append(RecentSubmissionRead(**data))
+    return results
 
 
 @app.patch("/api/sites/{site_id}/status", response_model=SiteRead)

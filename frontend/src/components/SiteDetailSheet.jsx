@@ -33,6 +33,8 @@ export default function SiteDetailSheet({
   onCreateSprayRecord,
   onDeleteSprayRecord,
   onStartInspection,
+  onViewPdf,
+  onEditRecord,
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editState, setEditState] = useState(() => buildEditState(site));
@@ -351,7 +353,7 @@ export default function SiteDetailSheet({
                   {sprayRecords.map((record) => (
                     <div key={record.id} className="site-row" style={{ padding: '0.5rem', borderRadius: '6px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div>
+                        <div style={{ flex: 1 }}>
                           <div className="small-text" style={{ fontWeight: 600 }}>
                             {record.spray_date}{record.is_avoided ? ' — Issue/Not Sprayed' : ' — Sprayed'}
                             {record.lease_sheet_data ? ' 📄' : ''}
@@ -362,15 +364,25 @@ export default function SiteDetailSheet({
                             {record.notes ? ` — ${record.notes}` : ''}
                           </div>
                           {record.pdf_url && (
-                            <div className="small-text" style={{ marginTop: '0.25rem' }}>
-                              <a 
-                                href={record.pdf_url} 
-                                target="_blank" 
-                                rel="noopener noreferrer"
-                                style={{ color: '#3b82f6', textDecoration: 'underline' }}
+                            <div style={{ display: 'flex', gap: '6px', marginTop: '0.25rem' }}>
+                              <button
+                                className="secondary-button"
+                                type="button"
+                                onClick={() => onViewPdf?.(record)}
+                                style={{ padding: '2px 8px', fontSize: '0.7rem' }}
                               >
-                                📄 View Lease Sheet PDF
-                              </a>
+                                📄 View PDF
+                              </button>
+                              {canManagePin && onEditRecord && (
+                                <button
+                                  className="secondary-button"
+                                  type="button"
+                                  onClick={() => onEditRecord(record)}
+                                  style={{ padding: '2px 8px', fontSize: '0.7rem' }}
+                                >
+                                  ✏️ Edit
+                                </button>
+                              )}
                             </div>
                           )}
                         </div>

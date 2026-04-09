@@ -1,7 +1,7 @@
 import { openDB } from 'idb';
 
 const DB_NAME = 'pineview-offline-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 function ensureCacheId(site) {
   return {
@@ -20,6 +20,9 @@ const dbPromise = openDB(DB_NAME, DB_VERSION, {
     }
     if (!db.objectStoreNames.contains('meta')) {
       db.createObjectStore('meta', { keyPath: 'key' });
+    }
+    if (!db.objectStoreNames.contains('uploadQueue')) {
+      db.createObjectStore('uploadQueue', { keyPath: 'id' });
     }
   },
 });
@@ -83,4 +86,37 @@ export async function getLastSyncAt() {
   const db = await dbPromise;
   const entry = await db.get('meta', 'lastSyncAt');
   return entry?.value || null;
+}
+
+// ── Upload queue (background lease sheet / spray record uploads) ──
+
+export async function queueUpload(entry) {
+  const db = await dbPromise;
+  const item = {
+    id: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+    status: 'pending',
+    ...entry,
+  };
+  await db.put('uploadQueue', item);
+  return item;
+}
+
+export async function getUploadQueue() {
+  const db = await dbPromise;
+  return db.getAll('uploadQueue');
+}
+
+export async function removeUploadEntry(id) {
+  const db = await dbPromise;
+  await db.delete('uploadQueue', id);
+}
+
+export async function updateUploadEntry(id, updates) {
+  const db = await dbPromise;
+  const existing = await db.get('uploadQueue', id);
+  if (!existing) return;
+  const updated = { ...existing, ...updates };
+  await db.put('uploadQueue', updated);
+  return updated;
 }

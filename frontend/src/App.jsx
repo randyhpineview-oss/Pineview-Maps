@@ -6,6 +6,7 @@ import HerbicideLeaseSheet from './components/HerbicideLeaseSheet';
 import LoginPage from './components/LoginPage';
 import MapView from './components/MapView';
 import PipelineDetailSheet from './components/PipelineDetailSheet';
+import RecentsPanel from './components/RecentsPanel';
 import SiteDetailSheet from './components/SiteDetailSheet';
 import { api } from './lib/api';
 import { nearestFraction } from './lib/mapUtils';
@@ -14,8 +15,11 @@ import {
   getLastSyncAt,
   getQueuedActions,
   getSites,
+  getUploadQueue,
   queueAction,
+  queueUpload,
   removeQueuedAction,
+  removeUploadEntry,
   removeSite,
   replaceSites,
   setLastSyncAt,
@@ -29,6 +33,7 @@ const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
 
 const TAB_MAP = 'map';
 const TAB_SITES = 'sites';
+const TAB_RECENTS = 'recents';
 const TAB_ADMIN = 'admin';
 
 const MapIcon = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>);
@@ -118,6 +123,14 @@ export default function App() {
   // Lease sheet inspection state
   const [inspectionSite, setInspectionSite] = useState(null);
   const [inspectionPipeline, setInspectionPipeline] = useState(null);
+  // Upload queue state
+  const [uploadQueueItems, setUploadQueueItems] = useState([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const uploadingRef = useRef(false);
+  // PDF preview state
+  const [previewingPdfUrl, setPreviewingPdfUrl] = useState(null);
+  // Edit spray record state
+  const [editingSprayRecord, setEditingSprayRecord] = useState(null);
   const mapRef = useRef(null);
   const lastFollowUpdateRef = useRef(0);
   const smoothedLocationRef = useRef(null);
@@ -218,6 +231,44 @@ export default function App() {
     }
   }, [roleCanAdmin]);
 
+  const refreshUploadQueue = useCallback(async () => {
+    const items = await getUploadQueue();
+    setUploadQueueItems(items);
+    return items;
+  }, []);
+
+  const processUploadQueue = useCallback(async () => {
+    if (uploadingRef.current || !window.navigator.onLine) return;
+    uploadingRef.current = true;
+    setIsUploading(true);
+    try {
+      const items = await getUploadQueue();
+      for (const item of items.sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+        try {
+          if (item.targetType === 'site') {
+            await api.createSiteSprayRecord(item.targetId, item.payload);
+            // Refresh the site data in background
+            try {
+              const updated = await api.getSite(item.targetId);
+              setSites((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+              await upsertSite(updated);
+            } catch { /* ignore refresh failure */ }
+          } else if (item.targetType === 'pipeline') {
+            await api.createSprayRecord(item.targetId, item.payload);
+          }
+          await removeUploadEntry(item.id);
+        } catch (err) {
+          console.error('[UPLOAD_QUEUE] Failed to upload:', item.id, err);
+          // Leave it in queue for retry
+        }
+      }
+    } finally {
+      uploadingRef.current = false;
+      setIsUploading(false);
+      await refreshUploadQueue();
+    }
+  }, [refreshUploadQueue]);
+
   const syncQueuedActions = useCallback(async () => {
     if (!window.navigator.onLine) {
       return;
@@ -234,7 +285,9 @@ export default function App() {
       await removeQueuedAction(action.id);
     }
     await refreshQueueCount();
-  }, [refreshQueueCount]);
+    // Also process upload queue
+    await processUploadQueue();
+  }, [refreshQueueCount, processUploadQueue]);
 
   const refreshAllData = useCallback(async () => {
     setIsLoading(true);
@@ -319,8 +372,12 @@ export default function App() {
 
   useEffect(() => {
     void refreshQueueCount();
+    void refreshUploadQueue().then(() => {
+      // Process any pending uploads from previous session
+      if (window.navigator.onLine) processUploadQueue();
+    });
     void refreshAllData();
-  }, [refreshAllData, refreshQueueCount]);
+  }, [refreshAllData, refreshQueueCount, refreshUploadQueue, processUploadQueue]);
 
   useEffect(() => {
     if (!isOnline) {
@@ -940,28 +997,55 @@ export default function App() {
   }
 
   async function handleLeaseSheetSubmit(payload) {
+    // Queue the upload in background and close the sheet immediately
+    const targetType = inspectionSite ? 'site' : 'pipeline';
+    const targetId = inspectionSite ? inspectionSite.id : inspectionPipeline?.id;
+
+    await queueUpload({
+      targetType,
+      targetId,
+      payload,
+    });
+    await refreshUploadQueue();
+
+    // Optimistically update site status
+    if (inspectionSite) {
+      const optimistic = {
+        ...inspectionSite,
+        status: payload.is_avoided ? 'issue' : 'inspected',
+        last_inspected_at: new Date().toISOString(),
+      };
+      setSites((prev) => prev.map((s) => (s.id === optimistic.id ? optimistic : s)));
+      setSelectedSite(optimistic);
+      await upsertSite(optimistic);
+    }
+
+    setMessage(payload.is_avoided ? 'Issue queued for upload.' : 'Spray record queued for upload.');
+    // Clear inspection state — user returns to map immediately
+    setInspectionSite(null);
+    setInspectionPipeline(null);
+
+    // Kick off background upload
+    processUploadQueue();
+  }
+
+  async function handleEditSpraySubmit(payload) {
+    if (!editingSprayRecord) return;
     setStatusSaving(true);
     try {
-      if (inspectionSite) {
-        await api.createSiteSprayRecord(inspectionSite.id, payload);
-        // Refresh site data
-        const updated = await api.getSite(inspectionSite.id);
-        setSelectedSite(updated);
-        setSites((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-      } else if (inspectionPipeline) {
-        await api.createSprayRecord(inspectionPipeline.id, payload);
-        // Refresh pipeline data
-        const updated = await api.getPipeline(inspectionPipeline.id);
-        setSelectedPipeline(updated);
-        setPipelineSprayRecords(updated.spray_records || []);
-        setPipelines((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+      await api.updateSiteSprayRecord(editingSprayRecord.id, payload);
+      setMessage('Record updated.');
+      setEditingSprayRecord(null);
+      // Refresh site data
+      if (editingSprayRecord.site_id) {
+        try {
+          const updated = await api.getSite(editingSprayRecord.site_id);
+          setSites((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+          setSelectedSite(updated);
+        } catch { /* ignore */ }
       }
-      setMessage(payload.is_avoided ? 'Issue recorded.' : 'Spray record saved.');
-      // Clear inspection state
-      setInspectionSite(null);
-      setInspectionPipeline(null);
     } catch (error) {
-      setMessage(error.message || 'Failed to save spray record.');
+      setMessage(error.message || 'Failed to update record.');
     } finally {
       setStatusSaving(false);
     }
@@ -1370,6 +1454,14 @@ export default function App() {
         <span className="topbar-title">Pineview Maps</span>
         <div className="topbar-right">
           <span className={`badge ${isOnline ? 'online' : 'offline'}`}>{isOnline ? 'Online' : 'Offline'}</span>
+          {(uploadQueueItems.length > 0 || isUploading) ? (
+            <span 
+              className="badge" 
+              style={{ background: '#3b82f6', color: 'white', animation: isUploading ? 'pulse 1.5s infinite' : 'none' }}
+            >
+              {isUploading ? `Syncing (${uploadQueueItems.length})…` : `Queued (${uploadQueueItems.length})`}
+            </span>
+          ) : null}
           {queuedCount > 0 ? (
             <button 
               className="badge" 
@@ -1479,6 +1571,58 @@ export default function App() {
               isOpen={true}
               onSubmit={handleLeaseSheetSubmit}
               onCancel={handleLeaseSheetCancel}
+            />
+          </div>
+        )}
+
+        {/* ── Edit Lease Sheet overlay ── */}
+        {editingSprayRecord && (
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 30,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'flex-end',
+          }}>
+            <HerbicideLeaseSheet
+              site={{ id: editingSprayRecord.site_id, client: editingSprayRecord.site_client, area: editingSprayRecord.site_area, lsd: editingSprayRecord.site_lsd }}
+              isOpen={true}
+              editingRecord={editingSprayRecord}
+              onSubmit={handleEditSpraySubmit}
+              onCancel={() => setEditingSprayRecord(null)}
+            />
+          </div>
+        )}
+
+        {/* ── PDF Preview overlay ── */}
+        {previewingPdfUrl && (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 50,
+            backgroundColor: '#1f2937',
+            display: 'flex',
+            flexDirection: 'column',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #374151' }}>
+              <span style={{ color: '#f9fafb', fontWeight: 600 }}>PDF Preview</span>
+              <button
+                onClick={() => setPreviewingPdfUrl(null)}
+                style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer' }}
+              >×</button>
+            </div>
+            <iframe
+              src={previewingPdfUrl}
+              style={{ flex: 1, border: 'none', width: '100%' }}
+              title="PDF Preview"
             />
           </div>
         )}
@@ -1642,6 +1786,8 @@ export default function App() {
                 onCreateSprayRecord={handleCreateSiteSprayRecord}
                 onDeleteSprayRecord={handleDeleteSiteSprayRecord}
                 onStartInspection={handleStartInspection}
+                onViewPdf={(record) => record.pdf_url && setPreviewingPdfUrl(record.pdf_url)}
+                onEditRecord={(record) => setEditingSprayRecord({ ...record, site_lsd: selectedSite?.lsd, site_client: selectedSite?.client, site_area: selectedSite?.area })}
               />
             ) : null}
           </div>
@@ -1719,6 +1865,26 @@ export default function App() {
           </div>
         </div>
 
+        {/* ── Recents panel ── */}
+        <div className={`side-panel ${activeTab === TAB_RECENTS ? 'open' : ''}`}>
+          <div className="side-panel-header">
+            <h2>Recents</h2>
+          </div>
+          <div className="side-panel-body">
+            <RecentsPanel
+              visible={activeTab === TAB_RECENTS}
+              onViewPdf={(record) => {
+                if (record.pdf_url) {
+                  setPreviewingPdfUrl(record.pdf_url);
+                }
+              }}
+              onEditRecord={(record) => setEditingSprayRecord(record)}
+              roleCanAdmin={roleCanAdmin}
+              uploadQueue={uploadQueueItems}
+            />
+          </div>
+        </div>
+
         {/* ── Admin panel ── */}
         <div 
           className={`side-panel ${activeTab === TAB_ADMIN && roleCanAdmin ? 'open' : ''}`}
@@ -1775,6 +1941,17 @@ export default function App() {
         }}>
           <ListIcon />
           <span>Sites</span>
+        </button>
+        <button className={`tab-btn ${activeTab === TAB_RECENTS ? 'active' : ''}`} type="button" onClick={() => { 
+          if (activeTab === TAB_RECENTS) {
+            setActiveTab(TAB_MAP);
+          } else {
+            setActiveTab(TAB_RECENTS);
+            setDetailOpen(false);
+          }
+        }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span>Recents</span>
         </button>
         {roleCanAdmin ? (
           <button className={`tab-btn ${activeTab === TAB_ADMIN ? 'active' : ''}`} type="button" onClick={() => { 
