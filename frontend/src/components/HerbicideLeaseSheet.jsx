@@ -293,16 +293,17 @@ export default function HerbicideLeaseSheet({
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(null);
     setPdfBase64(null);
-    setPreviewZoom(1);
-    setPreviewPan({ x: 0, y: 0 });
+    previewZoomRef.current = 1;
+    previewPanRef.current = { x: 0, y: 0 };
   };
 
-  // Pinch-to-zoom for the preview PDF
-  const [previewZoom, setPreviewZoom] = useState(1);
-  const [previewPan, setPreviewPan] = useState({ x: 0, y: 0 });
+  // Pinch-to-zoom for the preview PDF — use refs to avoid stale closures
+  const previewZoomRef = useRef(1);
+  const previewPanRef = useRef({ x: 0, y: 0 });
+  const [, forcePreviewRender] = useState(0);
+  const rerenderPreview = () => forcePreviewRender(n => n + 1);
   const previewPinchDist = useRef(null);
   const previewPinchZoom = useRef(1);
-  const previewPanning = useRef(false);
   const previewLastTouch = useRef(null);
   const previewLastTap = useRef(0);
 
@@ -311,13 +312,13 @@ export default function HerbicideLeaseSheet({
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       previewPinchDist.current = Math.hypot(dx, dy);
-      previewPinchZoom.current = previewZoom;
+      previewPinchZoom.current = previewZoomRef.current;
+      previewLastTouch.current = null;
       e.preventDefault();
-    } else if (e.touches.length === 1 && previewZoom > 1) {
-      previewPanning.current = true;
+    } else if (e.touches.length === 1) {
       previewLastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
     }
-  }, [previewZoom]);
+  }, []);
 
   const onPreviewTouchMove = useCallback((e) => {
     if (e.touches.length === 2 && previewPinchDist.current !== null) {
@@ -325,13 +326,15 @@ export default function HerbicideLeaseSheet({
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       const dist = Math.hypot(dx, dy);
       const scale = dist / previewPinchDist.current;
-      setPreviewZoom(Math.min(4, Math.max(0.5, previewPinchZoom.current * scale)));
+      previewZoomRef.current = Math.min(4, Math.max(1, previewPinchZoom.current * scale));
+      rerenderPreview();
       e.preventDefault();
-    } else if (e.touches.length === 1 && previewPanning.current && previewLastTouch.current) {
+    } else if (e.touches.length === 1 && previewLastTouch.current && previewZoomRef.current > 1) {
       const dx = e.touches[0].clientX - previewLastTouch.current.x;
       const dy = e.touches[0].clientY - previewLastTouch.current.y;
-      setPreviewPan(prev => ({ x: prev.x + dx, y: prev.y + dy }));
+      previewPanRef.current = { x: previewPanRef.current.x + dx, y: previewPanRef.current.y + dy };
       previewLastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      rerenderPreview();
       e.preventDefault();
     }
   }, []);
@@ -339,15 +342,19 @@ export default function HerbicideLeaseSheet({
   const onPreviewTouchEnd = useCallback((e) => {
     if (e.touches.length < 2) previewPinchDist.current = null;
     if (e.touches.length === 0) {
-      previewPanning.current = false;
       previewLastTouch.current = null;
-      // Double-tap to reset
       const now = Date.now();
       if (now - previewLastTap.current < 300) {
-        setPreviewZoom(1);
-        setPreviewPan({ x: 0, y: 0 });
+        previewZoomRef.current = 1;
+        previewPanRef.current = { x: 0, y: 0 };
+        rerenderPreview();
       }
       previewLastTap.current = now;
+      if (previewZoomRef.current < 1.05) {
+        previewZoomRef.current = 1;
+        previewPanRef.current = { x: 0, y: 0 };
+        rerenderPreview();
+      }
     }
   }, []);
 
@@ -376,12 +383,12 @@ export default function HerbicideLeaseSheet({
           <div style={{
             width: '100%',
             height: '100%',
-            transform: `translate(${previewPan.x}px, ${previewPan.y}px) scale(${previewZoom})`,
-            transformOrigin: 'center top',
+            transform: `translate(${previewPanRef.current.x}px, ${previewPanRef.current.y}px) scale(${previewZoomRef.current})`,
+            transformOrigin: '0 0',
           }}>
             <iframe
               src={previewUrl}
-              title="PDF Preview"
+              title="Herbicide Lease Sheet"
               style={{ width: '100%', height: '100%', border: 'none', pointerEvents: 'none' }}
             />
           </div>

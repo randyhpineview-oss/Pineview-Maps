@@ -51,7 +51,7 @@ function fixPhotoOrientation(dataUrl) {
 }
 
 /**
- * Generate a Herbicide Application Ticket PDF.
+ * Generate a Herbicide Lease Sheet PDF.
  * @param {object} data - form data
  * @param {string[]} [photoDataUrls] - array of data URLs for photos (max 2)
  * Returns { blob, base64 }
@@ -88,7 +88,7 @@ export async function generateLeaseSheetPdf(data, photoDataUrls = []) {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(16);
   doc.setTextColor(50, 80, 50);
-  doc.text('Herbicide Application Ticket', marginL + 120, titleY);
+  doc.text('Herbicide Lease Sheet', marginL + 120, titleY);
   doc.setTextColor(0);
 
   // Ticket No (same baseline as title)

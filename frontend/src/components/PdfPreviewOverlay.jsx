@@ -2,23 +2,26 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/$/, '') || '';
 
-const MIN_ZOOM = 0.5;
+const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
-const ZOOM_STEP = 0.25;
 
 export default function PdfPreviewOverlay({ pdfUrl, onClose }) {
   const [blobUrl, setBlobUrl] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
 
-  // Refs for gesture tracking
+  // Use refs for zoom/pan so touch callbacks always see current values
+  const zoomRef = useRef(1);
+  const panRef = useRef({ x: 0, y: 0 });
+  const [, forceRender] = useState(0);
+  const rerender = () => forceRender(n => n + 1);
+
+  // Gesture refs
   const containerRef = useRef(null);
-  const isPanning = useRef(false);
   const lastTouch = useRef(null);
   const lastPinchDist = useRef(null);
   const lastPinchZoom = useRef(1);
+  const lastTapTime = useRef(0);
 
   // Fetch PDF via backend proxy
   useEffect(() => {
@@ -61,69 +64,67 @@ export default function PdfPreviewOverlay({ pdfUrl, onClose }) {
     };
   }, [blobUrl]);
 
-  // Double-tap to reset zoom
-  const lastTapTime = useRef(0);
-  const handleDoubleTap = useCallback(() => {
-    const now = Date.now();
-    if (now - lastTapTime.current < 300) {
-      setZoom(1);
-      setPan({ x: 0, y: 0 });
-    }
-    lastTapTime.current = now;
-  }, []);
-
-  // Touch handlers for pinch-to-zoom and pan
+  // Touch handlers — all use refs so no stale closures
   const handleTouchStart = useCallback((e) => {
     if (e.touches.length === 2) {
-      // Pinch start
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       lastPinchDist.current = Math.hypot(dx, dy);
-      lastPinchZoom.current = zoom;
+      lastPinchZoom.current = zoomRef.current;
+      lastTouch.current = null; // stop pan during pinch
       e.preventDefault();
-    } else if (e.touches.length === 1 && zoom > 1) {
-      // Pan start (only when zoomed in)
-      isPanning.current = true;
+    } else if (e.touches.length === 1) {
       lastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
     }
-  }, [zoom]);
+  }, []);
 
   const handleTouchMove = useCallback((e) => {
     if (e.touches.length === 2 && lastPinchDist.current !== null) {
-      // Pinch zoom
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       const dist = Math.hypot(dx, dy);
       const scale = dist / lastPinchDist.current;
-      const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, lastPinchZoom.current * scale));
-      setZoom(newZoom);
+      zoomRef.current = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, lastPinchZoom.current * scale));
+      rerender();
       e.preventDefault();
-    } else if (e.touches.length === 1 && isPanning.current && lastTouch.current) {
-      // Pan
+    } else if (e.touches.length === 1 && lastTouch.current && zoomRef.current > 1) {
       const dx = e.touches[0].clientX - lastTouch.current.x;
       const dy = e.touches[0].clientY - lastTouch.current.y;
-      setPan(prev => ({ x: prev.x + dx, y: prev.y + dy }));
+      panRef.current = { x: panRef.current.x + dx, y: panRef.current.y + dy };
       lastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      rerender();
       e.preventDefault();
     }
   }, []);
 
   const handleTouchEnd = useCallback((e) => {
-    if (e.touches.length < 2) {
-      lastPinchDist.current = null;
-    }
+    if (e.touches.length < 2) lastPinchDist.current = null;
     if (e.touches.length === 0) {
-      isPanning.current = false;
       lastTouch.current = null;
-      handleDoubleTap();
+      // Double-tap to reset
+      const now = Date.now();
+      if (now - lastTapTime.current < 300) {
+        zoomRef.current = 1;
+        panRef.current = { x: 0, y: 0 };
+        rerender();
+      }
+      lastTapTime.current = now;
+      // Snap zoom back to 1 if close
+      if (zoomRef.current < 1.05) {
+        zoomRef.current = 1;
+        panRef.current = { x: 0, y: 0 };
+        rerender();
+      }
     }
-  }, [handleDoubleTap]);
+  }, []);
 
   // Mouse wheel zoom (desktop)
   const handleWheel = useCallback((e) => {
     e.preventDefault();
-    const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
-    setZoom(z => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z + delta)));
+    const delta = e.deltaY > 0 ? -0.25 : 0.25;
+    zoomRef.current = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoomRef.current + delta));
+    if (zoomRef.current <= 1) panRef.current = { x: 0, y: 0 };
+    rerender();
   }, []);
 
   // Build a direct Dropbox download link for "Open in tab" fallback
@@ -133,6 +134,9 @@ export default function PdfPreviewOverlay({ pdfUrl, onClose }) {
       .replace('www.dropbox.com', 'dl.dropboxusercontent.com')
       .replace('&dl=0', '').replace('?dl=0', '?').replace('dl=1', '').replace(/[?&]$/, '');
   }
+
+  const zoom = zoomRef.current;
+  const pan = panRef.current;
 
   return (
     <div style={{
@@ -148,7 +152,7 @@ export default function PdfPreviewOverlay({ pdfUrl, onClose }) {
     }}>
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #374151', gap: '8px', flexShrink: 0 }}>
-        <span style={{ color: '#f9fafb', fontWeight: 600, flex: 1 }}>PDF Preview</span>
+        <span style={{ color: '#f9fafb', fontWeight: 600, flex: 1 }}>Herbicide Lease Sheet</span>
         <a
           href={directUrl}
           target="_blank"
@@ -193,12 +197,12 @@ export default function PdfPreviewOverlay({ pdfUrl, onClose }) {
             width: '100%',
             height: '100%',
             transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-            transformOrigin: 'center top',
+            transformOrigin: '0 0',
           }}>
             <iframe
               src={blobUrl}
               style={{ width: '100%', height: '100%', border: 'none', pointerEvents: 'none' }}
-              title="PDF Preview"
+              title="Herbicide Lease Sheet"
             />
           </div>
           {/* Transparent touch layer on top of iframe to capture pinch/pan gestures */}
