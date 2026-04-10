@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { api } from '../lib/api';
 
 const TABS = [
@@ -29,10 +29,8 @@ const btnStyle = (bg) => ({
   fontWeight: 600,
 });
 
-export default function LookupManager() {
+export default function LookupManager({ cachedLookups = {}, onLookupsChanged }) {
   const [tab, setTab] = useState('herbicides');
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(false);
   const [newName, setNewName] = useState('');
   const [newExtra, setNewExtra] = useState('');
   const [newIsAccessRoad, setNewIsAccessRoad] = useState(false);
@@ -41,25 +39,8 @@ export default function LookupManager() {
   const [editExtra, setEditExtra] = useState('');
   const [editIsAccessRoad, setEditIsAccessRoad] = useState(false);
 
-  useEffect(() => {
-    loadItems();
-  }, [tab]);
-
-  async function loadItems() {
-    setLoading(true);
-    try {
-      let data;
-      if (tab === 'herbicides') data = await api.listHerbicides();
-      else if (tab === 'applicators') data = await api.listApplicators();
-      else if (tab === 'weeds') data = await api.listNoxiousWeeds();
-      else if (tab === 'locations') data = await api.listLocationTypes();
-      setItems(data || []);
-    } catch (e) {
-      console.error('Failed to load lookup items:', e);
-    } finally {
-      setLoading(false);
-    }
-  }
+  // Items come from pre-loaded IndexedDB cache — no API call on tab switch
+  const items = useMemo(() => cachedLookups[tab] || [], [cachedLookups, tab]);
 
   async function handleAdd() {
     if (!newName.trim()) return;
@@ -71,7 +52,7 @@ export default function LookupManager() {
       setNewName('');
       setNewExtra('');
       setNewIsAccessRoad(false);
-      await loadItems();
+      onLookupsChanged?.();
     } catch (e) {
       alert('Failed to add: ' + (e.message || e));
     }
@@ -84,7 +65,7 @@ export default function LookupManager() {
       else if (tab === 'weeds') await api.updateNoxiousWeed(id, { name: editName, is_active: true });
       else if (tab === 'locations') await api.updateLocationType(id, { name: editName, is_access_road: editIsAccessRoad, is_active: true });
       setEditId(null);
-      await loadItems();
+      onLookupsChanged?.();
     } catch (e) {
       alert('Failed to update: ' + (e.message || e));
     }
@@ -97,7 +78,7 @@ export default function LookupManager() {
       else if (tab === 'applicators') await api.deleteApplicator(id);
       else if (tab === 'weeds') await api.deleteNoxiousWeed(id);
       else if (tab === 'locations') await api.deleteLocationType(id);
-      await loadItems();
+      onLookupsChanged?.();
     } catch (e) {
       alert('Failed to delete: ' + (e.message || e));
     }
@@ -165,9 +146,7 @@ export default function LookupManager() {
       </div>
 
       {/* Items list */}
-      {loading ? (
-        <div style={{ textAlign: 'center', padding: '20px', color: '#9ca3af' }}>Loading...</div>
-      ) : items.length === 0 ? (
+      {items.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '20px', color: '#9ca3af' }}>No items yet. Add one above.</div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>

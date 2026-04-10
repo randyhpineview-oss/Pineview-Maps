@@ -135,6 +135,11 @@ export default function AdminPanel({
   deletedPipelines = [],
   onRestorePipeline,
   onDeletePipelinePermanent,
+  // Pre-loaded cached data from IndexedDB
+  cachedLookups = { herbicides: [], applicators: [], weeds: [], locations: [] },
+  onLookupsChanged,
+  cachedUsers = [],
+  onUsersChanged,
 }) {
   const [file, setFile] = useState(null);
   const [pipelineFile, setPipelineFile] = useState(null);
@@ -371,11 +376,11 @@ export default function AdminPanel({
         </CollapsibleSection>
 
         <CollapsibleSection title="User Management" defaultOpen={false}>
-          <UserManagementPanel busy={busy} currentUserEmail={currentUserEmail} />
+          <UserManagementPanel busy={busy} currentUserEmail={currentUserEmail} cachedUsers={cachedUsers} onUsersChanged={onUsersChanged} />
         </CollapsibleSection>
 
         <CollapsibleSection title="Lookup Tables" defaultOpen={false}>
-          <LookupManager />
+          <LookupManager cachedLookups={cachedLookups} onLookupsChanged={onLookupsChanged} />
         </CollapsibleSection>
       </div>
     </div>

@@ -1,7 +1,7 @@
 import { openDB } from 'idb';
 
 const DB_NAME = 'pineview-offline-db';
-const DB_VERSION = 2;
+const DB_VERSION = 4;
 
 function ensureCacheId(site) {
   return {
@@ -23,6 +23,15 @@ const dbPromise = openDB(DB_NAME, DB_VERSION, {
     }
     if (!db.objectStoreNames.contains('uploadQueue')) {
       db.createObjectStore('uploadQueue', { keyPath: 'id' });
+    }
+    if (!db.objectStoreNames.contains('recents')) {
+      db.createObjectStore('recents', { keyPath: 'id' });
+    }
+    if (!db.objectStoreNames.contains('lookups')) {
+      db.createObjectStore('lookups', { keyPath: 'key' });
+    }
+    if (!db.objectStoreNames.contains('users')) {
+      db.createObjectStore('users', { keyPath: 'id' });
     }
   },
 });
@@ -86,6 +95,74 @@ export async function getLastSyncAt() {
   const db = await dbPromise;
   const entry = await db.get('meta', 'lastSyncAt');
   return entry?.value || null;
+}
+
+// ── Recents cache (lightweight — strips heavy lease_sheet_data) ──
+
+function lightweightRecent(record) {
+  // Only keep what the RecentsPanel list needs for display.
+  // Drop lease_sheet_data (contains base64 photos) to keep IndexedDB small.
+  const { lease_sheet_data, ...rest } = record;
+  // Keep only the applicators list from lease_sheet_data for display
+  return {
+    ...rest,
+    lease_sheet_data: lease_sheet_data ? { applicators: lease_sheet_data.applicators } : null,
+  };
+}
+
+export async function replaceRecents(records) {
+  const db = await dbPromise;
+  const tx = db.transaction('recents', 'readwrite');
+  await tx.store.clear();
+  for (const record of records) {
+    await tx.store.put(lightweightRecent(record));
+  }
+  await tx.done;
+}
+
+export async function getRecents() {
+  const db = await dbPromise;
+  return db.getAll('recents');
+}
+
+// ── Lookups cache (herbicides, applicators, weeds, location types) ──
+
+export async function replaceLookups(lookupKey, records) {
+  const db = await dbPromise;
+  await db.put('lookups', { key: lookupKey, items: records, updatedAt: new Date().toISOString() });
+}
+
+export async function getLookups(lookupKey) {
+  const db = await dbPromise;
+  const entry = await db.get('lookups', lookupKey);
+  return entry?.items || [];
+}
+
+export async function getAllLookups() {
+  const db = await dbPromise;
+  const all = await db.getAll('lookups');
+  const result = {};
+  for (const entry of all) {
+    result[entry.key] = entry.items;
+  }
+  return result;
+}
+
+// ── Users cache ──
+
+export async function replaceUsers(users) {
+  const db = await dbPromise;
+  const tx = db.transaction('users', 'readwrite');
+  await tx.store.clear();
+  for (const user of users) {
+    await tx.store.put(user);
+  }
+  await tx.done;
+}
+
+export async function getUsers() {
+  const db = await dbPromise;
+  return db.getAll('users');
 }
 
 // ── Upload queue (background lease sheet / spray record uploads) ──

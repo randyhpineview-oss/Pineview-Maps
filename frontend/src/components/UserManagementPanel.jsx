@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 
 import { api } from '../lib/api';
 
@@ -164,9 +164,8 @@ function UserRow({ user, busy, onUpdateRole, onUpdateName, onDelete, currentUser
   );
 }
 
-export default function UserManagementPanel({ busy: externalBusy, currentUserEmail }) {
-  const [users, setUsers] = useState([]);
-  const [loading, setLoading] = useState(false);
+export default function UserManagementPanel({ busy: externalBusy, currentUserEmail, cachedUsers = [], onUsersChanged }) {
+  const users = cachedUsers;
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [busy, setBusy] = useState(false);
@@ -180,23 +179,6 @@ export default function UserManagementPanel({ busy: externalBusy, currentUserEma
   const [newRole, setNewRole] = useState('worker');
 
   const isBusy = busy || externalBusy;
-
-  const loadUsers = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const data = await api.listUsers();
-      setUsers(data);
-    } catch (err) {
-      setError(err.message || 'Failed to load users');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadUsers();
-  }, [loadUsers]);
 
   function clearMessages() {
     setError('');
@@ -230,7 +212,7 @@ export default function UserManagementPanel({ busy: externalBusy, currentUserEma
       setNewName('');
       setNewRole('worker');
       setShowForm(false);
-      await loadUsers();
+      onUsersChanged?.();
     } catch (err) {
       setError(err.message || 'Failed to create user');
     } finally {
@@ -259,7 +241,7 @@ export default function UserManagementPanel({ busy: externalBusy, currentUserEma
       setNewName('');
       setNewRole('worker');
       setShowForm(false);
-      await loadUsers();
+      onUsersChanged?.();
     } catch (err) {
       setError(err.message || 'Failed to send invitation');
     } finally {
@@ -273,7 +255,7 @@ export default function UserManagementPanel({ busy: externalBusy, currentUserEma
     try {
       await api.updateUser(userId, { role: newRoleValue });
       setSuccess('User role updated');
-      await loadUsers();
+      onUsersChanged?.();
     } catch (err) {
       setError(err.message || 'Failed to update user');
     } finally {
@@ -287,7 +269,7 @@ export default function UserManagementPanel({ busy: externalBusy, currentUserEma
     try {
       await api.updateUser(userId, { name: newName });
       setSuccess('User name updated');
-      await loadUsers();
+      onUsersChanged?.();
     } catch (err) {
       setError(err.message || 'Failed to update user');
     } finally {
@@ -301,7 +283,7 @@ export default function UserManagementPanel({ busy: externalBusy, currentUserEma
     try {
       await api.deleteUser(userId);
       setSuccess('User deleted');
-      await loadUsers();
+      onUsersChanged?.();
     } catch (err) {
       setError(err.message || 'Failed to delete user');
     } finally {
@@ -391,10 +373,7 @@ export default function UserManagementPanel({ busy: externalBusy, currentUserEma
         </form>
       ) : null}
 
-      {loading ? (
-        <div className="small-text" style={{ padding: '1rem 0' }}>Loading users…</div>
-      ) : (
-        <div className="list-grid">
+      <div className="list-grid">
           {users.length === 0 ? (
             <div className="site-row">
               <div className="small-text">No users found.</div>
@@ -412,19 +391,6 @@ export default function UserManagementPanel({ busy: externalBusy, currentUserEma
               />
             ))
           )}
-        </div>
-      )}
-
-      <div style={{ marginTop: '0.5rem' }}>
-        <button
-          className="secondary-button"
-          type="button"
-          disabled={loading}
-          onClick={loadUsers}
-          style={{ fontSize: '0.8rem' }}
-        >
-          {loading ? 'Refreshing…' : 'Refresh list'}
-        </button>
       </div>
     </div>
   );

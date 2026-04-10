@@ -18,6 +18,7 @@ export default function HerbicideLeaseSheet({
   onCancel,
   isOpen,
   editingRecord = null,
+  cachedLookups = {},
 }) {
   const isEditMode = !!editingRecord;
   const [herbicides, setHerbicides] = useState([]);
@@ -147,52 +148,15 @@ export default function HerbicideLeaseSheet({
   // This avoids wasting ticket numbers when users cancel.
   // In edit mode, we keep the original ticket number from the record.
 
-  // Load lookup tables — show cached instantly, refresh from server in background
+  // Load lookup tables from pre-loaded IndexedDB cache (passed as prop from App)
   useEffect(() => {
     if (!isOpen) return;
-
-    // 1. Load from localStorage cache immediately
-    try {
-      const cached = localStorage.getItem('lookup_cache');
-      if (cached) {
-        const c = JSON.parse(cached);
-        if (c.herbicides) setHerbicides(c.herbicides);
-        if (c.applicators) setApplicators(c.applicators);
-        if (c.noxiousWeeds) setNoxiousWeeds(c.noxiousWeeds);
-        if (c.locationTypes) setLocationTypes(c.locationTypes);
-        setIsLoading(false);
-      }
-    } catch { /* ignore parse errors */ }
-
-    // 2. Refresh from server in background
-    async function refreshLookups() {
-      try {
-        const [herbs, apps, weeds, types] = await Promise.all([
-          api.listHerbicides(),
-          api.listApplicators(),
-          api.listNoxiousWeeds(),
-          api.listLocationTypes(),
-        ]);
-        setHerbicides(herbs);
-        setApplicators(apps);
-        setNoxiousWeeds(weeds);
-        setLocationTypes(types);
-        // Cache for next time
-        localStorage.setItem('lookup_cache', JSON.stringify({
-          herbicides: herbs,
-          applicators: apps,
-          noxiousWeeds: weeds,
-          locationTypes: types,
-          cachedAt: new Date().toISOString(),
-        }));
-      } catch (error) {
-        console.error('Failed to refresh lookup tables:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    refreshLookups();
-  }, [isOpen]);
+    if (cachedLookups.herbicides?.length) setHerbicides(cachedLookups.herbicides);
+    if (cachedLookups.applicators?.length) setApplicators(cachedLookups.applicators);
+    if (cachedLookups.weeds?.length) setNoxiousWeeds(cachedLookups.weeds);
+    if (cachedLookups.locations?.length) setLocationTypes(cachedLookups.locations);
+    setIsLoading(false);
+  }, [isOpen, cachedLookups]);
 
   // Calculate area treated when total liters changes (200L = 1ha)
   useEffect(() => {

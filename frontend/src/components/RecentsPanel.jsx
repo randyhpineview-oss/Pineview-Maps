@@ -1,61 +1,33 @@
-import { useCallback, useEffect, useState } from 'react';
-import { api } from '../lib/api';
+import { useEffect, useMemo, useState } from 'react';
 
 export default function RecentsPanel({
   visible,
+  cachedRecents = [],
   onViewPdf,
   onEditRecord,
   roleCanAdmin = false,
   uploadQueue = [],
 }) {
-  const [records, setRecords] = useState([]);
-  const [search, setSearch] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(null);
-
-  // Load cached recents instantly, then refresh from server
-  useEffect(() => {
-    if (!visible) return;
-    try {
-      const cached = localStorage.getItem('recents_cache');
-      if (cached) {
-        const c = JSON.parse(cached);
-        if (c.records && !search) setRecords(c.records);
-      }
-    } catch { /* ignore */ }
-  }, [visible]);
-
-  const loadRecords = useCallback(async () => {
-    if (!visible) return;
-    setIsLoading(true);
-    setError(null);
-    try {
-      const data = await api.listRecentSubmissions(search || undefined);
-      setRecords(data);
-      // Cache the unfiltered list
-      if (!search) {
-        localStorage.setItem('recents_cache', JSON.stringify({
-          records: data,
-          cachedAt: new Date().toISOString(),
-        }));
-      }
-    } catch (err) {
-      setError(err.message || 'Failed to load submissions');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [visible, search]);
-
-  useEffect(() => {
-    loadRecords();
-  }, [loadRecords]);
-
-  // Debounced search
+  // Debounced search (client-side filter over pre-loaded data)
   const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
   useEffect(() => {
     const timer = setTimeout(() => setSearch(searchInput), 300);
     return () => clearTimeout(timer);
   }, [searchInput]);
+
+  // Filter cachedRecents by search term (all filtering is client-side — no API call)
+  const records = useMemo(() => {
+    if (!search) return cachedRecents;
+    const q = search.toLowerCase();
+    return cachedRecents.filter((r) =>
+      (r.ticket_number || '').toLowerCase().includes(q) ||
+      (r.site_client || '').toLowerCase().includes(q) ||
+      (r.site_area || '').toLowerCase().includes(q) ||
+      (r.site_lsd || '').toLowerCase().includes(q) ||
+      (r.sprayed_by_name || '').toLowerCase().includes(q)
+    );
+  }, [cachedRecents, search]);
 
   if (!visible) return null;
 
@@ -106,11 +78,7 @@ export default function RecentsPanel({
         </div>
       )}
 
-      {isLoading && records.length === 0 ? (
-        <div className="small-text" style={{ textAlign: 'center', padding: '20px' }}>Loading...</div>
-      ) : error ? (
-        <div className="small-text" style={{ textAlign: 'center', padding: '20px', color: '#fca5a5' }}>{error}</div>
-      ) : records.length === 0 ? (
+      {records.length === 0 ? (
         <div className="small-text" style={{ textAlign: 'center', padding: '20px' }}>No submissions found.</div>
       ) : (
         <div className="list-grid">
@@ -161,15 +129,6 @@ export default function RecentsPanel({
         </div>
       )}
 
-      <button
-        className="secondary-button"
-        type="button"
-        onClick={loadRecords}
-        disabled={isLoading}
-        style={{ width: '100%', marginTop: '12px' }}
-      >
-        {isLoading ? 'Loading...' : 'Refresh'}
-      </button>
     </div>
   );
 }

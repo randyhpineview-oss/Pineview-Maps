@@ -250,6 +250,7 @@ def sync_status(
     # Get max updated_at timestamps
     sites_updated = db.execute(text("SELECT MAX(updated_at) FROM sites WHERE deleted_at IS NULL")).scalar()
     pipelines_updated = db.execute(text("SELECT MAX(updated_at) FROM pipelines WHERE deleted_at IS NULL")).scalar()
+    spray_records_updated = db.execute(text("SELECT MAX(created_at) FROM site_spray_records")).scalar()
     
     # Get pending counts for admins
     pending_sites_count = 0
@@ -269,6 +270,7 @@ def sync_status(
     return {
         "sites_last_updated": sites_updated.isoformat() if sites_updated else None,
         "pipelines_last_updated": pipelines_updated.isoformat() if pipelines_updated else None,
+        "spray_records_last_updated": spray_records_updated.isoformat() if spray_records_updated else None,
         "pending_sites_count": pending_sites_count,
         "pending_pipelines_count": pending_pipelines_count,
     }

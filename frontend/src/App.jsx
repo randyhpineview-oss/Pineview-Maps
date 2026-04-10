@@ -13,16 +13,22 @@ import { api } from './lib/api';
 import { nearestFraction } from './lib/mapUtils';
 import { onAuthStateChange, signOut } from './lib/supabaseClient';
 import {
+  getAllLookups,
   getLastSyncAt,
   getQueuedActions,
+  getRecents,
   getSites,
   getUploadQueue,
+  getUsers,
   queueAction,
   queueUpload,
   removeQueuedAction,
   removeUploadEntry,
   removeSite,
+  replaceLookups,
+  replaceRecents,
   replaceSites,
+  replaceUsers,
   setLastSyncAt,
   upsertSite,
 } from './lib/offlineStore';
@@ -132,6 +138,12 @@ export default function App() {
   const [previewingPdfUrl, setPreviewingPdfUrl] = useState(null);
   // Edit spray record state
   const [editingSprayRecord, setEditingSprayRecord] = useState(null);
+  // Recents cache (IndexedDB-backed, pre-loaded at startup)
+  const [cachedRecents, setCachedRecents] = useState([]);
+  // Lookups cache (IndexedDB-backed)
+  const [cachedLookups, setCachedLookups] = useState({ herbicides: [], applicators: [], weeds: [], locations: [] });
+  // Users cache (IndexedDB-backed)
+  const [cachedUsers, setCachedUsers] = useState([]);
   const mapRef = useRef(null);
   const lastFollowUpdateRef = useRef(0);
   const smoothedLocationRef = useRef(null);
@@ -195,6 +207,78 @@ export default function App() {
     setLastSync(now);
     await loadPendingSites();
   }, [loadPendingSites, serverFilters]);
+
+  // Load recents: cached from IndexedDB instantly, then refresh from server
+  const loadCachedRecents = useCallback(async () => {
+    const cached = await getRecents();
+    if (cached.length > 0) {
+      // Sort by created_at desc (IndexedDB doesn't guarantee order)
+      cached.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+      setCachedRecents(cached);
+    }
+  }, []);
+
+  const loadServerRecents = useCallback(async () => {
+    if (!window.navigator.onLine) return;
+    try {
+      const data = await api.listRecentSubmissions();
+      setCachedRecents(data);
+      await replaceRecents(data);
+    } catch {
+      console.error('[RECENTS] Failed to load from server');
+    }
+  }, []);
+
+  // Load lookups: cached from IndexedDB instantly, then refresh from server
+  const loadCachedLookups = useCallback(async () => {
+    const all = await getAllLookups();
+    if (Object.keys(all).length > 0) {
+      setCachedLookups({
+        herbicides: all.herbicides || [],
+        applicators: all.applicators || [],
+        weeds: all.weeds || [],
+        locations: all.locations || [],
+      });
+    }
+  }, []);
+
+  const loadServerLookups = useCallback(async () => {
+    if (!window.navigator.onLine) return;
+    try {
+      const [herbicides, applicators, weeds, locations] = await Promise.all([
+        api.listHerbicides(),
+        api.listApplicators(),
+        api.listNoxiousWeeds(),
+        api.listLocationTypes(),
+      ]);
+      setCachedLookups({ herbicides, applicators, weeds, locations });
+      await Promise.all([
+        replaceLookups('herbicides', herbicides),
+        replaceLookups('applicators', applicators),
+        replaceLookups('weeds', weeds),
+        replaceLookups('locations', locations),
+      ]);
+    } catch {
+      console.error('[LOOKUPS] Failed to load from server');
+    }
+  }, []);
+
+  // Load users: cached from IndexedDB instantly, then refresh from server
+  const loadCachedUsers = useCallback(async () => {
+    const cached = await getUsers();
+    if (cached.length > 0) setCachedUsers(cached);
+  }, []);
+
+  const loadServerUsers = useCallback(async () => {
+    if (!window.navigator.onLine) return;
+    try {
+      const data = await api.listUsers();
+      setCachedUsers(data);
+      await replaceUsers(data);
+    } catch {
+      console.error('[USERS] Failed to load from server');
+    }
+  }, []);
 
   const loadPipelines = useCallback(async () => {
     if (!window.navigator.onLine) return;
@@ -296,17 +380,27 @@ export default function App() {
     setMessage('Loading...');
     
     try {
-      // Load cached data immediately for instant display
-      await loadCachedSites();
+      // Load ALL cached data from IndexedDB in parallel for instant display
+      await Promise.all([
+        loadCachedSites(),
+        loadCachedRecents(),
+        loadCachedLookups(),
+        loadCachedUsers(),
+      ]);
       setIsLoading(false); // Show app immediately with cached data
       
       // Then sync with server in background if online (non-blocking)
       if (window.navigator.onLine) {
         try {
-          await loadServerSites();
-          await loadPipelines();
-          await loadPendingPipelines();
-          await loadDeletedPipelines();
+          await Promise.all([
+            loadServerSites(),
+            loadServerRecents(),
+            loadServerLookups(),
+            loadServerUsers(),
+            loadPipelines(),
+            loadPendingPipelines(),
+            loadDeletedPipelines(),
+          ]);
           setMessage('Synced with server');
         } catch (error) {
           setMessage('Using cached data');
@@ -319,7 +413,8 @@ export default function App() {
       setIsLoading(false);
       setMessage('Ready');
     }
-  }, [loadCachedSites, loadServerSites]);
+  }, [loadCachedSites, loadCachedRecents, loadCachedLookups, loadCachedUsers,
+      loadServerSites, loadServerRecents, loadServerLookups, loadServerUsers]);
 
   useEffect(() => {
     let mounted = true;
@@ -417,6 +512,8 @@ export default function App() {
                            syncStatus.sites_last_updated !== lastSyncStatusRef.current.sites_last_updated;
         const pipelinesChanged = !lastSyncStatusRef.current?.pipelines_last_updated || 
                                syncStatus.pipelines_last_updated !== lastSyncStatusRef.current.pipelines_last_updated;
+        const recentsChanged = !lastSyncStatusRef.current?.spray_records_last_updated ||
+                              syncStatus.spray_records_last_updated !== lastSyncStatusRef.current.spray_records_last_updated;
         
         // Update stored sync status
         lastSyncStatusRef.current = syncStatus;
@@ -444,6 +541,16 @@ export default function App() {
           try {
             const pipelineData = await api.listPipelines();
             setPipelines(pipelineData);
+          } catch {
+            // Silently fail
+          }
+        }
+
+        if (recentsChanged) {
+          try {
+            const data = await api.listRecentSubmissions();
+            setCachedRecents(data);
+            await replaceRecents(data);
           } catch {
             // Silently fail
           }
@@ -1595,6 +1702,7 @@ export default function App() {
               isOpen={true}
               onSubmit={handleLeaseSheetSubmit}
               onCancel={handleLeaseSheetCancel}
+              cachedLookups={cachedLookups}
             />
           </div>
         )}
@@ -1619,6 +1727,7 @@ export default function App() {
               editingRecord={editingSprayRecord}
               onSubmit={handleEditSpraySubmit}
               onCancel={() => setEditingSprayRecord(null)}
+              cachedLookups={cachedLookups}
             />
           </div>
         )}
@@ -1885,6 +1994,7 @@ export default function App() {
           <div className="side-panel-body">
             <RecentsPanel
               visible={activeTab === TAB_RECENTS}
+              cachedRecents={cachedRecents}
               onViewPdf={(record) => {
                 if (record.pdf_url) {
                   setPreviewingPdfUrl(record.pdf_url);
@@ -1932,6 +2042,10 @@ export default function App() {
               deletedPipelines={deletedPipelines}
               onRestorePipeline={(pipelineId) => runAdminAction(async () => { await api.restorePipeline(pipelineId); await loadPipelines(); await loadDeletedPipelines(); }, 'Pipeline restored.')}
               onDeletePipelinePermanent={(pipelineId) => runAdminAction(async () => { await api.deletePipelinePermanent(pipelineId); await loadDeletedPipelines(); }, 'Pipeline permanently deleted.')}
+              cachedLookups={cachedLookups}
+              onLookupsChanged={loadServerLookups}
+              cachedUsers={cachedUsers}
+              onUsersChanged={loadServerUsers}
             />
           </div>
         </div>
