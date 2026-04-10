@@ -314,8 +314,10 @@ def create_spray_record(
 
     user_name = getattr(current_user, 'name', None) or (current_user.email.split('@')[0].title() if current_user.email else None)
 
-    # Use ticket number from frontend or generate one
-    ticket_number = payload.ticket_number or generate_ticket_number(db)
+    # Only assign a ticket number for actual spray records (not issue/avoided)
+    ticket_number = None
+    if not payload.is_avoided:
+        ticket_number = payload.ticket_number or generate_ticket_number(db)
     
     # Handle Dropbox uploads
     pdf_url = None

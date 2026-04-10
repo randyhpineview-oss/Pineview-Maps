@@ -356,8 +356,8 @@ export default function App() {
           }
           await removeUploadEntry(item.id);
         } catch (err) {
-          console.error('[UPLOAD_QUEUE] Failed to upload:', item.id, err);
-          // Leave it in queue for retry
+          console.warn('[UPLOAD_QUEUE] Failed to upload item', item.id, '— will retry next cycle:', err?.message || err);
+          // Leave it in queue for retry on next poll cycle
         }
       }
     } finally {
@@ -594,10 +594,13 @@ export default function App() {
       } catch (error) {
         // Silently fail polling to avoid spam
       }
+
+      // Retry any stuck upload queue items on each poll cycle
+      try { processUploadQueue(); } catch { /* ignore */ }
     }, 10000); // Poll every 10 seconds for updates
 
     return () => clearInterval(pollInterval);
-  }, [isOnline, serverFilters, roleCanAdmin, selectedSite]);
+  }, [isOnline, serverFilters, roleCanAdmin, selectedSite, processUploadQueue]);
 
   const visibleSites = useMemo(() => {
     const normalizedSearch = filters.search.trim().toLowerCase();
@@ -1855,7 +1858,7 @@ export default function App() {
             <input
               value={sprayForm.notes}
               onChange={(e) => setSprayForm((c) => ({ ...c, notes: e.target.value }))}
-              placeholder="Notes (optional)"
+              placeholder={sprayForm.is_avoided ? 'Issue reason (required)' : 'Notes (optional)'}
             />
             <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
               <input
@@ -1863,7 +1866,7 @@ export default function App() {
                 checked={sprayForm.is_avoided}
                 onChange={(e) => setSprayForm((c) => ({ ...c, is_avoided: e.target.checked }))}
               />
-              <span className="small-text">Mark as Issue / Not Sprayed</span>
+              <span className="small-text">Issue with site — skip lease sheet</span>
             </label>
             <div className="button-row">
               <button className="primary-button" type="button" disabled={adminBusy} onClick={handleConfirmSpray}>

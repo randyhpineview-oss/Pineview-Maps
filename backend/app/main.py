@@ -468,12 +468,14 @@ def create_site_spray_record(
 
     user_name = getattr(current_user, 'name', None) or (current_user.email.split('@')[0].title() if current_user.email else None)
 
-    # Use ticket number from frontend or generate one
-    ticket_number = payload.ticket_number
-    if not ticket_number:
-        result = db.execute(text("SELECT nextval('ticket_seq')"))
-        seq_value = result.scalar()
-        ticket_number = f"T{seq_value:06d}"
+    # Only assign a ticket number for actual spray records (not issue/avoided)
+    ticket_number = None
+    if not payload.is_avoided:
+        ticket_number = payload.ticket_number
+        if not ticket_number:
+            result = db.execute(text("SELECT nextval('ticket_seq')"))
+            seq_value = result.scalar()
+            ticket_number = f"T{seq_value:06d}"
 
     # Handle Dropbox uploads
     pdf_url = None
