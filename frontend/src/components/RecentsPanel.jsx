@@ -13,6 +13,18 @@ export default function RecentsPanel({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  // Load cached recents instantly, then refresh from server
+  useEffect(() => {
+    if (!visible) return;
+    try {
+      const cached = localStorage.getItem('recents_cache');
+      if (cached) {
+        const c = JSON.parse(cached);
+        if (c.records && !search) setRecords(c.records);
+      }
+    } catch { /* ignore */ }
+  }, [visible]);
+
   const loadRecords = useCallback(async () => {
     if (!visible) return;
     setIsLoading(true);
@@ -20,6 +32,13 @@ export default function RecentsPanel({
     try {
       const data = await api.listRecentSubmissions(search || undefined);
       setRecords(data);
+      // Cache the unfiltered list
+      if (!search) {
+        localStorage.setItem('recents_cache', JSON.stringify({
+          records: data,
+          cachedAt: new Date().toISOString(),
+        }));
+      }
     } catch (err) {
       setError(err.message || 'Failed to load submissions');
     } finally {

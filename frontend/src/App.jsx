@@ -638,9 +638,17 @@ export default function App() {
   }
 
   function handleTouchStart(e) {
-    touchStartY.current = e.touches[0].clientY;
-    touchStartScrollTop.current = detailBodyRef.current?.scrollTop || 0;
-    pullDistance.current = 0;
+    const bodyRect = detailBodyRef.current?.getBoundingClientRect();
+    const touchY = e.touches[0].clientY;
+    // Only enable pull-to-dismiss when starting from the top of the scrollable body
+    // (within 80px of the body top) AND scroll is at top
+    const scrollTop = detailBodyRef.current?.scrollTop || 0;
+    if (bodyRect && (touchY - bodyRect.top) < 80 && scrollTop <= 0) {
+      touchStartY.current = touchY;
+      pullDistance.current = 0;
+    } else {
+      touchStartY.current = null;
+    }
   }
 
   function handleTouchMove(e) {
@@ -648,11 +656,9 @@ export default function App() {
     const currentY = e.touches[0].clientY;
     const delta = currentY - touchStartY.current;
     
-    // If at top of scroll and pulling down (delta > 0), track as pull distance
-    if (touchStartScrollTop.current <= 0 && delta > 0) {
+    if (delta > 0) {
       pullDistance.current = delta;
-      // Prevent default to stop scroll bounce, but only if we're pulling to dismiss
-      if (delta > 10) {
+      if (delta > 20) {
         e.preventDefault();
       }
     }
@@ -660,20 +666,25 @@ export default function App() {
 
   function handleTouchEnd(e) {
     if (touchStartY.current === null) return;
-    // Require a significant pull (100px) to dismiss
-    if (pullDistance.current > 100 && detailOpen) {
+    if (pullDistance.current > 150 && detailOpen) {
       handleCloseDetail();
     }
     touchStartY.current = null;
     pullDistance.current = 0;
-    touchStartScrollTop.current = 0;
   }
 
   // Touch handlers for pipeline detail panel (swipe down to dismiss)
   function handlePipelineTouchStart(e) {
-    pipelineTouchStartY.current = e.touches[0].clientY;
-    pipelineTouchStartScrollTop.current = pipelineDetailBodyRef.current?.scrollTop || 0;
-    pipelinePullDistance.current = 0;
+    const bodyRect = pipelineDetailBodyRef.current?.getBoundingClientRect();
+    const touchY = e.touches[0].clientY;
+    const scrollTop = pipelineDetailBodyRef.current?.scrollTop || 0;
+    // Only enable pull-to-dismiss when starting from the top of the scrollable body
+    if (bodyRect && (touchY - bodyRect.top) < 80 && scrollTop <= 0) {
+      pipelineTouchStartY.current = touchY;
+      pipelinePullDistance.current = 0;
+    } else {
+      pipelineTouchStartY.current = null;
+    }
   }
 
   function handlePipelineTouchMove(e) {
@@ -681,11 +692,9 @@ export default function App() {
     const currentY = e.touches[0].clientY;
     const delta = currentY - pipelineTouchStartY.current;
     
-    // If at top of scroll and pulling down (delta > 0), track as pull distance
-    if (pipelineTouchStartScrollTop.current <= 0 && delta > 0) {
+    if (delta > 0) {
       pipelinePullDistance.current = delta;
-      // Prevent default to stop scroll bounce, but only if we're pulling to dismiss
-      if (delta > 10) {
+      if (delta > 20) {
         e.preventDefault();
       }
     }
@@ -693,13 +702,11 @@ export default function App() {
 
   function handlePipelineTouchEnd(e) {
     if (pipelineTouchStartY.current === null) return;
-    // Require a significant pull (100px) to dismiss
-    if (pipelinePullDistance.current > 100 && pipelineDetailOpen) {
+    if (pipelinePullDistance.current > 150 && pipelineDetailOpen) {
       handleClosePipelineDetail();
     }
     pipelineTouchStartY.current = null;
     pipelinePullDistance.current = 0;
-    pipelineTouchStartScrollTop.current = 0;
   }
 
   function handleFabSelect(pinType) {

@@ -183,15 +183,10 @@ export default function PdfPreviewOverlay({ pdfUrl, onClose }) {
       {blobUrl && !loading && (
         <div
           ref={containerRef}
-          onTouchStart={handleTouchStart}
-          onTouchMove={handleTouchMove}
-          onTouchEnd={handleTouchEnd}
-          onWheel={handleWheel}
           style={{
             flex: 1,
             overflow: 'hidden',
             position: 'relative',
-            touchAction: 'none',
           }}
         >
           <div style={{
@@ -199,14 +194,26 @@ export default function PdfPreviewOverlay({ pdfUrl, onClose }) {
             height: '100%',
             transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
             transformOrigin: 'center top',
-            transition: isPanning.current ? 'none' : 'transform 0.1s ease-out',
           }}>
             <iframe
               src={blobUrl}
-              style={{ width: '100%', height: '100%', border: 'none', pointerEvents: zoom > 1 ? 'none' : 'auto' }}
+              style={{ width: '100%', height: '100%', border: 'none', pointerEvents: 'none' }}
               title="PDF Preview"
             />
           </div>
+          {/* Transparent touch layer on top of iframe to capture pinch/pan gestures */}
+          <div
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+            onWheel={handleWheel}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              zIndex: 2,
+              touchAction: 'none',
+            }}
+          />
         </div>
       )}
     </div>

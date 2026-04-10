@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { generateLeaseSheetPdf } from '../lib/pdfGenerator';
 
@@ -143,18 +143,29 @@ export default function HerbicideLeaseSheet({
     }
   }, [site, pipeline, isEditMode, editingRecord]);
 
-  // Fetch ticket number when sheet opens (skip in edit mode — we keep the original)
-  useEffect(() => {
-    if (isOpen && !isEditMode) {
-      api.getNextTicket()
-        .then(res => setTicketNumber(res.ticket_number))
-        .catch(() => setTicketNumber(`LOCAL-${Date.now()}`));
-    }
-  }, [isOpen, isEditMode]);
+  // Ticket number is assigned by the backend on submit (not on form open)
+  // This avoids wasting ticket numbers when users cancel.
+  // In edit mode, we keep the original ticket number from the record.
 
-  // Load lookup tables
+  // Load lookup tables — show cached instantly, refresh from server in background
   useEffect(() => {
-    async function loadLookups() {
+    if (!isOpen) return;
+
+    // 1. Load from localStorage cache immediately
+    try {
+      const cached = localStorage.getItem('lookup_cache');
+      if (cached) {
+        const c = JSON.parse(cached);
+        if (c.herbicides) setHerbicides(c.herbicides);
+        if (c.applicators) setApplicators(c.applicators);
+        if (c.noxiousWeeds) setNoxiousWeeds(c.noxiousWeeds);
+        if (c.locationTypes) setLocationTypes(c.locationTypes);
+        setIsLoading(false);
+      }
+    } catch { /* ignore parse errors */ }
+
+    // 2. Refresh from server in background
+    async function refreshLookups() {
       try {
         const [herbs, apps, weeds, types] = await Promise.all([
           api.listHerbicides(),
@@ -166,15 +177,21 @@ export default function HerbicideLeaseSheet({
         setApplicators(apps);
         setNoxiousWeeds(weeds);
         setLocationTypes(types);
+        // Cache for next time
+        localStorage.setItem('lookup_cache', JSON.stringify({
+          herbicides: herbs,
+          applicators: apps,
+          noxiousWeeds: weeds,
+          locationTypes: types,
+          cachedAt: new Date().toISOString(),
+        }));
       } catch (error) {
-        console.error('Failed to load lookup tables:', error);
+        console.error('Failed to refresh lookup tables:', error);
       } finally {
         setIsLoading(false);
       }
     }
-    if (isOpen) {
-      loadLookups();
-    }
+    refreshLookups();
   }, [isOpen]);
 
   // Calculate area treated when total liters changes (200L = 1ha)
@@ -289,11 +306,11 @@ export default function HerbicideLeaseSheet({
       const payload = {
         lease_sheet_data: {
           ...form,
-          ticket_number: ticketNumber,
+          ticket_number: ticketNumber || undefined,
           photos: photoData,
         },
         pdf_base64: pdfBase64,
-        ticket_number: ticketNumber,
+        ticket_number: ticketNumber || undefined,
         spray_date: form.date,
         notes: form.comments,
         is_avoided: false,
@@ -312,7 +329,63 @@ export default function HerbicideLeaseSheet({
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(null);
     setPdfBase64(null);
+    setPreviewZoom(1);
+    setPreviewPan({ x: 0, y: 0 });
   };
+
+  // Pinch-to-zoom for the preview PDF
+  const [previewZoom, setPreviewZoom] = useState(1);
+  const [previewPan, setPreviewPan] = useState({ x: 0, y: 0 });
+  const previewPinchDist = useRef(null);
+  const previewPinchZoom = useRef(1);
+  const previewPanning = useRef(false);
+  const previewLastTouch = useRef(null);
+  const previewLastTap = useRef(0);
+
+  const onPreviewTouchStart = useCallback((e) => {
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      previewPinchDist.current = Math.hypot(dx, dy);
+      previewPinchZoom.current = previewZoom;
+      e.preventDefault();
+    } else if (e.touches.length === 1 && previewZoom > 1) {
+      previewPanning.current = true;
+      previewLastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    }
+  }, [previewZoom]);
+
+  const onPreviewTouchMove = useCallback((e) => {
+    if (e.touches.length === 2 && previewPinchDist.current !== null) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      const scale = dist / previewPinchDist.current;
+      setPreviewZoom(Math.min(4, Math.max(0.5, previewPinchZoom.current * scale)));
+      e.preventDefault();
+    } else if (e.touches.length === 1 && previewPanning.current && previewLastTouch.current) {
+      const dx = e.touches[0].clientX - previewLastTouch.current.x;
+      const dy = e.touches[0].clientY - previewLastTouch.current.y;
+      setPreviewPan(prev => ({ x: prev.x + dx, y: prev.y + dy }));
+      previewLastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      e.preventDefault();
+    }
+  }, []);
+
+  const onPreviewTouchEnd = useCallback((e) => {
+    if (e.touches.length < 2) previewPinchDist.current = null;
+    if (e.touches.length === 0) {
+      previewPanning.current = false;
+      previewLastTouch.current = null;
+      // Double-tap to reset
+      const now = Date.now();
+      if (now - previewLastTap.current < 300) {
+        setPreviewZoom(1);
+        setPreviewPan({ x: 0, y: 0 });
+      }
+      previewLastTap.current = now;
+    }
+  }, []);
 
   if (!isOpen) return null;
 
@@ -329,25 +402,31 @@ export default function HerbicideLeaseSheet({
         boxSizing: 'border-box',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', flexShrink: 0 }}>
-          <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600 }}>Preview — {ticketNumber}</h2>
+          <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600 }}>Preview{ticketNumber ? ` — ${ticketNumber}` : ''}</h2>
         </div>
         <div style={{
           flex: 1,
-          overflow: 'auto',
-          WebkitOverflowScrolling: 'touch',
-          padding: '0 8px',
+          overflow: 'hidden',
+          position: 'relative',
         }}>
-          <object
-            data={previewUrl}
-            type="application/pdf"
-            style={{ width: '100%', height: '100%', minHeight: '70vh', border: 'none', borderRadius: '6px' }}
-          >
+          <div style={{
+            width: '100%',
+            height: '100%',
+            transform: `translate(${previewPan.x}px, ${previewPan.y}px) scale(${previewZoom})`,
+            transformOrigin: 'center top',
+          }}>
             <iframe
               src={previewUrl}
               title="PDF Preview"
-              style={{ width: '100%', height: '100%', minHeight: '70vh', border: 'none' }}
+              style={{ width: '100%', height: '100%', border: 'none', pointerEvents: 'none' }}
             />
-          </object>
+          </div>
+          <div
+            onTouchStart={onPreviewTouchStart}
+            onTouchMove={onPreviewTouchMove}
+            onTouchEnd={onPreviewTouchEnd}
+            style={{ position: 'absolute', inset: 0, zIndex: 2, touchAction: 'none' }}
+          />
         </div>
         <div style={{ display: 'flex', gap: '10px', padding: '12px 16px', flexShrink: 0 }}>
           <button
