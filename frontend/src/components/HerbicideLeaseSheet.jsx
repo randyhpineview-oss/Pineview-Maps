@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api } from '../lib/api';
+import { useEffect, useMemo, useState } from 'react';
 import { generateLeaseSheetPdf } from '../lib/pdfGenerator';
 
 function get12hTime() {
@@ -19,6 +18,7 @@ export default function HerbicideLeaseSheet({
   isOpen,
   editingRecord = null,
   cachedLookups = {},
+  initialDistanceMeters = null,
 }) {
   const isEditMode = !!editingRecord;
   const [herbicides, setHerbicides] = useState([]);
@@ -29,7 +29,7 @@ export default function HerbicideLeaseSheet({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [photos, setPhotos] = useState([]);
   const [ticketNumber, setTicketNumber] = useState('');
-  const [previewUrl, setPreviewUrl] = useState(null);
+  const [isPreviewing, setIsPreviewing] = useState(false);
   const [pdfBase64, setPdfBase64] = useState(null);
 
   // Form state
@@ -48,6 +48,7 @@ export default function HerbicideLeaseSheet({
     sprayMethod: [],
     noxiousWeedsSelected: [],
     herbicidesUsed: [],
+    totalDistanceSprayed: '',
     totalLiters: '',
     areaTreated: '',
     isAccessRoad: false,
@@ -86,6 +87,7 @@ export default function HerbicideLeaseSheet({
         sprayMethod: d.sprayMethod || [],
         noxiousWeedsSelected: d.noxiousWeedsSelected || [],
         herbicidesUsed: d.herbicidesUsed || [],
+        totalDistanceSprayed: d.totalDistanceSprayed || '',
         totalLiters: d.totalLiters || '',
         areaTreated: d.areaTreated || '',
         isAccessRoad: d.isAccessRoad || false,
@@ -140,9 +142,10 @@ export default function HerbicideLeaseSheet({
         customer: pipeline.client || '',
         area: pipeline.area || '',
         lsdOrPipeline: pipeline.name || '',
+        totalDistanceSprayed: initialDistanceMeters != null ? String(initialDistanceMeters) : prev.totalDistanceSprayed,
       }));
     }
-  }, [site, pipeline, isEditMode, editingRecord]);
+  }, [site, pipeline, isEditMode, editingRecord, initialDistanceMeters]);
 
   // Ticket number is assigned by the backend on submit (not on form open)
   // This avoids wasting ticket numbers when users cancel.
@@ -234,9 +237,9 @@ export default function HerbicideLeaseSheet({
       ...form,
       ticket_number: ticketNumber,
     };
-    const { blob, base64 } = await generateLeaseSheetPdf(pdfData, photoDataUrls);
+    const { base64 } = await generateLeaseSheetPdf(pdfData, photoDataUrls);
     setPdfBase64(base64);
-    setPreviewUrl(URL.createObjectURL(blob));
+    setIsPreviewing(true);
   };
 
   const handleConfirmSubmit = async () => {
@@ -280,8 +283,6 @@ export default function HerbicideLeaseSheet({
         is_avoided: false,
       };
       await onSubmit(payload);
-      // Success — parent will close the sheet, clean up
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
     } catch (err) {
       // Stay on preview, show error
       alert('Upload failed: ' + (err.message || 'Unknown error'));
@@ -290,78 +291,14 @@ export default function HerbicideLeaseSheet({
   };
 
   const handleBackToEdit = () => {
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setPreviewUrl(null);
+    setIsPreviewing(false);
     setPdfBase64(null);
-    previewZoomRef.current = 1;
-    previewPanRef.current = { x: 0, y: 0 };
   };
-
-  // Pinch-to-zoom for the preview PDF — use refs to avoid stale closures
-  const previewZoomRef = useRef(1);
-  const previewPanRef = useRef({ x: 0, y: 0 });
-  const [, forcePreviewRender] = useState(0);
-  const rerenderPreview = () => forcePreviewRender(n => n + 1);
-  const previewPinchDist = useRef(null);
-  const previewPinchZoom = useRef(1);
-  const previewLastTouch = useRef(null);
-  const previewLastTap = useRef(0);
-
-  const onPreviewTouchStart = useCallback((e) => {
-    if (e.touches.length === 2) {
-      const dx = e.touches[0].clientX - e.touches[1].clientX;
-      const dy = e.touches[0].clientY - e.touches[1].clientY;
-      previewPinchDist.current = Math.hypot(dx, dy);
-      previewPinchZoom.current = previewZoomRef.current;
-      previewLastTouch.current = null;
-      e.preventDefault();
-    } else if (e.touches.length === 1) {
-      previewLastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-    }
-  }, []);
-
-  const onPreviewTouchMove = useCallback((e) => {
-    if (e.touches.length === 2 && previewPinchDist.current !== null) {
-      const dx = e.touches[0].clientX - e.touches[1].clientX;
-      const dy = e.touches[0].clientY - e.touches[1].clientY;
-      const dist = Math.hypot(dx, dy);
-      const scale = dist / previewPinchDist.current;
-      previewZoomRef.current = Math.min(4, Math.max(1, previewPinchZoom.current * scale));
-      rerenderPreview();
-      e.preventDefault();
-    } else if (e.touches.length === 1 && previewLastTouch.current && previewZoomRef.current > 1) {
-      const dx = e.touches[0].clientX - previewLastTouch.current.x;
-      const dy = e.touches[0].clientY - previewLastTouch.current.y;
-      previewPanRef.current = { x: previewPanRef.current.x + dx, y: previewPanRef.current.y + dy };
-      previewLastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-      rerenderPreview();
-      e.preventDefault();
-    }
-  }, []);
-
-  const onPreviewTouchEnd = useCallback((e) => {
-    if (e.touches.length < 2) previewPinchDist.current = null;
-    if (e.touches.length === 0) {
-      previewLastTouch.current = null;
-      const now = Date.now();
-      if (now - previewLastTap.current < 300) {
-        previewZoomRef.current = 1;
-        previewPanRef.current = { x: 0, y: 0 };
-        rerenderPreview();
-      }
-      previewLastTap.current = now;
-      if (previewZoomRef.current < 1.05) {
-        previewZoomRef.current = 1;
-        previewPanRef.current = { x: 0, y: 0 };
-        rerenderPreview();
-      }
-    }
-  }, []);
 
   if (!isOpen) return null;
 
   // ── Preview overlay ──
-  if (previewUrl) {
+  if (isPreviewing) {
     return (
       <div style={{
         backgroundColor: '#1f2937',
@@ -377,27 +314,41 @@ export default function HerbicideLeaseSheet({
         </div>
         <div style={{
           flex: 1,
-          overflow: 'hidden',
-          position: 'relative',
+          overflowY: 'auto',
+          padding: '0 16px 16px',
         }}>
-          <div style={{
-            width: '100%',
-            height: '100%',
-            transform: `translate(${previewPanRef.current.x}px, ${previewPanRef.current.y}px) scale(${previewZoomRef.current})`,
-            transformOrigin: '0 0',
-          }}>
-            <iframe
-              src={previewUrl}
-              title="Herbicide Lease Sheet"
-              style={{ width: '100%', height: '100%', border: 'none', pointerEvents: 'none' }}
-            />
+          <div style={{ background: '#111827', border: '1px solid #374151', borderRadius: '10px', padding: '14px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '8px', fontSize: '0.9rem' }}>
+              <div><strong>Date:</strong> {form.date || '—'}</div>
+              <div><strong>Time:</strong> {form.time || '—'}</div>
+              <div><strong>Customer:</strong> {form.customer || '—'}</div>
+              <div><strong>Area:</strong> {form.area || '—'}</div>
+              <div><strong>LSD / Pipeline:</strong> {form.lsdOrPipeline || '—'}</div>
+              <div><strong>Distance Sprayed:</strong> {form.totalDistanceSprayed || '—'} m</div>
+              <div><strong>Total Liters:</strong> {form.totalLiters || '—'} L</div>
+              <div><strong>Area Treated:</strong> {form.areaTreated || '—'} ha</div>
+              <div><strong>Applicators:</strong> {form.applicators.length ? form.applicators.join(', ') : '—'}</div>
+              <div><strong>Location Types:</strong> {form.locationTypes.length ? form.locationTypes.join(', ') : '—'}</div>
+              <div><strong>Wind:</strong> {form.windDirection.length ? form.windDirection.join(', ') : '—'} {form.windSpeed ? `(${form.windSpeed} km/h)` : ''}</div>
+              <div><strong>Herbicides:</strong> {form.herbicidesUsed.length ? form.herbicidesUsed.join(', ') : '—'}</div>
+            </div>
+            {form.comments ? <div style={{ marginTop: '10px' }}><strong>Comments:</strong> {form.comments}</div> : null}
+            {photos.length > 0 ? (
+              <div style={{ marginTop: '12px' }}>
+                <strong>Photos:</strong>
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '8px' }}>
+                  {photos.map((photo, index) => (
+                    <img
+                      key={`preview-photo-${index}`}
+                      src={photo.preview}
+                      alt={`Preview photo ${index + 1}`}
+                      style={{ width: '130px', height: '130px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #4b5563' }}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
-          <div
-            onTouchStart={onPreviewTouchStart}
-            onTouchMove={onPreviewTouchMove}
-            onTouchEnd={onPreviewTouchEnd}
-            style={{ position: 'absolute', inset: 0, zIndex: 2, touchAction: 'none' }}
-          />
         </div>
         <div style={{ display: 'flex', gap: '10px', padding: '12px 16px', flexShrink: 0 }}>
           <button
@@ -799,6 +750,23 @@ export default function HerbicideLeaseSheet({
             {/* Total Liters and Area Treated */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
               <div>
+                <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Total Distance Sprayed (m)</label>
+                <input
+                  type="number"
+                  value={form.totalDistanceSprayed}
+                  onChange={e => setForm(prev => ({ ...prev, totalDistanceSprayed: e.target.value }))}
+                  placeholder="Segment distance"
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid #374151',
+                    backgroundColor: '#111827',
+                    color: '#f9fafb',
+                  }}
+                />
+              </div>
+              <div>
                 <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Total Liters Applied</label>
                 <input
                   type="number"
@@ -815,7 +783,7 @@ export default function HerbicideLeaseSheet({
                   }}
                 />
               </div>
-              <div>
+              <div style={{ gridColumn: '1 / -1' }}>
                 <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Area Treated (ha)</label>
                 <input
                   type="text"
@@ -995,7 +963,7 @@ export default function HerbicideLeaseSheet({
                   cursor: 'pointer',
                 }}
               >
-                Preview PDF
+                Preview
               </button>
               <button
                 onClick={onCancel}

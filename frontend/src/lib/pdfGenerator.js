@@ -188,6 +188,17 @@ export async function generateLeaseSheetPdf(data, photoDataUrls = []) {
   doc.text(`${data.totalLiters || '___'} L`, marginL + 255, y + 13);
   y += areaH;
 
+  // ── Total Distance Sprayed ──
+  if (data.totalDistanceSprayed) {
+    const distH = 18;
+    drawRect(marginL, y, contentW, distH);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Total Distance Sprayed:', marginL + 3, y + 13);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`${data.totalDistanceSprayed} m`, marginL + 110, y + 13);
+    y += distH;
+  }
+
   // ── Spray Type / Spray Method ──
   const spH = 34;
   drawRect(marginL, y, halfW, spH);

@@ -125,6 +125,7 @@ export default function App() {
   const [sprayEndPoint, setSprayEndPoint] = useState(null);
   const [showSprayConfirm, setShowSprayConfirm] = useState(false);
   const [sprayForm, setSprayForm] = useState({ date: new Date().toISOString().split('T')[0], notes: '', is_avoided: false });
+  const [pendingPipelineSegment, setPendingPipelineSegment] = useState(null);
   const [highlightedSprayRecordId, setHighlightedSprayRecordId] = useState(null);
   const [isFollowingUser, setIsFollowingUser] = useState(false);
   // Lease sheet inspection state
@@ -134,8 +135,8 @@ export default function App() {
   const [uploadQueueItems, setUploadQueueItems] = useState([]);
   const [isUploading, setIsUploading] = useState(false);
   const uploadingRef = useRef(false);
-  // PDF preview state
-  const [previewingPdfUrl, setPreviewingPdfUrl] = useState(null);
+  // Lease-sheet record preview state
+  const [previewingRecord, setPreviewingRecord] = useState(null);
   // Edit spray record state
   const [editingSprayRecord, setEditingSprayRecord] = useState(null);
   // Recents cache (IndexedDB-backed, pre-loaded at startup)
@@ -341,6 +342,17 @@ export default function App() {
             } catch { /* ignore refresh failure */ }
           } else if (item.targetType === 'pipeline') {
             await api.createSprayRecord(item.targetId, item.payload);
+            try {
+              const updatedPipeline = await api.getPipeline(item.targetId);
+              setPipelines((prev) => prev.map((p) => (p.id === updatedPipeline.id ? updatedPipeline : p)));
+              setSelectedPipeline((prev) => {
+                if (prev && prev.id === updatedPipeline.id) {
+                  setPipelineSprayRecords(updatedPipeline.spray_records || []);
+                  return updatedPipeline;
+                }
+                return prev;
+              });
+            } catch { /* ignore refresh failure */ }
           }
           await removeUploadEntry(item.id);
         } catch (err) {
@@ -917,21 +929,15 @@ export default function App() {
 
   // Spray marking
   function handleStartSprayMarking(pipeline) {
+    if (!pipeline) return;
+    setSelectedPipeline(pipeline);
     setIsSprayMarking(true);
     setSprayStartPoint(null);
     setSprayEndPoint(null);
     setShowSprayConfirm(false);
-    setSprayForm({ date: new Date().toISOString().split('T')[0], notes: '' });
+    setSprayForm({ date: new Date().toISOString().split('T')[0], notes: '', is_avoided: false });
+    setPendingPipelineSegment(null);
     setPipelineDetailOpen(false); // Slide panel away
-  }
-
-  function handleSprayClick(point) {
-    if (!sprayStartPoint) {
-      setSprayStartPoint(point);
-    } else if (!sprayEndPoint) {
-      setSprayEndPoint(point);
-      setShowSprayConfirm(true);
-    }
   }
 
   function handleCancelSprayMarking() {
@@ -993,12 +999,37 @@ export default function App() {
 
     const startFrac = nearestFraction(sprayStartPoint, coords);
     const endFrac = nearestFraction(sprayEndPoint, coords);
+    const startFraction = Math.min(startFrac, endFrac);
+    const endFraction = Math.max(startFrac, endFrac);
+    const segmentDistanceMeters = Math.round(Math.abs(endFraction - startFraction) * (selectedPipeline.total_length_km || 0) * 1000);
+
+    if (sprayForm.is_avoided && !(sprayForm.notes || '').trim()) {
+      setMessage('Please add an issue note when marking not sprayed/issue.');
+      return;
+    }
+
+    if (!sprayForm.is_avoided) {
+      setPendingPipelineSegment({
+        pipelineId: selectedPipeline.id,
+        start_fraction: startFraction,
+        end_fraction: endFraction,
+        spray_date: sprayForm.date,
+        distance_meters: segmentDistanceMeters,
+      });
+      setInspectionSite(null);
+      setInspectionPipeline(selectedPipeline);
+      setIsSprayMarking(false);
+      setSprayStartPoint(null);
+      setSprayEndPoint(null);
+      setShowSprayConfirm(false);
+      return;
+    }
 
     setAdminBusy(true);
     try {
       await api.createSprayRecord(selectedPipeline.id, {
-        start_fraction: Math.min(startFrac, endFrac),
-        end_fraction: Math.max(startFrac, endFrac),
+        start_fraction: startFraction,
+        end_fraction: endFraction,
         spray_date: sprayForm.date,
         notes: sprayForm.notes || null,
         is_avoided: sprayForm.is_avoided,
@@ -1008,7 +1039,7 @@ export default function App() {
       setSelectedPipeline(updated);
       setPipelineSprayRecords(updated.spray_records || []);
       setPipelines((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
-      setMessage('Spray record saved.');
+      setMessage('Issue/not sprayed segment saved.');
       setIsSprayMarking(false);
       setSprayStartPoint(null);
       setSprayEndPoint(null);
@@ -1120,26 +1151,36 @@ export default function App() {
       // It's a site
       setInspectionSite(siteOrPipeline);
       setInspectionPipeline(null);
+      setPendingPipelineSegment(null);
     } else {
-      // It's a pipeline
-      setInspectionPipeline(siteOrPipeline);
-      setInspectionSite(null);
+      // Pipelines must start with segment selection workflow first
+      handleStartSprayMarking(siteOrPipeline);
     }
   }
 
   async function handleLeaseSheetSubmit(payload) {
-    // Queue the upload in background and close the sheet immediately
-    const targetType = inspectionSite ? 'site' : 'pipeline';
-    const targetId = inspectionSite ? inspectionSite.id : inspectionPipeline?.id;
+    if (inspectionSite) {
+      await queueUpload({
+        targetType: 'site',
+        targetId: inspectionSite.id,
+        payload,
+      });
+      await refreshUploadQueue();
+    } else if (inspectionPipeline && pendingPipelineSegment) {
+      await queueUpload({
+        targetType: 'pipeline',
+        targetId: pendingPipelineSegment.pipelineId,
+        payload: {
+          ...payload,
+          start_fraction: pendingPipelineSegment.start_fraction,
+          end_fraction: pendingPipelineSegment.end_fraction,
+          spray_date: payload.spray_date || pendingPipelineSegment.spray_date,
+          is_avoided: false,
+        },
+      });
+      await refreshUploadQueue();
+    }
 
-    await queueUpload({
-      targetType,
-      targetId,
-      payload,
-    });
-    await refreshUploadQueue();
-
-    // Optimistically update site status
     if (inspectionSite) {
       const optimistic = {
         ...inspectionSite,
@@ -1151,10 +1192,11 @@ export default function App() {
       await upsertSite(optimistic);
     }
 
-    setMessage(payload.is_avoided ? 'Issue queued for upload.' : 'Spray record queued for upload.');
+    setMessage('Spray record queued for upload.');
     // Clear inspection state — user returns to map immediately
     setInspectionSite(null);
     setInspectionPipeline(null);
+    setPendingPipelineSegment(null);
 
     // Kick off background upload
     processUploadQueue();
@@ -1183,8 +1225,12 @@ export default function App() {
   }
 
   function handleLeaseSheetCancel() {
+    if (inspectionPipeline) {
+      setPipelineDetailOpen(true);
+    }
     setInspectionSite(null);
     setInspectionPipeline(null);
+    setPendingPipelineSegment(null);
   }
 
   function handleCancelEditMapPick() {
@@ -1699,6 +1745,7 @@ export default function App() {
             <HerbicideLeaseSheet
               site={inspectionSite}
               pipeline={inspectionPipeline}
+              initialDistanceMeters={pendingPipelineSegment?.distance_meters ?? null}
               isOpen={true}
               onSubmit={handleLeaseSheetSubmit}
               onCancel={handleLeaseSheetCancel}
@@ -1732,11 +1779,11 @@ export default function App() {
           </div>
         )}
 
-        {/* ── PDF Preview overlay ── */}
-        {previewingPdfUrl && (
+        {/* ── Lease Sheet Preview overlay ── */}
+        {previewingRecord && (
           <PdfPreviewOverlay
-            pdfUrl={previewingPdfUrl}
-            onClose={() => setPreviewingPdfUrl(null)}
+            record={previewingRecord}
+            onClose={() => setPreviewingRecord(null)}
           />
         )}
 
@@ -1900,9 +1947,7 @@ export default function App() {
                 onDeleteSprayRecord={handleDeleteSiteSprayRecord}
                 onStartInspection={handleStartInspection}
                 onViewPdf={(record) => {
-                  if (record.pdf_url) {
-                    setPreviewingPdfUrl(record.pdf_url);
-                  }
+                  setPreviewingRecord(record);
                 }}
                 onEditRecord={(record) => setEditingSprayRecord({ ...record, site_lsd: selectedSite?.lsd, site_client: selectedSite?.client, site_area: selectedSite?.area })}
               />
@@ -1930,13 +1975,13 @@ export default function App() {
                 canManage={canManagePins}
                 onSavePipeline={handleUpdatePipeline}
                 onDeletePipeline={handleDeletePipeline}
-                onMarkInspection={handleStartInspection}
+                onMarkInspection={handleStartSprayMarking}
                 adminBusy={adminBusy}
                 sprayRecords={pipelineSprayRecords}
                 onDeleteSprayRecord={handleDeleteSprayRecord}
                 highlightedSprayRecordId={highlightedSprayRecordId}
                 onHighlightSprayRecord={setHighlightedSprayRecordId}
-                onStartInspection={handleStartInspection}
+                onViewRecord={(record) => setPreviewingRecord(record)}
               />
             ) : null}
           </div>
@@ -1996,9 +2041,7 @@ export default function App() {
               visible={activeTab === TAB_RECENTS}
               cachedRecents={cachedRecents}
               onViewPdf={(record) => {
-                if (record.pdf_url) {
-                  setPreviewingPdfUrl(record.pdf_url);
-                }
+                setPreviewingRecord(record);
               }}
               onEditRecord={(record) => setEditingSprayRecord(record)}
               roleCanAdmin={roleCanAdmin}

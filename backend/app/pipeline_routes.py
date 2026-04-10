@@ -466,8 +466,13 @@ def _update_pipeline_spray_status(db: Session, pipeline: Pipeline):
         pipeline.status = "not_sprayed"
         return
 
+    sprayed_records = [r for r in records if not r.is_avoided]
+    if not sprayed_records:
+        pipeline.status = "not_sprayed"
+        return
+
     # Merge overlapping spray ranges
-    ranges = sorted([(r.start_fraction, r.end_fraction) for r in records])
+    ranges = sorted([(r.start_fraction, r.end_fraction) for r in sprayed_records])
     merged = [ranges[0]]
     for start, end in ranges[1:]:
         if start <= merged[-1][1]:

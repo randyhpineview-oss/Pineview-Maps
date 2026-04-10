@@ -19,6 +19,7 @@ export default function PipelineDetailSheet({
   onDeleteSprayRecord,
   highlightedSprayRecordId = null,
   onHighlightSprayRecord,
+  onViewRecord,
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editState, setEditState] = useState(() => buildEditState(pipeline));
@@ -31,8 +32,10 @@ export default function PipelineDetailSheet({
   const totalCoverage = useMemo(() => {
     if (!sprayRecords.length) return 0;
     const ranges = sprayRecords
+      .filter((r) => !r.is_avoided)
       .map((r) => [r.start_fraction, r.end_fraction])
       .sort((a, b) => a[0] - b[0]);
+    if (!ranges.length) return 0;
     const merged = [ranges[0]];
     for (let i = 1; i < ranges.length; i++) {
       if (ranges[i][0] <= merged[merged.length - 1][1]) {
@@ -218,19 +221,32 @@ export default function PipelineDetailSheet({
                         {record.ticket_number ? ` — Ticket: ${record.ticket_number}` : ''}
                         {record.notes ? ` — ${record.notes}` : ''}
                       </div>
-                      {record.pdf_url && (
-                        <div className="small-text" style={{ marginTop: '0.25rem' }}>
-                          <a 
-                            href={record.pdf_url} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            style={{ color: '#3b82f6', textDecoration: 'underline' }}
-                            onClick={(e) => e.stopPropagation()}
+                      {(record.lease_sheet_data || record.pdf_url) ? (
+                        <div style={{ display: 'flex', gap: '6px', marginTop: '0.35rem', flexWrap: 'wrap' }}>
+                          <button
+                            className="secondary-button"
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onViewRecord?.(record);
+                            }}
+                            style={{ padding: '2px 8px', fontSize: '0.7rem' }}
                           >
-                            📄 View Lease Sheet PDF
-                          </a>
+                            📄 View
+                          </button>
+                          {record.pdf_url ? (
+                            <a
+                              href={record.pdf_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ color: '#3b82f6', textDecoration: 'underline', fontSize: '0.75rem', alignSelf: 'center' }}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              Open PDF ↗
+                            </a>
+                          ) : null}
                         </div>
-                      )}
+                      ) : null}
                     </div>
                     {canManage && (
                       <button
