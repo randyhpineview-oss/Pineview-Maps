@@ -765,15 +765,15 @@ export default function HerbicideLeaseSheet({
               </div>
             </div>
 
-            {/* Total Liters and Area Treated */}
+            {/* Total Liters and Distance Sprayed */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
               <div>
-                <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Total Distance Sprayed (m)</label>
+                <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Total Liters</label>
                 <input
                   type="number"
-                  value={form.totalDistanceSprayed}
-                  onChange={e => setForm(prev => ({ ...prev, totalDistanceSprayed: e.target.value }))}
-                  placeholder="Segment distance"
+                  value={form.totalLiters}
+                  onChange={e => setForm(prev => ({ ...prev, totalLiters: e.target.value }))}
+                  placeholder="200L = 1ha"
                   style={{
                     width: '100%',
                     padding: '8px 12px',
@@ -785,12 +785,12 @@ export default function HerbicideLeaseSheet({
                 />
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Total Liters Applied</label>
+                <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Total Metres (m)</label>
                 <input
                   type="number"
-                  value={form.totalLiters}
-                  onChange={e => setForm(prev => ({ ...prev, totalLiters: e.target.value }))}
-                  placeholder="200L = 1ha"
+                  value={form.totalDistanceSprayed}
+                  onChange={e => setForm(prev => ({ ...prev, totalDistanceSprayed: e.target.value }))}
+                  placeholder="Distance"
                   style={{
                     width: '100%',
                     padding: '8px 12px',
