@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 
 // Point the worker to the bundled worker file
@@ -8,23 +8,47 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 ).href;
 
 /**
- * Renders a base64 PDF onto a canvas with pinch-to-zoom (mobile) and Ctrl+scroll (desktop).
- * Props:
- *   pdfBase64 - base64 string of the PDF (no data URI prefix)
+ * Renders a base64 PDF onto a canvas with pinch-to-zoom + pan (mobile)
+ * and Ctrl+scroll zoom (desktop). Zoom is centered on the pinch midpoint.
  */
 export default function PdfPreviewViewer({ pdfBase64 }) {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
-  const [scale, setScale] = useState(1);
-  const [pdfPage, setPdfPage] = useState(null);
-  const [baseScale, setBaseScale] = useState(1);
-  const renderTaskRef = useRef(null);
 
-  // Track pinch state
-  const pinchRef = useRef({ active: false, startDist: 0, startScale: 1 });
-  const scaleRef = useRef(1);
+  // All mutable transform state lives in a ref to avoid re-renders during gestures
+  const stateRef = useRef({
+    // CSS transform values
+    zoom: 1,       // current zoom multiplier (1 = fit-to-width)
+    panX: 0,       // px offset
+    panY: 0,
+    // Pinch tracking
+    pinching: false,
+    pinchStartDist: 0,
+    pinchStartZoom: 1,
+    pinchMidX: 0,
+    pinchMidY: 0,
+    pinchStartPanX: 0,
+    pinchStartPanY: 0,
+    // Single-finger pan tracking
+    dragging: false,
+    dragStartX: 0,
+    dragStartY: 0,
+    dragStartPanX: 0,
+    dragStartPanY: 0,
+    // Canvas dimensions at zoom=1 (for clamping)
+    canvasW: 0,
+    canvasH: 0,
+  });
 
-  // Load the PDF page once
+  // ── Apply CSS transform to canvas ──
+  const applyTransform = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const s = stateRef.current;
+    canvas.style.transform = `translate(${s.panX}px, ${s.panY}px) scale(${s.zoom})`;
+  }, []);
+
+  // ── Load PDF and render once at high-res ──
   useEffect(() => {
     if (!pdfBase64) return;
     let cancelled = false;
@@ -37,18 +61,29 @@ export default function PdfPreviewViewer({ pdfBase64 }) {
 
         const pdf = await pdfjsLib.getDocument({ data: uint8 }).promise;
         const page = await pdf.getPage(1);
-        if (!cancelled) {
-          setPdfPage(page);
-          // Calculate base scale so the PDF fills the container width
-          const container = containerRef.current;
-          if (container) {
-            const viewport = page.getViewport({ scale: 1 });
-            const fitScale = (container.clientWidth - 16) / viewport.width;
-            setBaseScale(fitScale);
-            setScale(fitScale);
-            scaleRef.current = fitScale;
-          }
-        }
+        if (cancelled) return;
+
+        const container = containerRef.current;
+        const canvas = canvasRef.current;
+        if (!container || !canvas) return;
+
+        // Fit PDF width to container
+        const vp1 = page.getViewport({ scale: 1 });
+        const fitScale = (container.clientWidth - 16) / vp1.width;
+        const viewport = page.getViewport({ scale: fitScale });
+
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = Math.floor(viewport.width * dpr);
+        canvas.height = Math.floor(viewport.height * dpr);
+        canvas.style.width = Math.floor(viewport.width) + 'px';
+        canvas.style.height = Math.floor(viewport.height) + 'px';
+
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        await page.render({ canvasContext: ctx, viewport }).promise;
+
+        stateRef.current.canvasW = viewport.width;
+        stateRef.current.canvasH = viewport.height;
       } catch (err) {
         console.error('[PdfPreviewViewer] Failed to load PDF:', err);
       }
@@ -57,117 +92,140 @@ export default function PdfPreviewViewer({ pdfBase64 }) {
     return () => { cancelled = true; };
   }, [pdfBase64]);
 
-  // Render the page whenever scale or pdfPage changes
-  useEffect(() => {
-    if (!pdfPage || !canvasRef.current) return;
-
-    // Cancel any in-flight render
-    if (renderTaskRef.current) {
-      renderTaskRef.current.cancel();
-      renderTaskRef.current = null;
-    }
-
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    const viewport = pdfPage.getViewport({ scale });
-    const outputScale = window.devicePixelRatio || 1;
-
-    canvas.width = Math.floor(viewport.width * outputScale);
-    canvas.height = Math.floor(viewport.height * outputScale);
-    canvas.style.width = Math.floor(viewport.width) + 'px';
-    canvas.style.height = Math.floor(viewport.height) + 'px';
-
-    ctx.setTransform(outputScale, 0, 0, outputScale, 0, 0);
-
-    const task = pdfPage.render({ canvasContext: ctx, viewport });
-    renderTaskRef.current = task;
-    task.promise.catch((err) => {
-      if (err?.name !== 'RenderingCancelledException') {
-        console.error('[PdfPreviewViewer] Render error:', err);
-      }
-    });
-  }, [pdfPage, scale]);
-
-  // Ctrl + scroll wheel zoom (desktop)
-  const handleWheel = useCallback((e) => {
-    if (!e.ctrlKey) return;
-    e.preventDefault();
-    setScale((prev) => {
-      const delta = e.deltaY > 0 ? 0.9 : 1.1;
-      const next = prev * delta;
-      return Math.max(baseScale * 0.5, Math.min(baseScale * 5, next));
-    });
-  }, [baseScale]);
-
-  // Keep scaleRef in sync
-  useEffect(() => { scaleRef.current = scale; }, [scale]);
-
-  // Pinch-to-zoom (mobile)
-  const getTouchDist = (touches) => {
-    const dx = touches[0].clientX - touches[1].clientX;
-    const dy = touches[0].clientY - touches[1].clientY;
+  // ── Helpers ──
+  const getDist = (t) => {
+    const dx = t[0].clientX - t[1].clientX;
+    const dy = t[0].clientY - t[1].clientY;
     return Math.sqrt(dx * dx + dy * dy);
   };
 
-  // Attach non-passive touch + wheel listeners so preventDefault works in PWA
+  const getMid = (t) => ({
+    x: (t[0].clientX + t[1].clientX) / 2,
+    y: (t[0].clientY + t[1].clientY) / 2,
+  });
+
+  // ── Attach non-passive touch + wheel listeners ──
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+    const s = stateRef.current;
 
     const onTouchStart = (e) => {
       if (e.touches.length === 2) {
         e.preventDefault();
-        pinchRef.current = {
-          active: true,
-          startDist: getTouchDist(e.touches),
-          startScale: scaleRef.current,
-        };
+        const mid = getMid(e.touches);
+        s.pinching = true;
+        s.dragging = false;
+        s.pinchStartDist = getDist(e.touches);
+        s.pinchStartZoom = s.zoom;
+        s.pinchMidX = mid.x;
+        s.pinchMidY = mid.y;
+        s.pinchStartPanX = s.panX;
+        s.pinchStartPanY = s.panY;
+      } else if (e.touches.length === 1 && s.zoom > 1.01) {
+        // Single-finger pan only when zoomed in
+        s.dragging = true;
+        s.dragStartX = e.touches[0].clientX;
+        s.dragStartY = e.touches[0].clientY;
+        s.dragStartPanX = s.panX;
+        s.dragStartPanY = s.panY;
       }
     };
 
     const onTouchMove = (e) => {
-      if (!pinchRef.current.active || e.touches.length !== 2) return;
-      e.preventDefault();
-      const dist = getTouchDist(e.touches);
-      const ratio = dist / pinchRef.current.startDist;
-      const next = pinchRef.current.startScale * ratio;
-      const bs = baseScale || 1;
-      const clamped = Math.max(bs * 0.5, Math.min(bs * 5, next));
-      setScale(clamped);
+      if (s.pinching && e.touches.length === 2) {
+        e.preventDefault();
+        const dist = getDist(e.touches);
+        const mid = getMid(e.touches);
+        const newZoom = Math.max(1, Math.min(5, s.pinchStartZoom * (dist / s.pinchStartDist)));
+
+        // Zoom toward pinch center: adjust pan so the midpoint stays fixed
+        const rect = container.getBoundingClientRect();
+        const cx = s.pinchMidX - rect.left - rect.width / 2;
+        const cy = s.pinchMidY - rect.top - rect.height / 2;
+        const ratio = newZoom / s.pinchStartZoom;
+
+        s.zoom = newZoom;
+        s.panX = s.pinchStartPanX + (mid.x - s.pinchMidX) + cx * (1 - ratio);
+        s.panY = s.pinchStartPanY + (mid.y - s.pinchMidY) + cy * (1 - ratio);
+        applyTransform();
+      } else if (s.dragging && e.touches.length === 1) {
+        e.preventDefault();
+        s.panX = s.dragStartPanX + (e.touches[0].clientX - s.dragStartX);
+        s.panY = s.dragStartPanY + (e.touches[0].clientY - s.dragStartY);
+        applyTransform();
+      }
     };
 
-    const onTouchEnd = () => {
-      pinchRef.current.active = false;
+    const onTouchEnd = (e) => {
+      if (e.touches.length < 2) s.pinching = false;
+      if (e.touches.length < 1) s.dragging = false;
+
+      // Snap back to zoom=1 if close
+      if (!s.pinching && s.zoom < 1.05) {
+        s.zoom = 1;
+        s.panX = 0;
+        s.panY = 0;
+        applyTransform();
+      }
+    };
+
+    // Ctrl + scroll wheel zoom (desktop) — zoom toward cursor
+    const onWheel = (e) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      const factor = e.deltaY > 0 ? 0.9 : 1.1;
+      const newZoom = Math.max(1, Math.min(5, s.zoom * factor));
+
+      const rect = container.getBoundingClientRect();
+      const cx = e.clientX - rect.left - rect.width / 2;
+      const cy = e.clientY - rect.top - rect.height / 2;
+      const ratio = newZoom / s.zoom;
+
+      s.panX = s.panX * ratio + cx * (1 - ratio);
+      s.panY = s.panY * ratio + cy * (1 - ratio);
+      s.zoom = newZoom;
+
+      if (s.zoom < 1.05) { s.zoom = 1; s.panX = 0; s.panY = 0; }
+      applyTransform();
     };
 
     container.addEventListener('touchstart', onTouchStart, { passive: false });
     container.addEventListener('touchmove', onTouchMove, { passive: false });
     container.addEventListener('touchend', onTouchEnd);
-    container.addEventListener('wheel', handleWheel, { passive: false });
+    container.addEventListener('wheel', onWheel, { passive: false });
 
     return () => {
       container.removeEventListener('touchstart', onTouchStart);
       container.removeEventListener('touchmove', onTouchMove);
       container.removeEventListener('touchend', onTouchEnd);
-      container.removeEventListener('wheel', handleWheel);
+      container.removeEventListener('wheel', onWheel);
     };
-  }, [handleWheel, baseScale]);
+  }, [applyTransform]);
 
   return (
     <div
       ref={containerRef}
       style={{
         flex: 1,
-        overflow: 'auto',
-        WebkitOverflowScrolling: 'touch',
+        overflow: 'hidden',
         touchAction: 'none',
         display: 'flex',
         justifyContent: 'center',
+        alignItems: 'flex-start',
         padding: '8px',
         background: '#4b5563',
+        position: 'relative',
       }}
     >
-      <canvas ref={canvasRef} style={{ display: 'block', margin: '0 auto' }} />
+      <canvas
+        ref={canvasRef}
+        style={{
+          display: 'block',
+          transformOrigin: 'center top',
+          willChange: 'transform',
+        }}
+      />
     </div>
   );
 }
