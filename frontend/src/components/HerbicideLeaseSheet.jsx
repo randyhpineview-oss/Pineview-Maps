@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { generateLeaseSheetPdf } from '../lib/pdfGenerator';
 import { api } from '../lib/api';
 import PdfPreviewViewer from './PdfPreviewViewer';
@@ -23,6 +23,7 @@ export default function HerbicideLeaseSheet({
   initialDistanceMeters = null,
 }) {
   const isEditMode = !!editingRecord;
+  const initializedRef = useRef(false);
   const [herbicides, setHerbicides] = useState([]);
   const [applicators, setApplicators] = useState([]);
   const [noxiousWeeds, setNoxiousWeeds] = useState([]);
@@ -70,9 +71,12 @@ export default function HerbicideLeaseSheet({
     form.locationTypes.some(type => accessRoadTypes.includes(type)),
   [form.locationTypes, accessRoadTypes]);
 
-  // Auto-populate from site, pipeline, or editing record
+  // Auto-populate from site, pipeline, or editing record (run once)
   useEffect(() => {
     if (isEditMode && editingRecord?.lease_sheet_data) {
+      // Only populate form once — skip if already initialized
+      if (initializedRef.current) return;
+      initializedRef.current = true;
       const d = editingRecord.lease_sheet_data;
       setForm({
         time: d.time || get12hTime(),
@@ -169,7 +173,8 @@ export default function HerbicideLeaseSheet({
         totalDistanceSprayed: initialDistanceMeters != null ? String(initialDistanceMeters) : prev.totalDistanceSprayed,
       }));
     }
-  }, [site, pipeline, isEditMode, editingRecord, initialDistanceMeters]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEditMode, isOpen]);
 
   // Ticket number is assigned by the backend on submit (not on form open)
   // This avoids wasting ticket numbers when users cancel.

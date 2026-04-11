@@ -134,6 +134,7 @@ export default function App() {
   // Upload queue state
   const [uploadQueueItems, setUploadQueueItems] = useState([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const uploadingRef = useRef(false);
   // Lease-sheet record preview state
   const [previewingRecord, setPreviewingRecord] = useState(null);
@@ -330,6 +331,9 @@ export default function App() {
       const items = await getUploadQueue();
       if (items.length === 0) { uploadingRef.current = false; return; }
       setIsUploading(true);
+      setUploadProgress(0);
+      const total = items.length;
+      let completed = 0;
       for (const item of items.sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
         try {
           if (item.targetType === 'site') {
@@ -356,6 +360,8 @@ export default function App() {
             } catch { /* ignore refresh failure */ }
           }
           await removeUploadEntry(item.id);
+          completed++;
+          setUploadProgress(Math.round((completed / total) * 100));
         } catch (err) {
           console.warn('[UPLOAD_QUEUE] Failed to upload item', item.id, '— will retry next cycle:', err?.message || err);
           // Leave it in queue for retry on next poll cycle
@@ -364,6 +370,7 @@ export default function App() {
     } finally {
       uploadingRef.current = false;
       setIsUploading(false);
+      setUploadProgress(0);
       await refreshUploadQueue();
     }
   }, [refreshUploadQueue]);
@@ -1655,7 +1662,14 @@ export default function App() {
           {(uploadQueueItems.length > 0 || isUploading) ? (
             <span
               className="badge"
-              style={{ background: '#3b82f6', color: 'white', animation: isUploading ? 'pulse 1.5s infinite' : 'none', cursor: 'pointer' }}
+              style={{
+                background: isUploading
+                  ? `linear-gradient(to right, #3b82f6 ${uploadProgress}%, #374151 ${uploadProgress}%)`
+                  : '#3b82f6',
+                color: 'white',
+                cursor: 'pointer',
+                transition: 'background 0.3s ease',
+              }}
               onClick={async () => {
                 const items = await getUploadQueue();
                 console.log('[UPLOAD_QUEUE] Clicked badge — queued items:', items);
