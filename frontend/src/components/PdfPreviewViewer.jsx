@@ -22,6 +22,7 @@ export default function PdfPreviewViewer({ pdfBase64 }) {
 
   // Track pinch state
   const pinchRef = useRef({ active: false, startDist: 0, startScale: 1 });
+  const scaleRef = useRef(1);
 
   // Load the PDF page once
   useEffect(() => {
@@ -45,6 +46,7 @@ export default function PdfPreviewViewer({ pdfBase64 }) {
             const fitScale = (container.clientWidth - 16) / viewport.width;
             setBaseScale(fitScale);
             setScale(fitScale);
+            scaleRef.current = fitScale;
           }
         }
       } catch (err) {
@@ -97,6 +99,9 @@ export default function PdfPreviewViewer({ pdfBase64 }) {
     });
   }, [baseScale]);
 
+  // Keep scaleRef in sync
+  useEffect(() => { scaleRef.current = scale; }, [scale]);
+
   // Pinch-to-zoom (mobile)
   const getTouchDist = (touches) => {
     const dx = touches[0].clientX - touches[1].clientX;
@@ -104,47 +109,58 @@ export default function PdfPreviewViewer({ pdfBase64 }) {
     return Math.sqrt(dx * dx + dy * dy);
   };
 
-  const handleTouchStart = useCallback((e) => {
-    if (e.touches.length === 2) {
-      pinchRef.current = {
-        active: true,
-        startDist: getTouchDist(e.touches),
-        startScale: scale,
-      };
-    }
-  }, [scale]);
-
-  const handleTouchMove = useCallback((e) => {
-    if (!pinchRef.current.active || e.touches.length !== 2) return;
-    e.preventDefault();
-    const dist = getTouchDist(e.touches);
-    const ratio = dist / pinchRef.current.startDist;
-    const next = pinchRef.current.startScale * ratio;
-    setScale(Math.max(baseScale * 0.5, Math.min(baseScale * 5, next)));
-  }, [baseScale]);
-
-  const handleTouchEnd = useCallback(() => {
-    pinchRef.current.active = false;
-  }, []);
-
-  // Attach non-passive wheel listener for Ctrl+scroll preventDefault
+  // Attach non-passive touch + wheel listeners so preventDefault works in PWA
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+
+    const onTouchStart = (e) => {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        pinchRef.current = {
+          active: true,
+          startDist: getTouchDist(e.touches),
+          startScale: scaleRef.current,
+        };
+      }
+    };
+
+    const onTouchMove = (e) => {
+      if (!pinchRef.current.active || e.touches.length !== 2) return;
+      e.preventDefault();
+      const dist = getTouchDist(e.touches);
+      const ratio = dist / pinchRef.current.startDist;
+      const next = pinchRef.current.startScale * ratio;
+      const bs = baseScale || 1;
+      const clamped = Math.max(bs * 0.5, Math.min(bs * 5, next));
+      setScale(clamped);
+    };
+
+    const onTouchEnd = () => {
+      pinchRef.current.active = false;
+    };
+
+    container.addEventListener('touchstart', onTouchStart, { passive: false });
+    container.addEventListener('touchmove', onTouchMove, { passive: false });
+    container.addEventListener('touchend', onTouchEnd);
     container.addEventListener('wheel', handleWheel, { passive: false });
-    return () => container.removeEventListener('wheel', handleWheel);
-  }, [handleWheel]);
+
+    return () => {
+      container.removeEventListener('touchstart', onTouchStart);
+      container.removeEventListener('touchmove', onTouchMove);
+      container.removeEventListener('touchend', onTouchEnd);
+      container.removeEventListener('wheel', handleWheel);
+    };
+  }, [handleWheel, baseScale]);
 
   return (
     <div
       ref={containerRef}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
       style={{
         flex: 1,
         overflow: 'auto',
         WebkitOverflowScrolling: 'touch',
+        touchAction: 'none',
         display: 'flex',
         justifyContent: 'center',
         padding: '8px',
