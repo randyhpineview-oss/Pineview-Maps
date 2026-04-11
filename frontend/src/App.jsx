@@ -486,6 +486,21 @@ export default function App() {
       if (window.navigator.onLine) processUploadQueue();
     });
     void refreshAllData();
+
+    // ── Debug helpers for upload queue ──
+    window.debugQueue = async () => {
+      const items = await getUploadQueue();
+      console.log('[UPLOAD_QUEUE] Items in queue:', items);
+      return items;
+    };
+    window.clearQueue = async () => {
+      const items = await getUploadQueue();
+      for (const item of items) {
+        await removeUploadEntry(item.id);
+      }
+      console.log('[UPLOAD_QUEUE] Cleared all items:', items);
+      await refreshUploadQueue();
+    };
   }, [refreshAllData, refreshQueueCount, refreshUploadQueue, processUploadQueue]);
 
   useEffect(() => {
@@ -1635,9 +1650,14 @@ export default function App() {
         <div className="topbar-right">
           <span className={`badge ${isOnline ? 'online' : 'offline'}`}>{isOnline ? 'Online' : 'Offline'}</span>
           {(uploadQueueItems.length > 0 || isUploading) ? (
-            <span 
-              className="badge" 
-              style={{ background: '#3b82f6', color: 'white', animation: isUploading ? 'pulse 1.5s infinite' : 'none' }}
+            <span
+              className="badge"
+              style={{ background: '#3b82f6', color: 'white', animation: isUploading ? 'pulse 1.5s infinite' : 'none', cursor: 'pointer' }}
+              onClick={async () => {
+                const items = await getUploadQueue();
+                console.log('[UPLOAD_QUEUE] Clicked badge — queued items:', items);
+                alert(`${items.length} item(s) in queue. Check console for details or run window.clearQueue() to clear.`);
+              }}
             >
               {isUploading ? `Syncing (${uploadQueueItems.length})…` : `Queued (${uploadQueueItems.length})`}
             </span>
