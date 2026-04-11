@@ -1230,26 +1230,30 @@ export default function App() {
 
   async function handleEditSpraySubmit(payload) {
     if (!editingSprayRecord) return;
-    setStatusSaving(true);
-    try {
-      await api.updateSiteSprayRecord(editingSprayRecord.id, payload);
-      setMessage('Record updated.');
-      setEditingSprayRecord(null);
-      // Refresh site data
-      if (editingSprayRecord.site_id) {
-        try {
-          const updated = await api.getSite(editingSprayRecord.site_id);
-          setSites((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-          setSelectedSite(updated);
-        } catch { /* ignore */ }
+    const record = editingSprayRecord;
+    // Close form immediately — upload happens in background
+    setEditingSprayRecord(null);
+    setMessage('Updating record…');
+
+    // Fire off API call in background (don't await before closing form)
+    (async () => {
+      try {
+        await api.updateSiteSprayRecord(record.id, payload);
+        setMessage('Record updated.');
+        // Refresh site data
+        if (record.site_id) {
+          try {
+            const updated = await api.getSite(record.site_id);
+            setSites((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+            setSelectedSite((prev) => prev && prev.id === updated.id ? updated : prev);
+          } catch { /* ignore */ }
+        }
+        // Refresh recents so View PDF button and data stay current
+        loadServerRecents();
+      } catch (error) {
+        setMessage('Update failed: ' + (error.message || 'Unknown error'));
       }
-      // Refresh recents so View PDF button and data stay current
-      loadServerRecents();
-    } catch (error) {
-      setMessage(error.message || 'Failed to update record.');
-    } finally {
-      setStatusSaving(false);
-    }
+    })();
   }
 
   function handleLeaseSheetCancel() {
