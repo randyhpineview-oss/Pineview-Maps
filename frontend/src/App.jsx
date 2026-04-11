@@ -326,9 +326,10 @@ export default function App() {
   const processUploadQueue = useCallback(async () => {
     if (uploadingRef.current || !window.navigator.onLine) return;
     uploadingRef.current = true;
-    setIsUploading(true);
     try {
       const items = await getUploadQueue();
+      if (items.length === 0) { uploadingRef.current = false; return; }
+      setIsUploading(true);
       for (const item of items.sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
         try {
           if (item.targetType === 'site') {

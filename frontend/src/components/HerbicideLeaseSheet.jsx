@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { generateLeaseSheetPdf } from '../lib/pdfGenerator';
+import { api } from '../lib/api';
 
 function get12hTime() {
   const now = new Date();
@@ -245,10 +246,35 @@ export default function HerbicideLeaseSheet({
   const handleConfirmSubmit = async () => {
     setIsSubmitting(true);
     try {
+      // For new records, fetch ticket number now so it appears in the PDF
+      let finalTicket = ticketNumber;
+      if (!finalTicket && !isEditMode) {
+        try {
+          const resp = await api.getNextTicket();
+          finalTicket = resp.ticket_number;
+          setTicketNumber(finalTicket);
+        } catch (err) {
+          console.warn('[LEASE] Could not fetch ticket number:', err?.message);
+        }
+      }
+
+      // Regenerate PDF with the ticket number so Dropbox copy has it
+      const photoDataUrls = await Promise.all(
+        photos.map(async (p) => {
+          if (p.existingBase64) {
+            return `data:${p.existingBase64.type || 'image/jpeg'};base64,${p.existingBase64.data}`;
+          }
+          return p.preview;
+        })
+      );
+      const { base64: finalPdfBase64 } = await generateLeaseSheetPdf(
+        { ...form, ticket_number: finalTicket },
+        photoDataUrls
+      );
+
       // Convert photos to base64
       const photoPromises = photos.map(async (p) => {
         if (p.existingBase64) {
-          // Already have base64 data from edit mode
           return p.existingBase64;
         }
         if (p.file) {
@@ -264,7 +290,6 @@ export default function HerbicideLeaseSheet({
             reader.readAsDataURL(p.file);
           });
         }
-        // Fallback: no data available
         return null;
       });
       
@@ -273,18 +298,17 @@ export default function HerbicideLeaseSheet({
       const payload = {
         lease_sheet_data: {
           ...form,
-          ticket_number: ticketNumber || undefined,
+          ticket_number: finalTicket || undefined,
           photos: photoData,
         },
-        pdf_base64: pdfBase64,
-        ticket_number: ticketNumber || undefined,
+        pdf_base64: finalPdfBase64,
+        ticket_number: finalTicket || undefined,
         spray_date: form.date,
         notes: form.comments,
         is_avoided: false,
       };
       await onSubmit(payload);
     } catch (err) {
-      // Stay on preview, show error
       alert('Upload failed: ' + (err.message || 'Unknown error'));
       setIsSubmitting(false);
     }
