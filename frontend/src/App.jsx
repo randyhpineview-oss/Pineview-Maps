@@ -1236,6 +1236,8 @@ export default function App() {
           setSelectedSite(updated);
         } catch { /* ignore */ }
       }
+      // Refresh recents so View PDF button and data stay current
+      loadServerRecents();
     } catch (error) {
       setMessage(error.message || 'Failed to update record.');
     } finally {

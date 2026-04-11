@@ -113,13 +113,35 @@ export default function HerbicideLeaseSheet({
         });
         setPhotos(restored);
       } else if (editingRecord.photo_urls && editingRecord.photo_urls.length > 0) {
-        // Fallback: use Dropbox photo URLs as previews
-        const restored = editingRecord.photo_urls.map((url) => ({
-          file: null,
-          preview: url.replace('dl=0', 'raw=1'),
-          existingUrl: url,
-        }));
-        setPhotos(restored);
+        // Fallback: fetch Dropbox photos and convert to base64 to avoid CORS issues
+        (async () => {
+          const restored = await Promise.all(
+            editingRecord.photo_urls.map(async (url) => {
+              const rawUrl = url.replace('dl=0', 'raw=1');
+              try {
+                const resp = await fetch(rawUrl);
+                const blob = await resp.blob();
+                const dataUrl = await new Promise((resolve) => {
+                  const reader = new FileReader();
+                  reader.onloadend = () => resolve(reader.result);
+                  reader.readAsDataURL(blob);
+                });
+                return {
+                  file: null,
+                  preview: dataUrl,
+                  existingBase64: {
+                    data: dataUrl.split(',')[1],
+                    type: blob.type || 'image/jpeg',
+                  },
+                };
+              } catch {
+                // If fetch fails, use URL as preview (photos won't embed in PDF)
+                return { file: null, preview: rawUrl, existingUrl: url };
+              }
+            })
+          );
+          setPhotos(restored);
+        })();
       }
       return;
     }
@@ -218,30 +240,34 @@ export default function HerbicideLeaseSheet({
   };
 
   const handlePreview = async () => {
-    // Build photo data URLs for embedding in PDF
-    const photoDataUrls = await Promise.all(
-      photos.map(p => {
-        if (p.file) {
-          return new Promise(resolve => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result);
-            reader.readAsDataURL(p.file);
-          });
-        }
-        // Pre-existing photo (edit mode) — already a data URL or Dropbox URL
-        if (p.existingBase64) {
-          return `data:${p.existingBase64.type || 'image/jpeg'};base64,${p.existingBase64.data}`;
-        }
-        return p.preview;
-      })
-    );
-    const pdfData = {
-      ...form,
-      ticket_number: ticketNumber,
-    };
-    const { base64 } = await generateLeaseSheetPdf(pdfData, photoDataUrls);
-    setPdfBase64(base64);
-    setIsPreviewing(true);
+    try {
+      // Build photo data URLs for embedding in PDF
+      const photoDataUrls = await Promise.all(
+        photos.map(p => {
+          if (p.file) {
+            return new Promise(resolve => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result);
+              reader.readAsDataURL(p.file);
+            });
+          }
+          if (p.existingBase64) {
+            return `data:${p.existingBase64.type || 'image/jpeg'};base64,${p.existingBase64.data}`;
+          }
+          return p.preview;
+        })
+      );
+      const pdfData = {
+        ...form,
+        ticket_number: ticketNumber,
+      };
+      const { base64 } = await generateLeaseSheetPdf(pdfData, photoDataUrls);
+      setPdfBase64(base64);
+      setIsPreviewing(true);
+    } catch (err) {
+      console.error('[LEASE] Preview failed:', err);
+      alert('Failed to generate preview: ' + (err.message || 'Unknown error'));
+    }
   };
 
   const handleConfirmSubmit = async () => {
