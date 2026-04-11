@@ -75,22 +75,26 @@ export default function PdfPreviewViewer({ pdfBase64 }) {
 
         // Fit PDF width to container
         const vp1 = page.getViewport({ scale: 1 });
-        const fitScale = (container.clientWidth - 16) / vp1.width;
-        const viewport = page.getViewport({ scale: fitScale });
+        const containerW = container.clientWidth - 16;
+        const fitScale = containerW / vp1.width;
 
-        // Render at DPR resolution for pixel-perfect display
+        // Render at full DPR resolution natively through PDF.js
         const dpr = window.devicePixelRatio || 1;
-        canvas.width = Math.floor(viewport.width * dpr);
-        canvas.height = Math.floor(viewport.height * dpr);
-        canvas.style.width = Math.floor(viewport.width) + 'px';
-        canvas.style.height = Math.floor(viewport.height) + 'px';
+        const renderVP = page.getViewport({ scale: fitScale * dpr });
+
+        canvas.width = Math.floor(renderVP.width);
+        canvas.height = Math.floor(renderVP.height);
+        // CSS display size = render size / dpr
+        const cssW = Math.floor(renderVP.width / dpr);
+        const cssH = Math.floor(renderVP.height / dpr);
+        canvas.style.width = cssW + 'px';
+        canvas.style.height = cssH + 'px';
 
         const ctx = canvas.getContext('2d');
-        ctx.scale(dpr, dpr);
-        await page.render({ canvasContext: ctx, viewport }).promise;
+        await page.render({ canvasContext: ctx, viewport: renderVP }).promise;
 
-        stateRef.current.canvasW = viewport.width;
-        stateRef.current.canvasH = viewport.height;
+        stateRef.current.canvasW = cssW;
+        stateRef.current.canvasH = cssH;
       } catch (err) {
         console.error('[PdfPreviewViewer] Failed to load PDF:', err);
       }
