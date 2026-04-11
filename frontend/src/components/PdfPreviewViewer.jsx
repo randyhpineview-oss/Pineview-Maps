@@ -45,7 +45,13 @@ export default function PdfPreviewViewer({ pdfBase64 }) {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const s = stateRef.current;
-    canvas.style.transform = `translate(${s.panX}px, ${s.panY}px) scale(${s.zoom})`;
+    // Only apply transform when zoomed — at 1x, remove it entirely so the
+    // browser renders the canvas at native resolution (no GPU layer blur).
+    if (s.zoom <= 1.001 && Math.abs(s.panX) < 1 && Math.abs(s.panY) < 1) {
+      canvas.style.transform = '';
+    } else {
+      canvas.style.transform = `translate(${s.panX}px, ${s.panY}px) scale(${s.zoom})`;
+    }
   }, []);
 
   // ── Load PDF and render once at high-res ──
@@ -224,7 +230,6 @@ export default function PdfPreviewViewer({ pdfBase64 }) {
         style={{
           display: 'block',
           transformOrigin: 'center top',
-          willChange: 'transform',
         }}
       />
     </div>
