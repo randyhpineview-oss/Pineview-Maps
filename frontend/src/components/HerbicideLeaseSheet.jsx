@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { generateLeaseSheetPdf } from '../lib/pdfGenerator';
 import { api } from '../lib/api';
+import PdfPreviewViewer from './PdfPreviewViewer';
 
 function get12hTime() {
   const now = new Date();
@@ -321,29 +322,6 @@ export default function HerbicideLeaseSheet({
 
   if (!isOpen) return null;
 
-  // ── Shared preview styles matching PDF layout ──
-  const PV = {
-    page: {
-      maxWidth: '640px', width: '100%', margin: '0 auto',
-      background: '#ffffff', color: '#1a1a1a', fontFamily: 'Helvetica, Arial, sans-serif',
-      fontSize: '9pt', lineHeight: 1.35, padding: '28px 32px', boxSizing: 'border-box',
-    },
-    cell: (flex = 1) => ({ border: '0.5px solid #000', padding: '4px 6px', flex }),
-    row: { display: 'flex' },
-    bold: { fontWeight: 700 },
-    label: { fontWeight: 700, fontSize: '8pt' },
-    normal: { fontWeight: 400, fontSize: '8pt' },
-  };
-
-  const fmt = (v, fb = '—') => {
-    if (Array.isArray(v)) return v.length ? v.join(', ') : fb;
-    if (v === null || v === undefined || v === '') return fb;
-    return String(v);
-  };
-
-  const windPreview = `${fmt(form.windDirection, '')} ${form.windSpeed ? form.windSpeed + ' km/h' : ''}`.trim() || '—';
-  const showRoadsidePreview = form.isAccessRoad || (form.locationTypes || []).some(t => ['Access Road', 'Roadside'].includes(t));
-
   // ── Preview overlay ──
   if (isPreviewing) {
     return (
@@ -358,148 +336,7 @@ export default function HerbicideLeaseSheet({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', flexShrink: 0, background: '#1f2937' }}>
           <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600, color: '#f9fafb' }}>Preview{ticketNumber ? ` — ${ticketNumber}` : ''}</h2>
         </div>
-        <div style={{ flex: 1, overflowY: 'auto', padding: '16px 8px' }}>
-          <div style={PV.page}>
-
-            {/* Header: Logo + Title + Ticket */}
-            <div style={{ display: 'flex', alignItems: 'center', marginBottom: '12px', gap: '16px' }}>
-              <img src="/logo.png" alt="" style={{ width: '72px', height: '72px', objectFit: 'contain' }}
-                onError={(e) => { e.target.style.display = 'none'; }} />
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: '14pt', fontWeight: 700, color: '#325032' }}>Herbicide Lease Sheet</div>
-                <div style={{ fontSize: '7pt', color: '#666', marginTop: '2px' }}>7077 252 Road, Pineview, BC, Canada, V1J 8E3</div>
-                <div style={{ fontSize: '7pt', color: '#666' }}>Tel: 250.261.9544 | office@pineviewmanagement.com</div>
-              </div>
-              <div style={{ fontSize: '11pt', fontWeight: 700, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                No: {ticketNumber || ''}
-              </div>
-            </div>
-
-            {/* Customer / Area / LSD */}
-            <div style={{ marginBottom: '2px' }}>
-              <span style={PV.bold}>Customer/Area/LSD: </span>
-              {form.customer} / {form.area} / {form.lsdOrPipeline}
-            </div>
-
-            {/* Date + Time */}
-            <div style={{ marginBottom: '2px' }}>
-              <span style={PV.bold}>Date: </span>{fmt(form.date)}
-              <span style={{ ...PV.bold, marginLeft: '32px' }}>Time: </span>{fmt(form.time)}
-            </div>
-
-            {/* Applicators */}
-            <div style={{ marginBottom: '6px' }}>
-              <span style={PV.bold}>Applicators: </span>{fmt(form.applicators)}
-            </div>
-
-            {/* Wind | Location Type */}
-            <div style={PV.row}>
-              <div style={PV.cell()}>
-                <div style={PV.label}>Wind Direction/Speed:</div>
-                <div style={PV.normal}>{windPreview}</div>
-              </div>
-              <div style={PV.cell()}>
-                <div style={PV.label}>Location Type:</div>
-                <div style={PV.normal}>{fmt(form.locationTypes)}</div>
-              </div>
-            </div>
-
-            {/* Temperature */}
-            <div style={PV.row}>
-              <div style={PV.cell()}>
-                <span style={PV.label}>Temp: </span>
-                <span style={PV.normal}>{form.temperature ? `${form.temperature}°C` : '—'}</span>
-              </div>
-              <div style={PV.cell()}></div>
-            </div>
-
-            {/* Noxious Weeds */}
-            <div style={PV.row}>
-              <div style={PV.cell()}>
-                <div style={PV.label}>Noxious Weeds:</div>
-                <div style={PV.normal}>{fmt(form.noxiousWeedsSelected)}</div>
-              </div>
-              <div style={PV.cell()}></div>
-            </div>
-
-            {/* Products Applied */}
-            <div style={PV.row}>
-              <div style={{ ...PV.cell(), flex: 2 }}>
-                <div style={PV.label}>Products Applied:</div>
-                <div style={PV.normal}>{fmt(form.herbicidesUsed)}</div>
-              </div>
-            </div>
-
-            {/* Area Treated / Total Product */}
-            <div style={{ ...PV.row, ...PV.cell() }}>
-              <span style={PV.label}>Area Treated: </span>
-              <span style={{ ...PV.normal, marginRight: '24px' }}>{fmt(form.areaTreated, '___')} ha</span>
-              <span style={PV.label}>Total Product: </span>
-              <span style={PV.normal}>{fmt(form.totalLiters, '___')} L</span>
-            </div>
-
-            {/* Distance Sprayed */}
-            {form.totalDistanceSprayed ? (
-              <div style={{ ...PV.row, ...PV.cell() }}>
-                <span style={PV.label}>Total Distance Sprayed: </span>
-                <span style={PV.normal}>{form.totalDistanceSprayed} m</span>
-              </div>
-            ) : null}
-
-            {/* Spray Type / Spray Method */}
-            <div style={PV.row}>
-              <div style={PV.cell()}>
-                <div style={PV.label}>Spray Type:</div>
-                <div style={PV.normal}>{fmt(form.sprayType)}</div>
-              </div>
-              <div style={PV.cell()}>
-                <div style={PV.label}>Spray Method:</div>
-                <div style={PV.normal}>{fmt(form.sprayMethod)}</div>
-              </div>
-            </div>
-
-            {/* Roadside Details */}
-            {showRoadsidePreview ? (
-              <div style={{ ...PV.row, ...PV.cell() }}>
-                <div>
-                  <div style={PV.label}>Roadside Details:</div>
-                  <div style={PV.normal}>Distance: {fmt(form.roadsideKm, '___')} km &nbsp; Herbicides: {fmt(form.roadsideHerbicides)}</div>
-                  <div style={PV.normal}>Liters: {fmt(form.roadsideLiters, '___')} L &nbsp; Area: {fmt(form.roadsideAreaTreated, '___')} ha</div>
-                </div>
-              </div>
-            ) : null}
-
-            {/* Comments */}
-            <div style={{ ...PV.row, ...PV.cell(), minHeight: '40px' }}>
-              <div>
-                <div style={PV.label}>Comments:</div>
-                <div style={PV.normal}>{form.comments || ''}</div>
-              </div>
-            </div>
-
-            {/* Photos */}
-            {photos.length > 0 ? (
-              <div style={{ marginTop: '8px' }}>
-                <div style={PV.label}>Photos:</div>
-                <div style={{ display: 'flex', gap: '12px', marginTop: '6px', flexWrap: 'wrap' }}>
-                  {photos.map((photo, i) => (
-                    <div key={`preview-photo-${i}`} style={{ textAlign: 'center' }}>
-                      <img
-                        src={photo.preview}
-                        alt={`Photo ${i + 1}`}
-                        style={{ maxWidth: '240px', maxHeight: '240px', objectFit: 'contain', border: '0.5px solid #999' }}
-                      />
-                      <div style={{ fontSize: '7pt', color: '#666', marginTop: '2px' }}>
-                        {i === 0 ? 'LSD / Location ID' : 'Site Photo'}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-          </div>
-        </div>
+        <PdfPreviewViewer pdfBase64={pdfBase64} />
         <div style={{ display: 'flex', gap: '10px', padding: '12px 16px', flexShrink: 0, background: '#1f2937' }}>
           <button
             onClick={handleConfirmSubmit}
