@@ -33,6 +33,28 @@ class SiteSprayRecordRead(BaseModel):
     tm_ticket_id: int | None = None
 
 
+class SiteSprayRecordSummary(BaseModel):
+    """Lightweight spray-record view without lease_sheet_data.
+
+    Used by list endpoints to keep egress tiny. For the full record (edit /
+    deep inspection), call GET /api/site-spray-records/{id}.
+    """
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    site_id: int
+    spray_date: date
+    sprayed_by_user_id: int | None
+    sprayed_by_name: str | None
+    notes: str | None
+    is_avoided: bool
+    created_at: datetime
+    ticket_number: str | None = None
+    pdf_url: str | None = None
+    photo_urls: list[str] | None = None
+    tm_ticket_id: int | None = None
+
+
 class TimeMaterialsLink(BaseModel):
     """Instruction for linking a lease sheet to a T&M ticket on submit."""
     ticket_id: int | None = None           # link to existing ticket
@@ -62,6 +84,11 @@ class SiteSprayRecordUpdate(BaseModel):
 
 
 class RecentSubmissionRead(BaseModel):
+    """Lightweight recent-submission row — NO lease_sheet_data.
+
+    The PDF preview fetches the real Dropbox PDF via /api/pdf-proxy; the edit
+    flow fetches the full record via /api/site-spray-records/{id}.
+    """
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -73,7 +100,6 @@ class RecentSubmissionRead(BaseModel):
     is_avoided: bool
     created_at: datetime
     ticket_number: str | None = None
-    lease_sheet_data: dict | None = None
     pdf_url: str | None = None
     photo_urls: list[str] | None = None
     tm_ticket_id: int | None = None
@@ -122,7 +148,7 @@ class SiteRead(BaseModel):
     approved_by_user_id: int | None
     pending_pin_type: PinType | None = None
     updates: list[SiteUpdateRead] = Field(default_factory=list)
-    spray_records: list[SiteSprayRecordRead] = Field(default_factory=list)
+    spray_records: list[SiteSprayRecordSummary] = Field(default_factory=list)
     # Nested user objects for convenience
     created_by_user: UserRead | None = None
     approved_by_user: UserRead | None = None

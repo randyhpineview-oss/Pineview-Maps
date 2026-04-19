@@ -44,6 +44,7 @@ from app.schemas import (
     SiteQuickEdit,
     SiteRead,
     SiteSprayRecordRead,
+    SiteSprayRecordSummary,
     SiteSprayRecordCreate,
     SiteSprayRecordUpdate,
     SiteStatusUpdate,
@@ -470,16 +471,48 @@ def quick_edit_site(
     return SiteRead.model_validate(site)
 
 
-@app.get("/api/sites/{site_id}/spray", response_model=list[SiteSprayRecordRead])
+def _strip_photos_from_lease_data(data: dict | None) -> dict | None:
+    """Return a copy of lease_sheet_data with photos[].data stripped.
+
+    The base64 image bytes bloat the DB (and every list endpoint response). The
+    photos are already uploaded to Dropbox and their URLs live in photo_urls,
+    so we keep only lightweight metadata (name, type, etc.) in the JSONB copy.
+    """
+    if not data:
+        return data
+    out = dict(data)
+    if isinstance(out.get("photos"), list):
+        out["photos"] = [
+            {k: v for k, v in p.items() if k != "data"}
+            for p in out["photos"]
+            if isinstance(p, dict)
+        ]
+    return out
+
+
+@app.get("/api/sites/{site_id}/spray", response_model=list[SiteSprayRecordSummary])
 def list_site_spray_records(
     site_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """List spray records for a site."""
+    """List spray records for a site (summary — no lease_sheet_data)."""
     get_site_or_404(db, site_id)
     q = db.query(SiteSprayRecord).filter(SiteSprayRecord.site_id == site_id)
-    return [SiteSprayRecordRead.model_validate(r) for r in q.order_by(SiteSprayRecord.created_at.desc()).all()]
+    return [SiteSprayRecordSummary.model_validate(r) for r in q.order_by(SiteSprayRecord.created_at.desc()).all()]
+
+
+@app.get("/api/site-spray-records/{record_id}", response_model=SiteSprayRecordRead)
+def get_site_spray_record(
+    record_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Full spray record (including lease_sheet_data) — used by the edit flow."""
+    record = db.query(SiteSprayRecord).filter(SiteSprayRecord.id == record_id).first()
+    if not record:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Site spray record not found")
+    return SiteSprayRecordRead.model_validate(record)
 
 
 @app.post("/api/sites/{site_id}/spray", response_model=SiteSprayRecordRead)
@@ -547,6 +580,10 @@ def create_site_spray_record(
                 except Exception as e:
                     print(f"Error uploading photo {i+1}: {e}")
 
+    # Strip photos[].data before persisting — the actual images live in Dropbox
+    # (URLs in photo_urls). Storing the base64 in the DB balloons egress.
+    persisted_lease_data = _strip_photos_from_lease_data(payload.lease_sheet_data)
+
     record = SiteSprayRecord(
         site_id=site_id,
         spray_date=payload.spray_date,
@@ -555,7 +592,7 @@ def create_site_spray_record(
         notes=payload.notes,
         is_avoided=payload.is_avoided,
         ticket_number=ticket_number,
-        lease_sheet_data=payload.lease_sheet_data,
+        lease_sheet_data=persisted_lease_data,
         pdf_url=pdf_url,
         photo_urls=photo_urls if photo_urls else None,
     )
@@ -637,7 +674,8 @@ def update_site_spray_record(
     if payload.is_avoided is not None:
         record.is_avoided = payload.is_avoided
     if payload.lease_sheet_data is not None:
-        record.lease_sheet_data = payload.lease_sheet_data
+        # Strip photos[].data before persisting (see create endpoint)
+        record.lease_sheet_data = _strip_photos_from_lease_data(payload.lease_sheet_data)
 
     # Re-upload PDF if new base64 is provided (replaces old PDF on Dropbox)
     if payload.pdf_base64:
@@ -706,9 +744,12 @@ def list_recent_submissions(
 
     rows = q.order_by(SiteSprayRecord.created_at.desc()).limit(limit).all()
 
+    # Build the summary view without lease_sheet_data — the PDF preview
+    # fetches the real Dropbox PDF via /api/pdf-proxy, and the edit flow
+    # fetches the full row via /api/site-spray-records/{id}.
     results = []
     for record, site_lsd, site_client, site_area in rows:
-        data = SiteSprayRecordRead.model_validate(record).model_dump()
+        data = SiteSprayRecordSummary.model_validate(record).model_dump()
         data['site_lsd'] = site_lsd
         data['site_client'] = site_client
         data['site_area'] = site_area

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { generateLeaseSheetPdf } from '../lib/pdfGenerator';
+import { api } from '../lib/api';
 import PdfPreviewViewer from './PdfPreviewViewer';
 
 function pdfLink(url) {
@@ -17,33 +17,47 @@ export default function PdfPreviewOverlay({ record, onClose }) {
   const d = record?.lease_sheet_data || {};
   const directUrl = pdfLink(record?.pdf_url || null);
   const ticket = record?.ticket_number || d.ticket_number || '';
-  const [pdfBase64, setPdfBase64] = useState(null);
+  const [pdfBytes, setPdfBytes] = useState(null);
   const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  // Regenerate PDF from stored lease_sheet_data
+  // Fetch the real Dropbox PDF via the backend proxy (avoids browser-side
+  // CORS issues and means we don't have to drag base64 photos through the API).
   useEffect(() => {
     if (!record) return;
+    if (!record.pdf_url) {
+      setError('This record has no uploaded PDF yet.');
+      setLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
     let cancelled = false;
+
+    setLoading(true);
+    setError(null);
+    setPdfBytes(null);
 
     (async () => {
       try {
-        // Build photo data URLs from embedded base64 photos
-        const photos = d.photos || [];
-        const photoDataUrls = photos.slice(0, 2).map(
-          (p) => `data:${p.type || 'image/jpeg'};base64,${p.data}`
-        );
-
-        const pdfData = { ...d, ticket_number: ticket };
-        const { base64 } = await generateLeaseSheetPdf(pdfData, photoDataUrls);
-        if (!cancelled) setPdfBase64(base64);
+        const bytes = await api.fetchPdfBytes(record.pdf_url, controller.signal);
+        if (!cancelled) {
+          setPdfBytes(bytes);
+          setLoading(false);
+        }
       } catch (err) {
-        console.error('[PdfPreviewOverlay] PDF generation failed:', err);
-        if (!cancelled) setError('Could not generate PDF preview.');
+        if (cancelled || err?.name === 'AbortError') return;
+        console.error('[PdfPreviewOverlay] PDF fetch failed:', err);
+        setError(err?.message || 'Could not load PDF.');
+        setLoading(false);
       }
     })();
 
-    return () => { cancelled = true; };
-  }, [record]);
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [record?.id, record?.pdf_url]);
 
   return (
     <div style={{
@@ -73,16 +87,22 @@ export default function PdfPreviewOverlay({ record, onClose }) {
 
       {/* ── PDF viewer ── */}
       {error ? (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#f87171' }}>
-          {error}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', padding: '20px', textAlign: 'center' }}>
+          <div style={{ color: '#f87171' }}>{error}</div>
+          {directUrl ? (
+            <a href={directUrl} target="_blank" rel="noopener noreferrer"
+              style={{ color: '#60a5fa', fontSize: '0.9rem' }}>
+              Open PDF in a new tab ↗
+            </a>
+          ) : null}
         </div>
-      ) : pdfBase64 ? (
-        <PdfPreviewViewer pdfBase64={pdfBase64} />
-      ) : (
+      ) : pdfBytes ? (
+        <PdfPreviewViewer pdfBytes={pdfBytes} />
+      ) : loading ? (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af' }}>
-          Loading PDF...
+          Loading PDF…
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

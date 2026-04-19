@@ -231,9 +231,48 @@ export const api = {
   updateSiteSprayRecord(recordId, payload) {
     return request(`/api/site-spray-records/${recordId}`, { method: 'PATCH', body: payload });
   },
+  // Full spray record including lease_sheet_data (used by the edit flow).
+  // List endpoints return a slimmer summary without lease_sheet_data to keep egress tiny.
+  getSiteSprayRecord(recordId) {
+    return request(`/api/site-spray-records/${recordId}`);
+  },
   listRecentSubmissions(search) {
     const params = search ? `?search=${encodeURIComponent(search)}` : '';
     return request(`/api/recent-submissions${params}`);
+  },
+
+  /**
+   * Fetch a Dropbox-hosted PDF through the backend proxy and return its raw bytes.
+   *
+   * Uses /api/pdf-proxy (server-side fetch) to sidestep browser-CORS issues with
+   * Dropbox shared links. Returns a Uint8Array that can be passed directly to
+   * pdfjs (via PdfPreviewViewer's pdfBytes prop).
+   *
+   * @param {string} pdfUrl        Dropbox shared-link URL (or any direct URL).
+   * @param {AbortSignal} [signal] Optional AbortSignal to cancel the fetch.
+   * @returns {Promise<Uint8Array>}
+   */
+  async fetchPdfBytes(pdfUrl, signal) {
+    if (!pdfUrl) throw new Error('No pdf_url on this record.');
+    const headers = {};
+    if (USE_SUPABASE_AUTH) {
+      const token = localStorage.getItem('supabase-access-token');
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+    } else {
+      headers['X-Demo-User'] = 'worker';
+    }
+    const url = `${API_BASE_URL}/api/pdf-proxy?url=${encodeURIComponent(pdfUrl)}`;
+    const resp = await fetch(url, { headers, signal });
+    if (!resp.ok) {
+      let message = `PDF proxy failed (${resp.status})`;
+      try {
+        const body = await resp.json();
+        if (body?.detail) message += `: ${body.detail}`;
+      } catch { /* non-json body */ }
+      throw new Error(message);
+    }
+    const buf = await resp.arrayBuffer();
+    return new Uint8Array(buf);
   },
   bulkResetPipelines(payload) {
     return request('/api/admin/pipelines/bulk-reset', { method: 'POST', body: payload });

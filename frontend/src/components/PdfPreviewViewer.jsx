@@ -8,10 +8,16 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 ).href;
 
 /**
- * Renders a base64 PDF onto a canvas with pinch-to-zoom + pan (mobile)
+ * Renders a PDF onto a canvas with pinch-to-zoom + pan (mobile)
  * and Ctrl+scroll zoom (desktop). Zoom is centered on the pinch midpoint.
+ *
+ * Accepts either:
+ *   - `pdfBase64`: base64-encoded PDF string (existing callers).
+ *   - `pdfBytes`:  raw Uint8Array of PDF bytes (preferred — no base64 round-trip).
+ *
+ * If both are provided, `pdfBytes` wins.
  */
-export default function PdfPreviewViewer({ pdfBase64 }) {
+export default function PdfPreviewViewer({ pdfBase64, pdfBytes }) {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
 
@@ -56,16 +62,27 @@ export default function PdfPreviewViewer({ pdfBase64 }) {
 
   // ── Load PDF and render once at high-res ──
   useEffect(() => {
-    if (!pdfBase64) return;
+    // Resolve the input: prefer pdfBytes (Uint8Array), fall back to base64.
+    let uint8 = null;
+    if (pdfBytes && pdfBytes.length > 0) {
+      uint8 = pdfBytes;
+    } else if (pdfBase64) {
+      const raw = atob(pdfBase64);
+      uint8 = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) uint8[i] = raw.charCodeAt(i);
+    }
+    if (!uint8) return;
+
     let cancelled = false;
+    // Hold the loading task so we can destroy it if the component unmounts early
+    let loadingTask = null;
 
     (async () => {
       try {
-        const raw = atob(pdfBase64);
-        const uint8 = new Uint8Array(raw.length);
-        for (let i = 0; i < raw.length; i++) uint8[i] = raw.charCodeAt(i);
-
-        const pdf = await pdfjsLib.getDocument({ data: uint8 }).promise;
+        // pdfjs will consume the buffer — pass a fresh copy so the caller's
+        // Uint8Array isn't detached if they reuse it.
+        loadingTask = pdfjsLib.getDocument({ data: uint8.slice() });
+        const pdf = await loadingTask.promise;
         const page = await pdf.getPage(1);
         if (cancelled) return;
 
@@ -96,12 +113,17 @@ export default function PdfPreviewViewer({ pdfBase64 }) {
         stateRef.current.canvasW = cssW;
         stateRef.current.canvasH = cssH;
       } catch (err) {
-        console.error('[PdfPreviewViewer] Failed to load PDF:', err);
+        if (!cancelled) console.error('[PdfPreviewViewer] Failed to load PDF:', err);
       }
     })();
 
-    return () => { cancelled = true; };
-  }, [pdfBase64]);
+    return () => {
+      cancelled = true;
+      if (loadingTask) {
+        try { loadingTask.destroy(); } catch { /* ignore */ }
+      }
+    };
+  }, [pdfBase64, pdfBytes]);
 
   // ── Helpers ──
   const getDist = (t) => {

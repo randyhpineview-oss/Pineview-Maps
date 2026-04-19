@@ -540,52 +540,54 @@ export default function App() {
     })();
   }, [isOnline, refreshAllData, syncQueuedActions]);
 
-  // Auto-poll for real-time updates every 10 seconds when online using bandwidth-efficient sync-status
+  // ── Auto-poll for real-time updates ──
+  // Strategy:
+  //   1. Always start with a lightweight /api/sync-status call (a few hundred bytes).
+  //   2. Only re-fetch sites/pipelines/recents when the corresponding timestamp bumps.
+  //   3. Skip the entire tick when the tab is hidden (phone in pocket, app in background).
+  //   4. Run a single refresh immediately when the tab becomes visible again, so the
+  //      user sees fresh data without waiting for the next interval.
+  //   5. Base interval = 30 s (up from 10 s). With slim payloads this covers everyone.
   useEffect(() => {
     if (!isOnline) return;
 
-    const pollInterval = setInterval(async () => {
+    const POLL_MS = 30000;
+
+    const runPollTick = async () => {
+      // Don't poll while the document is hidden — huge bandwidth saver on mobile.
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return;
+      }
+
       try {
-        // Get lightweight sync status (~200 bytes vs ~100KB-1MB for full data)
         const syncStatus = await api.getSyncStatus();
-        
-        // Check if data has changed by comparing timestamps
-        const sitesChanged = !lastSyncStatusRef.current?.sites_last_updated || 
+
+        const sitesChanged = !lastSyncStatusRef.current?.sites_last_updated ||
                            syncStatus.sites_last_updated !== lastSyncStatusRef.current.sites_last_updated;
-        const pipelinesChanged = !lastSyncStatusRef.current?.pipelines_last_updated || 
+        const pipelinesChanged = !lastSyncStatusRef.current?.pipelines_last_updated ||
                                syncStatus.pipelines_last_updated !== lastSyncStatusRef.current.pipelines_last_updated;
         const recentsChanged = !lastSyncStatusRef.current?.spray_records_last_updated ||
                               syncStatus.spray_records_last_updated !== lastSyncStatusRef.current.spray_records_last_updated;
-        
-        // Update stored sync status
+
         lastSyncStatusRef.current = syncStatus;
-        
-        // Only fetch full data if something changed
+
         if (sitesChanged) {
           try {
             const sitesPayload = await api.listSites(serverFilters);
             setSites(sitesPayload);
             await replaceSites(sitesPayload);
-            
-            // Update selectedSite if it exists in the new payload
             if (selectedSite && Number.isInteger(selectedSite.id)) {
               const updated = sitesPayload.find((s) => s.id === selectedSite.id);
-              if (updated) {
-                setSelectedSite(updated);
-              }
+              if (updated) setSelectedSite(updated);
             }
-          } catch {
-            // Silently fail
-          }
+          } catch { /* silently fail */ }
         }
-        
+
         if (pipelinesChanged) {
           try {
             const pipelineData = await api.listPipelines();
             setPipelines(pipelineData);
-          } catch {
-            // Silently fail
-          }
+          } catch { /* silently fail */ }
         }
 
         if (recentsChanged) {
@@ -593,43 +595,36 @@ export default function App() {
             const data = await api.listRecentSubmissions();
             setCachedRecents(data);
             await replaceRecents(data);
-          } catch {
-            // Silently fail
-          }
+          } catch { /* silently fail */ }
         }
-        
-        // Always refresh pending counts (lightweight from sync status)
-        if (syncStatus.pending_sites_count !== undefined) {
-          setPendingSitesCount(syncStatus.pending_sites_count);
-        }
-        if (syncStatus.pending_pipelines_count !== undefined) {
-          setPendingPipelinesCount(syncStatus.pending_pipelines_count);
-        }
-        
-        // Also fetch pending lists if admin and counts changed
+
+        if (syncStatus.pending_sites_count !== undefined) setPendingSitesCount(syncStatus.pending_sites_count);
+        if (syncStatus.pending_pipelines_count !== undefined) setPendingPipelinesCount(syncStatus.pending_pipelines_count);
+
         if ((syncStatus.pending_sites_count > 0 || syncStatus.pending_pipelines_count > 0) && roleCanAdmin) {
-          try {
-            const pending = await api.listPendingSites();
-            setPendingSites(pending);
-          } catch {
-            // Silently fail
-          }
-          try {
-            const pendingPipes = await api.listPendingPipelines();
-            setPendingPipelines(pendingPipes);
-          } catch {
-            // Silently fail
-          }
+          try { setPendingSites(await api.listPendingSites()); } catch { /* silently fail */ }
+          try { setPendingPipelines(await api.listPendingPipelines()); } catch { /* silently fail */ }
         }
-      } catch (error) {
-        // Silently fail polling to avoid spam
-      }
+      } catch { /* silently fail polling to avoid spam */ }
 
-      // Retry any stuck upload queue items on each poll cycle
+      // Retry any stuck upload queue items on each tick (also visibility-gated).
       try { processUploadQueue(); } catch { /* ignore */ }
-    }, 10000); // Poll every 10 seconds for updates
+    };
 
-    return () => clearInterval(pollInterval);
+    const pollInterval = setInterval(runPollTick, POLL_MS);
+
+    // Immediate refresh when tab becomes visible again (covers phone-unlock, tab-switch).
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        runPollTick();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      clearInterval(pollInterval);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, [isOnline, serverFilters, roleCanAdmin, selectedSite, processUploadQueue]);
 
   const visibleSites = useMemo(() => {
@@ -1236,6 +1231,34 @@ export default function App() {
 
     // Kick off background upload
     processUploadQueue();
+  }
+
+  /**
+   * Open the lease-sheet editor for a recents/summary row.
+   *
+   * Since /api/recent-submissions and /api/sites/{id}/spray now return a
+   * slimmer summary without lease_sheet_data, we have to fetch the full row
+   * (with lease_sheet_data) from /api/site-spray-records/{id} before the form
+   * has something to populate.
+   *
+   * @param {object} record   A summary row (must at least have `id`).
+   * @param {object} [siteCtx] Optional site client/area/lsd overrides.
+   */
+  async function openEditRecord(record, siteCtx = {}) {
+    if (!record?.id) return;
+    setMessage('Loading record…');
+    try {
+      const full = await api.getSiteSprayRecord(record.id);
+      setEditingSprayRecord({
+        ...full,
+        site_lsd: siteCtx.site_lsd ?? record.site_lsd ?? full.site_lsd,
+        site_client: siteCtx.site_client ?? record.site_client ?? full.site_client,
+        site_area: siteCtx.site_area ?? record.site_area ?? full.site_area,
+      });
+      setMessage('');
+    } catch (error) {
+      setMessage('Could not load record: ' + (error.message || 'unknown error'));
+    }
   }
 
   async function handleEditSpraySubmit(payload) {
@@ -2024,7 +2047,7 @@ export default function App() {
                 onViewPdf={(record) => {
                   setPreviewingRecord(record);
                 }}
-                onEditRecord={(record) => setEditingSprayRecord({ ...record, site_lsd: selectedSite?.lsd, site_client: selectedSite?.client, site_area: selectedSite?.area })}
+                onEditRecord={(record) => openEditRecord(record, { site_lsd: selectedSite?.lsd, site_client: selectedSite?.client, site_area: selectedSite?.area })}
               />
             ) : null}
           </div>
@@ -2119,7 +2142,7 @@ export default function App() {
               clients={clients}
               areas={areas}
               onViewPdf={(record) => setPreviewingRecord(record)}
-              onEditRecord={(record) => setEditingSprayRecord(record)}
+              onEditRecord={(record) => openEditRecord(record)}
               onStartLeaseSheetFromDraft={(draft) => {
                 // Tapping a draft (or "New lease sheet") opens the lease sheet overlay.
                 // When draft is null, the user needs to pick a site from the Map tab first.
