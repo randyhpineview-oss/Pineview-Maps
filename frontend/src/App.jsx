@@ -2116,6 +2116,8 @@ export default function App() {
               visible={activeTab === TAB_FORMS}
               cachedRecents={cachedRecents}
               uploadQueue={uploadQueueItems}
+              clients={clients}
+              areas={areas}
               onViewPdf={(record) => setPreviewingRecord(record)}
               onEditRecord={(record) => setEditingSprayRecord(record)}
               onStartLeaseSheetFromDraft={(draft) => {
@@ -2139,20 +2141,13 @@ export default function App() {
                   setActiveTab(TAB_MAP);
                 }
               }}
-              onStartNewTMTicket={async () => {
-                // Office/admin can start a T&M ticket manually; for now just prompt.
-                const client = prompt('Client for new T&M ticket?');
-                if (!client) return;
-                const area = prompt('Area for new T&M ticket?');
-                if (!area) return;
-                const description = prompt('Description of Work?') || '';
-                const today = new Date().toISOString().split('T')[0];
+              onStartNewTMTicket={async ({ client, area, spray_date, description_of_work }) => {
                 try {
                   const created = await api.createTMTicket({
-                    spray_date: today,
+                    spray_date,
                     client,
                     area,
-                    description_of_work: description,
+                    description_of_work,
                   });
                   setActiveTMTicketId(created.id);
                 } catch (e) {

@@ -27,10 +27,12 @@ export default function FormsPanel({
   visible,
   cachedRecents = [],
   uploadQueue = [],
+  clients = [],          // shared global client list from the map's pins
+  areas = [],            // shared global area list from the map's pins
   onViewPdf,
   onEditRecord,
   onStartLeaseSheetFromDraft,
-  onStartNewTMTicket,
+  onStartNewTMTicket,    // called with ({ client, area, spray_date, description_of_work })
   onOpenTMTicket,
   onRequestDraftsRefresh,    // parent can trigger a refresh when form closes
   draftsRefreshToken = 0,    // bump to trigger reload
@@ -43,6 +45,14 @@ export default function FormsPanel({
   const [openTickets, setOpenTickets] = useState([]);
   const [drafts, setDrafts] = useState([]);
   const [tmSubmitted, setTmSubmitted] = useState([]);
+
+  // "New T&M ticket" modal
+  const [newTMOpen, setNewTMOpen] = useState(false);
+  const [newTMDate, setNewTMDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [newTMClient, setNewTMClient] = useState('');
+  const [newTMArea, setNewTMArea] = useState('');
+  const [newTMDesc, setNewTMDesc] = useState('');
+  const [newTMBusy, setNewTMBusy] = useState(false);
 
   // Debounced search
   const [searchInput, setSearchInput] = useState('');
@@ -191,7 +201,13 @@ export default function FormsPanel({
 
           <div
             role="button"
-            onClick={() => onStartNewTMTicket?.()}
+            onClick={() => {
+              setNewTMDate(new Date().toISOString().split('T')[0]);
+              setNewTMClient('');
+              setNewTMArea('');
+              setNewTMDesc('');
+              setNewTMOpen(true);
+            }}
             style={{
               padding: '14px',
               background: '#111827',
@@ -475,6 +491,147 @@ export default function FormsPanel({
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── New T&M Ticket Modal ── */}
+      {newTMOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(0,0,0,0.65)',
+            zIndex: 100,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px',
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget && !newTMBusy) setNewTMOpen(false); }}
+        >
+          <div
+            style={{
+              background: '#111827',
+              border: '1px solid #374151',
+              borderRadius: '10px',
+              width: '100%',
+              maxWidth: '420px',
+              padding: '18px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px',
+            }}
+          >
+            <h3 style={{ margin: 0, fontSize: '1.05rem' }}>New T&amp;M Ticket</h3>
+
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <span className="small-text" style={{ color: '#9ca3af' }}>Date</span>
+              <input
+                type="date"
+                value={newTMDate}
+                onChange={(e) => setNewTMDate(e.target.value)}
+                style={{
+                  padding: '8px 10px',
+                  borderRadius: '6px',
+                  border: '1px solid #374151',
+                  background: '#0b1220',
+                  color: '#f9fafb',
+                }}
+              />
+            </label>
+
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <span className="small-text" style={{ color: '#9ca3af' }}>Client</span>
+              <select
+                value={newTMClient}
+                onChange={(e) => setNewTMClient(e.target.value)}
+                style={{
+                  padding: '8px 10px',
+                  borderRadius: '6px',
+                  border: '1px solid #374151',
+                  background: '#0b1220',
+                  color: '#f9fafb',
+                }}
+              >
+                <option value="">-- Select client --</option>
+                {clients.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </label>
+
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <span className="small-text" style={{ color: '#9ca3af' }}>Area</span>
+              <select
+                value={newTMArea}
+                onChange={(e) => setNewTMArea(e.target.value)}
+                style={{
+                  padding: '8px 10px',
+                  borderRadius: '6px',
+                  border: '1px solid #374151',
+                  background: '#0b1220',
+                  color: '#f9fafb',
+                }}
+              >
+                <option value="">-- Select area --</option>
+                {areas.map((a) => (
+                  <option key={a} value={a}>{a}</option>
+                ))}
+              </select>
+            </label>
+
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <span className="small-text" style={{ color: '#9ca3af' }}>Description of Work (optional)</span>
+              <textarea
+                value={newTMDesc}
+                onChange={(e) => setNewTMDesc(e.target.value)}
+                rows={3}
+                style={{
+                  padding: '8px 10px',
+                  borderRadius: '6px',
+                  border: '1px solid #374151',
+                  background: '#0b1220',
+                  color: '#f9fafb',
+                  resize: 'vertical',
+                }}
+              />
+            </label>
+
+            <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={newTMBusy}
+                onClick={() => setNewTMOpen(false)}
+                style={{ flex: 1 }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                disabled={newTMBusy || !newTMClient || !newTMArea || !newTMDate}
+                onClick={async () => {
+                  if (!newTMClient || !newTMArea || !newTMDate) return;
+                  setNewTMBusy(true);
+                  try {
+                    await onStartNewTMTicket?.({
+                      client: newTMClient,
+                      area: newTMArea,
+                      spray_date: newTMDate,
+                      description_of_work: newTMDesc || '',
+                    });
+                    setNewTMOpen(false);
+                  } finally {
+                    setNewTMBusy(false);
+                  }
+                }}
+                style={{ flex: 1 }}
+              >
+                {newTMBusy ? 'Creating...' : 'Create'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
