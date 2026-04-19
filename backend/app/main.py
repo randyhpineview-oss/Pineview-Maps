@@ -15,7 +15,23 @@ from app.user_management import router as user_management_router
 from app.pipeline_routes import router as pipeline_router
 from app.lookup_routes import router as lookup_router
 from app.pipeline_models import Pipeline, SprayRecord  # noqa: F401 — ensure tables are registered
-from app.models import ApprovalState, PinType, RoleEnum, Site, SiteSprayRecord, SiteStatus, SiteUpdate, User
+from app.models import (
+    ApprovalState,
+    PinType,
+    RoleEnum,
+    Site,
+    SiteSprayRecord,
+    SiteStatus,
+    SiteUpdate,
+    TimeMaterialsRow,
+    TimeMaterialsTicket,
+    User,
+)
+from app.time_materials_routes import (
+    append_row_for_spray_record,
+    find_or_create_ticket_for_link,
+    router as time_materials_router,
+)
 from app.schemas import (
     BulkResetRequest,
     BulkResetResponse,
@@ -52,6 +68,7 @@ app.include_router(user_management_router)
 app.include_router(password_reset_router)
 app.include_router(pipeline_router)
 app.include_router(lookup_router)
+app.include_router(time_materials_router)
 
 
 # Global exception handler to ensure CORS headers on errors
@@ -138,6 +155,16 @@ def _migrate_add_columns() -> None:
             # We let create_all handle it at startup, but just in case:
             pass
         
+        # Ensure Time & Materials tables exist (not included in default create_all on first deploys)
+        try:
+            Base.metadata.create_all(
+                bind=engine,
+                tables=[TimeMaterialsTicket.__table__, TimeMaterialsRow.__table__],
+                checkfirst=True,
+            )
+        except Exception as e:
+            print(f"[STARTUP] Could not ensure T&M tables: {e}")
+
         # site_spray_records migrations
         if insp.has_table("site_spray_records"):
             existing_site_records = {col["name"] for col in insp.get_columns("site_spray_records")}
@@ -147,6 +174,14 @@ def _migrate_add_columns() -> None:
                 conn.execute(text("ALTER TABLE site_spray_records ADD COLUMN lease_sheet_data JSONB"))
             if "pdf_url" not in existing_site_records:
                 conn.execute(text("ALTER TABLE site_spray_records ADD COLUMN pdf_url TEXT"))
+            if "tm_ticket_id" not in existing_site_records:
+                if is_sqlite:
+                    conn.execute(text("ALTER TABLE site_spray_records ADD COLUMN tm_ticket_id INTEGER"))
+                else:
+                    conn.execute(text(
+                        "ALTER TABLE site_spray_records ADD COLUMN tm_ticket_id INTEGER "
+                        "REFERENCES time_materials_tickets(id) ON DELETE SET NULL"
+                    ))
             if "photo_urls" not in existing_site_records:
                 if is_sqlite:
                     conn.execute(text("ALTER TABLE site_spray_records ADD COLUMN photo_urls TEXT DEFAULT '[]'"))
@@ -529,7 +564,30 @@ def create_site_spray_record(
     # Auto-update site status if marking as sprayed or issue
     site.status = SiteStatus.issue if payload.is_avoided else SiteStatus.inspected
     site.updated_at = datetime.utcnow()
-    
+    db.flush()
+    # Ensure site relationship is populated for row derivation
+    record.site = site
+
+    # ── Time & Materials linking (Phase 4) ──
+    tm_link = getattr(payload, "time_materials_link", None)
+    if tm_link and not payload.is_avoided:
+        ticket = find_or_create_ticket_for_link(
+            db=db,
+            record=record,
+            link_ticket_id=tm_link.ticket_id,
+            link_create=tm_link.create,
+            description_of_work=tm_link.description_of_work,
+            current_user=current_user,
+        )
+        if ticket is not None:
+            append_row_for_spray_record(db, ticket, record)
+            # Upload new/updated T&M PDF if provided
+            if tm_link.tm_pdf_base64:
+                from app.time_materials_routes import _upload_tm_pdf
+                new_url = _upload_tm_pdf(ticket, tm_link.tm_pdf_base64)
+                if new_url:
+                    ticket.pdf_url = new_url
+
     db.commit()
     db.refresh(record)
     return SiteSprayRecordRead.model_validate(record)
@@ -555,15 +613,21 @@ def update_site_spray_record(
     record_id: int,
     payload: SiteSprayRecordUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
+    current_user: User = Depends(get_current_user),
 ):
-    """Update a site spray record (admin/office edit & re-submit)."""
+    """Update a site spray record (admin/office can edit anything; workers only their own)."""
     import base64
     from app.dropbox_integration import upload_pdf_to_dropbox, build_pdf_path
+    from app.time_materials_routes import _upload_tm_pdf, append_row_for_spray_record
 
     record = db.query(SiteSprayRecord).filter(SiteSprayRecord.id == record_id).first()
     if not record:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Site spray record not found")
+
+    # Permission: workers may only edit their own records
+    if current_user.role not in (RoleEnum.admin, RoleEnum.office):
+        if record.sprayed_by_user_id != current_user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
 
     # Update simple fields
     if payload.spray_date is not None:
@@ -593,6 +657,16 @@ def update_site_spray_record(
                 record.pdf_url = new_pdf_url
         except Exception as e:
             print(f"Error re-uploading PDF: {e}")
+
+    # ── Cascade to linked T&M ticket row + regenerate its PDF (Phase 8) ──
+    if record.tm_ticket_id is not None:
+        ticket = db.query(TimeMaterialsTicket).filter(TimeMaterialsTicket.id == record.tm_ticket_id).first()
+        if ticket is not None:
+            append_row_for_spray_record(db, ticket, record)
+            if payload.tm_pdf_base64:
+                new_url = _upload_tm_pdf(ticket, payload.tm_pdf_base64)
+                if new_url:
+                    ticket.pdf_url = new_url
 
     db.commit()
     db.refresh(record)

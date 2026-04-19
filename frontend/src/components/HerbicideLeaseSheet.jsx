@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { generateLeaseSheetPdf } from '../lib/pdfGenerator';
+import { generateTMTicketPdf } from '../lib/tmTicketPdfGenerator';
 import { api } from '../lib/api';
+import { saveLeaseSheetDraft, deleteLeaseSheetDraft } from '../lib/offlineStore';
 import PdfPreviewViewer from './PdfPreviewViewer';
 
 function get12hTime() {
@@ -21,6 +23,8 @@ export default function HerbicideLeaseSheet({
   editingRecord = null,
   cachedLookups = {},
   initialDistanceMeters = null,
+  draft = null,                 // optional draft to resume from
+  onDraftSaved,                 // callback when "Save Draft" pressed successfully
 }) {
   const isEditMode = !!editingRecord;
   const initializedRef = useRef(false);
@@ -34,6 +38,13 @@ export default function HerbicideLeaseSheet({
   const [ticketNumber, setTicketNumber] = useState('');
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [pdfBase64, setPdfBase64] = useState(null);
+  // T&M linking step state
+  const [isPickingTM, setIsPickingTM] = useState(false);
+  const [openTMTickets, setOpenTMTickets] = useState([]);
+  const [tmChoice, setTmChoice] = useState(null);  // { ticket_id } | { create: true, description_of_work }
+  const [tmDescription, setTmDescription] = useState('');
+  const [draftId, setDraftId] = useState(draft?.id || null);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
 
   // Form state
   const [form, setForm] = useState({
@@ -71,8 +82,17 @@ export default function HerbicideLeaseSheet({
     form.locationTypes.some(type => accessRoadTypes.includes(type)),
   [form.locationTypes, accessRoadTypes]);
 
-  // Auto-populate from site, pipeline, or editing record (run once)
+  // Auto-populate from site, pipeline, draft, or editing record (run once)
   useEffect(() => {
+    // Restore draft (device-local, no API call)
+    if (draft && !initializedRef.current) {
+      initializedRef.current = true;
+      if (draft.form) setForm(draft.form);
+      if (draft.photos) setPhotos(draft.photos);
+      if (draft.ticketNumber) setTicketNumber(draft.ticketNumber);
+      if (draft.id) setDraftId(draft.id);
+      return;
+    }
     if (isEditMode && editingRecord?.lease_sheet_data) {
       // Only populate form once — skip if already initialized
       if (initializedRef.current) return;
@@ -275,6 +295,39 @@ export default function HerbicideLeaseSheet({
     }
   };
 
+  // Called when user taps "Continue" from Preview.
+  // In edit mode: skip linking step (record already linked); go straight to submit.
+  // In create mode: fetch open T&M tickets matching client/area/date, show picker.
+  const handleContinueFromPreview = async () => {
+    if (isEditMode) {
+      await handleConfirmSubmit();
+      return;
+    }
+    try {
+      const tickets = await api.listOpenTMTickets({
+        client: form.customer || undefined,
+        area: form.area || undefined,
+        spray_date: form.date || undefined,
+      });
+      setOpenTMTickets(tickets || []);
+      // Default pick: if exactly one matches auto-pick it; if multiple require user to choose;
+      // if none, default to "create new".
+      if (tickets && tickets.length === 1) {
+        setTmChoice({ ticket_id: tickets[0].id });
+      } else if (tickets && tickets.length > 1) {
+        setTmChoice(null);  // force user to pick
+      } else {
+        setTmChoice({ create: true });
+      }
+      setIsPickingTM(true);
+    } catch (err) {
+      console.warn('[LEASE] Could not fetch open T&M tickets (continuing without link):', err?.message);
+      setOpenTMTickets([]);
+      setTmChoice({ create: true });
+      setIsPickingTM(true);
+    }
+  };
+
   const handleConfirmSubmit = async () => {
     setIsSubmitting(true);
     try {
@@ -326,7 +379,73 @@ export default function HerbicideLeaseSheet({
       });
       
       const photoData = (await Promise.all(photoPromises)).filter(Boolean);
-      
+
+      // ── Build the T&M link + tentative PDF so the backend can upload to Dropbox ──
+      let tm_link = null;
+      if (!isEditMode && tmChoice) {
+        const pickedExisting = tmChoice.ticket_id
+          ? openTMTickets.find((t) => t.id === tmChoice.ticket_id)
+          : null;
+
+        // Tentative T&M ticket for PDF rendering (backend will allocate the real number if `create`)
+        const tentativeTicket = pickedExisting
+          ? {
+              ...pickedExisting,
+              rows: [
+                ...(pickedExisting.rows || []),
+                {
+                  location: form.lsdOrPipeline || '',
+                  site_type: (site?.pin_type === 'lsd' ? 'Wellsite' : ''),
+                  herbicides: (form.herbicidesUsed || []).length === 1
+                    ? form.herbicidesUsed[0]
+                    : (form.herbicidesUsed || []).length > 1
+                      ? `${form.herbicidesUsed.length} Herbicides`
+                      : '',
+                  liters_used: Number(form.totalLiters) || 0,
+                  area_ha: Number(form.areaTreated) || 0,
+                  cost_code: '',
+                },
+              ],
+            }
+          : {
+              ticket_number: '',  // backend will fill
+              spray_date: form.date,
+              client: form.customer,
+              area: form.area,
+              description_of_work: tmDescription || (tmChoice.description_of_work || ''),
+              rows: [
+                {
+                  location: form.lsdOrPipeline || '',
+                  site_type: (site?.pin_type === 'lsd' ? 'Wellsite' : ''),
+                  herbicides: (form.herbicidesUsed || []).length === 1
+                    ? form.herbicidesUsed[0]
+                    : (form.herbicidesUsed || []).length > 1
+                      ? `${form.herbicidesUsed.length} Herbicides`
+                      : '',
+                  liters_used: Number(form.totalLiters) || 0,
+                  area_ha: Number(form.areaTreated) || 0,
+                  cost_code: '',
+                },
+              ],
+            };
+
+        let tmPdfBase64 = null;
+        try {
+          const { base64 } = await generateTMTicketPdf(tentativeTicket, { includeOfficeData: false });
+          tmPdfBase64 = base64;
+        } catch (err) {
+          console.warn('[LEASE] T&M PDF generation failed (continuing):', err?.message);
+        }
+
+        tm_link = pickedExisting
+          ? { ticket_id: pickedExisting.id, tm_pdf_base64: tmPdfBase64 }
+          : {
+              create: true,
+              description_of_work: tmDescription || (tmChoice.description_of_work || ''),
+              tm_pdf_base64: tmPdfBase64,
+            };
+      }
+
       const payload = {
         lease_sheet_data: {
           ...form,
@@ -338,11 +457,75 @@ export default function HerbicideLeaseSheet({
         spray_date: form.date,
         notes: form.comments,
         is_avoided: false,
+        time_materials_link: tm_link,
       };
+
+      // For edit mode, regenerate the linked T&M PDF as well
+      if (isEditMode && editingRecord?.tm_ticket_id) {
+        try {
+          const tmTicket = await api.getTMTicket(editingRecord.tm_ticket_id);
+          const { base64: tmPdfBase64 } = await generateTMTicketPdf(tmTicket, {
+            includeOfficeData: false,  // worker-facing regeneration — keep pricing blank
+          });
+          payload.tm_pdf_base64 = tmPdfBase64;
+        } catch (err) {
+          console.warn('[LEASE] Could not regenerate T&M PDF:', err?.message);
+        }
+      }
+
       await onSubmit(payload);
+
+      // Delete local draft on successful submit
+      if (draftId) {
+        try { await deleteLeaseSheetDraft(draftId); } catch { /* ignore */ }
+      }
     } catch (err) {
       alert('Upload failed: ' + (err.message || 'Unknown error'));
       setIsSubmitting(false);
+    }
+  };
+
+  // Save current form state as a device-local draft
+  const handleSaveDraft = async () => {
+    setIsSavingDraft(true);
+    try {
+      // Convert any file-based photos to base64 so they survive a reload
+      const photoPromises = photos.map(async (p) => {
+        if (p.existingBase64) return p;
+        if (p.preview?.startsWith('data:')) return p;
+        if (p.file) {
+          return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve({
+              file: null,
+              preview: reader.result,
+              existingBase64: {
+                data: reader.result.split(',')[1],
+                type: p.file.type || 'image/jpeg',
+              },
+            });
+            reader.readAsDataURL(p.file);
+          });
+        }
+        return p;
+      });
+      const serializablePhotos = await Promise.all(photoPromises);
+
+      const saved = await saveLeaseSheetDraft({
+        id: draftId || undefined,
+        site_id: site?.id || null,
+        pipeline_id: pipeline?.id || null,
+        form,
+        photos: serializablePhotos,
+        ticketNumber,
+        label: `${form.customer || site?.client || '—'} / ${form.area || site?.area || '—'} / ${form.lsdOrPipeline || site?.lsd || '—'}`,
+      });
+      setDraftId(saved.id);
+      onDraftSaved?.(saved);
+    } catch (err) {
+      alert('Could not save draft: ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsSavingDraft(false);
     }
   };
 
@@ -352,6 +535,174 @@ export default function HerbicideLeaseSheet({
   };
 
   if (!isOpen) return null;
+
+  // ── T&M linking step (between Preview and Submit) ──
+  if (isPickingTM) {
+    return (
+      <div style={{
+        backgroundColor: '#1f2937',
+        color: '#f9fafb',
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        width: '100%',
+        boxSizing: 'border-box',
+        padding: '20px',
+        overflowY: 'auto',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+          <h2 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 600 }}>Link to Time & Materials Ticket</h2>
+          <button onClick={() => setIsPickingTM(false)} style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer' }}>×</button>
+        </div>
+        <p style={{ fontSize: '0.85rem', color: '#9ca3af', margin: '0 0 14px 0' }}>
+          Today's open tickets for <strong>{form.customer || '—'}</strong> / <strong>{form.area || '—'}</strong>:
+        </p>
+
+        {openTMTickets.length > 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '14px' }}>
+            {openTMTickets.map((t) => (
+              <label
+                key={t.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '10px',
+                  background: tmChoice?.ticket_id === t.id ? '#1e40af' : '#111827',
+                  padding: '12px',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  border: '1px solid #374151',
+                }}
+              >
+                <input
+                  type="radio"
+                  name="tm-choice"
+                  checked={tmChoice?.ticket_id === t.id}
+                  onChange={() => setTmChoice({ ticket_id: t.id })}
+                  style={{ marginTop: '2px' }}
+                />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{t.ticket_number}</div>
+                  <div style={{ fontSize: '0.8rem', color: '#9ca3af', marginTop: '2px' }}>
+                    {(t.rows?.length || 0)} row(s) • {t.created_by_name || '—'}
+                  </div>
+                  {t.description_of_work ? (
+                    <div style={{ fontSize: '0.75rem', color: '#d1d5db', marginTop: '4px' }}>
+                      {t.description_of_work}
+                    </div>
+                  ) : null}
+                </div>
+              </label>
+            ))}
+          </div>
+        ) : (
+          <div style={{ fontSize: '0.85rem', color: '#9ca3af', background: '#111827', padding: '12px', borderRadius: '8px', marginBottom: '14px' }}>
+            No open T&M tickets match this client / area / date.
+          </div>
+        )}
+
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '10px',
+            background: tmChoice?.create ? '#1e40af' : '#111827',
+            padding: '12px',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            border: '1px solid #374151',
+            marginBottom: '14px',
+          }}
+        >
+          <input
+            type="radio"
+            name="tm-choice"
+            checked={!!tmChoice?.create}
+            onChange={() => setTmChoice({ create: true })}
+            style={{ marginTop: '2px' }}
+          />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>+ Start new T&M ticket</div>
+            <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '2px' }}>
+              New ticket for {form.customer || '—'} / {form.area || '—'} / {form.date || '—'}
+            </div>
+          </div>
+        </label>
+
+        {tmChoice?.create ? (
+          <div style={{ marginBottom: '14px' }}>
+            <label style={{ display: 'block', fontSize: '0.85rem', color: '#9ca3af', marginBottom: '6px' }}>
+              Description of Work <span style={{ color: '#f87171' }}>*</span>
+            </label>
+            <textarea
+              value={tmDescription}
+              onChange={(e) => setTmDescription(e.target.value)}
+              placeholder="e.g. Spray leases and compressors"
+              rows={2}
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                borderRadius: '6px',
+                border: '1px solid #374151',
+                backgroundColor: '#111827',
+                color: '#f9fafb',
+                resize: 'vertical',
+                boxSizing: 'border-box',
+              }}
+            />
+          </div>
+        ) : null}
+
+        <div style={{ display: 'flex', gap: '10px', marginTop: 'auto' }}>
+          {(() => {
+            const needsDescription = tmChoice?.create && !tmDescription.trim();
+            const needsChoice = !tmChoice;
+            const isDisabled = isSubmitting || needsDescription || needsChoice;
+            const label = isSubmitting
+              ? 'Uploading...'
+              : needsChoice
+                ? 'Select a ticket above'
+                : 'Confirm & Submit';
+            return (
+              <button
+                onClick={handleConfirmSubmit}
+                disabled={isDisabled}
+                style={{
+                  flex: 2,
+                  padding: '12px',
+                  background: isDisabled ? '#374151' : '#22c55e',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '1rem',
+                  fontWeight: 600,
+                  cursor: isDisabled ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {label}
+              </button>
+            );
+          })()}
+          <button
+            onClick={() => setIsPickingTM(false)}
+            disabled={isSubmitting}
+            style={{
+              flex: 1,
+              padding: '12px',
+              background: '#374151',
+              color: '#f9fafb',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '1rem',
+              cursor: isSubmitting ? 'not-allowed' : 'pointer',
+            }}
+          >
+            Back
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // ── Preview overlay ──
   if (isPreviewing) {
@@ -370,7 +721,7 @@ export default function HerbicideLeaseSheet({
         <PdfPreviewViewer pdfBase64={pdfBase64} />
         <div style={{ display: 'flex', gap: '10px', padding: '12px 16px', flexShrink: 0, background: '#1f2937' }}>
           <button
-            onClick={handleConfirmSubmit}
+            onClick={handleContinueFromPreview}
             disabled={isSubmitting}
             style={{
               flex: 1,
@@ -385,7 +736,7 @@ export default function HerbicideLeaseSheet({
               opacity: isSubmitting ? 0.7 : 1,
             }}
           >
-            {isSubmitting ? 'Uploading...' : isEditMode ? 'Update & Re-Submit' : 'Confirm & Submit'}
+            {isSubmitting ? 'Uploading...' : isEditMode ? 'Update & Re-Submit' : 'Continue'}
           </button>
           <button
             onClick={handleBackToEdit}
@@ -966,38 +1317,57 @@ export default function HerbicideLeaseSheet({
             </div>
 
             {/* Submit buttons */}
-            <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
-              <button
-                onClick={handlePreview}
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  backgroundColor: '#3b82f6',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '8px',
-                  fontSize: '1rem',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                }}
-              >
-                Preview
-              </button>
-              <button
-                onClick={onCancel}
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  backgroundColor: '#374151',
-                  color: '#f9fafb',
-                  border: 'none',
-                  borderRadius: '8px',
-                  fontSize: '1rem',
-                  cursor: 'pointer',
-                }}
-              >
-                Cancel
-              </button>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '20px' }}>
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <button
+                  onClick={handlePreview}
+                  style={{
+                    flex: 1,
+                    padding: '12px',
+                    backgroundColor: '#3b82f6',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    fontSize: '1rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Preview
+                </button>
+                <button
+                  onClick={onCancel}
+                  style={{
+                    flex: 1,
+                    padding: '12px',
+                    backgroundColor: '#374151',
+                    color: '#f9fafb',
+                    border: 'none',
+                    borderRadius: '8px',
+                    fontSize: '1rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+              {!isEditMode && (
+                <button
+                  onClick={handleSaveDraft}
+                  disabled={isSavingDraft}
+                  style={{
+                    padding: '10px',
+                    backgroundColor: 'transparent',
+                    color: '#9ca3af',
+                    border: '1px dashed #374151',
+                    borderRadius: '8px',
+                    fontSize: '0.9rem',
+                    cursor: isSavingDraft ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {isSavingDraft ? 'Saving draft...' : draftId ? '💾 Update Draft' : '💾 Save Draft'}
+                </button>
+              )}
             </div>
           </div>
         )}

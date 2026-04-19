@@ -60,6 +60,24 @@ def build_pdf_path(date_str: str, client: str, area: str, ticket: str, lsd_or_pi
         f"/{_safe_name(ticket)}_{_safe_name(lsd_or_pipeline)}.pdf"
     )
 
+def build_tm_path(date_str: str, client: str, area: str, ticket: str) -> str:
+    """
+    Build Dropbox path for a Time & Materials ticket:
+    /{YYYY} Spray Records/{YYYY-MM-DD}/Time And Materials/{Client}/{Area}/{Ticket}.pdf
+    """
+    try:
+        dt = datetime.strptime(date_str, '%Y-%m-%d')
+    except (ValueError, TypeError):
+        dt = datetime.utcnow()
+    year = dt.strftime('%Y')
+    date_folder = dt.strftime('%Y-%m-%d')
+    return (
+        f"/{year} Spray Records/{date_folder}/Time And Materials"
+        f"/{_safe_name(client)}/{_safe_name(area)}"
+        f"/{_safe_name(ticket)}.pdf"
+    )
+
+
 def build_photo_path(ticket: str, index: int) -> str:
     """
     Build Dropbox path:

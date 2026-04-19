@@ -299,6 +299,35 @@ export const api = {
     return request(`/api/lookups/location-types/${id}`, { method: 'DELETE' });
   },
 
+  // ── Time & Materials tickets ──
+  listOpenTMTickets(filters) {
+    const params = new URLSearchParams();
+    if (filters?.client) params.set('client', filters.client);
+    if (filters?.area) params.set('area', filters.area);
+    if (filters?.spray_date) params.set('spray_date', filters.spray_date);
+    const query = params.toString();
+    return request(`/api/time-materials/open${query ? `?${query}` : ''}`);
+  },
+  listTMTickets(filters) {
+    const params = new URLSearchParams();
+    if (filters?.status) params.set('status', filters.status);
+    if (filters?.spray_date) params.set('spray_date', filters.spray_date);
+    const query = params.toString();
+    return request(`/api/time-materials${query ? `?${query}` : ''}`);
+  },
+  getTMTicket(ticketId) {
+    return request(`/api/time-materials/${ticketId}`);
+  },
+  createTMTicket(payload) {
+    return request('/api/time-materials', { method: 'POST', body: payload });
+  },
+  updateTMTicket(ticketId, payload) {
+    return request(`/api/time-materials/${ticketId}`, { method: 'PATCH', body: payload });
+  },
+  deleteTMTicket(ticketId) {
+    return request(`/api/time-materials/${ticketId}`, { method: 'DELETE' });
+  },
+
   // ── Password reset (6-digit code flow) ──
   requestResetCode(email) {
     return request('/api/auth/forgot-password', { method: 'POST', body: { email } });

@@ -7,7 +7,8 @@ import LoginPage from './components/LoginPage';
 import MapView from './components/MapView';
 import PipelineDetailSheet from './components/PipelineDetailSheet';
 import PdfPreviewOverlay from './components/PdfPreviewOverlay';
-import RecentsPanel from './components/RecentsPanel';
+import FormsPanel from './components/FormsPanel';
+import TMTicketDetailSheet from './components/TMTicketDetailSheet';
 import SiteDetailSheet from './components/SiteDetailSheet';
 import { api } from './lib/api';
 import { nearestFraction } from './lib/mapUtils';
@@ -40,7 +41,7 @@ const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
 
 const TAB_MAP = 'map';
 const TAB_SITES = 'sites';
-const TAB_RECENTS = 'recents';
+const TAB_FORMS = 'forms';
 const TAB_ADMIN = 'admin';
 
 const MapIcon = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>);
@@ -140,6 +141,12 @@ export default function App() {
   const [previewingRecord, setPreviewingRecord] = useState(null);
   // Edit spray record state
   const [editingSprayRecord, setEditingSprayRecord] = useState(null);
+  // T&M ticket detail view
+  const [activeTMTicketId, setActiveTMTicketId] = useState(null);
+  // Lease sheet draft being resumed
+  const [resumingDraft, setResumingDraft] = useState(null);
+  // Token used to force FormsPanel to refresh drafts list
+  const [draftsRefreshToken, setDraftsRefreshToken] = useState(0);
   // Recents cache (IndexedDB-backed, pre-loaded at startup)
   const [cachedRecents, setCachedRecents] = useState([]);
   // Lookups cache (IndexedDB-backed)
@@ -729,7 +736,7 @@ export default function App() {
 
   // Swipe detection refs for side panels
   const sitesPanelTouchStartX = useRef(null);
-  const recentsPanelTouchStartX = useRef(null);
+  const formsPanelTouchStartX = useRef(null);
   const adminPanelTouchStartX = useRef(null);
   const SWIPE_THRESHOLD = 50;
 
@@ -749,18 +756,18 @@ export default function App() {
     sitesPanelTouchStartX.current = null;
   };
 
-  const handleRecentsPanelTouchStart = (e) => {
-    recentsPanelTouchStartX.current = e.touches[0].clientX;
+  const handleFormsPanelTouchStart = (e) => {
+    formsPanelTouchStartX.current = e.touches[0].clientX;
   };
 
-  const handleRecentsPanelTouchEnd = (e) => {
-    if (recentsPanelTouchStartX.current === null) return;
+  const handleFormsPanelTouchEnd = (e) => {
+    if (formsPanelTouchStartX.current === null) return;
     const endX = e.changedTouches[0].clientX;
-    const diff = endX - recentsPanelTouchStartX.current;
-    if (diff > SWIPE_THRESHOLD && activeTab === TAB_RECENTS) {
+    const diff = endX - formsPanelTouchStartX.current;
+    if (diff > SWIPE_THRESHOLD && activeTab === TAB_FORMS) {
       setActiveTab(TAB_MAP);
     }
-    recentsPanelTouchStartX.current = null;
+    formsPanelTouchStartX.current = null;
   };
 
   const handleAdminPanelTouchStart = (e) => {
@@ -1223,6 +1230,9 @@ export default function App() {
     setInspectionSite(null);
     setInspectionPipeline(null);
     setPendingPipelineSegment(null);
+    // Clear any draft-resume state and bump refresh token so drafts list re-reads IDB
+    setResumingDraft(null);
+    setDraftsRefreshToken((x) => x + 1);
 
     // Kick off background upload
     processUploadQueue();
@@ -1792,8 +1802,10 @@ export default function App() {
               initialDistanceMeters={pendingPipelineSegment?.distance_meters ?? null}
               isOpen={true}
               onSubmit={handleLeaseSheetSubmit}
-              onCancel={handleLeaseSheetCancel}
+              onCancel={() => { handleLeaseSheetCancel(); setResumingDraft(null); }}
               cachedLookups={cachedLookups}
+              draft={resumingDraft}
+              onDraftSaved={() => { setDraftsRefreshToken((x) => x + 1); }}
             />
           </div>
         )}
@@ -1829,6 +1841,25 @@ export default function App() {
             record={previewingRecord}
             onClose={() => setPreviewingRecord(null)}
           />
+        )}
+
+        {/* ── T&M Ticket Detail overlay ── */}
+        {activeTMTicketId != null && (
+          <div style={{
+            position: 'fixed',
+            top: 0, left: 0, right: 0, bottom: 0,
+            zIndex: 40,
+            background: '#0b1220',
+            display: 'flex',
+            flexDirection: 'column',
+          }}>
+            <TMTicketDetailSheet
+              ticketId={activeTMTicketId}
+              roleCanAdmin={roleCanAdmin}
+              roleCanOffice={roleCanAdmin}
+              onClose={() => setActiveTMTicketId(null)}
+            />
+          </div>
         )}
 
         {/* Place-pin banner */}
@@ -2071,25 +2102,67 @@ export default function App() {
           </div>
         </div>
 
-        {/* ── Recents panel ── */}
+        {/* ── Forms panel (formerly Recents) ── */}
         <div 
-          className={`side-panel ${activeTab === TAB_RECENTS ? 'open' : ''}`}
-          onTouchStart={handleRecentsPanelTouchStart}
-          onTouchEnd={handleRecentsPanelTouchEnd}
+          className={`side-panel ${activeTab === TAB_FORMS ? 'open' : ''}`}
+          onTouchStart={handleFormsPanelTouchStart}
+          onTouchEnd={handleFormsPanelTouchEnd}
         >
           <div className="side-panel-header">
-            <h2>Recents</h2>
+            <h2>Forms</h2>
           </div>
           <div className="side-panel-body">
-            <RecentsPanel
-              visible={activeTab === TAB_RECENTS}
+            <FormsPanel
+              visible={activeTab === TAB_FORMS}
               cachedRecents={cachedRecents}
-              onViewPdf={(record) => {
-                setPreviewingRecord(record);
-              }}
-              onEditRecord={(record) => setEditingSprayRecord(record)}
-              roleCanAdmin={roleCanAdmin}
               uploadQueue={uploadQueueItems}
+              onViewPdf={(record) => setPreviewingRecord(record)}
+              onEditRecord={(record) => setEditingSprayRecord(record)}
+              onStartLeaseSheetFromDraft={(draft) => {
+                // Tapping a draft (or "New lease sheet") opens the lease sheet overlay.
+                // When draft is null, the user needs to pick a site from the Map tab first.
+                if (draft) {
+                  setResumingDraft(draft);
+                  // If draft has a site_id, try to focus it; otherwise open a generic overlay
+                  if (draft.site_id) {
+                    const foundSite = sites.find((s) => s.id === draft.site_id);
+                    if (foundSite) {
+                      setInspectionSite(foundSite);
+                    } else {
+                      setInspectionSite({ id: draft.site_id });
+                    }
+                  } else {
+                    setInspectionSite(null);
+                  }
+                } else {
+                  setMessage('Select a site from the Map tab first, then tap "Mark as sprayed".');
+                  setActiveTab(TAB_MAP);
+                }
+              }}
+              onStartNewTMTicket={async () => {
+                // Office/admin can start a T&M ticket manually; for now just prompt.
+                const client = prompt('Client for new T&M ticket?');
+                if (!client) return;
+                const area = prompt('Area for new T&M ticket?');
+                if (!area) return;
+                const description = prompt('Description of Work?') || '';
+                const today = new Date().toISOString().split('T')[0];
+                try {
+                  const created = await api.createTMTicket({
+                    spray_date: today,
+                    client,
+                    area,
+                    description_of_work: description,
+                  });
+                  setActiveTMTicketId(created.id);
+                } catch (e) {
+                  setMessage('Failed to create T&M ticket: ' + (e.message || 'unknown'));
+                }
+              }}
+              onOpenTMTicket={(ticketId) => setActiveTMTicketId(ticketId)}
+              onRequestDraftsRefresh={() => setDraftsRefreshToken((x) => x + 1)}
+              draftsRefreshToken={draftsRefreshToken}
+              roleCanAdmin={roleCanAdmin}
             />
           </div>
         </div>
@@ -2155,16 +2228,16 @@ export default function App() {
           <ListIcon />
           <span>Sites</span>
         </button>
-        <button className={`tab-btn ${activeTab === TAB_RECENTS ? 'active' : ''}`} type="button" onClick={() => { 
-          if (activeTab === TAB_RECENTS) {
+        <button className={`tab-btn ${activeTab === TAB_FORMS ? 'active' : ''}`} type="button" onClick={() => { 
+          if (activeTab === TAB_FORMS) {
             setActiveTab(TAB_MAP);
           } else {
-            setActiveTab(TAB_RECENTS);
+            setActiveTab(TAB_FORMS);
             setDetailOpen(false);
           }
         }}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          <span>Recents</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          <span>Forms</span>
         </button>
         {roleCanAdmin ? (
           <button className={`tab-btn ${activeTab === TAB_ADMIN ? 'active' : ''}`} type="button" onClick={() => { 

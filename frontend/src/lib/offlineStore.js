@@ -1,7 +1,7 @@
 import { openDB } from 'idb';
 
 const DB_NAME = 'pineview-offline-db';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 function ensureCacheId(site) {
   return {
@@ -32,6 +32,9 @@ const dbPromise = openDB(DB_NAME, DB_VERSION, {
     }
     if (!db.objectStoreNames.contains('users')) {
       db.createObjectStore('users', { keyPath: 'id' });
+    }
+    if (!db.objectStoreNames.contains('leaseSheetDrafts')) {
+      db.createObjectStore('leaseSheetDrafts', { keyPath: 'id' });
     }
   },
 });
@@ -196,4 +199,37 @@ export async function updateUploadEntry(id, updates) {
   const updated = { ...existing, ...updates };
   await db.put('uploadQueue', updated);
   return updated;
+}
+
+// ── Lease Sheet Drafts (device-local, not synced) ──
+// Draft shape: { id, site_id, pipeline_id, form, photos, ticketNumber, label, createdAt, updatedAt }
+
+export async function saveLeaseSheetDraft(draft) {
+  const db = await dbPromise;
+  const now = new Date().toISOString();
+  const existing = draft.id ? await db.get('leaseSheetDrafts', draft.id) : null;
+  const payload = {
+    id: draft.id || crypto.randomUUID(),
+    createdAt: existing?.createdAt || now,
+    ...draft,
+    updatedAt: now,
+  };
+  await db.put('leaseSheetDrafts', payload);
+  return payload;
+}
+
+export async function getLeaseSheetDrafts() {
+  const db = await dbPromise;
+  const drafts = await db.getAll('leaseSheetDrafts');
+  return drafts.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+}
+
+export async function getLeaseSheetDraft(id) {
+  const db = await dbPromise;
+  return db.get('leaseSheetDrafts', id);
+}
+
+export async function deleteLeaseSheetDraft(id) {
+  const db = await dbPromise;
+  await db.delete('leaseSheetDrafts', id);
 }

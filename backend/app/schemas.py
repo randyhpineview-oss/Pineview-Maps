@@ -3,7 +3,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models import ApprovalState, PinType, RoleEnum, SiteStatus
+from app.models import ApprovalState, PinType, RoleEnum, SiteStatus, TMTicketStatus
 
 
 class UserRead(BaseModel):
@@ -30,6 +30,15 @@ class SiteSprayRecordRead(BaseModel):
     lease_sheet_data: dict | None = None
     pdf_url: str | None = None
     photo_urls: list[str] | None = None
+    tm_ticket_id: int | None = None
+
+
+class TimeMaterialsLink(BaseModel):
+    """Instruction for linking a lease sheet to a T&M ticket on submit."""
+    ticket_id: int | None = None           # link to existing ticket
+    create: bool = False                    # create new ticket from this lease sheet
+    description_of_work: str | None = None  # required when create=True
+    tm_pdf_base64: str | None = None        # frontend-generated T&M PDF after this row is appended
 
 
 class SiteSprayRecordCreate(BaseModel):
@@ -39,6 +48,7 @@ class SiteSprayRecordCreate(BaseModel):
     lease_sheet_data: dict | None = None
     pdf_base64: str | None = None
     ticket_number: str | None = None
+    time_materials_link: TimeMaterialsLink | None = None
 
 
 class SiteSprayRecordUpdate(BaseModel):
@@ -48,6 +58,7 @@ class SiteSprayRecordUpdate(BaseModel):
     lease_sheet_data: dict | None = None
     pdf_base64: str | None = None
     ticket_number: str | None = None
+    tm_pdf_base64: str | None = None  # regenerated T&M PDF after edit propagation
 
 
 class RecentSubmissionRead(BaseModel):
@@ -65,6 +76,7 @@ class RecentSubmissionRead(BaseModel):
     lease_sheet_data: dict | None = None
     pdf_url: str | None = None
     photo_urls: list[str] | None = None
+    tm_ticket_id: int | None = None
     # Joined site context
     site_lsd: str | None = None
     site_client: str | None = None
@@ -192,3 +204,71 @@ class TypeChangeRequest(BaseModel):
 
 class SessionResponse(BaseModel):
     user: UserRead
+
+
+# ── Time & Materials Ticket schemas ──
+
+class TimeMaterialsRowRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    ticket_id: int
+    spray_record_id: int
+    location: str | None = None
+    site_type: str | None = None
+    herbicides: str | None = None
+    liters_used: float | None = None
+    area_ha: float | None = None
+    cost_code: str | None = None
+    created_at: datetime
+
+
+class TimeMaterialsRowUpdate(BaseModel):
+    location: str | None = None
+    site_type: str | None = None
+    herbicides: str | None = None
+    liters_used: float | None = None
+    area_ha: float | None = None
+    cost_code: str | None = None
+
+
+class TimeMaterialsTicketRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    ticket_number: str
+    spray_date: date
+    client: str
+    area: str
+    description_of_work: str | None = None
+    po_approval_number: str | None = None
+    created_by_user_id: int | None = None
+    created_by_name: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    pdf_url: str | None = None
+    office_data: dict | None = None  # stripped for worker role in endpoint
+    approved_by_user_id: int | None = None
+    approved_by_name: str | None = None
+    approved_at: datetime | None = None
+    approved_signature: str | None = None  # stripped for worker role in endpoint
+    status: TMTicketStatus
+    rows: list[TimeMaterialsRowRead] = Field(default_factory=list)
+
+
+class TimeMaterialsTicketCreate(BaseModel):
+    spray_date: date
+    client: str
+    area: str
+    description_of_work: str | None = None
+
+
+class TimeMaterialsTicketUpdate(BaseModel):
+    description_of_work: str | None = None
+    po_approval_number: str | None = None
+    office_data: dict | None = None
+    status: TMTicketStatus | None = None
+    pdf_base64: str | None = None
+    approved_signature: str | None = None   # base64 PNG from draw-pad
+    approve: bool = False                    # set approved_by/at, status=approved
+    row_updates: list[dict] | None = None    # [{ id, cost_code, ... }] batch update rows

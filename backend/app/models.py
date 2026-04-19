@@ -5,11 +5,17 @@ import secrets
 import string
 from datetime import datetime, timedelta
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, String, Text, Boolean
+from sqlalchemy import Date, DateTime, Enum, Float, ForeignKey, Integer, Numeric, String, Text, Boolean
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+
+class TMTicketStatus(str, enum.Enum):
+    open = "open"
+    submitted = "submitted"
+    approved = "approved"
 
 
 class RoleEnum(str, enum.Enum):
@@ -151,8 +157,94 @@ class SiteSprayRecord(Base):
     lease_sheet_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     pdf_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     photo_urls: Mapped[list | None] = mapped_column(JSONB, nullable=True, default=list)
+    tm_ticket_id: Mapped[int | None] = mapped_column(
+        ForeignKey("time_materials_tickets.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     site: Mapped[Site] = relationship(back_populates="spray_records")
+    tm_ticket: Mapped["TimeMaterialsTicket | None"] = relationship(
+        back_populates="spray_records",
+        foreign_keys=[tm_ticket_id],
+    )
+    tm_row: Mapped["TimeMaterialsRow | None"] = relationship(
+        back_populates="spray_record",
+        uselist=False,
+    )
+
+
+class TimeMaterialsTicket(Base):
+    """Time & Materials billing ticket. Accumulates rows from linked SiteSprayRecords."""
+    __tablename__ = "time_materials_tickets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    ticket_number: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
+    spray_date: Mapped[datetime] = mapped_column(Date, nullable=False, index=True)
+    client: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    area: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    description_of_work: Mapped[str | None] = mapped_column(Text, nullable=True)
+    po_approval_number: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    created_by_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+    pdf_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Free-form office pricing: { lines: [{ label, qty, rate }, ...], gst_percent: 5 }
+    office_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    approved_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    approved_by_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    approved_signature: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[TMTicketStatus] = mapped_column(
+        Enum(TMTicketStatus),
+        nullable=False,
+        default=TMTicketStatus.open,
+        index=True,
+    )
+
+    rows: Mapped[list["TimeMaterialsRow"]] = relationship(
+        back_populates="ticket",
+        cascade="all, delete-orphan",
+        order_by="TimeMaterialsRow.created_at",
+    )
+    spray_records: Mapped[list["SiteSprayRecord"]] = relationship(
+        back_populates="tm_ticket",
+        foreign_keys=[SiteSprayRecord.tm_ticket_id],
+    )
+
+
+class TimeMaterialsRow(Base):
+    """A single 'Sites Treated' row on a T&M ticket, sourced from a linked lease sheet."""
+    __tablename__ = "time_materials_rows"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    ticket_id: Mapped[int] = mapped_column(
+        ForeignKey("time_materials_tickets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    spray_record_id: Mapped[int] = mapped_column(
+        ForeignKey("site_spray_records.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    location: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    site_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    herbicides: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    liters_used: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    area_ha: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    cost_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    ticket: Mapped[TimeMaterialsTicket] = relationship(back_populates="rows")
+    spray_record: Mapped[SiteSprayRecord] = relationship(back_populates="tm_row")
 
 
 class PasswordResetCode(Base):
