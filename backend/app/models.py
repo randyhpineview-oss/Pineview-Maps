@@ -5,7 +5,7 @@ import secrets
 import string
 from datetime import datetime, timedelta
 
-from sqlalchemy import Date, DateTime, Enum, Float, ForeignKey, Integer, Numeric, String, Text, Boolean
+from sqlalchemy import Date, DateTime, Enum, Float, ForeignKey, Integer, Numeric, String, Text, Boolean, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -168,9 +168,14 @@ class SiteSprayRecord(Base):
         back_populates="spray_records",
         foreign_keys=[tm_ticket_id],
     )
-    tm_row: Mapped["TimeMaterialsRow | None"] = relationship(
+    # A spray record can generate multiple T&M rows — one "main" row for the
+    # site (Wellsite/Water/etc.) plus an optional "Roadside" companion row
+    # when the lease sheet includes access-road activity. Uniqueness is
+    # enforced by the (spray_record_id, site_type) composite constraint on
+    # TimeMaterialsRow, so there's at most one per site_type.
+    tm_rows: Mapped[list["TimeMaterialsRow"]] = relationship(
         back_populates="spray_record",
-        uselist=False,
+        cascade="all, delete-orphan",
     )
 
 
@@ -220,8 +225,18 @@ class TimeMaterialsTicket(Base):
 
 
 class TimeMaterialsRow(Base):
-    """A single 'Sites Treated' row on a T&M ticket, sourced from a linked lease sheet."""
+    """A single 'Sites Treated' row on a T&M ticket, sourced from a linked lease sheet.
+
+    A lease sheet may generate multiple rows on the same ticket — typically one
+    main row (Wellsite / Water / Quad Access / Reclaimed) plus an optional
+    companion 'Roadside' row when the sheet has access-road activity. So the
+    uniqueness contract is COMPOSITE: per (spray_record_id, site_type), not
+    per spray_record_id alone. See tm_rows_composite_unique_migration.sql.
+    """
     __tablename__ = "time_materials_rows"
+    __table_args__ = (
+        UniqueConstraint("spray_record_id", "site_type", name="uq_tm_rows_spray_site_type"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     ticket_id: Mapped[int] = mapped_column(
@@ -232,7 +247,6 @@ class TimeMaterialsRow(Base):
     spray_record_id: Mapped[int] = mapped_column(
         ForeignKey("site_spray_records.id", ondelete="CASCADE"),
         nullable=False,
-        unique=True,
         index=True,
     )
     location: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -244,7 +258,7 @@ class TimeMaterialsRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     ticket: Mapped[TimeMaterialsTicket] = relationship(back_populates="rows")
-    spray_record: Mapped[SiteSprayRecord] = relationship(back_populates="tm_row")
+    spray_record: Mapped[SiteSprayRecord] = relationship(back_populates="tm_rows")
 
 
 class PasswordResetCode(Base):
