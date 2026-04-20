@@ -241,6 +241,21 @@ export const api = {
     return request(`/api/recent-submissions${params}`);
   },
 
+  // ── Delta-sync endpoints (bandwidth-efficient polling) ──
+  //
+  // Each returns { items, [ids_removed], server_time }. Pass the previous
+  // `server_time` back as `?since=` to fetch only what changed since then.
+  // On first load / error, callers should fall back to the full list endpoint.
+  sitesDelta(since) {
+    return request(`/api/sites/delta?since=${encodeURIComponent(since)}`);
+  },
+  pipelinesDelta(since) {
+    return request(`/api/pipelines/delta?since=${encodeURIComponent(since)}`);
+  },
+  recentSubmissionsDelta(since) {
+    return request(`/api/recent-submissions/delta?since=${encodeURIComponent(since)}`);
+  },
+
   /**
    * Fetch a Dropbox-hosted PDF through the backend proxy and return its raw bytes.
    *

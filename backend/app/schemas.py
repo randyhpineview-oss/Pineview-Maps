@@ -232,6 +232,35 @@ class SessionResponse(BaseModel):
     user: UserRead
 
 
+# ── Delta-sync response envelopes ──
+#
+# Each delta endpoint returns a small payload describing what changed since
+# the caller's last-seen timestamp, rather than the entire resource list.
+# The frontend uses `server_time` as the next `?since=...` value so clocks
+# don't drift and nothing is ever skipped.
+
+
+class SitesDeltaResponse(BaseModel):
+    """Incremental sites update.
+
+    `items` — sites created/updated (and still visible) since `since`.
+    `ids_removed` — site IDs that were soft-deleted or rejected since `since`;
+    frontend should drop them from its cache/map.
+    `server_time` — pass this back as `?since=` on the next call.
+    """
+    items: list[SiteRead]
+    ids_removed: list[int]
+    server_time: datetime
+
+
+class RecentSubmissionsDeltaResponse(BaseModel):
+    """Incremental recent-submissions update. Append-only: no removal list
+    needed because these are typically created and never deleted. Only new
+    submissions since `since` are returned, already capped by the server."""
+    items: list[RecentSubmissionRead]
+    server_time: datetime
+
+
 # ── Time & Materials Ticket schemas ──
 
 class TimeMaterialsRowRead(BaseModel):

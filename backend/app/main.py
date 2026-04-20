@@ -38,12 +38,14 @@ from app.schemas import (
     BulkResetResponse,
     KmlImportResponse,
     RecentSubmissionRead,
+    RecentSubmissionsDeltaResponse,
     SessionResponse,
     SiteAdminUpdate,
     SiteApprovalUpdate,
     SiteCreate,
     SiteQuickEdit,
     SiteRead,
+    SitesDeltaResponse,
     SiteSprayRecordRead,
     SiteSprayRecordSummary,
     SiteSprayRecordCreate,
@@ -290,9 +292,13 @@ def sync_status(
     current_user: User = Depends(get_current_user),
 ) -> dict:
     """Return lightweight sync status to reduce bandwidth usage."""
-    # Get max updated_at timestamps
-    sites_updated = db.execute(text("SELECT MAX(updated_at) FROM sites WHERE deleted_at IS NULL")).scalar()
-    pipelines_updated = db.execute(text("SELECT MAX(updated_at) FROM pipelines WHERE deleted_at IS NULL")).scalar()
+    # MAX without filtering deleted rows — a soft-delete ALSO bumps updated_at,
+    # and the delta endpoints return soft-deleted IDs in `ids_removed` so the
+    # frontend can prune its cache. If we filtered `deleted_at IS NULL` here
+    # and the deleted row was the freshest, clients would never be told to
+    # refresh and the pin would stay on their map forever.
+    sites_updated = db.execute(text("SELECT MAX(updated_at) FROM sites")).scalar()
+    pipelines_updated = db.execute(text("SELECT MAX(updated_at) FROM pipelines")).scalar()
     spray_records_updated = db.execute(text("SELECT MAX(created_at) FROM site_spray_records")).scalar()
     
     # Get pending counts for admins
@@ -367,6 +373,66 @@ def list_sites(
 
     sites = query.all()
     return [SiteRead.model_validate(site) for site in sites]
+
+
+# NOTE: /api/sites/delta MUST be declared before /api/sites/{site_id},
+# otherwise FastAPI routes "delta" as a site_id path parameter.
+@app.get("/api/sites/delta", response_model=SitesDeltaResponse)
+def sites_delta(
+    since: datetime = Query(..., description="ISO timestamp from a previous server_time"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SitesDeltaResponse:
+    """Incremental sites sync — only rows whose `updated_at > since`.
+
+    Huge egress win vs. refetching the whole list on every poll tick:
+    a typical tick transfers 0-3 rows instead of hundreds. The frontend
+    merges `items` into its cache and drops `ids_removed` from it.
+
+    `server_time` is what the caller should send back as `?since=` next time.
+    """
+    # Capture server_time FIRST so any row written during this request is
+    # guaranteed to be caught by the next `?since=server_time` call.
+    server_time = datetime.utcnow()
+
+    # Active rows updated since the caller's watermark (same shape as list_sites
+    # but without pagination/search filters — delta is always the full changed set).
+    items_q = (
+        db.query(Site)
+        .options(
+            joinedload(Site.updates),
+            joinedload(Site.spray_records).defer(SiteSprayRecord.lease_sheet_data),
+            joinedload(Site.created_by_user),
+            joinedload(Site.approved_by_user),
+            joinedload(Site.last_inspected_by_user),
+        )
+        .filter(
+            Site.updated_at > since,
+            Site.deleted_at.is_(None),
+            Site.approval_state != ApprovalState.rejected,
+        )
+    )
+    items = [SiteRead.model_validate(s) for s in items_q.all()]
+
+    # Rows that became invisible since the caller's watermark: soft-deleted
+    # OR rejected. Frontend drops these IDs from its local cache/map.
+    removed_q = (
+        db.query(Site.id)
+        .filter(
+            Site.updated_at > since,
+            or_(
+                Site.deleted_at.isnot(None),
+                Site.approval_state == ApprovalState.rejected,
+            ),
+        )
+    )
+    ids_removed = [row[0] for row in removed_q.all()]
+
+    return SitesDeltaResponse(
+        items=items,
+        ids_removed=ids_removed,
+        server_time=server_time,
+    )
 
 
 @app.get("/api/sites/{site_id}", response_model=SiteRead)
@@ -660,7 +726,15 @@ def delete_site_spray_record(
     record = db.query(SiteSprayRecord).filter(SiteSprayRecord.id == record_id).first()
     if not record:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Site spray record not found")
-    
+
+    # DELTA-SYNC: bump the parent site's updated_at so the incremental
+    # /api/sites/delta endpoint picks up this change. SQLAlchemy's onupdate
+    # only fires for direct edits to the Site row — child-table changes
+    # are invisible to it, so we bump manually.
+    site = db.query(Site).filter(Site.id == record.site_id).first()
+    if site is not None:
+        site.updated_at = datetime.utcnow()
+
     db.delete(record)
     db.commit()
 
@@ -726,6 +800,12 @@ def update_site_spray_record(
                 if new_url:
                     ticket.pdf_url = new_url
 
+    # DELTA-SYNC: bump the parent site's updated_at so /api/sites/delta
+    # surfaces this change on the next poll tick.
+    site = db.query(Site).filter(Site.id == record.site_id).first()
+    if site is not None:
+        site.updated_at = datetime.utcnow()
+
     db.commit()
     db.refresh(record)
     return SiteSprayRecordRead.model_validate(record)
@@ -781,6 +861,50 @@ def list_recent_submissions(
         data['site_area'] = site_area
         results.append(RecentSubmissionRead(**data))
     return results
+
+
+@app.get("/api/recent-submissions/delta", response_model=RecentSubmissionsDeltaResponse)
+def recent_submissions_delta(
+    since: datetime = Query(..., description="ISO timestamp from a previous server_time"),
+    limit: int = Query(default=100, le=500),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> RecentSubmissionsDeltaResponse:
+    """Incremental recent-submissions sync — only rows created since `since`.
+
+    Recents are append-only (we don't delete lease sheets from here), so no
+    removal list is needed. Limit is generous (100) because in practice far
+    fewer rows will land between 30s polls; the cap only matters when a
+    client comes back from a long absence.
+    """
+    server_time = datetime.utcnow()
+
+    q = (
+        db.query(
+            SiteSprayRecord,
+            Site.lsd.label('site_lsd'),
+            Site.client.label('site_client'),
+            Site.area.label('site_area'),
+        )
+        .options(defer(SiteSprayRecord.lease_sheet_data))
+        .join(Site, SiteSprayRecord.site_id == Site.id)
+        .filter(
+            SiteSprayRecord.lease_sheet_data.isnot(None),
+            SiteSprayRecord.created_at > since,
+        )
+        .order_by(SiteSprayRecord.created_at.desc())
+        .limit(limit)
+    )
+
+    items = []
+    for record, site_lsd, site_client, site_area in q.all():
+        data = SiteSprayRecordSummary.model_validate(record).model_dump()
+        data['site_lsd'] = site_lsd
+        data['site_client'] = site_client
+        data['site_area'] = site_area
+        items.append(RecentSubmissionRead(**data))
+
+    return RecentSubmissionsDeltaResponse(items=items, server_time=server_time)
 
 
 @app.patch("/api/sites/{site_id}/status", response_model=SiteRead)

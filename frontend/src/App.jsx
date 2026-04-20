@@ -24,6 +24,7 @@ import {
   queueAction,
   queueUpload,
   removeQueuedAction,
+  removeRecentById,
   removeUploadEntry,
   removeSite,
   replaceLookups,
@@ -31,6 +32,7 @@ import {
   replaceSites,
   replaceUsers,
   setLastSyncAt,
+  upsertRecent,
   upsertSite,
 } from './lib/offlineStore';
 import { formatDate, pinTypeLabel, statusLabel } from './lib/mapUtils';
@@ -77,6 +79,12 @@ export default function App() {
   }, []);
   const wasOnline = useRef(window.navigator.onLine);
   const lastSyncStatusRef = useRef(null);
+  // Delta-sync watermarks: the `server_time` returned by the last successful
+  // /api/*/delta call, to be passed back as `?since=` on the next poll. Null
+  // means "no baseline yet — fall back to full fetch on the first call".
+  const sitesSinceRef = useRef(null);
+  const pipelinesSinceRef = useRef(null);
+  const recentsSinceRef = useRef(null);
   const [user, setUser] = useState(null);
   const [session, setSession] = useState(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
@@ -431,6 +439,23 @@ export default function App() {
             loadPendingPipelines(),
             loadDeletedPipelines(),
           ]);
+
+          // Seed delta-sync watermarks from sync-status RIGHT AFTER the full
+          // load. This way the 30s poll loop can immediately use the cheap
+          // /api/*/delta endpoints — and the very first poll tick won't
+          // re-download the same data we just fetched unless something has
+          // actually changed in the last 30s.
+          try {
+            const initial = await api.getSyncStatus();
+            lastSyncStatusRef.current = initial;
+            sitesSinceRef.current = initial.sites_last_updated || null;
+            pipelinesSinceRef.current = initial.pipelines_last_updated || null;
+            recentsSinceRef.current = initial.spray_records_last_updated || null;
+          } catch {
+            // If sync-status fails, leave watermarks null — the poll loop
+            // will fall back to full fetches, which is safe.
+          }
+
           setMessage('Synced with server');
         } catch (error) {
           setMessage('Using cached data');
@@ -545,16 +570,152 @@ export default function App() {
 
   // ── Auto-poll for real-time updates ──
   // Strategy:
-  //   1. Always start with a lightweight /api/sync-status call (a few hundred bytes).
-  //   2. Only re-fetch sites/pipelines/recents when the corresponding timestamp bumps.
-  //   3. Skip the entire tick when the tab is hidden (phone in pocket, app in background).
-  //   4. Run a single refresh immediately when the tab becomes visible again, so the
-  //      user sees fresh data without waiting for the next interval.
-  //   5. Base interval = 30 s (up from 10 s). With slim payloads this covers everyone.
+  //   1. Every 30 s, call /api/sync-status (tiny — just a few timestamps).
+  //   2. When a resource's max-timestamp bumps, fetch ONLY what changed via
+  //      /api/<resource>/delta?since=<watermark>, not the full list.
+  //   3. Merge `items` into state + IndexedDB, drop `ids_removed`. A typical
+  //      delta is 0-3 rows instead of hundreds → ~100× less egress.
+  //   4. If delta fails or no watermark yet, fall back to the full list.
+  //   5. Skip the tick while the tab is hidden; re-run on visibility change.
   useEffect(() => {
     if (!isOnline) return;
 
     const POLL_MS = 30000;
+
+    // ── Delta merge helpers ────────────────────────────────────────────────
+    // Each is defined inline so it closes over the latest setState setters
+    // without needing to live outside the effect. They update both React
+    // state (instant UI) and IndexedDB (offline persistence).
+
+    async function syncSitesIncrementally(syncStatus) {
+      // No watermark yet → do a full fetch, which also seeds the watermark
+      // for future delta calls.
+      if (!sitesSinceRef.current) {
+        try {
+          const full = await api.listSites(serverFilters);
+          setSites(full);
+          await replaceSites(full);
+          if (selectedSite && Number.isInteger(selectedSite.id)) {
+            const updated = full.find((s) => s.id === selectedSite.id);
+            if (updated) setSelectedSite(updated);
+          }
+          sitesSinceRef.current = syncStatus.sites_last_updated || new Date().toISOString();
+        } catch { /* silently fail */ }
+        return;
+      }
+
+      try {
+        const delta = await api.sitesDelta(sitesSinceRef.current);
+        const items = Array.isArray(delta?.items) ? delta.items : [];
+        const idsRemoved = Array.isArray(delta?.ids_removed) ? delta.ids_removed : [];
+
+        if (items.length > 0 || idsRemoved.length > 0) {
+          // Merge into React state (upsert by id, drop removed).
+          setSites((prev) => {
+            const byId = new Map(prev.map((s) => [s.id, s]));
+            for (const item of items) byId.set(item.id, item);
+            for (const id of idsRemoved) byId.delete(id);
+            return Array.from(byId.values());
+          });
+
+          // Keep the currently-viewed site in sync when the delta includes it.
+          if (selectedSite && Number.isInteger(selectedSite.id)) {
+            const hit = items.find((s) => s.id === selectedSite.id);
+            if (hit) setSelectedSite(hit);
+          }
+
+          // Persist to IndexedDB.
+          for (const item of items) await upsertSite(item);
+          for (const id of idsRemoved) await removeSite({ id });
+        }
+
+        sitesSinceRef.current = delta.server_time || sitesSinceRef.current;
+      } catch {
+        // Delta failed — fall back to a full fetch and re-seed the watermark.
+        try {
+          const full = await api.listSites(serverFilters);
+          setSites(full);
+          await replaceSites(full);
+          if (selectedSite && Number.isInteger(selectedSite.id)) {
+            const updated = full.find((s) => s.id === selectedSite.id);
+            if (updated) setSelectedSite(updated);
+          }
+          sitesSinceRef.current = syncStatus.sites_last_updated || new Date().toISOString();
+        } catch { /* silently fail */ }
+      }
+    }
+
+    async function syncPipelinesIncrementally(syncStatus) {
+      if (!pipelinesSinceRef.current) {
+        try {
+          const full = await api.listPipelines();
+          setPipelines(full);
+          pipelinesSinceRef.current = syncStatus.pipelines_last_updated || new Date().toISOString();
+        } catch { /* silently fail */ }
+        return;
+      }
+
+      try {
+        const delta = await api.pipelinesDelta(pipelinesSinceRef.current);
+        const items = Array.isArray(delta?.items) ? delta.items : [];
+        const idsRemoved = Array.isArray(delta?.ids_removed) ? delta.ids_removed : [];
+
+        if (items.length > 0 || idsRemoved.length > 0) {
+          setPipelines((prev) => {
+            const byId = new Map(prev.map((p) => [p.id, p]));
+            for (const item of items) byId.set(item.id, item);
+            for (const id of idsRemoved) byId.delete(id);
+            return Array.from(byId.values());
+          });
+        }
+
+        pipelinesSinceRef.current = delta.server_time || pipelinesSinceRef.current;
+      } catch {
+        try {
+          const full = await api.listPipelines();
+          setPipelines(full);
+          pipelinesSinceRef.current = syncStatus.pipelines_last_updated || new Date().toISOString();
+        } catch { /* silently fail */ }
+      }
+    }
+
+    async function syncRecentsIncrementally(syncStatus) {
+      if (!recentsSinceRef.current) {
+        try {
+          const full = await api.listRecentSubmissions();
+          setCachedRecents(full);
+          await replaceRecents(full);
+          recentsSinceRef.current = syncStatus.spray_records_last_updated || new Date().toISOString();
+        } catch { /* silently fail */ }
+        return;
+      }
+
+      try {
+        const delta = await api.recentSubmissionsDelta(recentsSinceRef.current);
+        const items = Array.isArray(delta?.items) ? delta.items : [];
+
+        if (items.length > 0) {
+          // Prepend new items, dedupe by id, keep the list bounded.
+          setCachedRecents((prev) => {
+            const byId = new Map();
+            for (const item of items) byId.set(item.id, item);
+            for (const row of prev) if (!byId.has(row.id)) byId.set(row.id, row);
+            return Array.from(byId.values())
+              .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+          });
+          for (const item of items) await upsertRecent(item);
+        }
+
+        recentsSinceRef.current = delta.server_time || recentsSinceRef.current;
+      } catch {
+        try {
+          const full = await api.listRecentSubmissions();
+          setCachedRecents(full);
+          await replaceRecents(full);
+          recentsSinceRef.current = syncStatus.spray_records_last_updated || new Date().toISOString();
+        } catch { /* silently fail */ }
+      }
+    }
 
     const runPollTick = async () => {
       // Don't poll while the document is hidden — huge bandwidth saver on mobile.
@@ -574,32 +735,9 @@ export default function App() {
 
         lastSyncStatusRef.current = syncStatus;
 
-        if (sitesChanged) {
-          try {
-            const sitesPayload = await api.listSites(serverFilters);
-            setSites(sitesPayload);
-            await replaceSites(sitesPayload);
-            if (selectedSite && Number.isInteger(selectedSite.id)) {
-              const updated = sitesPayload.find((s) => s.id === selectedSite.id);
-              if (updated) setSelectedSite(updated);
-            }
-          } catch { /* silently fail */ }
-        }
-
-        if (pipelinesChanged) {
-          try {
-            const pipelineData = await api.listPipelines();
-            setPipelines(pipelineData);
-          } catch { /* silently fail */ }
-        }
-
-        if (recentsChanged) {
-          try {
-            const data = await api.listRecentSubmissions();
-            setCachedRecents(data);
-            await replaceRecents(data);
-          } catch { /* silently fail */ }
-        }
+        if (sitesChanged) await syncSitesIncrementally(syncStatus);
+        if (pipelinesChanged) await syncPipelinesIncrementally(syncStatus);
+        if (recentsChanged) await syncRecentsIncrementally(syncStatus);
 
         if (syncStatus.pending_sites_count !== undefined) setPendingSitesCount(syncStatus.pending_sites_count);
         if (syncStatus.pending_pipelines_count !== undefined) setPendingPipelinesCount(syncStatus.pending_pipelines_count);

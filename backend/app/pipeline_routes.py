@@ -19,11 +19,12 @@ from app.pipeline_schemas import (
     PipelineImportResponse,
     PipelineListRead,
     PipelineRead,
+    PipelinesDeltaResponse,
     PipelineUpdate,
     SprayRecordCreate,
     SprayRecordRead,
 )
-from sqlalchemy import text
+from sqlalchemy import or_, text
 
 router = APIRouter(prefix="/api", tags=["pipelines"])
 
@@ -124,6 +125,56 @@ def list_pipelines(
         q = q.filter(Pipeline.area == area)
     q = q.order_by(Pipeline.created_at.desc())
     return [PipelineListRead.model_validate(p) for p in q.all()]
+
+
+# NOTE: /api/pipelines/delta MUST be declared before /api/pipelines/{pipeline_id},
+# otherwise FastAPI routes "delta" as a pipeline_id path parameter.
+@router.get("/pipelines/delta", response_model=PipelinesDeltaResponse)
+def pipelines_delta(
+    since: datetime = Query(..., description="ISO timestamp from a previous server_time"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PipelinesDeltaResponse:
+    """Incremental pipelines sync — only rows whose `updated_at > since`.
+
+    Pipelines carry heavy `coordinates` arrays, so refetching the full list
+    every 30s was a major egress drain. With deltas, a typical poll tick
+    returns 0 pipelines; only when someone adds a spray record or imports
+    a new KML does anything flow.
+    """
+    server_time = datetime.utcnow()
+
+    items_q = (
+        db.query(Pipeline)
+        .options(
+            joinedload(Pipeline.spray_records).defer(SprayRecord.lease_sheet_data),
+        )
+        .filter(
+            Pipeline.updated_at > since,
+            Pipeline.deleted_at.is_(None),
+            Pipeline.approval_state != PipelineApprovalState.rejected.value,
+        )
+    )
+    items = [PipelineListRead.model_validate(p) for p in items_q.all()]
+
+    # Rows that became invisible since the caller's watermark.
+    removed_q = (
+        db.query(Pipeline.id)
+        .filter(
+            Pipeline.updated_at > since,
+            or_(
+                Pipeline.deleted_at.isnot(None),
+                Pipeline.approval_state == PipelineApprovalState.rejected.value,
+            ),
+        )
+    )
+    ids_removed = [row[0] for row in removed_q.all()]
+
+    return PipelinesDeltaResponse(
+        items=items,
+        ids_removed=ids_removed,
+        server_time=server_time,
+    )
 
 
 @router.get("/pending-pipelines", response_model=list[PipelineListRead])
@@ -389,6 +440,12 @@ def create_spray_record(
     db.flush()
     _update_pipeline_spray_status(db, pipeline)
 
+    # DELTA-SYNC: always bump the pipeline's updated_at so /api/pipelines/delta
+    # picks up the new spray record even if _update_pipeline_spray_status didn't
+    # change the status column (e.g., adding another spray to an already-sprayed
+    # pipeline). onupdate only fires for direct column edits.
+    pipeline.updated_at = datetime.utcnow()
+
     db.commit()
     db.refresh(record)
     
@@ -436,10 +493,12 @@ def delete_spray_record(
     db.delete(record)
     db.flush()
 
-    # Update pipeline status
+    # Update pipeline status + DELTA-SYNC: always bump updated_at so
+    # /api/pipelines/delta surfaces this change even when status didn't flip.
     pipeline = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
     if pipeline:
         _update_pipeline_spray_status(db, pipeline)
+        pipeline.updated_at = datetime.utcnow()
 
     db.commit()
 

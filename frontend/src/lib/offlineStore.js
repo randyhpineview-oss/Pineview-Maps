@@ -128,6 +128,19 @@ export async function getRecents() {
   return db.getAll('recents');
 }
 
+export async function upsertRecent(record) {
+  // Used by the delta-sync path: merge a single incoming record into the
+  // cache without blowing away the rest. Strips lease_sheet_data's heavy
+  // fields just like replaceRecents does.
+  const db = await dbPromise;
+  await db.put('recents', lightweightRecent(record));
+}
+
+export async function removeRecentById(id) {
+  const db = await dbPromise;
+  await db.delete('recents', id);
+}
+
 // ── Lookups cache (herbicides, applicators, weeds, location types) ──
 
 export async function replaceLookups(lookupKey, records) {

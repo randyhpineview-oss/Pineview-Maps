@@ -181,3 +181,15 @@ class PipelineBulkResetRequest(BaseModel):
     client: str | None = None
     area: str | None = None
     pipeline_ids: list[int] | None = None
+
+
+class PipelinesDeltaResponse(BaseModel):
+    """Incremental pipelines update.
+
+    Same contract as the sites delta: `items` are rows changed-and-still-visible
+    since `since`; `ids_removed` are rows that became hidden (soft-deleted or
+    rejected); `server_time` is the next watermark the caller should send.
+    """
+    items: list[PipelineListRead]
+    ids_removed: list[int]
+    server_time: datetime
