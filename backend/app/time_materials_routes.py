@@ -1,6 +1,10 @@
 """Endpoints for Time & Materials tickets.
 
-Shared ticket sequence with Herbicide Lease Sheets via ticket_seq.
+Ticket numbers come from the DEDICATED `tm_ticket_seq` (prefix "TM"). Herbicide
+lease sheets have their own separate `herb_lease_seq` (prefix "HL") — the two
+are fully independent so counts don't interleave. Legacy tickets created before
+the split keep their original "T######" numbers.
+
 Workers can only view/edit their own tickets; office/admin see all and can fill office_data.
 """
 from datetime import date, datetime
@@ -147,9 +151,14 @@ def _visible_query(db: Session, current_user: User):
 
 
 def _allocate_ticket_number(db: Session) -> str:
-    result = db.execute(text("SELECT nextval('ticket_seq')"))
+    """Pull the next TM-prefixed ticket number from the dedicated tm_ticket_seq.
+
+    Uses its own sequence (created by split_ticket_sequences_migration.sql) so
+    T&M numbering doesn't interleave with herbicide lease sheets.
+    """
+    result = db.execute(text("SELECT nextval('tm_ticket_seq')"))
     seq_value = result.scalar()
-    return f"T{seq_value:06d}"
+    return f"TM{seq_value:06d}"
 
 
 def _upload_tm_pdf(ticket: TimeMaterialsTicket, pdf_base64: str) -> Optional[str]:

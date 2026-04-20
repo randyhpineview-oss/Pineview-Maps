@@ -23,6 +23,81 @@ const REC_ALL = 'all';
 const REC_LEASE = 'lease';
 const REC_TM = 'tm';
 
+// ── Row renderers ──
+// Lifted to module scope so they can be shared between the per-type tabs
+// (Lease / T&M) and the merged "All" tab, without inlining the same JSX
+// in three places. Returns a plain element — no hook usage inside.
+function renderLeaseRow(record, onViewPdf, onEditRecord) {
+  return (
+    <div key={`ls-${record.id}`} className="site-row" style={{ padding: '10px', borderRadius: '6px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div style={{ flex: 1 }}>
+          <div className="small-text" style={{ fontWeight: 700, fontSize: '0.85rem' }}>
+            {record.ticket_number || 'No Ticket'}  <span style={{ color: '#22c55e', fontWeight: 500 }}>Lease</span>
+          </div>
+          <div className="small-text" style={{ marginTop: '2px' }}>
+            {record.spray_date} • {record.sprayed_by_name || 'Unknown'}
+          </div>
+          <div className="small-text" style={{ color: '#9ca3af', marginTop: '2px' }}>
+            {record.site_lsd || ''} • {record.site_client || ''} • {record.site_area || ''}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: '6px', flexShrink: 0, marginLeft: '8px' }}>
+          {record.pdf_url && (
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => onViewPdf?.(record)}
+              style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+            >
+              📄 View
+            </button>
+          )}
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => onEditRecord?.(record)}
+            style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+          >
+            ✏️ Edit
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function renderTmRow(t, onOpenTMTicket) {
+  return (
+    <div key={`tm-${t.id}`} className="site-row" style={{ padding: '10px', borderRadius: '6px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div style={{ flex: 1 }}>
+          <div className="small-text" style={{ fontWeight: 700, fontSize: '0.85rem' }}>
+            {t.ticket_number}  <span style={{ color: '#8b5cf6', fontWeight: 500 }}>T&M</span>
+            {t.status === 'approved' ? <span style={{ color: '#22c55e', marginLeft: '6px' }}>✓</span> : null}
+          </div>
+          <div className="small-text" style={{ marginTop: '2px' }}>
+            {t.spray_date} • {t.created_by_name || 'Unknown'}
+          </div>
+          <div className="small-text" style={{ color: '#9ca3af', marginTop: '2px' }}>
+            {t.client} / {t.area} • {(t.rows?.length || 0)} row(s)
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: '6px', flexShrink: 0, marginLeft: '8px' }}>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => onOpenTMTicket?.(t.id)}
+            style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+          >
+            Open
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function FormsPanel({
   visible,
   cachedRecents = [],
@@ -67,8 +142,12 @@ export default function FormsPanel({
   const PAGE_SIZE = 20;
   const [leaseCount, setLeaseCount] = useState(PAGE_SIZE);
   const [tmCount, setTmCount] = useState(PAGE_SIZE);
+  // The "All" tab gets its own count so paging through a merged list
+  // doesn't fight with the per-type counts behind the scenes.
+  const [allCount, setAllCount] = useState(PAGE_SIZE);
   const [openCount, setOpenCount] = useState(PAGE_SIZE);
-  useEffect(() => { setLeaseCount(PAGE_SIZE); setTmCount(PAGE_SIZE); }, [search]);
+  useEffect(() => { setLeaseCount(PAGE_SIZE); setTmCount(PAGE_SIZE); setAllCount(PAGE_SIZE); }, [search]);
+  useEffect(() => { setAllCount(PAGE_SIZE); }, [recTab]);
   useEffect(() => { setOpenCount(PAGE_SIZE); }, [ipTab]);
 
   // Load open T&M tickets when In Progress → Open Tickets tab is shown
@@ -156,9 +235,21 @@ export default function FormsPanel({
 
   const sortedOpenTickets = useMemo(() => [...openTickets].sort(byNewest), [openTickets]);
 
+  // Merged "All" feed: lease sheets + T&M tickets interleaved by created_at desc.
+  // Each row keeps its native shape and gets a `_type` tag so the render
+  // pass can pick the right card. Re-uses the same `search` filter logic.
+  const filteredAll = useMemo(() => {
+    const combined = [
+      ...filteredLease.map((r) => ({ ...r, _type: 'lease' })),
+      ...filteredTm.map((t) => ({ ...t, _type: 'tm' })),
+    ];
+    return combined.sort(byNewest);
+  }, [filteredLease, filteredTm]);
+
   // Paginated views
   const visibleLease = useMemo(() => filteredLease.slice(0, leaseCount), [filteredLease, leaseCount]);
   const visibleTm = useMemo(() => filteredTm.slice(0, tmCount), [filteredTm, tmCount]);
+  const visibleAll = useMemo(() => filteredAll.slice(0, allCount), [filteredAll, allCount]);
   const visibleOpen = useMemo(() => sortedOpenTickets.slice(0, openCount), [sortedOpenTickets, openCount]);
 
   if (!visible) return null;
@@ -438,51 +529,41 @@ export default function FormsPanel({
             <button style={innerBtn(recTab === REC_TM)} onClick={() => setRecTab(REC_TM)}>T&M Tickets</button>
           </div>
 
-          {/* Lease sheet rows */}
-          {(recTab === REC_ALL || recTab === REC_LEASE) && (
+          {/* Render the three tabs. "All" interleaves lease + T&M by created_at;
+              "Lease Sheets" / "T&M Tickets" show a single-type list as before. */}
+          {recTab === REC_ALL && (
+            <div className="list-grid">
+              {filteredAll.length === 0 ? (
+                <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: '#9ca3af' }}>
+                  Nothing submitted yet.
+                </div>
+              ) : (
+                visibleAll.map((row) =>
+                  row._type === 'lease'
+                    ? renderLeaseRow(row, onViewPdf, onEditRecord)
+                    : renderTmRow(row, onOpenTMTicket)
+                )
+              )}
+              {filteredAll.length > allCount && (
+                <button
+                  type="button"
+                  onClick={() => setAllCount((c) => c + PAGE_SIZE)}
+                  style={{ padding: '8px', background: '#1f2937', border: '1px solid #374151', borderRadius: '6px', color: '#60a5fa', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', marginTop: '4px' }}
+                >
+                  Load more ({filteredAll.length - allCount} remaining)
+                </button>
+              )}
+            </div>
+          )}
+
+          {recTab === REC_LEASE && (
             <div className="list-grid">
               {filteredLease.length === 0 ? (
                 <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: '#9ca3af' }}>
                   No lease sheets.
                 </div>
               ) : (
-                visibleLease.map((record) => (
-                  <div key={`ls-${record.id}`} className="site-row" style={{ padding: '10px', borderRadius: '6px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div style={{ flex: 1 }}>
-                        <div className="small-text" style={{ fontWeight: 700, fontSize: '0.85rem' }}>
-                          {record.ticket_number || 'No Ticket'}  <span style={{ color: '#22c55e', fontWeight: 500 }}>Lease</span>
-                        </div>
-                        <div className="small-text" style={{ marginTop: '2px' }}>
-                          {record.spray_date} • {record.sprayed_by_name || 'Unknown'}
-                        </div>
-                        <div className="small-text" style={{ color: '#9ca3af', marginTop: '2px' }}>
-                          {record.site_lsd || ''} • {record.site_client || ''} • {record.site_area || ''}
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', gap: '6px', flexShrink: 0, marginLeft: '8px' }}>
-                        {record.pdf_url && (
-                          <button
-                            className="secondary-button"
-                            type="button"
-                            onClick={() => onViewPdf?.(record)}
-                            style={{ padding: '4px 10px', fontSize: '0.75rem' }}
-                          >
-                            📄 View
-                          </button>
-                        )}
-                        <button
-                          className="secondary-button"
-                          type="button"
-                          onClick={() => onEditRecord?.(record)}
-                          style={{ padding: '4px 10px', fontSize: '0.75rem' }}
-                        >
-                          ✏️ Edit
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))
+                visibleLease.map((record) => renderLeaseRow(record, onViewPdf, onEditRecord))
               )}
               {filteredLease.length > leaseCount && (
                 <button
@@ -496,42 +577,14 @@ export default function FormsPanel({
             </div>
           )}
 
-          {/* T&M rows */}
-          {(recTab === REC_ALL || recTab === REC_TM) && (
+          {recTab === REC_TM && (
             <div className="list-grid">
               {filteredTm.length === 0 ? (
                 <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: '#9ca3af' }}>
                   No T&M tickets.
                 </div>
               ) : (
-                visibleTm.map((t) => (
-                  <div key={`tm-${t.id}`} className="site-row" style={{ padding: '10px', borderRadius: '6px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div style={{ flex: 1 }}>
-                        <div className="small-text" style={{ fontWeight: 700, fontSize: '0.85rem' }}>
-                          {t.ticket_number}  <span style={{ color: '#8b5cf6', fontWeight: 500 }}>T&M</span>
-                          {t.status === 'approved' ? <span style={{ color: '#22c55e', marginLeft: '6px' }}>✓</span> : null}
-                        </div>
-                        <div className="small-text" style={{ marginTop: '2px' }}>
-                          {t.spray_date} • {t.created_by_name || 'Unknown'}
-                        </div>
-                        <div className="small-text" style={{ color: '#9ca3af', marginTop: '2px' }}>
-                          {t.client} / {t.area} • {(t.rows?.length || 0)} row(s)
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', gap: '6px', flexShrink: 0, marginLeft: '8px' }}>
-                        <button
-                          className="secondary-button"
-                          type="button"
-                          onClick={() => onOpenTMTicket?.(t.id)}
-                          style={{ padding: '4px 10px', fontSize: '0.75rem' }}
-                        >
-                          Open
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))
+                visibleTm.map((t) => renderTmRow(t, onOpenTMTicket))
               )}
               {filteredTm.length > tmCount && (
                 <button

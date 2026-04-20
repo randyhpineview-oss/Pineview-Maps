@@ -16,22 +16,28 @@ import { onAuthStateChange, signOut } from './lib/supabaseClient';
 import {
   getAllLookups,
   getLastSyncAt,
+  getPipelines,
   getQueuedActions,
   getRecents,
   getSites,
   getUploadQueue,
   getUsers,
+  getWatermarks,
   queueAction,
   queueUpload,
+  removePipeline,
   removeQueuedAction,
   removeRecentById,
   removeUploadEntry,
   removeSite,
   replaceLookups,
+  replacePipelines,
   replaceRecents,
   replaceSites,
   replaceUsers,
   setLastSyncAt,
+  setWatermarks,
+  upsertPipeline,
   upsertRecent,
   upsertSite,
 } from './lib/offlineStore';
@@ -97,6 +103,10 @@ export default function App() {
   const [isOnline, setIsOnline] = useState(window.navigator.onLine);
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
+  // Tracks the manual Refresh button's busy state. Kept separate from
+  // isSyncing (which represents the auto-reconnect sync) so the two
+  // indicators don't fight over a single variable.
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
   const [submittingPin, setSubmittingPin] = useState(false);
   const [adminBusy, setAdminBusy] = useState(false);
@@ -300,11 +310,20 @@ export default function App() {
     }
   }, [userRole]);
 
+  // Pipelines: cached from IndexedDB instantly, then refreshed from server
+  // when online. Mirror of loadCachedSites/loadServerSites so the boot path
+  // can hydrate-from-cache and skip the network fetch on subsequent reloads.
+  const loadCachedPipelines = useCallback(async () => {
+    const cached = await getPipelines();
+    if (cached.length > 0) setPipelines(cached);
+  }, []);
+
   const loadPipelines = useCallback(async () => {
     if (!window.navigator.onLine) return;
     try {
       const data = await api.listPipelines();
       setPipelines(data);
+      await replacePipelines(data);
     } catch {
       console.error('[PIPELINES] Failed to load pipelines');
     }
@@ -416,17 +435,18 @@ export default function App() {
   const refreshAllData = useCallback(async () => {
     setIsLoading(true);
     setMessage('Loading...');
-    
+
     try {
       // Load ALL cached data from IndexedDB in parallel for instant display
       await Promise.all([
         loadCachedSites(),
+        loadCachedPipelines(),
         loadCachedRecents(),
         loadCachedLookups(),
         loadCachedUsers(),
       ]);
       setIsLoading(false); // Show app immediately with cached data
-      
+
       // Then sync with server in background if online (non-blocking)
       if (window.navigator.onLine) {
         try {
@@ -441,16 +461,23 @@ export default function App() {
           ]);
 
           // Seed delta-sync watermarks from sync-status RIGHT AFTER the full
-          // load. This way the 30s poll loop can immediately use the cheap
+          // load. The 2-min poll loop immediately uses the cheap
           // /api/*/delta endpoints — and the very first poll tick won't
           // re-download the same data we just fetched unless something has
-          // actually changed in the last 30s.
+          // actually changed. We ALSO persist the watermarks to IndexedDB
+          // so the next browser reload can skip the full fetches entirely
+          // and go straight to delta polling (hydrate-from-cache).
           try {
             const initial = await api.getSyncStatus();
             lastSyncStatusRef.current = initial;
             sitesSinceRef.current = initial.sites_last_updated || null;
             pipelinesSinceRef.current = initial.pipelines_last_updated || null;
             recentsSinceRef.current = initial.spray_records_last_updated || null;
+            await setWatermarks({
+              sites: sitesSinceRef.current,
+              pipelines: pipelinesSinceRef.current,
+              recents: recentsSinceRef.current,
+            });
           } catch {
             // If sync-status fails, leave watermarks null — the poll loop
             // will fall back to full fetches, which is safe.
@@ -468,8 +495,109 @@ export default function App() {
       setIsLoading(false);
       setMessage('Ready');
     }
-  }, [loadCachedSites, loadCachedRecents, loadCachedLookups, loadCachedUsers,
-      loadServerSites, loadServerRecents, loadServerLookups, loadServerUsers]);
+  }, [loadCachedSites, loadCachedPipelines, loadCachedRecents, loadCachedLookups, loadCachedUsers,
+      loadServerSites, loadServerRecents, loadServerLookups, loadServerUsers,
+      loadPipelines, loadPendingPipelines, loadDeletedPipelines]);
+
+  // ── Boot hydration: hydrate-from-cache fast path ──────────────────────────
+  // On first mount we used to unconditionally call refreshAllData(), which
+  // redownloads the entire sites / pipelines / recents lists on every browser
+  // refresh. That's the single biggest egress cost at scale (20 workers ×
+  // ~10 reloads/day).
+  //
+  // This wrapper instead:
+  //   1. Loads cached data + stored watermarks from IndexedDB.
+  //   2. If all three caches are non-empty AND the stored watermark is fresh
+  //      (< 24 h), seeds state + refs from the cache and SKIPS the initial
+  //      full fetch. The 2-min poll tick picks up any true deltas.
+  //   3. Otherwise falls through to the original full refreshAllData() path.
+  //
+  // Lookups / users / pending counts / deleted pipelines are still fetched
+  // fresh — they're tiny and outside the delta pipeline.
+  const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 h
+  const bootHydrate = useCallback(async () => {
+    try {
+      const [cachedSites, cachedPipelines, cachedRecentsList, watermarks] = await Promise.all([
+        getSites(),
+        getPipelines(),
+        getRecents(),
+        getWatermarks(),
+      ]);
+
+      const now = Date.now();
+      const storedAt = watermarks?.stored_at ? new Date(watermarks.stored_at).getTime() : 0;
+      const cacheFresh = storedAt > 0 && (now - storedAt) < CACHE_MAX_AGE_MS;
+      const haveAllCaches =
+        cachedSites.length > 0 &&
+        cachedPipelines.length > 0 &&
+        cachedRecentsList.length > 0;
+      const haveAllWatermarks =
+        !!(watermarks?.sites && watermarks?.pipelines && watermarks?.recents);
+
+      if (cacheFresh && haveAllCaches && haveAllWatermarks && window.navigator.onLine) {
+        // ── Fast path: hydrate from cache, skip the full fetch ──
+        setIsLoading(true);
+        setMessage('Loading…');
+        await Promise.all([
+          loadCachedSites(),
+          loadCachedPipelines(),
+          loadCachedRecents(),
+          loadCachedLookups(),
+          loadCachedUsers(),
+        ]);
+        // Seed the poll loop's refs from the persisted watermarks so the
+        // very next poll tick uses /api/*/delta instead of re-downloading.
+        sitesSinceRef.current = watermarks.sites;
+        pipelinesSinceRef.current = watermarks.pipelines;
+        recentsSinceRef.current = watermarks.recents;
+        lastSyncStatusRef.current = {
+          sites_last_updated: watermarks.sites,
+          pipelines_last_updated: watermarks.pipelines,
+          spray_records_last_updated: watermarks.recents,
+        };
+
+        setIsLoading(false);
+        setMessage('Loaded from cache');
+
+        // Still refresh the non-delta-tracked bits in the background so
+        // the admin pending counts + lookups don't go stale silently.
+        void (async () => {
+          try {
+            await Promise.all([
+              loadServerLookups(),
+              loadServerUsers(),
+              loadPendingSites(),
+              loadPendingPipelines(),
+              loadDeletedPipelines(),
+            ]);
+          } catch { /* non-fatal */ }
+        })();
+
+        return true; // tell caller we used the fast path
+      }
+    } catch {
+      // Any cache read error → fall through to refreshAllData.
+    }
+    // Slow path: cold cache, stale cache, or offline → original behaviour.
+    await refreshAllData();
+    return false;
+  }, [refreshAllData, loadCachedSites, loadCachedPipelines, loadCachedRecents,
+      loadCachedLookups, loadCachedUsers, loadServerLookups, loadServerUsers,
+      loadPendingSites, loadPendingPipelines, loadDeletedPipelines]);
+
+  // Manual Refresh button handler. Always does the full path + queue resync
+  // so "↻ Refresh" next to the Online indicator feels like a hard reset.
+  const handleManualRefresh = useCallback(async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await refreshAllData();
+      await refreshQueueCount();
+      await refreshUploadQueue();
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [isRefreshing, refreshAllData, refreshQueueCount, refreshUploadQueue]);
 
   useEffect(() => {
     let mounted = true;
@@ -528,7 +656,9 @@ export default function App() {
       // Process any pending uploads from previous session
       if (window.navigator.onLine) processUploadQueue();
     });
-    void refreshAllData();
+    // Use the smart boot path: hydrate from cache when possible, otherwise
+    // fall back to a full server fetch. See bootHydrate above.
+    void bootHydrate();
 
     // ── Debug helpers for upload queue ──
     window.debugQueue = async () => {
@@ -544,7 +674,7 @@ export default function App() {
       console.log('[UPLOAD_QUEUE] Cleared all items:', items);
       await refreshUploadQueue();
     };
-  }, [refreshAllData, refreshQueueCount, refreshUploadQueue, processUploadQueue]);
+  }, [bootHydrate, refreshQueueCount, refreshUploadQueue, processUploadQueue]);
 
   useEffect(() => {
     if (!isOnline) {
@@ -570,7 +700,9 @@ export default function App() {
 
   // ── Auto-poll for real-time updates ──
   // Strategy:
-  //   1. Every 30 s, call /api/sync-status (tiny — just a few timestamps).
+  //   1. Every 2 min, call /api/sync-status (tiny — just a few timestamps).
+  //      A manual "Refresh" button in the top bar lets users force an
+  //      immediate full sync whenever they expect a fresh change.
   //   2. When a resource's max-timestamp bumps, fetch ONLY what changed via
   //      /api/<resource>/delta?since=<watermark>, not the full list.
   //   3. Merge `items` into state + IndexedDB, drop `ids_removed`. A typical
@@ -580,7 +712,7 @@ export default function App() {
   useEffect(() => {
     if (!isOnline) return;
 
-    const POLL_MS = 30000;
+    const POLL_MS = 120000;
 
     // ── Delta merge helpers ────────────────────────────────────────────────
     // Each is defined inline so it closes over the latest setState setters
@@ -650,6 +782,7 @@ export default function App() {
         try {
           const full = await api.listPipelines();
           setPipelines(full);
+          await replacePipelines(full);
           pipelinesSinceRef.current = syncStatus.pipelines_last_updated || new Date().toISOString();
         } catch { /* silently fail */ }
         return;
@@ -667,6 +800,9 @@ export default function App() {
             for (const id of idsRemoved) byId.delete(id);
             return Array.from(byId.values());
           });
+          // Persist to IndexedDB so next reload can hydrate-from-cache.
+          for (const item of items) await upsertPipeline(item);
+          for (const id of idsRemoved) await removePipeline(id);
         }
 
         pipelinesSinceRef.current = delta.server_time || pipelinesSinceRef.current;
@@ -674,6 +810,7 @@ export default function App() {
         try {
           const full = await api.listPipelines();
           setPipelines(full);
+          await replacePipelines(full);
           pipelinesSinceRef.current = syncStatus.pipelines_last_updated || new Date().toISOString();
         } catch { /* silently fail */ }
       }
@@ -738,6 +875,21 @@ export default function App() {
         if (sitesChanged) await syncSitesIncrementally(syncStatus);
         if (pipelinesChanged) await syncPipelinesIncrementally(syncStatus);
         if (recentsChanged) await syncRecentsIncrementally(syncStatus);
+
+        // Persist the latest watermarks to IndexedDB so the NEXT browser
+        // reload can take the hydrate-from-cache fast path and skip the
+        // initial full fetch. Cheap (single keyed put). Only write if
+        // something actually changed this tick — avoids thrashing the
+        // `stored_at` timestamp and thus the 24 h staleness gate.
+        if (sitesChanged || pipelinesChanged || recentsChanged) {
+          try {
+            await setWatermarks({
+              sites: sitesSinceRef.current,
+              pipelines: pipelinesSinceRef.current,
+              recents: recentsSinceRef.current,
+            });
+          } catch { /* non-fatal */ }
+        }
 
         if (syncStatus.pending_sites_count !== undefined) setPendingSitesCount(syncStatus.pending_sites_count);
         if (syncStatus.pending_pipelines_count !== undefined) setPendingPipelinesCount(syncStatus.pending_pipelines_count);
@@ -1837,6 +1989,24 @@ export default function App() {
         <span className="topbar-title">Pineview Maps</span>
         <div className="topbar-right">
           <span className={`badge ${isOnline ? 'online' : 'offline'}`}>{isOnline ? 'Online' : 'Offline'}</span>
+          {/* Manual refresh: full resync on demand. The auto-poll now runs at
+              2 min intervals to save egress, so this button is how users force
+              an immediate refresh when they expect a just-submitted change. */}
+          <button
+            className="badge"
+            style={{
+              background: isRefreshing ? '#374151' : '#1f2937',
+              color: isRefreshing ? '#9ca3af' : '#60a5fa',
+              cursor: (isRefreshing || !isOnline) ? 'not-allowed' : 'pointer',
+              border: '1px solid #374151',
+              padding: '2px 10px',
+            }}
+            onClick={handleManualRefresh}
+            disabled={isRefreshing || !isOnline}
+            title={!isOnline ? 'Connect to the internet to refresh' : 'Refresh all data from server'}
+          >
+            {isRefreshing ? '↻ Refreshing…' : '↻ Refresh'}
+          </button>
           {(uploadQueueItems.length > 0 || isUploading) ? (
             <span
               className="badge"

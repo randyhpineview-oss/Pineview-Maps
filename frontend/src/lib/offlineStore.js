@@ -1,7 +1,9 @@
 import { openDB } from 'idb';
 
 const DB_NAME = 'pineview-offline-db';
-const DB_VERSION = 5;
+// v6: added `pipelines` store to support hydrate-from-cache on boot, so the
+// 30+ KB pipeline list no longer re-downloads on every page refresh.
+const DB_VERSION = 6;
 
 function ensureCacheId(site) {
   return {
@@ -35,6 +37,9 @@ const dbPromise = openDB(DB_NAME, DB_VERSION, {
     }
     if (!db.objectStoreNames.contains('leaseSheetDrafts')) {
       db.createObjectStore('leaseSheetDrafts', { keyPath: 'id' });
+    }
+    if (!db.objectStoreNames.contains('pipelines')) {
+      db.createObjectStore('pipelines', { keyPath: 'id' });
     }
   },
 });
@@ -248,4 +253,68 @@ export async function getLeaseSheetDraft(id) {
 export async function deleteLeaseSheetDraft(id) {
   const db = await dbPromise;
   await db.delete('leaseSheetDrafts', id);
+}
+
+// ── Pipelines cache ──
+// Mirrors the sites cache: full replace on initial load, upsert/remove on
+// delta-sync ticks. Enables hydrate-from-cache on boot so pipelines don't
+// re-download on every tab reload.
+
+export async function replacePipelines(pipelines) {
+  const db = await dbPromise;
+  const tx = db.transaction('pipelines', 'readwrite');
+  await tx.store.clear();
+  for (const p of pipelines) {
+    await tx.store.put(p);
+  }
+  await tx.done;
+}
+
+export async function getPipelines() {
+  const db = await dbPromise;
+  return db.getAll('pipelines');
+}
+
+export async function upsertPipeline(pipeline) {
+  const db = await dbPromise;
+  await db.put('pipelines', pipeline);
+}
+
+export async function removePipeline(pipelineOrId) {
+  const id = typeof pipelineOrId === 'object' ? pipelineOrId?.id : pipelineOrId;
+  if (id == null) return;
+  const db = await dbPromise;
+  await db.delete('pipelines', id);
+}
+
+// ── Delta-sync watermarks ──
+// Persist the last-seen `updated_at` timestamps so the next boot can skip the
+// full-list fetches entirely and jump straight into delta polls. Stored under
+// a single key in the existing `meta` store so upgrades don't need another
+// store. Include `stored_at` so the boot path can enforce a max-age (24 h)
+// and fall back to a full refresh if the cache is suspiciously stale.
+
+const WATERMARK_KEY = 'deltaWatermarks';
+
+export async function setWatermarks(partial) {
+  const db = await dbPromise;
+  const existing = (await db.get('meta', WATERMARK_KEY))?.value || {};
+  const merged = {
+    ...existing,
+    ...partial,
+    stored_at: new Date().toISOString(),
+  };
+  await db.put('meta', { key: WATERMARK_KEY, value: merged });
+  return merged;
+}
+
+export async function getWatermarks() {
+  const db = await dbPromise;
+  const entry = await db.get('meta', WATERMARK_KEY);
+  return entry?.value || null;
+}
+
+export async function clearWatermarks() {
+  const db = await dbPromise;
+  await db.delete('meta', WATERMARK_KEY);
 }

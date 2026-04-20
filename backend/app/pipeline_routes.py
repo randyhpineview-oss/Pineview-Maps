@@ -30,10 +30,15 @@ router = APIRouter(prefix="/api", tags=["pipelines"])
 
 
 def generate_ticket_number(db) -> str:
-    """Generate a unique ticket number using the database sequence."""
-    result = db.execute(text("SELECT nextval('ticket_seq')"))
+    """Generate a unique HL-prefixed ticket number for a pipeline herbicide lease sheet.
+
+    Pipeline and wellsite lease sheets share the `herb_lease_seq` sequence (both
+    are herbicide lease sheets), which is distinct from the T&M `tm_ticket_seq`.
+    See split_ticket_sequences_migration.sql.
+    """
+    result = db.execute(text("SELECT nextval('herb_lease_seq')"))
     seq_value = result.scalar()
-    return f"T{seq_value:06d}"
+    return f"HL{seq_value:06d}"
 
 
 def _get_pipeline_or_404(db: Session, pipeline_id: int) -> Pipeline:

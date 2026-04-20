@@ -280,10 +280,14 @@ def next_ticket(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Get the next ticket number from the sequence."""
-    result = db.execute(text("SELECT nextval('ticket_seq')"))
+    """Get the next herbicide-lease-sheet ticket number from herb_lease_seq.
+
+    Used by the lease-sheet form to show an "HL######" preview before submit.
+    T&M tickets have their own endpoint/allocator on tm_ticket_seq (TM prefix).
+    """
+    result = db.execute(text("SELECT nextval('herb_lease_seq')"))
     seq_value = result.scalar()
-    return {"ticket_number": f"T{seq_value:06d}"}
+    return {"ticket_number": f"HL{seq_value:06d}"}
 
 
 @app.get("/api/sync-status")
@@ -622,14 +626,15 @@ def create_site_spray_record(
 
     user_name = getattr(current_user, 'name', None) or (current_user.email.split('@')[0].title() if current_user.email else None)
 
-    # Only assign a ticket number for actual spray records (not issue/avoided)
+    # Only assign a ticket number for actual spray records (not issue/avoided).
+    # Site spray records are herbicide lease sheets → HL prefix from herb_lease_seq.
     ticket_number = None
     if not payload.is_avoided:
         ticket_number = payload.ticket_number
         if not ticket_number:
-            result = db.execute(text("SELECT nextval('ticket_seq')"))
+            result = db.execute(text("SELECT nextval('herb_lease_seq')"))
             seq_value = result.scalar()
-            ticket_number = f"T{seq_value:06d}"
+            ticket_number = f"HL{seq_value:06d}"
 
     # Handle Dropbox uploads
     pdf_url = None
