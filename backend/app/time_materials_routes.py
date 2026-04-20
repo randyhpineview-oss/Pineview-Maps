@@ -374,9 +374,10 @@ def _herbicides_text(herb_list: list) -> str:
     n = len(herb_list or [])
     if n == 0:
         return ""
-    if n == 1:
-        return herb_list[0]
-    return f"{n} Herbicides"
+    # Always show a count, even for a single herbicide, so the Sites Treated
+    # column reads consistently and lines up 1:1 with the "N Herbicide (m³)"
+    # rows in the Office Use ONLY section below.
+    return f"{n} Herbicide" if n == 1 else f"{n} Herbicides"
 
 
 def _site_type_from_site(site) -> str:
