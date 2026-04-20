@@ -423,6 +423,29 @@ def update_ticket(
             payload.approve,
         ]):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Office-only fields")
+
+        # Workers can only edit while the ticket is in the "open" drafting
+        # stage. Once they've submitted it (or office approved it), the
+        # ticket is locked on the worker side \u2014 office handles any edits
+        # via the unapprove / re-edit flow. The frontend already hides the
+        # Save button for workers on non-open tickets; this is the server-
+        # side enforcement so a direct API call can't bypass it.
+        if ticket.status != TMTicketStatus.open:
+            # Allow zero-mutation PATCH bodies (e.g. the frontend sending an
+            # empty save is harmless) but reject any actual field edit.
+            trying_to_edit = any([
+                payload.description_of_work is not None,
+                payload.office_data is not None,
+                payload.status is not None,
+                payload.pdf_base64,
+                payload.row_updates,
+            ])
+            if trying_to_edit:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="This ticket has already been submitted \u2014 ask office to unapprove it if edits are needed",
+                )
+
         if payload.office_data is not None:
             ticket.office_data = _merge_worker_office_data(ticket.office_data, payload.office_data)
         if payload.status is not None:
@@ -439,12 +462,18 @@ def update_ticket(
             ticket.status = TMTicketStatus.submitted
         # Workers cannot update rows (cost_code etc. is office-only); silently ignore.
 
-    # PDF upload to Dropbox happens ONLY on final approval. Worker submits and
-    # office save-in-progress don't touch Dropbox \u2014 avoids churning through
-    # dozens of intermediate PDFs per ticket and keeps the Dropbox folder as
-    # the "finalized" record. The frontend should only send pdf_base64 on the
-    # approve action; any stray base64 on other saves is silently ignored.
-    if payload.pdf_base64 and (payload.approve or ticket.status == TMTicketStatus.approved):
+    # Upload the PDF to Dropbox on any state where the ticket is NOT still
+    # open (i.e., has been submitted or approved). This means:
+    #   \u2022 Worker submit -> uploads the worker-view PDF so they can open
+    #     the Dropbox link from their Recently Submitted list and see their
+    #     ticket number + qtys reflected in a stored PDF.
+    #   \u2022 Office approve -> overwrites with the finalized priced PDF +
+    #     signature.
+    #   \u2022 Office interim edits on a submitted/approved ticket also refresh
+    #     the Dropbox PDF so it mirrors the latest state.
+    # We intentionally skip upload while status is still `open` so draft
+    # edits (worker typing qtys, office interim save) don't churn Dropbox.
+    if payload.pdf_base64 and ticket.status != TMTicketStatus.open:
         new_url = _upload_tm_pdf(ticket, payload.pdf_base64)
         if new_url:
             ticket.pdf_url = new_url

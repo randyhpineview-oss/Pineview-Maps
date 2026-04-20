@@ -244,9 +244,10 @@ export default function TMTicketDetailSheet({
 
   // Worker-only: submit an open ticket for office approval. Locks the ticket
   // on the worker's side (backend rejects further worker edits once
-  // status=submitted). No PDF is uploaded to Dropbox yet \u2014 that happens on
-  // the office's final Approve action. The ticket number is already assigned
-  // from create time, so the worker keeps their HL/TM reference.
+  // status=submitted). Uploads the worker-view PDF (no pricing) to Dropbox
+  // so the worker's submitted list shows a real stored PDF alongside their
+  // ticket number. When office later approves, Dropbox is overwritten with
+  // the finalized priced + signed version.
   const handleSubmit = async () => {
     if (hasMissingQty) {
       alert(
@@ -261,13 +262,16 @@ export default function TMTicketDetailSheet({
     )) return;
     setIsSaving(true);
     try {
+      // Regenerate the worker-view PDF (QTY only, no rates/totals) for
+      // the Dropbox upload. regenerateCurrentPdf honours canOfficeEdit so
+      // the worker role naturally gets the stripped view.
+      const pdfBase64 = await regenerateCurrentPdf();
       const payload = {
         description_of_work: description,
         office_data: buildOfficeDataPayload(),
         status: 'submitted',
       };
-      // Intentionally skip pdf_base64 \u2014 the backend doesn't upload to
-      // Dropbox on worker submit; that's reserved for office approval.
+      if (pdfBase64) payload.pdf_base64 = pdfBase64;
       const updated = await api.updateTMTicket(ticket.id, payload);
       setTicket(updated);
       setRowsEdits({});
