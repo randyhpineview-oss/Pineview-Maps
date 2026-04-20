@@ -4,7 +4,7 @@ from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Uploa
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from sqlalchemy import inspect, or_, text
+from sqlalchemy import and_, inspect, or_, text
 from sqlalchemy.orm import Session, defer, joinedload
 
 from app.auth import get_current_user, require_roles, seed_demo_users
@@ -841,6 +841,20 @@ def list_recent_submissions(
         .filter(SiteSprayRecord.lease_sheet_data.isnot(None))
     )
 
+    # Workers only see their OWN lease-sheet submissions. Office/admin see all.
+    # Match on sprayed_by_user_id first; fall back to a name match for legacy
+    # rows that predate the `users` table seed (sprayed_by_user_id IS NULL).
+    if current_user.role == RoleEnum.worker:
+        q = q.filter(
+            or_(
+                SiteSprayRecord.sprayed_by_user_id == current_user.id,
+                and_(
+                    SiteSprayRecord.sprayed_by_user_id.is_(None),
+                    SiteSprayRecord.sprayed_by_name == current_user.name,
+                ),
+            )
+        )
+
     if search:
         search_term = f"%{search}%"
         q = q.filter(
@@ -897,9 +911,23 @@ def recent_submissions_delta(
             SiteSprayRecord.lease_sheet_data.isnot(None),
             SiteSprayRecord.created_at > since,
         )
-        .order_by(SiteSprayRecord.created_at.desc())
-        .limit(limit)
     )
+
+    # Match the privacy rule in /api/recent-submissions: workers see only
+    # their own submissions in the delta feed too, otherwise the 2-min poll
+    # would leak other workers' rows into the Recently Submitted list.
+    if current_user.role == RoleEnum.worker:
+        q = q.filter(
+            or_(
+                SiteSprayRecord.sprayed_by_user_id == current_user.id,
+                and_(
+                    SiteSprayRecord.sprayed_by_user_id.is_(None),
+                    SiteSprayRecord.sprayed_by_name == current_user.name,
+                ),
+            )
+        )
+
+    q = q.order_by(SiteSprayRecord.created_at.desc()).limit(limit)
 
     items = []
     for record, site_lsd, site_client, site_area in q.all():

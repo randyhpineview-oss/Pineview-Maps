@@ -159,6 +159,43 @@ export default function TMTicketDetailSheet({
     gst_percent: gstPercent,
   });
 
+  // ── Submission readiness ──
+  // Only the 7 worker-editable field labels (truck, lead/assistant applicator,
+  // UTV, backpack, H2S monitors, travel km) are REQUIRED before a ticket can
+  // be submitted or approved. 0 is an acceptable value ("didn't use this item
+  // today") — what we reject is empty/null/non-numeric. Auto-populated lines
+  // are derived from the spray rows (always filled). Custom office-added
+  // lines are optional pricing rows and not required. Matches the backend
+  // _validate_ticket_ready_for_submission in time_materials_routes.py.
+  const isQtyRequired = (line) => WORKER_EDITABLE_LINE_LABELS.includes(line.label);
+  const isQtyFilled = (line) => {
+    if (!isQtyRequired(line)) return true;
+    if (line.qty === '' || line.qty === null || line.qty === undefined) return false;
+    const n = Number(line.qty);
+    return Number.isFinite(n);
+  };
+  const missingQtyLabels = useMemo(() => {
+    return officeLines
+      .filter((l) => isQtyRequired(l) && !isQtyFilled(l))
+      .map((l) => l.label || '(unlabeled)');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [officeLines]);
+  const hasMissingQty = missingQtyLabels.length > 0;
+
+  // Only tickets in "open" status can be submitted by the owning worker.
+  // Office/admin go through the Approve flow instead.
+  const canWorkerSubmit =
+    !canOfficeEdit && ticket?.status === 'open';
+  // Workers on submitted/approved tickets see everything read-only.
+  const isWorkerReadOnly =
+    !canOfficeEdit && ticket?.status !== 'open';
+
+  // Whether THIS user should see the red asterisks on the 7 worker fields.
+  // Workers always see them on their own open tickets. Office/admin also see
+  // them whenever any of the 7 is empty, so they can fill in missing values
+  // themselves if they happen to be the one completing the ticket in the field.
+  const showMissingQtyHint = hasMissingQty && (canWorkerSubmit || canOfficeEdit);
+
   // Regenerate a PDF using the CURRENT edits (for preview + upload)
   const regenerateCurrentPdf = async (options = {}) => {
     if (!ticket) return null;
@@ -205,7 +242,60 @@ export default function TMTicketDetailSheet({
     }
   };
 
+  // Worker-only: submit an open ticket for office approval. Locks the ticket
+  // on the worker's side (backend rejects further worker edits once
+  // status=submitted). No PDF is uploaded to Dropbox yet \u2014 that happens on
+  // the office's final Approve action. The ticket number is already assigned
+  // from create time, so the worker keeps their HL/TM reference.
+  const handleSubmit = async () => {
+    if (hasMissingQty) {
+      alert(
+        'Fill in a quantity (use 0 if unused) for:\n\n\u2022 ' +
+          missingQtyLabels.join('\n\u2022 ')
+      );
+      return;
+    }
+    if (!confirm(
+      'Submit this ticket for office approval?\n\n'
+      + 'You will no longer be able to edit it. Office will add pricing and finalize.'
+    )) return;
+    setIsSaving(true);
+    try {
+      const payload = {
+        description_of_work: description,
+        office_data: buildOfficeDataPayload(),
+        status: 'submitted',
+      };
+      // Intentionally skip pdf_base64 \u2014 the backend doesn't upload to
+      // Dropbox on worker submit; that's reserved for office approval.
+      const updated = await api.updateTMTicket(ticket.id, payload);
+      setTicket(updated);
+      setRowsEdits({});
+      alert('Ticket submitted for approval.');
+    } catch (e) {
+      alert('Submit failed: ' + (e.message || 'Unknown error'));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Shared pre-approval check: same 7-field rule as worker submit. Office/
+  // admin approving a ticket where the worker left qty blank gets the same
+  // friendly list of what's missing rather than a silent 400 from the API.
+  const guardMissingQtyForApproval = () => {
+    if (!hasMissingQty) return true;
+    alert(
+      'Cannot approve — the following worker-filled quantities are still empty '
+      + '(use 0 if unused):\n\n• ' + missingQtyLabels.join('\n• ')
+    );
+    return false;
+  };
+
   const handleApproveWithSignature = async (signatureBase64) => {
+    if (!guardMissingQtyForApproval()) {
+      setIsSignatureOpen(false);
+      return;
+    }
     setIsSignatureOpen(false);
     setIsSaving(true);
     try {
@@ -266,6 +356,7 @@ export default function TMTicketDetailSheet({
   // Approve without drawing a signature — the PDF will have a blank signature
   // line so office can print and hand-sign after the fact.
   const handleApproveWithoutSignature = async () => {
+    if (!guardMissingQtyForApproval()) return;
     if (!confirm('Approve this ticket without a signature? The PDF will have a blank signature line.')) return;
     setIsSaving(true);
     try {
@@ -428,7 +519,16 @@ export default function TMTicketDetailSheet({
           gap: '4px', padding: '8px', background: '#1f2937', fontSize: '0.75rem', fontWeight: 600, color: '#9ca3af',
         }}>
           <span>Line</span>
-          <span>QTY</span>
+          <span>
+            QTY
+            {/* Red asterisk header hint when any of the 7 worker-required
+                fields (truck, lead/assistant applicator, UTV, backpack, H2S,
+                travel km) still has an empty qty. Visible to both worker
+                (Submit is gated) AND office/admin (Approve is gated too). */}
+            {showMissingQtyHint ? (
+              <span style={{ color: '#f87171', marginLeft: '4px' }} title="Fill in every required quantity (use 0 if unused) before Submit/Approve">*</span>
+            ) : null}
+          </span>
           {canOfficeEdit ? <span>Rate</span> : null}
           {canOfficeEdit ? <span>Sub Total</span> : null}
           {canOfficeEdit ? <span></span> : null}
@@ -474,12 +574,35 @@ export default function TMTicketDetailSheet({
 
               {/* QTY */}
               {qtyEditable ? (
-                <input
-                  type="number" inputMode="decimal" step="0.01"
-                  value={line.qty}
-                  onChange={(e) => updateLine(idx, 'qty', e.target.value)}
-                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
-                />
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type="number" inputMode="decimal" step="0.01"
+                    value={line.qty}
+                    onChange={(e) => updateLine(idx, 'qty', e.target.value)}
+                    style={{
+                      width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px',
+                      // Red outline on any empty REQUIRED worker field — visible
+                      // to both worker and office/admin. Custom office-added
+                      // lines are never required so they never go red.
+                      border: isQtyRequired(line) && !isQtyFilled(line)
+                        ? '1px solid #f87171'
+                        : '1px solid #374151',
+                      background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem',
+                    }}
+                  />
+                  {isQtyRequired(line) && !isQtyFilled(line) ? (
+                    <span
+                      aria-hidden="true"
+                      title="Required \u2014 enter 0 if unused"
+                      style={{
+                        position: 'absolute', top: '2px', right: '6px',
+                        color: '#f87171', fontWeight: 700, pointerEvents: 'none',
+                      }}
+                    >
+                      *
+                    </span>
+                  ) : null}
+                </div>
               ) : (
                 <span style={{ color: isAutoLine ? '#60a5fa' : '#9ca3af' }}>
                   {qty > 0 ? qty.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—'}
@@ -596,13 +719,39 @@ export default function TMTicketDetailSheet({
         >
           📄 Preview PDF
         </button>
-        <button
-          onClick={handleSave}
-          disabled={isSaving}
-          style={{ flex: 1, padding: '12px', background: isSaving ? '#374151' : '#22c55e', color: 'white', border: 'none', borderRadius: '8px', fontSize: '0.9rem', fontWeight: 600, cursor: isSaving ? 'not-allowed' : 'pointer', minWidth: '120px' }}
-        >
-          {isSaving ? 'Saving…' : '💾 Save'}
-        </button>
+        {/* Save: hide for workers once the ticket leaves "open" — submitted
+            and approved tickets are locked on the worker side. Office/admin
+            can always save edits regardless of status. */}
+        {(canOfficeEdit || canWorkerSubmit) ? (
+          <button
+            onClick={handleSave}
+            disabled={isSaving}
+            style={{ flex: 1, padding: '12px', background: isSaving ? '#374151' : '#22c55e', color: 'white', border: 'none', borderRadius: '8px', fontSize: '0.9rem', fontWeight: 600, cursor: isSaving ? 'not-allowed' : 'pointer', minWidth: '120px' }}
+          >
+            {isSaving ? 'Saving…' : '💾 Save'}
+          </button>
+        ) : null}
+        {/* Worker Submit for Approval: only on their own open tickets. Disabled
+            (but visible) until every required qty is filled, so the worker
+            knows what's blocking them. Click on disabled state still shows
+            the missing-field alert via handleSubmit's guard. */}
+        {canWorkerSubmit ? (
+          <button
+            onClick={handleSubmit}
+            disabled={isSaving || hasMissingQty}
+            title={hasMissingQty ? `Fill in: ${missingQtyLabels.join(', ')}` : 'Submit for office approval'}
+            style={{
+              flex: 1, padding: '12px',
+              background: (isSaving || hasMissingQty) ? '#374151' : '#0ea5e9',
+              color: 'white', border: 'none', borderRadius: '8px',
+              fontSize: '0.9rem', fontWeight: 600,
+              cursor: (isSaving || hasMissingQty) ? 'not-allowed' : 'pointer',
+              minWidth: '120px',
+            }}
+          >
+            {isSaving ? 'Submitting…' : '📤 Submit for Approval'}
+          </button>
+        ) : null}
         {canOfficeEdit && ticket.status !== 'approved' ? (
           <button
             onClick={handleApproveWithoutSignature}

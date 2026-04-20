@@ -23,6 +23,12 @@ const REC_ALL = 'all';
 const REC_LEASE = 'lease';
 const REC_TM = 'tm';
 
+// Office-only status filter inside the T&M tab of Recently Submitted.
+// Workers don't see these buttons (they just see everything that isn't open).
+const TM_STATUS_ALL = 'all';
+const TM_STATUS_SUBMITTED = 'submitted';
+const TM_STATUS_APPROVED = 'approved';
+
 // ── Row renderers ──
 // Lifted to module scope so they can be shared between the per-type tabs
 // (Lease / T&M) and the merged "All" tab, without inlining the same JSX
@@ -116,6 +122,10 @@ export default function FormsPanel({
   const [subTab, setSubTab] = useState(SUB_FORMS);
   const [ipTab, setIpTab] = useState(IP_UPLOADING);
   const [recTab, setRecTab] = useState(REC_ALL);
+  // Office-only filter inside the T&M tab: all vs submitted vs approved.
+  // Default "all" so the tab matches what office used to see before this
+  // split; they can narrow to "submitted" to triage pending approvals.
+  const [tmStatusFilter, setTmStatusFilter] = useState(TM_STATUS_ALL);
 
   const [openTickets, setOpenTickets] = useState([]);
   const [drafts, setDrafts] = useState([]);
@@ -149,6 +159,9 @@ export default function FormsPanel({
   useEffect(() => { setLeaseCount(PAGE_SIZE); setTmCount(PAGE_SIZE); setAllCount(PAGE_SIZE); }, [search]);
   useEffect(() => { setAllCount(PAGE_SIZE); }, [recTab]);
   useEffect(() => { setOpenCount(PAGE_SIZE); }, [ipTab]);
+  // Resetting tmCount when the office toggles its status filter keeps the
+  // "Load more" count honest against the filtered list.
+  useEffect(() => { setTmCount(PAGE_SIZE); setAllCount(PAGE_SIZE); }, [tmStatusFilter]);
 
   // Load open T&M tickets when In Progress → Open Tickets tab is shown
   useEffect(() => {
@@ -222,7 +235,22 @@ export default function FormsPanel({
   }, [cachedRecents, search]);
 
   const filteredTm = useMemo(() => {
-    const base = [...tmSubmitted].sort(byNewest);
+    // Recently Submitted should NEVER include status=open tickets — those
+    // haven't been handed off to office yet and still belong in the worker's
+    // "In Progress → Open Tickets" list.
+    let base = tmSubmitted.filter((t) => t.status !== 'open');
+
+    // Office/admin status filter: all | submitted | approved. Workers just
+    // see everything non-open (they don't get the filter buttons at all).
+    if (roleCanAdmin) {
+      if (tmStatusFilter === TM_STATUS_SUBMITTED) {
+        base = base.filter((t) => t.status === 'submitted');
+      } else if (tmStatusFilter === TM_STATUS_APPROVED) {
+        base = base.filter((t) => t.status === 'approved');
+      }
+    }
+
+    base = [...base].sort(byNewest);
     if (!search) return base;
     const q = search.toLowerCase();
     return base.filter((t) =>
@@ -231,7 +259,7 @@ export default function FormsPanel({
       (t.area || '').toLowerCase().includes(q) ||
       (t.created_by_name || '').toLowerCase().includes(q)
     );
-  }, [tmSubmitted, search]);
+  }, [tmSubmitted, search, tmStatusFilter, roleCanAdmin]);
 
   const sortedOpenTickets = useMemo(() => [...openTickets].sort(byNewest), [openTickets]);
 
@@ -579,6 +607,36 @@ export default function FormsPanel({
 
           {recTab === REC_TM && (
             <div className="list-grid">
+              {/* Office-only status filter: lets admins/office narrow the list
+                  to "awaiting approval" (submitted) or "already approved" so
+                  they can triage pricing + approvals at a glance. Workers
+                  don't see these buttons \u2014 the list is their own history. */}
+              {roleCanAdmin ? (
+                <div style={{ display: 'flex', gap: '6px', marginBottom: '2px' }}>
+                  <button
+                    type="button"
+                    style={innerBtn(tmStatusFilter === TM_STATUS_ALL)}
+                    onClick={() => setTmStatusFilter(TM_STATUS_ALL)}
+                  >
+                    All
+                  </button>
+                  <button
+                    type="button"
+                    style={innerBtn(tmStatusFilter === TM_STATUS_SUBMITTED)}
+                    onClick={() => setTmStatusFilter(TM_STATUS_SUBMITTED)}
+                  >
+                    Submitted
+                  </button>
+                  <button
+                    type="button"
+                    style={innerBtn(tmStatusFilter === TM_STATUS_APPROVED)}
+                    onClick={() => setTmStatusFilter(TM_STATUS_APPROVED)}
+                  >
+                    Approved
+                  </button>
+                </div>
+              ) : null}
+
               {filteredTm.length === 0 ? (
                 <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: '#9ca3af' }}>
                   No T&M tickets.

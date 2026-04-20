@@ -188,37 +188,65 @@ export async function generateTMTicketPdf(ticket, options = {}) {
   doc.text('Sites Treated', pageW / 2, y, { align: 'center' });
   y += 6;
 
-  // Columns: Location | (site type) | Herbicides | (L) Used | Area (ha / km) | Cost Code
+  // Columns: Location | Site Type | Herbicides | (L) Used | Area (ha / km) | Cost Code
   // Roadside rows show the area as km; everything else as ha. The unit is
   // inferred from row.site_type === 'Roadside' at render time.
   const colWidths = [110, 70, 85, 60, 60, 155];  // sums to ~540
   const rowH = 16;
   const totalTableW = colWidths.reduce((a, b) => a + b, 0);
-  const headers = ['Location', ' ', 'Herbicides', '(L) Used', 'Area', 'Cost Code'];
+  const headers = ['Location', 'Site Type', 'Herbicides', '(L) Used', 'Area', 'Cost Code'];
+  const marginB = 36;
 
-  // Header row
-  let cx = marginL;
-  doc.setFillColor(240, 240, 240);
-  doc.rect(marginL, y, totalTableW, rowH, 'F');
-  doc.setFontSize(8);
-  for (let i = 0; i < colWidths.length; i++) {
-    drawRect(cx, y, colWidths[i], rowH);
-    if (headers[i].trim()) {
-      doc.text(headers[i], cx + 4, y + 11);
+  // ── Draw the Sites Treated header strip at the current `y`. Used both
+  //    for the initial rendering and whenever we break to a new page. ──
+  const drawSitesHeader = (continuation = false) => {
+    if (continuation) {
+      // Continuation page title, so readers know this is the tail of the
+      // Sites Treated table and not a new section.
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.text('Sites Treated (continued)', pageW / 2, y, { align: 'center' });
+      y += 6;
     }
-    cx += colWidths[i];
-  }
-  y += rowH;
+    let hx = marginL;
+    doc.setFillColor(240, 240, 240);
+    doc.rect(marginL, y, totalTableW, rowH, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    for (let i = 0; i < colWidths.length; i++) {
+      drawRect(hx, y, colWidths[i], rowH);
+      if (headers[i].trim()) {
+        doc.text(headers[i], hx + 4, y + 11);
+      }
+      hx += colWidths[i];
+    }
+    y += rowH;
+    doc.setFont('helvetica', 'normal');
+  };
 
-  // Data rows — ensure at least 18 rows for manual addenda
+  // Header row (initial page)
+  drawSitesHeader(false);
+
+  // Data rows — ensure at least 18 rows for manual addenda on a single-page
+  // ticket, but let the table grow as long as needed when we have more real
+  // rows than that. When we run out of vertical room, break to a new page
+  // and re-draw the Sites Treated header so the continuation is readable.
   const rows = ticket.rows || [];
   const minRows = 18;
   const rowCount = Math.max(rows.length, minRows);
 
   doc.setFont('helvetica', 'normal');
   for (let r = 0; r < rowCount; r++) {
+    // If this row would collide with the bottom margin, start a new page
+    // and re-draw the Sites Treated header strip at the top.
+    if (y + rowH > pageH - marginB) {
+      doc.addPage();
+      y = 36;
+      drawSitesHeader(true);
+    }
+
     const row = rows[r] || {};
-    cx = marginL;
+    let cx = marginL;
     const isRoadside = row.site_type === 'Roadside';
     const areaValue = row.area_ha != null && row.area_ha !== '' ? Number(row.area_ha).toFixed(2) : '';
     const areaText = areaValue ? `${areaValue} ${isRoadside ? 'km' : 'ha'}` : '';
@@ -238,15 +266,7 @@ export async function generateTMTicketPdf(ticket, options = {}) {
       cx += colWidths[i];
     }
     y += rowH;
-    if (y > pageH - 260) break; // reserve space for Office Use ONLY
   }
-
-  // ── Office Use ONLY section ──
-  y += 10;
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.text('Office Use ONLY', marginL, y);
-  y += 6;
 
   // Always use office_data.lines if present (so worker-entered QTY shows up
   // in the PDF). Rate + Sub Total + Totals are gated separately by
@@ -266,8 +286,29 @@ export async function generateTMTicketPdf(ticket, options = {}) {
   const officeRowH = 14;
   const officeHeaders = [' ', 'QTY', 'Rate', 'Sub Total'];
 
+  // Estimate room needed for the full Office Use section (title + header
+  // row + all line rows + 3 summary rows + Approved/footer buffer). If we
+  // don't have it on the current page, break to a new page BEFORE drawing
+  // the section title so the block stays together rather than splitting
+  // mid-table.
+  const officeBlockHeight =
+    28                                        // title + header row
+    + (displayLines.length + 3) * officeRowH  // rows + Sub/GST/Total
+    + 90;                                     // footer + Approved signature area
+  if (y + officeBlockHeight > pageH - marginB) {
+    doc.addPage();
+    y = 36;
+  }
+
+  // ── Office Use ONLY section title ──
+  y += 10;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.text('Office Use ONLY', marginL, y);
+  y += 6;
+
   // Header row
-  cx = marginL;
+  let cx = marginL;
   doc.setFillColor(240, 240, 240);
   doc.rect(marginL, y, totalOfficeW, officeRowH, 'F');
   doc.setFont('helvetica', 'bold');
@@ -333,6 +374,13 @@ export async function generateTMTicketPdf(ticket, options = {}) {
     doc.setFont('helvetica', 'normal');
     doc.text(value, cx + 4, y + 10);
     y += officeRowH;
+  }
+
+  // Final guard: ensure the Approval / GST footer fits on the current page.
+  // ~60pt is enough for the GST#/WCB# line + signature block.
+  if (y + 60 > pageH - marginB) {
+    doc.addPage();
+    y = 36;
   }
 
   // ── Footer: GST/WCB + Approval ──

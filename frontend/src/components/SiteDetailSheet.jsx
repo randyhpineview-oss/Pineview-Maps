@@ -356,14 +356,23 @@ export default function SiteDetailSheet({
                         <div style={{ flex: 1 }}>
                           <div className="small-text" style={{ fontWeight: 600 }}>
                             {record.spray_date}{record.is_avoided ? ' — Issue/Not Sprayed' : ' — Sprayed'}
-                            {record.lease_sheet_data ? ' 📄' : ''}
+                            {/* Only show the 📄 icon to roles that can actually
+                                view the PDF — workers don't need a hint that a
+                                lease sheet exists since they can't open it. */}
+                            {canManagePin && record.lease_sheet_data ? ' 📄' : ''}
                           </div>
                           <div className="small-text">
                             By: {record.sprayed_by_name || 'Unknown'}
-                            {record.ticket_number ? ` — Ticket: ${record.ticket_number}` : ''}
+                            {/* Workers don't get to see the ticket number on
+                                other people's spray records either — it's
+                                internal billing metadata they don't need. */}
+                            {canManagePin && record.ticket_number ? ` — Ticket: ${record.ticket_number}` : ''}
                             {record.notes ? ` — ${record.notes}` : ''}
                           </div>
-                          {(record.pdf_url || record.lease_sheet_data) && (
+                          {/* Workers see spray-record rows (date + who) but
+                              NOT the "View PDF" / "Edit" buttons — they don't
+                              need access to the lease sheet itself. */}
+                          {canManagePin && (record.pdf_url || record.lease_sheet_data) && (
                             <div style={{ display: 'flex', gap: '6px', marginTop: '0.25rem' }}>
                               {record.pdf_url && (
                                 <button
@@ -375,7 +384,7 @@ export default function SiteDetailSheet({
                                   📄 View PDF
                                 </button>
                               )}
-                              {canManagePin && onEditRecord && record.lease_sheet_data && (
+                              {onEditRecord && record.lease_sheet_data && (
                                 <button
                                   className="secondary-button"
                                   type="button"

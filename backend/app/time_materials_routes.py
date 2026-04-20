@@ -47,6 +47,54 @@ WORKER_EDITABLE_LINE_LABELS = frozenset({
 })
 
 
+def _validate_ticket_ready_for_submission(ticket: TimeMaterialsTicket) -> None:
+    """Enforce that every worker-required Office Use row has a numeric qty
+    before a ticket may transition to `submitted` or `approved`.
+
+    Scope: only the 7 labels in WORKER_EDITABLE_LINE_LABELS (truck, applicators,
+    UTV, backpack, H2S monitors, travel km) are required. 0 is acceptable
+    ("didn't use this item"); empty/null/non-numeric is rejected. Auto-
+    populated lines are derived from the spray rows and don't need checking.
+    Custom office-added pricing lines are optional.
+
+    Kept as a server-side backstop \u2014 the frontend also validates (the Submit /
+    Approve buttons are gated on this) but a UI-only check is bypassable via
+    direct API access.
+    """
+    lines = (ticket.office_data or {}).get("lines") or []
+    missing = []
+    # Track which required labels actually APPEAR in the ticket's office_data.
+    # A ticket that never had office_data initialised at all will have none
+    # of the 7 labels present \u2014 also a submission blocker.
+    present_required = set()
+    for line in lines:
+        label = (line or {}).get("label") or ""
+        if label not in WORKER_EDITABLE_LINE_LABELS:
+            continue
+        present_required.add(label)
+        qty = (line or {}).get("qty")
+        if qty is None or qty == "":
+            missing.append(label)
+            continue
+        try:
+            float(qty)
+        except (TypeError, ValueError):
+            missing.append(label)
+    # Any required label missing from the payload altogether counts as empty.
+    for label in WORKER_EDITABLE_LINE_LABELS - present_required:
+        missing.append(label)
+    if missing:
+        # Deterministic ordering for a clean error message.
+        ordered = [l for l in WORKER_EDITABLE_LINE_LABELS if l in set(missing)]
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Cannot submit ticket \u2014 fill in a quantity (0 if unused) for: "
+                + ", ".join(ordered)
+            ),
+        )
+
+
 def _merge_worker_office_data(
     existing: dict | None,
     incoming: dict | None,
@@ -192,9 +240,25 @@ def list_open_tickets(
 ):
     """List open T&M tickets for the linking step in the lease sheet submit flow.
 
-    Workers see only their own tickets. Office/admin see all.
+    Always scoped to the CURRENT user's own open tickets \u2014 including for office
+    and admin. Rationale: when somebody is linking their lease-sheet activity
+    to a ticket, they should only pick from tickets they themselves created,
+    otherwise hours land on another person's ticket and billing gets muddled.
+    Office/admin who need to see everyone's tickets use the main list endpoint
+    at `/api/time-materials`, not this picker.
     """
-    q = _visible_query(db, current_user).filter(TimeMaterialsTicket.status == TMTicketStatus.open)
+    # NOT _visible_query \u2014 that allows office/admin to see all tickets. The
+    # linking picker must always be "mine only" regardless of role.
+    q = db.query(TimeMaterialsTicket).options(joinedload(TimeMaterialsTicket.rows)).filter(
+        TimeMaterialsTicket.status == TMTicketStatus.open,
+        or_(
+            TimeMaterialsTicket.created_by_user_id == current_user.id,
+            and_(
+                TimeMaterialsTicket.created_by_user_id.is_(None),
+                TimeMaterialsTicket.created_by_name == current_user.name,
+            ),
+        ),
+    )
     if client:
         q = q.filter(TimeMaterialsTicket.client == client)
     if area:
@@ -317,6 +381,16 @@ def update_ticket(
         if payload.approved_signature is not None:
             ticket.approved_signature = payload.approved_signature
         if payload.approve:
+            # Apply the same 7-field qty-present check as worker submit. If
+            # office tries to approve a ticket that's missing worker-filled
+            # quantities (e.g. the worker skipped Submit and office is
+            # approving a legacy `open` ticket directly), they get the same
+            # descriptive 400 listing the missing labels. The frontend also
+            # pre-checks so this only fires when someone bypasses the UI.
+            #
+            # office_data may have just been mutated above \u2014 validate the
+            # merged state, not the pre-merge version.
+            _validate_ticket_ready_for_submission(ticket)
             ticket.status = TMTicketStatus.approved
             ticket.approved_at = datetime.utcnow()
             # current_user.id is guaranteed-present (auth upserts the user row).
@@ -340,7 +414,9 @@ def update_ticket(
                         setattr(row, fld, ru[fld])
     else:
         # Worker path: reject approval + office-only write attempts outright,
-        # but accept office_data WITH QTY-only merge on allowlisted labels.
+        # but accept office_data WITH QTY-only merge on allowlisted labels,
+        # and allow the one-way open -> submitted status transition so the
+        # worker can hand the ticket off to office for pricing & approval.
         if any([
             payload.po_approval_number is not None,
             payload.approved_signature is not None,
@@ -349,10 +425,26 @@ def update_ticket(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Office-only fields")
         if payload.office_data is not None:
             ticket.office_data = _merge_worker_office_data(ticket.office_data, payload.office_data)
+        if payload.status is not None:
+            # Only one legal worker-initiated transition: open -> submitted.
+            # Anything else (re-opening, approving, etc.) belongs to office.
+            if payload.status != TMTicketStatus.submitted or ticket.status != TMTicketStatus.open:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Workers can only submit an open ticket for approval",
+                )
+            # Validate the merged office_data FIRST so the error message points
+            # at the qty fields the worker still needs to fill in.
+            _validate_ticket_ready_for_submission(ticket)
+            ticket.status = TMTicketStatus.submitted
         # Workers cannot update rows (cost_code etc. is office-only); silently ignore.
 
-    # Upload new PDF if provided (always overwrite existing Dropbox file)
-    if payload.pdf_base64:
+    # PDF upload to Dropbox happens ONLY on final approval. Worker submits and
+    # office save-in-progress don't touch Dropbox \u2014 avoids churning through
+    # dozens of intermediate PDFs per ticket and keeps the Dropbox folder as
+    # the "finalized" record. The frontend should only send pdf_base64 on the
+    # approve action; any stray base64 on other saves is silently ignored.
+    if payload.pdf_base64 and (payload.approve or ticket.status == TMTicketStatus.approved):
         new_url = _upload_tm_pdf(ticket, payload.pdf_base64)
         if new_url:
             ticket.pdf_url = new_url
