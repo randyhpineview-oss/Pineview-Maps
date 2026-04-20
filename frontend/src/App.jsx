@@ -1883,6 +1883,7 @@ export default function App() {
               ticketId={activeTMTicketId}
               roleCanAdmin={roleCanAdmin}
               roleCanOffice={roleCanAdmin}
+              currentUserEmail={user?.email}
               onClose={() => setActiveTMTicketId(null)}
             />
           </div>

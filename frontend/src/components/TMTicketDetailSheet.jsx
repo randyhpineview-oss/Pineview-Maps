@@ -1,19 +1,59 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api';
-import { DEFAULT_OFFICE_LINES, computeOfficeTotals, generateTMTicketPdf } from '../lib/tmTicketPdfGenerator';
+import {
+  DEFAULT_OFFICE_LINES,
+  AUTO_LINE_LABELS,
+  WORKER_EDITABLE_LINE_LABELS,
+  migrateOfficeLineLabel,
+  computeOfficeTotals,
+  generateTMTicketPdf,
+} from '../lib/tmTicketPdfGenerator';
 import SignaturePadModal from './SignaturePadModal';
 import PdfPreviewViewer from './PdfPreviewViewer';
 
+const DEFAULT_LABELS_SET = new Set(DEFAULT_OFFICE_LINES.map((l) => l.label));
+
+// Parse herbicide count from a row's herbicides text.
+// '' → 0, 'N Herbicides' → N, anything else (single product name) → 1.
+function herbicideCount(text) {
+  if (!text) return 0;
+  const m = String(text).match(/^(\d+)\s+Herbicides$/);
+  if (m) return parseInt(m[1], 10);
+  return 1;
+}
+
+// Derived QTY for the 4 auto-populated office lines.
+// - 1/2/3 Herbicide (m²): sum area_ha × 10_000 for non-Roadside rows with that herbicide count.
+// - Roadside/Access Rd Liters Applied: sum liters_used for Roadside rows.
+function derivedQtyFor(label, rows) {
+  const safe = rows || [];
+  const main = safe.filter((r) => r.site_type !== 'Roadside');
+  const sumAreaM2 = (count) =>
+    main.filter((r) => herbicideCount(r.herbicides) === count)
+      .reduce((s, r) => s + (Number(r.area_ha) || 0), 0) * 10000;
+  switch (label) {
+    case '1 Herbicide (m²)': return sumAreaM2(1);
+    case '2 Herbicides (m²)': return sumAreaM2(2);
+    case '3 Herbicides (m²)': return sumAreaM2(3);
+    case 'Roadside/Access Rd Liters Applied':
+      return safe.filter((r) => r.site_type === 'Roadside')
+        .reduce((s, r) => s + (Number(r.liters_used) || 0), 0);
+    default: return null;
+  }
+}
+
 /**
  * Detail view for a Time & Materials ticket.
- * - Workers: read-only, no office_data, no signature fields.
- * - Office/Admin: editable Office Use ONLY lines, auto-computed totals, signature pad for approval.
+ * - Workers: see Sites Treated (read-only), Office Use ONLY with QTY-only editability on a fixed
+ *   allowlist of lines; no rates or totals visible.
+ * - Office/Admin: full edit including labels, rates, add/remove custom lines, totals, signature.
  */
 export default function TMTicketDetailSheet({
   ticketId,
   onClose,
   roleCanAdmin = false,
   roleCanOffice = false,
+  currentUserEmail = null,
 }) {
   const canOfficeEdit = roleCanAdmin || roleCanOffice;
   const [ticket, setTicket] = useState(null);
@@ -42,9 +82,11 @@ export default function TMTicketDetailSheet({
         setTicket(t);
         setDescription(t.description_of_work || '');
         setPoNumber(t.po_approval_number || '');
+        // Seed office lines from saved data, or start from defaults.
+        // Migrate any legacy labels (e.g. renamed roadside line) on the fly.
         const seed = t.office_data?.lines || DEFAULT_OFFICE_LINES;
         setOfficeLines(seed.map((l) => ({
-          label: l.label || '',
+          label: migrateOfficeLineLabel(l.label || ''),
           qty: l.qty ?? '',
           rate: l.rate ?? '',
         })));
@@ -58,13 +100,40 @@ export default function TMTicketDetailSheet({
     return () => { cancelled = true; };
   }, [ticketId]);
 
-  const totals = useMemo(
-    () => computeOfficeTotals({ lines: officeLines, gst_percent: gstPercent }),
-    [officeLines, gstPercent]
-  );
+  // Rows including any pending edits — used both in the UI render and as the
+  // source of truth for derived auto-populated QTYs.
+  const effectiveRows = useMemo(() => {
+    return (ticket?.rows || []).map((r) => ({ ...r, ...(rowsEdits[r.id] || {}) }));
+  }, [ticket?.rows, rowsEdits]);
+
+  // Resolve the effective QTY for an office line, substituting the derived
+  // value for auto-populated labels (workers cannot override these).
+  const effectiveQtyOf = (line) => {
+    if (AUTO_LINE_LABELS.includes(line.label)) {
+      const d = derivedQtyFor(line.label, effectiveRows);
+      return Number(d) || 0;
+    }
+    const q = parseFloat(line.qty);
+    return Number.isFinite(q) ? q : 0;
+  };
+
+  // Totals always use effective (derived where applicable) QTY.
+  const totals = useMemo(() => {
+    const lines = officeLines.map((l) => ({ ...l, qty: effectiveQtyOf(l) }));
+    return computeOfficeTotals({ lines, gst_percent: gstPercent });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [officeLines, gstPercent, effectiveRows]);
 
   const updateLine = (idx, field, value) => {
     setOfficeLines((prev) => prev.map((l, i) => (i === idx ? { ...l, [field]: value } : l)));
+  };
+
+  const addOfficeLine = () => {
+    setOfficeLines((prev) => [...prev, { label: '', qty: '', rate: '' }]);
+  };
+
+  const removeOfficeLine = (idx) => {
+    setOfficeLines((prev) => prev.filter((_, i) => i !== idx));
   };
 
   const updateRowEdit = (rowId, field, value) => {
@@ -78,22 +147,31 @@ export default function TMTicketDetailSheet({
     return Object.entries(rowsEdits).map(([id, fields]) => ({ id: Number(id), ...fields }));
   };
 
+  // Build the office_data payload with derived QTY baked into auto-populated
+  // lines, so the persisted value always matches what's shown in the UI.
+  const buildOfficeDataPayload = () => ({
+    lines: officeLines.map((l) => {
+      if (AUTO_LINE_LABELS.includes(l.label)) {
+        return { ...l, qty: derivedQtyFor(l.label, effectiveRows) ?? 0 };
+      }
+      return { ...l };
+    }),
+    gst_percent: gstPercent,
+  });
+
   // Regenerate a PDF using the CURRENT edits (for preview + upload)
   const regenerateCurrentPdf = async (options = {}) => {
     if (!ticket) return null;
-    const mergedRows = (ticket.rows || []).map((r) => ({
-      ...r,
-      ...(rowsEdits[r.id] || {}),
-    }));
     const mergedTicket = {
       ...ticket,
       description_of_work: description,
       po_approval_number: poNumber,
-      rows: mergedRows,
-      office_data: { lines: officeLines, gst_percent: gstPercent },
+      rows: effectiveRows,
+      office_data: buildOfficeDataPayload(),
       ...options,
     };
     const { base64 } = await generateTMTicketPdf(mergedTicket, {
+      // Office/admin PDFs show rates + totals; worker PDFs show QTY only (no pricing).
       includeOfficeData: canOfficeEdit,
       signaturePng: options.signaturePng || null,
     });
@@ -106,10 +184,12 @@ export default function TMTicketDetailSheet({
       const pdfBase64 = await regenerateCurrentPdf();
       const payload = {
         description_of_work: description,
+        // Always send office_data — backend enforces allowlist for workers
+        // (only QTY on worker-editable labels is accepted).
+        office_data: buildOfficeDataPayload(),
       };
       if (canOfficeEdit) {
         payload.po_approval_number = poNumber;
-        payload.office_data = { lines: officeLines, gst_percent: gstPercent };
         const rowUps = buildRowUpdates();
         if (rowUps.length > 0) payload.row_updates = rowUps;
       }
@@ -134,8 +214,34 @@ export default function TMTicketDetailSheet({
       const payload = {
         description_of_work: description,
         po_approval_number: poNumber,
-        office_data: { lines: officeLines, gst_percent: gstPercent },
+        office_data: buildOfficeDataPayload(),
         approved_signature: signatureBase64,
+        approve: true,
+      };
+      const rowUps = buildRowUpdates();
+      if (rowUps.length > 0) payload.row_updates = rowUps;
+      if (pdfBase64) payload.pdf_base64 = pdfBase64;
+      const updated = await api.updateTMTicket(ticket.id, payload);
+      setTicket(updated);
+      setRowsEdits({});
+    } catch (e) {
+      alert('Approval failed: ' + (e.message || 'Unknown error'));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Approve without drawing a signature — the PDF will have a blank signature
+  // line so office can print and hand-sign after the fact.
+  const handleApproveWithoutSignature = async () => {
+    if (!confirm('Approve this ticket without a signature? The PDF will have a blank signature line.')) return;
+    setIsSaving(true);
+    try {
+      const pdfBase64 = await regenerateCurrentPdf();
+      const payload = {
+        description_of_work: description,
+        po_approval_number: poNumber,
+        office_data: buildOfficeDataPayload(),
         approve: true,
       };
       const rowUps = buildRowUpdates();
@@ -232,7 +338,8 @@ export default function TMTicketDetailSheet({
         </div>
       ) : null}
 
-      {/* Sites Treated */}
+      {/* Sites Treated — read-only for workers (auto-filled from lease sheets).
+          Office/admin can edit Cost Code. Area unit swaps to 'km' for Roadside rows. */}
       <h3 style={{ fontSize: '1rem', margin: '14px 0 6px' }}>Sites Treated ({ticket.rows?.length || 0})</h3>
       <div style={{ background: '#111827', borderRadius: '8px', overflow: 'hidden', border: '1px solid #374151' }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 0.9fr 1.2fr 0.8fr 0.8fr 1fr', gap: '4px', padding: '8px', background: '#1f2937', fontSize: '0.75rem', fontWeight: 600, color: '#9ca3af' }}>
@@ -240,7 +347,7 @@ export default function TMTicketDetailSheet({
           <span>Type</span>
           <span>Herbicides</span>
           <span>(L) Used</span>
-          <span>Area (ha)</span>
+          <span>Area</span>
           <span>Cost Code</span>
         </div>
         {(ticket.rows || []).length === 0 ? (
@@ -248,6 +355,8 @@ export default function TMTicketDetailSheet({
         ) : null}
         {(ticket.rows || []).map((r) => {
           const rowEdit = rowsEdits[r.id] || {};
+          const isRoadside = r.site_type === 'Roadside';
+          const unit = isRoadside ? 'km' : 'ha';
           return (
             <div key={r.id} style={{
               display: 'grid', gridTemplateColumns: '1.4fr 0.9fr 1.2fr 0.8fr 0.8fr 1fr',
@@ -256,8 +365,8 @@ export default function TMTicketDetailSheet({
               <span>{r.location || '—'}</span>
               <span>{r.site_type || '—'}</span>
               <span>{r.herbicides || '—'}</span>
-              <span>{r.liters_used != null ? Number(r.liters_used).toFixed(2) : '—'}</span>
-              <span>{r.area_ha != null ? Number(r.area_ha).toFixed(2) : '—'}</span>
+              <span>{r.liters_used != null && r.liters_used !== '' ? Number(r.liters_used).toFixed(2) : '—'}</span>
+              <span>{r.area_ha != null && r.area_ha !== '' ? `${Number(r.area_ha).toFixed(2)} ${unit}` : '—'}</span>
               {canOfficeEdit ? (
                 <input
                   value={rowEdit.cost_code ?? (r.cost_code ?? '')}
@@ -273,50 +382,147 @@ export default function TMTicketDetailSheet({
         })}
       </div>
 
-      {/* Office Use ONLY — only for office/admin */}
-      {canOfficeEdit ? (
-        <>
-          <h3 style={{ fontSize: '1rem', margin: '18px 0 6px' }}>Office Use ONLY</h3>
-          <div style={{ background: '#111827', borderRadius: '8px', border: '1px solid #374151', overflow: 'hidden' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 0.8fr 0.8fr 0.9fr', gap: '4px', padding: '8px', background: '#1f2937', fontSize: '0.75rem', fontWeight: 600, color: '#9ca3af' }}>
-              <span>Line</span>
-              <span>QTY</span>
-              <span>Rate</span>
-              <span>Sub Total</span>
+      {/* Office Use ONLY
+          Workers: see this table, but rate + totals are hidden; QTY is editable
+            only on the allowlisted labels; auto-populated lines show their
+            derived quantity read-only.
+          Office/Admin: full editability including labels, rates, add/remove lines. */}
+      <h3 style={{ fontSize: '1rem', margin: '18px 0 6px' }}>Office Use ONLY</h3>
+      <div style={{ background: '#111827', borderRadius: '8px', border: '1px solid #374151', overflow: 'hidden' }}>
+        {/* Header row */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: canOfficeEdit ? '1.9fr 0.8fr 0.8fr 0.9fr 0.25fr' : '2.5fr 1fr',
+          gap: '4px', padding: '8px', background: '#1f2937', fontSize: '0.75rem', fontWeight: 600, color: '#9ca3af',
+        }}>
+          <span>Line</span>
+          <span>QTY</span>
+          {canOfficeEdit ? <span>Rate</span> : null}
+          {canOfficeEdit ? <span>Sub Total</span> : null}
+          {canOfficeEdit ? <span></span> : null}
+        </div>
+        {officeLines.map((line, idx) => {
+          const isAutoLine = AUTO_LINE_LABELS.includes(line.label);
+          const isWorkerEditable = WORKER_EDITABLE_LINE_LABELS.includes(line.label);
+          // Custom = anything not in the pre-seeded defaults, including newly-added blank rows.
+          const isCustomLine = !DEFAULT_LABELS_SET.has(line.label);
+          // Effective QTY: derived for auto-lines, else the typed value.
+          const qty = effectiveQtyOf(line);
+          const rate = parseFloat(line.rate) || 0;
+          const sub = qty * rate;
+
+          // Who can edit QTY here:
+          //  - Auto-populated lines: nobody (always derived, read-only).
+          //  - Office/admin: always.
+          //  - Worker: only if label is in the worker allowlist.
+          const qtyEditable = !isAutoLine && (canOfficeEdit || isWorkerEditable);
+
+          // Label editability: office/admin only.
+          const labelEditable = canOfficeEdit && !isAutoLine;
+
+          return (
+            <div key={idx} style={{
+              display: 'grid',
+              gridTemplateColumns: canOfficeEdit ? '1.9fr 0.8fr 0.8fr 0.9fr 0.25fr' : '2.5fr 1fr',
+              gap: '4px', padding: '6px 8px', borderTop: '1px solid #374151', fontSize: '0.8rem', alignItems: 'center',
+            }}>
+              {/* Label */}
+              {labelEditable ? (
+                <input
+                  value={line.label}
+                  onChange={(e) => updateLine(idx, 'label', e.target.value)}
+                  placeholder="Line item"
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+                />
+              ) : (
+                <span style={{ color: isAutoLine ? '#9ca3af' : '#f9fafb', fontStyle: isAutoLine ? 'italic' : 'normal' }}>
+                  {line.label || '—'}
+                </span>
+              )}
+
+              {/* QTY */}
+              {qtyEditable ? (
+                <input
+                  type="number" inputMode="decimal" step="0.01"
+                  value={line.qty}
+                  onChange={(e) => updateLine(idx, 'qty', e.target.value)}
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+                />
+              ) : (
+                <span style={{ color: isAutoLine ? '#60a5fa' : '#9ca3af' }}>
+                  {qty > 0 ? qty.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—'}
+                </span>
+              )}
+
+              {/* Rate — office/admin only */}
+              {canOfficeEdit ? (
+                <input
+                  type="number" inputMode="decimal" step="0.01"
+                  value={line.rate}
+                  onChange={(e) => updateLine(idx, 'rate', e.target.value)}
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+                />
+              ) : null}
+
+              {/* Sub Total — office/admin only */}
+              {canOfficeEdit ? (
+                <span style={{ textAlign: 'right', color: sub > 0 ? '#22c55e' : '#6b7280' }}>
+                  {sub > 0 ? `$${sub.toFixed(2)}` : '—'}
+                </span>
+              ) : null}
+
+              {/* Remove button — office/admin only, only on custom (non-default) lines */}
+              {canOfficeEdit ? (
+                isCustomLine ? (
+                  <button
+                    type="button"
+                    onClick={() => removeOfficeLine(idx)}
+                    aria-label="Remove line"
+                    title="Remove this custom line"
+                    style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '1rem', padding: 0 }}
+                  >
+                    ×
+                  </button>
+                ) : <span />
+              ) : null}
             </div>
-            {officeLines.map((line, idx) => {
-              const qty = parseFloat(line.qty) || 0;
-              const rate = parseFloat(line.rate) || 0;
-              const sub = qty * rate;
-              return (
-                <div key={idx} style={{ display: 'grid', gridTemplateColumns: '2fr 0.8fr 0.8fr 0.9fr', gap: '4px', padding: '6px 8px', borderTop: '1px solid #374151', fontSize: '0.8rem', alignItems: 'center' }}>
-                  <span>{line.label}</span>
-                  <input
-                    type="number" inputMode="decimal" step="0.01"
-                    value={line.qty}
-                    onChange={(e) => updateLine(idx, 'qty', e.target.value)}
-                    style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
-                  />
-                  <input
-                    type="number" inputMode="decimal" step="0.01"
-                    value={line.rate}
-                    onChange={(e) => updateLine(idx, 'rate', e.target.value)}
-                    style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
-                  />
-                  <span style={{ textAlign: 'right', color: sub > 0 ? '#22c55e' : '#6b7280' }}>
-                    {sub > 0 ? `$${sub.toFixed(2)}` : '—'}
-                  </span>
-                </div>
-              );
-            })}
-            {/* Totals */}
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 0.8fr 0.8fr 0.9fr', gap: '4px', padding: '6px 8px', borderTop: '1px solid #374151', fontSize: '0.8rem', alignItems: 'center', background: '#0b1220' }}>
+          );
+        })}
+
+        {/* Add Office Line — office/admin only */}
+        {canOfficeEdit ? (
+          <div style={{ padding: '8px', borderTop: '1px solid #374151', background: '#0b1220' }}>
+            <button
+              type="button"
+              onClick={addOfficeLine}
+              style={{
+                width: '100%',
+                padding: '6px',
+                background: '#1f2937',
+                border: '1px dashed #374151',
+                borderRadius: '6px',
+                color: '#60a5fa',
+                fontSize: '0.8rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              + Add Office Line
+            </button>
+          </div>
+        ) : null}
+
+        {/* Totals — office/admin only */}
+        {canOfficeEdit ? (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: '1.9fr 0.8fr 0.8fr 0.9fr 0.25fr', gap: '4px', padding: '6px 8px', borderTop: '1px solid #374151', fontSize: '0.8rem', alignItems: 'center', background: '#0b1220' }}>
               <span></span>
               <span></span>
               <span style={{ fontWeight: 600, color: '#9ca3af' }}>Sub Total</span>
               <span style={{ textAlign: 'right', fontWeight: 600 }}>${totals.subTotal.toFixed(2)}</span>
+              <span></span>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 0.8fr 0.8fr 0.9fr', gap: '4px', padding: '6px 8px', borderTop: '1px solid #374151', fontSize: '0.8rem', alignItems: 'center', background: '#0b1220' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1.9fr 0.8fr 0.8fr 0.9fr 0.25fr', gap: '4px', padding: '6px 8px', borderTop: '1px solid #374151', fontSize: '0.8rem', alignItems: 'center', background: '#0b1220' }}>
               <span></span>
               <span></span>
               <span style={{ fontWeight: 600, color: '#9ca3af', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -329,16 +535,18 @@ export default function TMTicketDetailSheet({
                 />%
               </span>
               <span style={{ textAlign: 'right', fontWeight: 600 }}>${totals.gst.toFixed(2)}</span>
+              <span></span>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 0.8fr 0.8fr 0.9fr', gap: '4px', padding: '8px', borderTop: '1px solid #374151', fontSize: '0.9rem', alignItems: 'center', background: '#0f172a', fontWeight: 700 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1.9fr 0.8fr 0.8fr 0.9fr 0.25fr', gap: '4px', padding: '8px', borderTop: '1px solid #374151', fontSize: '0.9rem', alignItems: 'center', background: '#0f172a', fontWeight: 700 }}>
               <span></span>
               <span></span>
               <span>Total</span>
               <span style={{ textAlign: 'right', color: '#22c55e' }}>${totals.total.toFixed(2)}</span>
+              <span></span>
             </div>
-          </div>
-        </>
-      ) : null}
+          </>
+        ) : null}
+      </div>
 
       {/* Approval info */}
       {ticket.status === 'approved' ? (
@@ -363,6 +571,15 @@ export default function TMTicketDetailSheet({
         >
           {isSaving ? 'Saving…' : '💾 Save'}
         </button>
+        {canOfficeEdit && ticket.status !== 'approved' ? (
+          <button
+            onClick={handleApproveWithoutSignature}
+            disabled={isSaving}
+            style={{ flex: 1, padding: '12px', background: isSaving ? '#374151' : '#f59e0b', color: 'white', border: 'none', borderRadius: '8px', fontSize: '0.9rem', fontWeight: 600, cursor: isSaving ? 'not-allowed' : 'pointer', minWidth: '120px' }}
+          >
+            ✓ Approve (no signature)
+          </button>
+        ) : null}
         {canOfficeEdit && ticket.status !== 'approved' ? (
           <button
             onClick={() => setIsSignatureOpen(true)}
@@ -390,6 +607,7 @@ export default function TMTicketDetailSheet({
         onClose={() => setIsSignatureOpen(false)}
         onSave={handleApproveWithSignature}
         existingSignature={ticket.approved_signature || null}
+        storageKey={currentUserEmail ? `pv.sig.${currentUserEmail.toLowerCase()}` : null}
       />
     </div>
   );

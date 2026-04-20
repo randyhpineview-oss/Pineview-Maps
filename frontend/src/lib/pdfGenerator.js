@@ -161,7 +161,15 @@ export async function generateLeaseSheetPdf(data, photoDataUrls = []) {
   doc.setFont('helvetica', 'bold');
   doc.text('Noxious Weeds:', marginL + 3, y + 11);
   doc.setFont('helvetica', 'normal');
-  const noxLines = doc.splitTextToSize((data.noxiousWeedsSelected || []).join(', '), halfW - 8);
+  // Merge standard-list selections + typed custom weeds. If "Other" is present
+  // we replace it with the custom list so the PDF reads cleanly.
+  const selectedWeeds = data.noxiousWeedsSelected || [];
+  const customWeeds = data.customWeeds || [];
+  const displayWeeds = [
+    ...selectedWeeds.filter(w => w.toLowerCase() !== 'other'),
+    ...customWeeds,
+  ];
+  const noxLines = doc.splitTextToSize(displayWeeds.join(', '), halfW - 8);
   doc.text(noxLines, marginL + 3, y + 23);
   y += noxH;
 

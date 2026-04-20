@@ -170,7 +170,7 @@ export default function PdfPreviewViewer({ pdfBase64, pdfBytes }) {
         e.preventDefault();
         const dist = getDist(e.touches);
         const mid = getMid(e.touches);
-        const newZoom = Math.max(1, Math.min(5, s.pinchStartZoom * (dist / s.pinchStartDist)));
+        const newZoom = Math.max(0.5, Math.min(5, s.pinchStartZoom * (dist / s.pinchStartDist)));
 
         // Zoom toward pinch center: adjust pan so the midpoint stays fixed
         const rect = container.getBoundingClientRect();
@@ -194,8 +194,9 @@ export default function PdfPreviewViewer({ pdfBase64, pdfBytes }) {
       if (e.touches.length < 2) s.pinching = false;
       if (e.touches.length < 1) s.dragging = false;
 
-      // Snap back to zoom=1 if close
-      if (!s.pinching && s.zoom < 1.05) {
+      // Snap back to zoom=1 if close (but only when zoomed IN toward 1;
+      // allow zoom-out below 1 for small-screen viewing).
+      if (!s.pinching && s.zoom > 1 && s.zoom < 1.05) {
         s.zoom = 1;
         s.panX = 0;
         s.panY = 0;
@@ -203,12 +204,13 @@ export default function PdfPreviewViewer({ pdfBase64, pdfBytes }) {
       }
     };
 
-    // Ctrl + scroll wheel zoom (desktop) — zoom toward cursor
+    // Ctrl + scroll wheel zoom (desktop) — zoom toward cursor.
+    // Without Ctrl: let the browser scroll the container vertically.
     const onWheel = (e) => {
-      if (!e.ctrlKey) return;
+      if (!e.ctrlKey) return;  // no preventDefault → default scroll behavior
       e.preventDefault();
       const factor = e.deltaY > 0 ? 0.9 : 1.1;
-      const newZoom = Math.max(1, Math.min(5, s.zoom * factor));
+      const newZoom = Math.max(0.5, Math.min(5, s.zoom * factor));
 
       const rect = container.getBoundingClientRect();
       const cx = e.clientX - rect.left - rect.width / 2;
@@ -219,7 +221,8 @@ export default function PdfPreviewViewer({ pdfBase64, pdfBytes }) {
       s.panY = s.panY * ratio + cy * (1 - ratio);
       s.zoom = newZoom;
 
-      if (s.zoom < 1.05) { s.zoom = 1; s.panX = 0; s.panY = 0; }
+      // Snap to 1 only when zooming back IN from above 1.
+      if (s.zoom > 1 && s.zoom < 1.05) { s.zoom = 1; s.panX = 0; s.panY = 0; }
       applyTransform();
     };
 
@@ -241,8 +244,11 @@ export default function PdfPreviewViewer({ pdfBase64, pdfBytes }) {
       ref={containerRef}
       style={{
         flex: 1,
-        overflow: 'hidden',
-        touchAction: 'none',
+        overflowX: 'hidden',
+        overflowY: 'auto',
+        // pan-y so vertical scroll still works on touch devices; pinch-zoom
+        // handled manually via non-passive touch listeners.
+        touchAction: 'pan-y',
         display: 'flex',
         justifyContent: 'center',
         alignItems: 'flex-start',

@@ -45,6 +45,8 @@ export default function HerbicideLeaseSheet({
   const [tmDescription, setTmDescription] = useState('');
   const [draftId, setDraftId] = useState(draft?.id || null);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
+  // Local-only input for typing custom (Other) weeds. Not persisted.
+  const [customWeedInput, setCustomWeedInput] = useState('');
 
   // Form state
   const [form, setForm] = useState({
@@ -61,6 +63,7 @@ export default function HerbicideLeaseSheet({
     sprayType: [],
     sprayMethod: [],
     noxiousWeedsSelected: [],
+    customWeeds: [],
     herbicidesUsed: [],
     totalDistanceSprayed: '',
     totalLiters: '',
@@ -112,6 +115,7 @@ export default function HerbicideLeaseSheet({
         sprayType: d.sprayType || [],
         sprayMethod: d.sprayMethod || [],
         noxiousWeedsSelected: d.noxiousWeedsSelected || [],
+        customWeeds: d.customWeeds || [],
         herbicidesUsed: d.herbicidesUsed || [],
         totalDistanceSprayed: d.totalDistanceSprayed || '',
         totalLiters: d.totalLiters || '',
@@ -1080,13 +1084,106 @@ export default function HerbicideLeaseSheet({
                     <input
                       type="checkbox"
                       checked={form.noxiousWeedsSelected.includes(weed.name)}
-                      onChange={() => handleCheckboxGroup('noxiousWeedsSelected', weed.name)}
+                      onChange={() => {
+                        const isOther = weed.name.toLowerCase() === 'other';
+                        const alreadyChecked = form.noxiousWeedsSelected.includes(weed.name);
+                        if (isOther && alreadyChecked) {
+                          // Un-checking "Other" also clears any typed custom weeds
+                          setForm(prev => ({
+                            ...prev,
+                            noxiousWeedsSelected: prev.noxiousWeedsSelected.filter(v => v !== weed.name),
+                            customWeeds: [],
+                          }));
+                          setCustomWeedInput('');
+                        } else {
+                          handleCheckboxGroup('noxiousWeedsSelected', weed.name);
+                        }
+                      }}
                       style={{ display: 'none' }}
                     />
                     {weed.name}
                   </label>
                 ))}
               </div>
+
+              {/* Custom weeds input (shown only when "Other" is selected) */}
+              {form.noxiousWeedsSelected.some(w => w.toLowerCase() === 'other') && (
+                <div style={{ marginTop: '10px', padding: '10px', background: '#111827', border: '1px solid #374151', borderRadius: '6px' }}>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <input
+                      type="text"
+                      value={customWeedInput}
+                      onChange={(e) => setCustomWeedInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const trimmed = customWeedInput.trim();
+                          if (!trimmed) return;
+                          if (form.customWeeds.includes(trimmed)) { setCustomWeedInput(''); return; }
+                          setForm(prev => ({ ...prev, customWeeds: [...prev.customWeeds, trimmed] }));
+                          setCustomWeedInput('');
+                        }
+                      }}
+                      placeholder="Type a weed name and press Add / Enter"
+                      style={{
+                        flex: 1,
+                        padding: '8px 12px',
+                        borderRadius: '6px',
+                        border: '1px solid #374151',
+                        backgroundColor: '#1f2937',
+                        color: '#f9fafb',
+                        fontSize: '0.875rem',
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const trimmed = customWeedInput.trim();
+                        if (!trimmed) return;
+                        if (form.customWeeds.includes(trimmed)) { setCustomWeedInput(''); return; }
+                        setForm(prev => ({ ...prev, customWeeds: [...prev.customWeeds, trimmed] }));
+                        setCustomWeedInput('');
+                      }}
+                      style={{
+                        padding: '6px 14px',
+                        borderRadius: '6px',
+                        border: 'none',
+                        background: '#3b82f6',
+                        color: 'white',
+                        fontSize: '0.85rem',
+                        cursor: 'pointer',
+                        fontWeight: 600,
+                      }}
+                    >
+                      Add
+                    </button>
+                  </div>
+                  {form.customWeeds.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
+                      {form.customWeeds.map((w, idx) => (
+                        <span key={`${w}-${idx}`} style={{
+                          display: 'inline-flex', alignItems: 'center', gap: '6px',
+                          padding: '4px 10px',
+                          borderRadius: '999px',
+                          background: '#3b82f6',
+                          color: 'white',
+                          fontSize: '0.8rem',
+                        }}>
+                          {w}
+                          <button
+                            type="button"
+                            onClick={() => setForm(prev => ({ ...prev, customWeeds: prev.customWeeds.filter((_, i) => i !== idx) }))}
+                            aria-label={`Remove ${w}`}
+                            style={{ background: 'transparent', color: 'white', border: 'none', cursor: 'pointer', padding: 0, fontSize: '1rem', lineHeight: 1 }}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Herbicides Used */}

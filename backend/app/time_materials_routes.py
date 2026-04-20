@@ -7,7 +7,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import or_, text
+from sqlalchemy import and_, or_, text
 from sqlalchemy.orm import Session, joinedload
 
 from app.auth import get_current_user, require_roles
@@ -30,31 +30,119 @@ from app.schemas import (
 router = APIRouter(prefix="/api/time-materials", tags=["time-materials"])
 
 
+# Labels that a worker role is allowed to edit QTY on. Must stay in sync with
+# WORKER_EDITABLE_LINE_LABELS in frontend/src/lib/tmTicketPdfGenerator.js.
+WORKER_EDITABLE_LINE_LABELS = frozenset({
+    "Truck Unit (/hr)",
+    "Lead Applicator (/hr)",
+    "Assistant Applicator (/hr)",
+    "UTV Unit (/day)",
+    "Backpack (/day)",
+    "H2S Monitors",
+    "Travel Km",
+})
+
+
+def _merge_worker_office_data(
+    existing: dict | None,
+    incoming: dict | None,
+) -> dict | None:
+    """Merge a worker-submitted office_data onto the existing ticket office_data,
+    accepting ONLY QTY changes on the allowlisted labels. Rate, labels, and
+    non-allowlisted lines stay exactly as they were in the stored ticket.
+    Also preserves any lines the worker didn't send.
+    """
+    if incoming is None:
+        return existing
+    existing = existing or {}
+    incoming_lines = incoming.get("lines") or []
+    existing_lines = list(existing.get("lines") or [])
+
+    # Build a label → incoming-qty map for quick lookup.
+    incoming_qty_by_label = {}
+    for il in incoming_lines:
+        lbl = il.get("label") or ""
+        if lbl in WORKER_EDITABLE_LINE_LABELS and "qty" in il:
+            incoming_qty_by_label[lbl] = il["qty"]
+
+    # Merge: for each existing line, swap in incoming QTY if label matches.
+    merged_lines = []
+    for el in existing_lines:
+        lbl = el.get("label") or ""
+        if lbl in incoming_qty_by_label:
+            merged_lines.append({**el, "qty": incoming_qty_by_label[lbl]})
+        else:
+            merged_lines.append(el)
+    # Preserve the existing gst_percent (workers cannot change it).
+    return {
+        "lines": merged_lines,
+        "gst_percent": existing.get("gst_percent", 5),
+    }
+
+
 def _strip_office_fields_for_worker(
     ticket: TimeMaterialsTicket, current_user: User
 ) -> TimeMaterialsTicketRead:
-    """Convert a ticket to its Read schema, stripping office-only fields for workers."""
+    """Convert a ticket to its Read schema, stripping pricing data for workers.
+
+    Workers can see office_data labels + QTY (so they can verify their entered
+    amounts and the auto-populated values), but NOT the rate column, GST rate,
+    or totals. Signatures stay hidden too.
+    """
     data = TimeMaterialsTicketRead.model_validate(ticket)
     if current_user.role == RoleEnum.worker:
+        stripped_office_data = None
+        if ticket.office_data:
+            # Strip `rate` from every line, keep label + qty.
+            stripped_lines = [
+                {k: v for k, v in (line or {}).items() if k != "rate"}
+                for line in (ticket.office_data.get("lines") or [])
+            ]
+            stripped_office_data = {"lines": stripped_lines}
         data = data.model_copy(update={
-            "office_data": None,
+            "office_data": stripped_office_data,
             "approved_signature": None,
         })
     return data
+
+
+def _worker_owns_ticket(ticket: TimeMaterialsTicket, current_user: User) -> bool:
+    """A worker "owns" a ticket if their id matches created_by_user_id, OR —
+    for legacy orphaned tickets created before users were persisted — their
+    display name matches created_by_name.
+    """
+    if ticket.created_by_user_id is not None and ticket.created_by_user_id == current_user.id:
+        return True
+    if ticket.created_by_user_id is None and current_user.name and ticket.created_by_name == current_user.name:
+        return True
+    return False
 
 
 def _can_edit_ticket(ticket: TimeMaterialsTicket, current_user: User) -> bool:
     """Workers can only edit their own tickets. Office/admin can edit any."""
     if current_user.role in (RoleEnum.admin, RoleEnum.office):
         return True
-    return ticket.created_by_user_id is not None and ticket.created_by_user_id == current_user.id
+    return _worker_owns_ticket(ticket, current_user)
 
 
 def _visible_query(db: Session, current_user: User):
-    """Base query scoped to what the current user can see."""
+    """Base query scoped to what the current user can see.
+
+    Workers see tickets where (a) created_by_user_id matches their id, OR
+    (b) created_by_user_id is NULL but created_by_name matches theirs (covers
+    legacy tickets created before users were seeded into the local table).
+    """
     q = db.query(TimeMaterialsTicket).options(joinedload(TimeMaterialsTicket.rows))
     if current_user.role == RoleEnum.worker:
-        q = q.filter(TimeMaterialsTicket.created_by_user_id == current_user.id)
+        q = q.filter(
+            or_(
+                TimeMaterialsTicket.created_by_user_id == current_user.id,
+                and_(
+                    TimeMaterialsTicket.created_by_user_id.is_(None),
+                    TimeMaterialsTicket.created_by_name == current_user.name,
+                ),
+            )
+        )
     return q
 
 
@@ -151,12 +239,8 @@ def create_ticket(
     """Create a new open T&M ticket. Shared ticket_seq."""
     ticket_number = _allocate_ticket_number(db)
 
-    created_by_user_id = None
-    if current_user.id:
-        local_user = db.query(User).filter(User.id == current_user.id).first()
-        if local_user:
-            created_by_user_id = current_user.id
-
+    # current_user.id is guaranteed to exist in the local `users` table because
+    # auth.get_current_user upserts it on every request. Safe to reference via FK.
     user_name = getattr(current_user, "name", None) or (
         current_user.email.split("@")[0].title() if current_user.email else None
     )
@@ -167,7 +251,7 @@ def create_ticket(
         client=payload.client,
         area=payload.area,
         description_of_work=payload.description_of_work,
-        created_by_user_id=created_by_user_id,
+        created_by_user_id=current_user.id,
         created_by_name=user_name,
         status=TMTicketStatus.open,
     )
@@ -214,10 +298,8 @@ def update_ticket(
         if payload.approve:
             ticket.status = TMTicketStatus.approved
             ticket.approved_at = datetime.utcnow()
-            if current_user.id:
-                local_user = db.query(User).filter(User.id == current_user.id).first()
-                if local_user:
-                    ticket.approved_by_user_id = current_user.id
+            # current_user.id is guaranteed-present (auth upserts the user row).
+            ticket.approved_by_user_id = current_user.id
             ticket.approved_by_name = getattr(current_user, "name", None) or (
                 current_user.email.split("@")[0].title() if current_user.email else None
             )
@@ -236,14 +318,17 @@ def update_ticket(
                     if fld in ru and ru[fld] is not None:
                         setattr(row, fld, ru[fld])
     else:
-        # Worker attempted to set office-only fields — reject silently by ignoring them.
+        # Worker path: reject approval + office-only write attempts outright,
+        # but accept office_data WITH QTY-only merge on allowlisted labels.
         if any([
             payload.po_approval_number is not None,
-            payload.office_data is not None,
             payload.approved_signature is not None,
             payload.approve,
         ]):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Office-only fields")
+        if payload.office_data is not None:
+            ticket.office_data = _merge_worker_office_data(ticket.office_data, payload.office_data)
+        # Workers cannot update rows (cost_code etc. is office-only); silently ignore.
 
     # Upload new PDF if provided (always overwrite existing Dropbox file)
     if payload.pdf_base64:
@@ -278,51 +363,88 @@ def delete_ticket(
 
 # ── Row helpers used internally by spray record endpoints ────────
 
+def _to_float(v):
+    try:
+        return float(v) if v not in (None, "", "___") else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _herbicides_text(herb_list: list) -> str:
+    n = len(herb_list or [])
+    if n == 0:
+        return ""
+    if n == 1:
+        return herb_list[0]
+    return f"{n} Herbicides"
+
+
+def _site_type_from_site(site) -> str:
+    if site is None:
+        return ""
+    pin_type = getattr(site, "pin_type", None)
+    pin_val = pin_type.value if pin_type is not None and hasattr(pin_type, "value") else pin_type
+    type_map = {"lsd": "Wellsite", "water": "Water", "quad_access": "Quad Access", "reclaimed": "Reclaimed"}
+    return type_map.get(pin_val, "")
+
+
 def derive_row_from_spray_record(record: SiteSprayRecord) -> dict:
-    """Derive T&M row fields from a site spray record's lease_sheet_data + site."""
+    """Derive the MAIN T&M row fields from a site spray record's lease_sheet_data + site."""
     data = record.lease_sheet_data or {}
-    herb_list = data.get("herbicidesUsed") or []
-    if len(herb_list) == 0:
-        herbicides_text = ""
-    elif len(herb_list) == 1:
-        herbicides_text = herb_list[0]
-    else:
-        herbicides_text = f"{len(herb_list)} Herbicides"
-
-    # Site type from linked site (Wellsite for LSD, etc.)
     site = getattr(record, "site", None)
-    site_type = None
-    if site is not None:
-        pin_type = getattr(site, "pin_type", None)
-        pin_val = pin_type.value if pin_type is not None and hasattr(pin_type, "value") else pin_type
-        type_map = {"lsd": "Wellsite", "water": "Water", "quad_access": "Quad Access", "reclaimed": "Reclaimed"}
-        site_type = type_map.get(pin_val, "")
-
-    def _to_float(v):
-        try:
-            return float(v) if v not in (None, "", "___") else None
-        except (ValueError, TypeError):
-            return None
-
     return {
         "location": data.get("lsdOrPipeline") or (site.lsd if site else None),
-        "site_type": site_type,
-        "herbicides": herbicides_text,
+        "site_type": _site_type_from_site(site),
+        "herbicides": _herbicides_text(data.get("herbicidesUsed") or []),
         "liters_used": _to_float(data.get("totalLiters")),
         "area_ha": _to_float(data.get("areaTreated")),
     }
 
 
-def append_row_for_spray_record(
+def _has_roadside(data: dict) -> bool:
+    """True if the lease sheet's locationTypes include an access-road entry OR
+    roadsideLiters/roadsideKm were actually filled in."""
+    if data.get("isAccessRoad"):
+        return True
+    if _to_float(data.get("roadsideLiters")) or _to_float(data.get("roadsideKm")):
+        return True
+    return False
+
+
+def derive_roadside_row_from_spray_record(record: SiteSprayRecord) -> dict | None:
+    """Derive a second 'Roadside' T&M row from a lease sheet if applicable.
+
+    The roadside row uses `area_ha` to store the roadsideKm value (unit is
+    swapped to 'km' at render time by inspecting site_type == 'Roadside').
+    """
+    data = record.lease_sheet_data or {}
+    if not _has_roadside(data):
+        return None
+    site = getattr(record, "site", None)
+    return {
+        "location": data.get("lsdOrPipeline") or (site.lsd if site else None),
+        "site_type": "Roadside",
+        "herbicides": _herbicides_text(data.get("roadsideHerbicides") or []),
+        "liters_used": _to_float(data.get("roadsideLiters")),
+        "area_ha": _to_float(data.get("roadsideKm")),
+    }
+
+
+def _upsert_row(
     db: Session,
     ticket: TimeMaterialsTicket,
     record: SiteSprayRecord,
+    fields: dict,
+    is_roadside: bool,
 ) -> TimeMaterialsRow:
-    """Create (or update existing) row for a spray record on the given ticket."""
-    row = db.query(TimeMaterialsRow).filter(
-        TimeMaterialsRow.spray_record_id == record.id
-    ).first()
-    fields = derive_row_from_spray_record(record)
+    """Upsert a single row keyed by (spray_record_id, is_roadside). Roadside
+    vs main is disambiguated via site_type == 'Roadside'."""
+    q = db.query(TimeMaterialsRow).filter(TimeMaterialsRow.spray_record_id == record.id)
+    if is_roadside:
+        q = q.filter(TimeMaterialsRow.site_type == "Roadside")
+    else:
+        q = q.filter(TimeMaterialsRow.site_type != "Roadside")
+    row = q.first()
 
     if row:
         for k, v in fields.items():
@@ -337,11 +459,33 @@ def append_row_for_spray_record(
             **fields,
         )
         db.add(row)
+    return row
+
+
+def append_row_for_spray_record(
+    db: Session,
+    ticket: TimeMaterialsTicket,
+    record: SiteSprayRecord,
+) -> TimeMaterialsRow:
+    """Create (or update existing) rows for a spray record on the given ticket.
+
+    Always upserts the main row. If the lease sheet has an access-road portion
+    (isAccessRoad or roadside values filled), also upserts a companion
+    'Roadside' row so it gets its own line in the Sites Treated table.
+    """
+    # Main row
+    main_fields = derive_row_from_spray_record(record)
+    main_row = _upsert_row(db, ticket, record, main_fields, is_roadside=False)
+
+    # Optional roadside row
+    roadside_fields = derive_roadside_row_from_spray_record(record)
+    if roadside_fields is not None:
+        _upsert_row(db, ticket, record, roadside_fields, is_roadside=True)
 
     record.tm_ticket_id = ticket.id
     ticket.updated_at = datetime.utcnow()
     db.flush()
-    return row
+    return main_row
 
 
 def find_or_create_ticket_for_link(
@@ -357,19 +501,21 @@ def find_or_create_ticket_for_link(
         ticket = db.query(TimeMaterialsTicket).filter(TimeMaterialsTicket.id == link_ticket_id).first()
         if not ticket:
             return None
+        # Cannot attach additional rows to a ticket that is no longer open
+        # (submitted / approved / signed). The picker already filters these out
+        # on the frontend, but this is a backstop against stale UIs.
+        if ticket.status != TMTicketStatus.open:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="T&M ticket is already signed / approved and cannot accept new rows.",
+            )
         # Workers may only attach to their own open tickets
-        if current_user.role == RoleEnum.worker:
-            if ticket.created_by_user_id != current_user.id:
-                return None
+        if current_user.role == RoleEnum.worker and not _worker_owns_ticket(ticket, current_user):
+            return None
         return ticket
 
     if link_create:
         ticket_number = _allocate_ticket_number(db)
-        created_by_user_id = None
-        if current_user.id:
-            local_user = db.query(User).filter(User.id == current_user.id).first()
-            if local_user:
-                created_by_user_id = current_user.id
         user_name = getattr(current_user, "name", None) or (
             current_user.email.split("@")[0].title() if current_user.email else None
         )
@@ -387,7 +533,7 @@ def find_or_create_ticket_for_link(
             client=client,
             area=area,
             description_of_work=description_of_work,
-            created_by_user_id=created_by_user_id,
+            created_by_user_id=current_user.id,
             created_by_name=user_name,
             status=TMTicketStatus.open,
         )

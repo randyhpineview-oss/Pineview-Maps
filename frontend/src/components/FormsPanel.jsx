@@ -62,6 +62,15 @@ export default function FormsPanel({
     return () => clearTimeout(timer);
   }, [searchInput]);
 
+  // Pagination: show 20 per list, "Load more" reveals +20. Reset when search changes
+  // or when the user navigates between tabs to keep the UX predictable.
+  const PAGE_SIZE = 20;
+  const [leaseCount, setLeaseCount] = useState(PAGE_SIZE);
+  const [tmCount, setTmCount] = useState(PAGE_SIZE);
+  const [openCount, setOpenCount] = useState(PAGE_SIZE);
+  useEffect(() => { setLeaseCount(PAGE_SIZE); setTmCount(PAGE_SIZE); }, [search]);
+  useEffect(() => { setOpenCount(PAGE_SIZE); }, [ipTab]);
+
   // Load open T&M tickets when In Progress → Open Tickets tab is shown
   useEffect(() => {
     if (!visible) return;
@@ -111,11 +120,20 @@ export default function FormsPanel({
     return () => { cancelled = true; };
   }, [visible, subTab, recTab]);
 
-  // Filtered lease sheet recents
+  // Sort helper: newest first by created_at (fall back to id for stable ordering).
+  const byNewest = (a, b) => {
+    const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+    const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+    if (tb !== ta) return tb - ta;
+    return (b.id || 0) - (a.id || 0);
+  };
+
+  // Filtered + sorted lease sheet recents
   const filteredLease = useMemo(() => {
-    if (!search) return cachedRecents;
+    const base = [...cachedRecents].sort(byNewest);
+    if (!search) return base;
     const q = search.toLowerCase();
-    return cachedRecents.filter((r) =>
+    return base.filter((r) =>
       (r.ticket_number || '').toLowerCase().includes(q) ||
       (r.site_client || '').toLowerCase().includes(q) ||
       (r.site_area || '').toLowerCase().includes(q) ||
@@ -125,15 +143,23 @@ export default function FormsPanel({
   }, [cachedRecents, search]);
 
   const filteredTm = useMemo(() => {
-    if (!search) return tmSubmitted;
+    const base = [...tmSubmitted].sort(byNewest);
+    if (!search) return base;
     const q = search.toLowerCase();
-    return tmSubmitted.filter((t) =>
+    return base.filter((t) =>
       (t.ticket_number || '').toLowerCase().includes(q) ||
       (t.client || '').toLowerCase().includes(q) ||
       (t.area || '').toLowerCase().includes(q) ||
       (t.created_by_name || '').toLowerCase().includes(q)
     );
   }, [tmSubmitted, search]);
+
+  const sortedOpenTickets = useMemo(() => [...openTickets].sort(byNewest), [openTickets]);
+
+  // Paginated views
+  const visibleLease = useMemo(() => filteredLease.slice(0, leaseCount), [filteredLease, leaseCount]);
+  const visibleTm = useMemo(() => filteredTm.slice(0, tmCount), [filteredTm, tmCount]);
+  const visibleOpen = useMemo(() => sortedOpenTickets.slice(0, openCount), [sortedOpenTickets, openCount]);
 
   if (!visible) return null;
 
@@ -296,12 +322,12 @@ export default function FormsPanel({
           {/* Open Tickets */}
           {ipTab === IP_OPEN && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              {openTickets.length === 0 ? (
+              {sortedOpenTickets.length === 0 ? (
                 <div className="small-text" style={{ textAlign: 'center', padding: '20px', color: '#9ca3af' }}>
                   No open T&M tickets.
                 </div>
               ) : (
-                openTickets.map((t) => (
+                visibleOpen.map((t) => (
                   <button
                     key={t.id}
                     type="button"
@@ -330,6 +356,15 @@ export default function FormsPanel({
                     </div>
                   </button>
                 ))
+              )}
+              {sortedOpenTickets.length > openCount && (
+                <button
+                  type="button"
+                  onClick={() => setOpenCount((c) => c + PAGE_SIZE)}
+                  style={{ padding: '8px', background: '#1f2937', border: '1px solid #374151', borderRadius: '6px', color: '#60a5fa', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', marginTop: '4px' }}
+                >
+                  Load more ({sortedOpenTickets.length - openCount} remaining)
+                </button>
               )}
             </div>
           )}
@@ -411,7 +446,7 @@ export default function FormsPanel({
                   No lease sheets.
                 </div>
               ) : (
-                filteredLease.map((record) => (
+                visibleLease.map((record) => (
                   <div key={`ls-${record.id}`} className="site-row" style={{ padding: '10px', borderRadius: '6px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                       <div style={{ flex: 1 }}>
@@ -449,6 +484,15 @@ export default function FormsPanel({
                   </div>
                 ))
               )}
+              {filteredLease.length > leaseCount && (
+                <button
+                  type="button"
+                  onClick={() => setLeaseCount((c) => c + PAGE_SIZE)}
+                  style={{ padding: '8px', background: '#1f2937', border: '1px solid #374151', borderRadius: '6px', color: '#60a5fa', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', marginTop: '4px' }}
+                >
+                  Load more ({filteredLease.length - leaseCount} remaining)
+                </button>
+              )}
             </div>
           )}
 
@@ -460,7 +504,7 @@ export default function FormsPanel({
                   No T&M tickets.
                 </div>
               ) : (
-                filteredTm.map((t) => (
+                visibleTm.map((t) => (
                   <div key={`tm-${t.id}`} className="site-row" style={{ padding: '10px', borderRadius: '6px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                       <div style={{ flex: 1 }}>
@@ -488,6 +532,15 @@ export default function FormsPanel({
                     </div>
                   </div>
                 ))
+              )}
+              {filteredTm.length > tmCount && (
+                <button
+                  type="button"
+                  onClick={() => setTmCount((c) => c + PAGE_SIZE)}
+                  style={{ padding: '8px', background: '#1f2937', border: '1px solid #374151', borderRadius: '6px', color: '#60a5fa', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', marginTop: '4px' }}
+                >
+                  Load more ({filteredTm.length - tmCount} remaining)
+                </button>
               )}
             </div>
           )}

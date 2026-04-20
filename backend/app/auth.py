@@ -28,6 +28,65 @@ def seed_demo_users(db: Session) -> None:
     db.commit()
 
 
+def _upsert_supabase_user(
+    db: Session,
+    actual_id: int,
+    email: str,
+    name: str,
+    role: RoleEnum,
+) -> User:
+    """Ensure a User row exists in the local `users` table for a Supabase-authenticated
+    caller so FK-backed columns (e.g. `created_by_user_id`) can reference it.
+
+    Supabase users are synthesized from the JWT; without this, every `created_by_user_id`
+    would be NULL, breaking role-scoped visibility (e.g. workers can't see their own
+    T&M tickets).
+
+    Behavior:
+      - Look up by id first (stable hash of the Supabase `sub` claim).
+      - If not found, look up by email (handles case where a different hash previously
+        claimed this email, or a demo-seeded row exists with this email).
+      - Insert if neither exists. Update name/role if they changed.
+
+    Never raises — auth should continue to work even if the users table is read-only
+    (we fall back to a transient User object in that case).
+    """
+    try:
+        existing = db.query(User).filter(User.id == actual_id).first()
+        if existing is None:
+            existing = db.query(User).filter(User.email == email).first()
+
+        if existing is None:
+            new_user = User(id=actual_id, email=email, name=name, role=role)
+            db.add(new_user)
+            db.commit()
+            db.refresh(new_user)
+            return new_user
+
+        # Keep the row in sync with whatever the JWT says.
+        changed = False
+        if existing.name != name:
+            existing.name = name
+            changed = True
+        if existing.role != role:
+            existing.role = role
+            changed = True
+        if changed:
+            db.commit()
+            db.refresh(existing)
+        return existing
+    except Exception as exc:
+        # Surface enough info for debugging without blocking auth.
+        print(f"[AUTH] Could not upsert user {email} ({actual_id}): {exc}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        # Fall back to a transient object — callers that need a persisted row will fail
+        # their FK writes, but auth itself still succeeds.
+        return User(id=actual_id, email=email, name=name, role=role)
+
+
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     # If using Supabase, verify JWT token (check JWT first, regardless of db availability)
     if settings.use_supabase:
@@ -79,13 +138,25 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
                         # Fallback to hash of email
                         actual_id = hash(user_email) % 1000000
                     
-                    # Return a user-like object (doesn't need to be persisted in production)
-                    user = User(
-                        id=actual_id,  # Use actual user ID instead of placeholder
-                        email=user_email,
-                        name=user_name,
-                        role=role_enum
-                    )
+                    # Ensure a matching row exists in the local `users` table so
+                    # FK-backed columns (e.g. created_by_user_id on T&M tickets)
+                    # can reference this caller. Without this, workers lose
+                    # visibility of their own tickets.
+                    if db is not None:
+                        user = _upsert_supabase_user(
+                            db,
+                            actual_id=actual_id,
+                            email=user_email,
+                            name=user_name,
+                            role=role_enum,
+                        )
+                    else:
+                        user = User(
+                            id=actual_id,
+                            email=user_email,
+                            name=user_name,
+                            role=role_enum,
+                        )
                     print(f"[AUTH DEBUG] Created user object - ID: {user.id}, Email: {user.email}, Name: {user.name}")
                     return user
             except Exception:

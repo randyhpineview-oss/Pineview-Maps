@@ -208,10 +208,13 @@ export async function saveLeaseSheetDraft(draft) {
   const db = await dbPromise;
   const now = new Date().toISOString();
   const existing = draft.id ? await db.get('leaseSheetDrafts', draft.id) : null;
+  // Order matters: spread draft FIRST so we can guarantee `id` isn't wiped by
+  // a `draft.id === undefined` on the incoming payload. IndexedDB requires a
+  // valid key on the `id` keyPath.
   const payload = {
-    id: draft.id || crypto.randomUUID(),
     createdAt: existing?.createdAt || now,
     ...draft,
+    id: draft.id || existing?.id || crypto.randomUUID(),
     updatedAt: now,
   };
   await db.put('leaseSheetDrafts', payload);

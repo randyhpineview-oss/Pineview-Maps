@@ -35,9 +35,47 @@ export const DEFAULT_OFFICE_LINES = [
   { label: '1 Herbicide (m²)', qty: '', rate: '' },
   { label: '2 Herbicides (m²)', qty: '', rate: '' },
   { label: '3 Herbicides (m²)', qty: '', rate: '' },
-  { label: 'Roadside/Access Rd Kms Sprayed', qty: '', rate: '' },
+  { label: 'Roadside/Access Rd Liters Applied', qty: '', rate: '' },
   { label: 'Travel Km', qty: '', rate: '' },
 ];
+
+/**
+ * Auto-populated office line labels whose QTY comes from Sites Treated rows,
+ * not from user input. Used by the detail sheet to render these as read-only
+ * (unless the user explicitly overrides).
+ */
+export const AUTO_LINE_LABELS = [
+  '1 Herbicide (m²)',
+  '2 Herbicides (m²)',
+  '3 Herbicides (m²)',
+  'Roadside/Access Rd Liters Applied',
+];
+
+/**
+ * Labels that a worker role can edit QTY on (never Rate). All other office
+ * lines are office/admin-only for QTY edits.
+ */
+export const WORKER_EDITABLE_LINE_LABELS = [
+  'Truck Unit (/hr)',
+  'Lead Applicator (/hr)',
+  'Assistant Applicator (/hr)',
+  'UTV Unit (/day)',
+  'Backpack (/day)',
+  'H2S Monitors',
+  'Travel Km',
+];
+
+/**
+ * Map legacy labels (from previously-saved office_data) to their current name.
+ * Keeps older tickets rendering correctly after we rename a pre-seeded line.
+ */
+const LEGACY_LABEL_MIGRATIONS = {
+  'Roadside/Access Rd Kms Sprayed': 'Roadside/Access Rd Liters Applied',
+};
+
+export function migrateOfficeLineLabel(label) {
+  return LEGACY_LABEL_MIGRATIONS[label] || label;
+}
 
 export function computeOfficeTotals(officeData) {
   const lines = officeData?.lines || [];
@@ -150,11 +188,13 @@ export async function generateTMTicketPdf(ticket, options = {}) {
   doc.text('Sites Treated', pageW / 2, y, { align: 'center' });
   y += 6;
 
-  // Columns: Location | (site type) | Herbicides | (L) Used | Area (ha) | Cost Code
+  // Columns: Location | (site type) | Herbicides | (L) Used | Area (ha / km) | Cost Code
+  // Roadside rows show the area as km; everything else as ha. The unit is
+  // inferred from row.site_type === 'Roadside' at render time.
   const colWidths = [110, 70, 85, 60, 60, 155];  // sums to ~540
   const rowH = 16;
   const totalTableW = colWidths.reduce((a, b) => a + b, 0);
-  const headers = ['Location', ' ', 'Herbicides', '(L) Used', 'Area (ha)', 'Cost Code'];
+  const headers = ['Location', ' ', 'Herbicides', '(L) Used', 'Area', 'Cost Code'];
 
   // Header row
   let cx = marginL;
@@ -179,12 +219,15 @@ export async function generateTMTicketPdf(ticket, options = {}) {
   for (let r = 0; r < rowCount; r++) {
     const row = rows[r] || {};
     cx = marginL;
+    const isRoadside = row.site_type === 'Roadside';
+    const areaValue = row.area_ha != null && row.area_ha !== '' ? Number(row.area_ha).toFixed(2) : '';
+    const areaText = areaValue ? `${areaValue} ${isRoadside ? 'km' : 'ha'}` : '';
     const cells = [
       row.location || '',
       row.site_type || '',
       row.herbicides || '',
       row.liters_used != null && row.liters_used !== '' ? Number(row.liters_used).toFixed(2) : '',
-      row.area_ha != null && row.area_ha !== '' ? Number(row.area_ha).toFixed(2) : '',
+      areaText,
       row.cost_code || '',
     ];
     for (let i = 0; i < colWidths.length; i++) {
@@ -205,11 +248,16 @@ export async function generateTMTicketPdf(ticket, options = {}) {
   doc.text('Office Use ONLY', marginL, y);
   y += 6;
 
-  // Office data defaults if none provided
+  // Always use office_data.lines if present (so worker-entered QTY shows up
+  // in the PDF). Rate + Sub Total + Totals are gated separately by
+  // includeOfficeData so workers never see pricing.
   let displayLines = DEFAULT_OFFICE_LINES.map(l => ({ ...l }));
   let gstPercent = 5;
-  if (includeOfficeData && ticket.office_data) {
-    displayLines = (ticket.office_data.lines || DEFAULT_OFFICE_LINES).map(l => ({ ...l }));
+  if (ticket.office_data) {
+    displayLines = (ticket.office_data.lines || DEFAULT_OFFICE_LINES).map((l) => ({
+      ...l,
+      label: migrateOfficeLineLabel(l.label || ''),
+    }));
     gstPercent = Number(ticket.office_data.gst_percent ?? 5) || 5;
   }
 
@@ -234,6 +282,8 @@ export async function generateTMTicketPdf(ticket, options = {}) {
   y += officeRowH;
 
   // Office line rows
+  // QTY is always shown when present (so workers can verify their entered data).
+  // Rate + Sub Total are only rendered when includeOfficeData is true.
   doc.setFont('helvetica', 'normal');
   let runningSubTotal = 0;
   for (const line of displayLines) {
@@ -242,11 +292,14 @@ export async function generateTMTicketPdf(ticket, options = {}) {
     const rate = parseFloat(line.rate);
     const sub = (Number.isFinite(qty) ? qty : 0) * (Number.isFinite(rate) ? rate : 0);
     if (includeOfficeData && sub > 0) runningSubTotal += sub;
+    const qtyText = Number.isFinite(qty) && qty !== 0
+      ? qty.toLocaleString(undefined, { maximumFractionDigits: 2 })
+      : '';
     const cells = [
       line.label || '',
-      includeOfficeData && Number.isFinite(qty) && qty !== 0 ? String(line.qty) : '',
-      includeOfficeData && Number.isFinite(rate) && rate !== 0 ? `$ ${formatMoney(rate)}` : includeOfficeData ? '$' : '$',
-      includeOfficeData && sub > 0 ? `$ ${formatMoney(sub)}` : '$',
+      qtyText,
+      includeOfficeData && Number.isFinite(rate) && rate !== 0 ? `$ ${formatMoney(rate)}` : includeOfficeData ? '$' : '',
+      includeOfficeData && sub > 0 ? `$ ${formatMoney(sub)}` : (includeOfficeData ? '$' : ''),
     ];
     for (let i = 0; i < officeColW.length; i++) {
       drawRect(cx, y, officeColW[i], officeRowH);
@@ -288,24 +341,30 @@ export async function generateTMTicketPdf(ticket, options = {}) {
   doc.setFontSize(7.5);
   doc.text('GST# 103512687.   WCB# 909 048', pageW - marginR, y, { align: 'right' });
 
-  y += 14;
+  y += 18;
+  // One-line approval: "Approved: ____[signature]____". No name printed —
+  // if a printed copy needs a name, the signer can hand-write it beside the
+  // signature. Signature image is stretched across most of the line for
+  // readability on desktop PDFs.
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9);
-  if (ticket.approved_by_name) {
-    doc.text(ticket.approved_by_name, marginL, y);
-    y += 12;
-  }
-  doc.text('Approved: ', marginL, y + 12);
-  // Signature line
+  doc.setFontSize(10);
+  doc.text('Approved:', marginL, y + 14);
+
+  // Signature baseline runs from just after "Approved:" label to the right margin.
+  const sigLineX1 = marginL + 60;
+  const sigLineX2 = pageW - marginR;
+  const sigLineY = y + 16;
   doc.setDrawColor(0);
   doc.setLineWidth(0.5);
-  doc.line(marginL + 55, y + 14, pageW - marginR, y + 14);
+  doc.line(sigLineX1, sigLineY, sigLineX2, sigLineY);
 
-  // Embed signature image if provided
+  // Embed signature image if provided — stretched to fill the line.
   const sig = signaturePng || ticket.approved_signature || null;
   if (sig) {
     try {
-      doc.addImage(sig, 'PNG', marginL + 60, y - 4, 150, 24);
+      const sigW = Math.min(280, sigLineX2 - sigLineX1 - 4);
+      const sigH = 32;
+      doc.addImage(sig, 'PNG', sigLineX1 + 4, sigLineY - sigH + 4, sigW, sigH);
     } catch (e) {
       console.warn('[TM_PDF] Could not embed signature:', e.message);
     }
