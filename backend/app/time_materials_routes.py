@@ -292,6 +292,18 @@ def update_ticket(
         if payload.office_data is not None:
             ticket.office_data = payload.office_data
         if payload.status is not None:
+            # Transitioning OUT of "approved" (office unapproving a ticket so a
+            # worker can correct it, or so office can re-sign) — wipe the
+            # approval metadata and signature so the ticket reads as unsigned
+            # again and the PDF regenerates clean on next save.
+            if (
+                ticket.status == TMTicketStatus.approved
+                and payload.status != TMTicketStatus.approved
+            ):
+                ticket.approved_at = None
+                ticket.approved_by_user_id = None
+                ticket.approved_by_name = None
+                ticket.approved_signature = None
             ticket.status = payload.status
         if payload.approved_signature is not None:
             ticket.approved_signature = payload.approved_signature

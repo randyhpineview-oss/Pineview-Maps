@@ -231,6 +231,38 @@ export default function TMTicketDetailSheet({
     }
   };
 
+  // Office-only: flip an approved ticket back to "submitted" so corrections
+  // can be made. Backend wipes approved_at / approved_by / approved_signature
+  // on this transition so the next save regenerates a clean PDF.
+  const handleUnapprove = async () => {
+    if (!confirm('Unapprove this ticket? The signature and approval info will be cleared so it can be edited and re-approved.')) return;
+    setIsSaving(true);
+    try {
+      const updated = await api.updateTMTicket(ticket.id, { status: 'submitted' });
+      setTicket(updated);
+      setRowsEdits({});
+    } catch (e) {
+      alert('Unapprove failed: ' + (e.message || 'Unknown error'));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Office-only: permanently delete the ticket. Linked spray records are
+  // unlinked (not deleted) by the backend, and T&M rows cascade via FK.
+  const handleDelete = async () => {
+    if (!confirm(`Delete T&M ticket ${ticket.ticket_number}?\n\nThis cannot be undone. Linked spray records are kept but unlinked from this ticket.`)) return;
+    if (!confirm('Are you absolutely sure? This is permanent.')) return;
+    setIsSaving(true);
+    try {
+      await api.deleteTMTicket(ticket.id);
+      if (onClose) onClose();
+    } catch (e) {
+      alert('Delete failed: ' + (e.message || 'Unknown error'));
+      setIsSaving(false);
+    }
+  };
+
   // Approve without drawing a signature — the PDF will have a blank signature
   // line so office can print and hand-sign after the fact.
   const handleApproveWithoutSignature = async () => {
@@ -586,6 +618,24 @@ export default function TMTicketDetailSheet({
             style={{ flex: 1, padding: '12px', background: '#8b5cf6', color: 'white', border: 'none', borderRadius: '8px', fontSize: '0.9rem', fontWeight: 600, cursor: 'pointer', minWidth: '120px' }}
           >
             ✍️ Sign & Approve
+          </button>
+        ) : null}
+        {canOfficeEdit && ticket.status === 'approved' ? (
+          <button
+            onClick={handleUnapprove}
+            disabled={isSaving}
+            style={{ flex: 1, padding: '12px', background: isSaving ? '#374151' : '#f59e0b', color: 'white', border: 'none', borderRadius: '8px', fontSize: '0.9rem', fontWeight: 600, cursor: isSaving ? 'not-allowed' : 'pointer', minWidth: '120px' }}
+          >
+            ↩️ Unapprove
+          </button>
+        ) : null}
+        {canOfficeEdit ? (
+          <button
+            onClick={handleDelete}
+            disabled={isSaving}
+            style={{ flex: 1, padding: '12px', background: isSaving ? '#374151' : '#dc2626', color: 'white', border: 'none', borderRadius: '8px', fontSize: '0.9rem', fontWeight: 600, cursor: isSaving ? 'not-allowed' : 'pointer', minWidth: '120px' }}
+          >
+            🗑️ Delete Ticket
           </button>
         ) : null}
       </div>
