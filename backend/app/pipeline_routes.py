@@ -4,7 +4,7 @@ import math
 import base64
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, defer, joinedload
 
 from app.auth import get_current_user, require_roles
 from app.database import get_db
@@ -105,8 +105,19 @@ def list_pipelines(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """List all non-deleted pipelines, optionally filtered."""
-    q = db.query(Pipeline).options(joinedload(Pipeline.spray_records)).filter(Pipeline.deleted_at.is_(None))
+    """List all non-deleted pipelines, optionally filtered.
+
+    EGRESS: defer `lease_sheet_data` on spray_records so the JSONB blob never
+    leaves Supabase. The list response uses SprayRecordSummary which doesn't
+    expose it anyway — defer() is what actually stops the DB from sending it.
+    """
+    q = (
+        db.query(Pipeline)
+        .options(
+            joinedload(Pipeline.spray_records).defer(SprayRecord.lease_sheet_data),
+        )
+        .filter(Pipeline.deleted_at.is_(None))
+    )
     if client:
         q = q.filter(Pipeline.client == client)
     if area:
@@ -123,6 +134,7 @@ def list_pending_pipelines(
     """List pipelines pending approval."""
     pipelines = (
         db.query(Pipeline)
+        .options(joinedload(Pipeline.spray_records).defer(SprayRecord.lease_sheet_data))
         .filter(Pipeline.deleted_at.is_(None), Pipeline.approval_state == "pending_review")
         .order_by(Pipeline.created_at.desc())
         .all()
@@ -188,7 +200,7 @@ def list_deleted_pipelines(
     """List soft-deleted pipelines."""
     pipelines = (
         db.query(Pipeline)
-        .options(joinedload(Pipeline.spray_records))
+        .options(joinedload(Pipeline.spray_records).defer(SprayRecord.lease_sheet_data))
         .filter(Pipeline.deleted_at.isnot(None))
         .order_by(Pipeline.deleted_at.desc())
         .all()
@@ -203,7 +215,12 @@ def restore_pipeline(
     current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
 ):
     """Restore a soft-deleted pipeline."""
-    pipeline = db.query(Pipeline).options(joinedload(Pipeline.spray_records)).filter(Pipeline.id == pipeline_id).first()
+    pipeline = (
+        db.query(Pipeline)
+        .options(joinedload(Pipeline.spray_records).defer(SprayRecord.lease_sheet_data))
+        .filter(Pipeline.id == pipeline_id)
+        .first()
+    )
     if not pipeline:
         raise HTTPException(status_code=404, detail="Pipeline not found")
     pipeline.deleted_at = None

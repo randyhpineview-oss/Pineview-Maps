@@ -2,9 +2,10 @@ from datetime import datetime
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import inspect, or_, text
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, defer, joinedload
 
 from app.auth import get_current_user, require_roles, seed_demo_users
 from app.config import get_settings
@@ -63,6 +64,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# GZip compression for large JSON responses (pipelines with coordinates,
+# sites list, T&M ticket bundles). Typically shrinks JSON 70-90%, which is
+# a direct reduction in Supabase egress for every large API response.
+# minimum_size=500 skips tiny responses where gzip overhead outweighs gain.
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 # Include routers AFTER middleware is set up
 app.include_router(user_management_router)
@@ -323,9 +330,13 @@ def list_sites(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[SiteRead]:
+    # EGRESS CRITICAL: defer lease_sheet_data (JSONB blob) on the joined
+    # spray_records. The response schema (SiteSprayRecordSummary) already
+    # doesn't expose this field, but without defer() SQLAlchemy still SELECTs
+    # it from the DB, which counts as Supabase egress per pooler byte.
     query = db.query(Site).options(
         joinedload(Site.updates),
-        joinedload(Site.spray_records),
+        joinedload(Site.spray_records).defer(SiteSprayRecord.lease_sheet_data),
         joinedload(Site.created_by_user),
         joinedload(Site.approved_by_user),
         joinedload(Site.last_inspected_by_user)
@@ -496,9 +507,18 @@ def list_site_spray_records(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """List spray records for a site (summary — no lease_sheet_data)."""
+    """List spray records for a site (summary — no lease_sheet_data).
+
+    defer() skips the heavy JSONB column at the DB query level so it never
+    leaves Supabase. The detail endpoint /api/site-spray-records/{id} fetches
+    the full row when the edit flow actually needs it.
+    """
     get_site_or_404(db, site_id)
-    q = db.query(SiteSprayRecord).filter(SiteSprayRecord.site_id == site_id)
+    q = (
+        db.query(SiteSprayRecord)
+        .options(defer(SiteSprayRecord.lease_sheet_data))
+        .filter(SiteSprayRecord.site_id == site_id)
+    )
     return [SiteSprayRecordSummary.model_validate(r) for r in q.order_by(SiteSprayRecord.created_at.desc()).all()]
 
 
@@ -714,11 +734,16 @@ def update_site_spray_record(
 @app.get("/api/recent-submissions", response_model=list[RecentSubmissionRead])
 def list_recent_submissions(
     search: str = Query(default=None),
-    limit: int = Query(default=50, le=200),
+    limit: int = Query(default=20, le=200),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """List recent lease sheet submissions with search."""
+    """List recent lease sheet submissions with search.
+
+    EGRESS: lease_sheet_data is NOT selected (defer) — the summary response
+    only needs scalar columns + joined site context. Default limit lowered
+    from 50 -> 20 since the Forms panel paginates client-side with "Load more".
+    """
     q = (
         db.query(
             SiteSprayRecord,
@@ -726,6 +751,7 @@ def list_recent_submissions(
             Site.client.label('site_client'),
             Site.area.label('site_area'),
         )
+        .options(defer(SiteSprayRecord.lease_sheet_data))
         .join(Site, SiteSprayRecord.site_id == Site.id)
         .filter(SiteSprayRecord.lease_sheet_data.isnot(None))
     )

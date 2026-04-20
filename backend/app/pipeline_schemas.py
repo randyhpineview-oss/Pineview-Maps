@@ -1,12 +1,13 @@
 from datetime import date, datetime
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.pipeline_models import PipelineApprovalState, PipelineStatus
 
 
 class SprayRecordRead(BaseModel):
+    """Full spray record (detail endpoint). Includes lease_sheet_data."""
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -23,6 +24,44 @@ class SprayRecordRead(BaseModel):
     lease_sheet_data: dict | None = None
     pdf_url: str | None = None
     photo_urls: list[str] | None = None
+
+
+class SprayRecordSummary(BaseModel):
+    """Lightweight spray-record view WITHOUT lease_sheet_data.
+
+    Used by list endpoints to keep Supabase egress tiny. The frontend
+    only needs a truthy flag to decide whether to show the 📄 badge and
+    the View/Edit buttons — not the full JSONB blob. For the edit flow
+    the full row comes from GET /api/pipelines/{id} or an equivalent
+    per-record endpoint.
+    """
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    pipeline_id: int
+    start_fraction: float
+    end_fraction: float
+    spray_date: date
+    sprayed_by_user_id: int | None
+    sprayed_by_name: str | None
+    notes: str | None
+    is_avoided: bool
+    created_at: datetime
+    ticket_number: str | None = None
+    pdf_url: str | None = None
+    photo_urls: list[str] | None = None
+    # Derived flag so the frontend can still show the "📄" lease-sheet badge
+    # without hydrating the 5-10 KB JSONB blob per row. Inferred from
+    # ticket_number + pdf_url so we never need to SELECT the JSONB column.
+    has_lease_sheet_data: bool = False
+
+    @model_validator(mode='after')
+    def _fill_has_lease_sheet_data(self):
+        # Any completed lease sheet gets a ticket_number assigned and/or a
+        # pdf_url after Dropbox upload. is_avoided rows skip both.
+        if not self.has_lease_sheet_data:
+            self.has_lease_sheet_data = bool(self.ticket_number or self.pdf_url)
+        return self
 
 
 class SprayRecordCreate(BaseModel):
@@ -79,7 +118,10 @@ class PipelineRead(BaseModel):
 
 
 class PipelineListRead(BaseModel):
-    """Lighter version without full coordinates for list endpoints."""
+    """Lighter version for list endpoints — spray_records use the Summary schema
+    (no lease_sheet_data) so egress stays flat regardless of how many lease
+    sheets a pipeline accumulates.
+    """
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -97,7 +139,7 @@ class PipelineListRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     created_by_user_id: int | None
-    spray_records: list[SprayRecordRead] = Field(default_factory=list)
+    spray_records: list[SprayRecordSummary] = Field(default_factory=list)
 
     @field_validator('coordinates', mode='before')
     @classmethod
