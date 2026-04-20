@@ -99,9 +99,21 @@ def _get_or_create_shared_link(dbx, file_path: str) -> Optional[str]:
         if hasattr(link_err, 'error') and hasattr(link_err.error, 'is_shared_link_already_exists'):
             try:
                 if link_err.error.is_shared_link_already_exists():
-                    existing = link_err.error.get_shared_link_already_exists().metadata
-                    print(f"[DROPBOX] Using existing shared link: {existing.url}")
-                    return existing.url
+                    meta_wrapper = link_err.error.get_shared_link_already_exists()
+                    # Extract the FileLinkMetadata from the wrapper. The SDK
+                    # exposes this differently across versions:
+                    #   - .get_metadata() method (tagged union accessor)
+                    #   - .metadata property (direct attribute)
+                    #   - .metadata() callable (some SDK builds)
+                    meta = None
+                    if hasattr(meta_wrapper, 'get_metadata'):
+                        meta = meta_wrapper.get_metadata()
+                    elif hasattr(meta_wrapper, 'metadata'):
+                        m = meta_wrapper.metadata
+                        meta = m() if callable(m) else m
+                    if meta and hasattr(meta, 'url'):
+                        print(f"[DROPBOX] Using existing shared link: {meta.url}")
+                        return meta.url
             except Exception as inner_err:
                 print(f"[DROPBOX] Error extracting existing link: {inner_err}")
     except Exception as e:
