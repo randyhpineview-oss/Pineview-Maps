@@ -280,6 +280,9 @@ export default function App() {
 
   const loadServerUsers = useCallback(async () => {
     if (!window.navigator.onLine) return;
+    // Only admins can list users — skip the call for office/worker to avoid
+    // a 403 on every page load (harmless but noisy in the Render logs).
+    if (userRole !== 'admin') return;
     try {
       const data = await api.listUsers();
       setCachedUsers(data);
@@ -287,7 +290,7 @@ export default function App() {
     } catch {
       console.error('[USERS] Failed to load from server');
     }
-  }, []);
+  }, [userRole]);
 
   const loadPipelines = useCallback(async () => {
     if (!window.navigator.onLine) return;
