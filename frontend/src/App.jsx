@@ -2624,7 +2624,6 @@ export default function App() {
               : 'translateX(100%)'
           }}
         >
-          <div className="drag-handle" />
           <div className="side-panel-header">
             <h2>Sites</h2>
             <span className="small-text">
@@ -2671,7 +2670,6 @@ export default function App() {
               : 'translateX(100%)'
           }}
         >
-          <div className="drag-handle" />
           <div className="side-panel-header">
             <h2>Forms</h2>
           </div>
@@ -2740,7 +2738,6 @@ export default function App() {
               : 'translateX(100%)'
           }}
         >
-          <div className="drag-handle" />
           <div className="side-panel-header">
             <h2>Admin</h2>
           </div>

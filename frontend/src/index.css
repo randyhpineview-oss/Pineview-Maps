@@ -374,26 +374,6 @@ button { cursor: pointer; }
   transition: none;
 }
 
-/* Drag handle indicator for panels */
-.side-panel .drag-handle {
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 4px;
-  height: 40px;
-  background: rgba(143, 182, 255, 0.3);
-  border-radius: 2px;
-  margin-left: 4px;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.2s ease;
-}
-.side-panel.dragging .drag-handle,
-.side-panel.open .drag-handle {
-  opacity: 1;
-}
-
 .side-panel-header {
   position: sticky;
   top: 0;
@@ -401,7 +381,7 @@ button { cursor: pointer; }
   align-items: center;
   gap: 0.75rem;
   padding: 0.75rem 1rem;
-  background: rgba(9, 17, 31, 0.98);
+  background: transparent;
   border-bottom: 1px solid rgba(143, 182, 255, 0.10);
   z-index: 2;
 }
