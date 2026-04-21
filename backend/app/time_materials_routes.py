@@ -354,6 +354,29 @@ def update_ticket(
 
     is_office = current_user.role in (RoleEnum.admin, RoleEnum.office)
 
+    # Worker edit window: workers may edit their own ticket while it's
+    # `open` (drafting) or `submitted` (handed off, awaiting office review).
+    # Once the ticket is `approved`, it's frozen on the worker side \u2014 the
+    # only way to re-edit is for office to Unapprove first, which wipes the
+    # signature/approval metadata. This guard runs BEFORE any field mutation
+    # so even the description_of_work assignment below can't sneak through.
+    if not is_office and ticket.status == TMTicketStatus.approved:
+        trying_to_edit = any([
+            payload.description_of_work is not None,
+            payload.office_data is not None,
+            payload.status is not None,
+            payload.pdf_base64,
+            payload.row_updates,
+            payload.po_approval_number is not None,
+            payload.approved_signature is not None,
+            payload.approve,
+        ])
+        if trying_to_edit:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This ticket has already been approved \u2014 ask office to unapprove it if edits are needed",
+            )
+
     # Worker-editable fields
     if payload.description_of_work is not None:
         ticket.description_of_work = payload.description_of_work
@@ -417,34 +440,15 @@ def update_ticket(
         # but accept office_data WITH QTY-only merge on allowlisted labels,
         # and allow the one-way open -> submitted status transition so the
         # worker can hand the ticket off to office for pricing & approval.
+        # Approval + office-only field attempts always 403 regardless of
+        # status. (The "already approved" lockout is handled by the earlier
+        # guard that runs before any field mutation.)
         if any([
             payload.po_approval_number is not None,
             payload.approved_signature is not None,
             payload.approve,
         ]):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Office-only fields")
-
-        # Workers can only edit while the ticket is in the "open" drafting
-        # stage. Once they've submitted it (or office approved it), the
-        # ticket is locked on the worker side \u2014 office handles any edits
-        # via the unapprove / re-edit flow. The frontend already hides the
-        # Save button for workers on non-open tickets; this is the server-
-        # side enforcement so a direct API call can't bypass it.
-        if ticket.status != TMTicketStatus.open:
-            # Allow zero-mutation PATCH bodies (e.g. the frontend sending an
-            # empty save is harmless) but reject any actual field edit.
-            trying_to_edit = any([
-                payload.description_of_work is not None,
-                payload.office_data is not None,
-                payload.status is not None,
-                payload.pdf_base64,
-                payload.row_updates,
-            ])
-            if trying_to_edit:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="This ticket has already been submitted \u2014 ask office to unapprove it if edits are needed",
-                )
 
         if payload.office_data is not None:
             ticket.office_data = _merge_worker_office_data(ticket.office_data, payload.office_data)

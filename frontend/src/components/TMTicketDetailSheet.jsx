@@ -186,15 +186,18 @@ export default function TMTicketDetailSheet({
   // Office/admin go through the Approve flow instead.
   const canWorkerSubmit =
     !canOfficeEdit && ticket?.status === 'open';
-  // Workers on submitted/approved tickets see everything read-only.
-  const isWorkerReadOnly =
-    !canOfficeEdit && ticket?.status !== 'open';
+  // Workers can EDIT their own ticket while it's open OR submitted (handed
+  // off but not yet approved). Once approved, the ticket is frozen on the
+  // worker side \u2014 office must Unapprove to unlock edits. Matches the
+  // backend guard at the top of the PATCH /time-materials/{id} handler.
+  const canWorkerEdit =
+    !canOfficeEdit && ticket?.status !== 'approved';
 
   // Whether THIS user should see the red asterisks on the 7 worker fields.
-  // Workers always see them on their own open tickets. Office/admin also see
-  // them whenever any of the 7 is empty, so they can fill in missing values
-  // themselves if they happen to be the one completing the ticket in the field.
-  const showMissingQtyHint = hasMissingQty && (canWorkerSubmit || canOfficeEdit);
+  // Workers see them whenever they can edit and something's missing. Office/
+  // admin also see them so they can fill in missing values themselves if
+  // they happen to be the one completing the ticket in the field.
+  const showMissingQtyHint = hasMissingQty && (canWorkerEdit || canOfficeEdit);
 
   // Regenerate a PDF using the CURRENT edits (for preview + upload)
   const regenerateCurrentPdf = async (options = {}) => {
@@ -445,6 +448,9 @@ export default function TMTicketDetailSheet({
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           rows={2}
+          // Lock the description for workers on approved tickets so the UI
+          // matches the backend guard. Office/admin can always edit.
+          readOnly={!canOfficeEdit && !canWorkerEdit}
           style={{
             width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '6px',
             border: '1px solid #374151', backgroundColor: '#111827', color: '#f9fafb', resize: 'vertical',
@@ -550,8 +556,12 @@ export default function TMTicketDetailSheet({
           // Who can edit QTY here:
           //  - Auto-populated lines: nobody (always derived, read-only).
           //  - Office/admin: always.
-          //  - Worker: only if label is in the worker allowlist.
-          const qtyEditable = !isAutoLine && (canOfficeEdit || isWorkerEditable);
+          //  - Worker: only if label is in the worker allowlist AND the
+          //    ticket is still editable on their side (open or submitted,
+          //    not yet approved).
+          const qtyEditable =
+            !isAutoLine
+            && (canOfficeEdit || (isWorkerEditable && canWorkerEdit));
 
           // Label editability: office/admin only.
           const labelEditable = canOfficeEdit && !isAutoLine;
@@ -723,10 +733,11 @@ export default function TMTicketDetailSheet({
         >
           📄 Preview PDF
         </button>
-        {/* Save: hide for workers once the ticket leaves "open" — submitted
-            and approved tickets are locked on the worker side. Office/admin
-            can always save edits regardless of status. */}
-        {(canOfficeEdit || canWorkerSubmit) ? (
+        {/* Save: workers can save while open OR submitted (so they can fix
+            forgotten hours / add cleanup work even after handing the ticket
+            off). Locked only once office approves. Office/admin can always
+            save edits regardless of status. */}
+        {(canOfficeEdit || canWorkerEdit) ? (
           <button
             onClick={handleSave}
             disabled={isSaving}
@@ -793,7 +804,13 @@ export default function TMTicketDetailSheet({
         ) : null}
       </div>
 
-      {ticket.pdf_url ? (
+      {/* Dropbox link: office/admin only. After approval, the stored PDF
+          includes pricing + signature, which workers must not see. Workers
+          use the in-app "Preview PDF" button instead \u2014 that regenerates a
+          fresh PDF client-side with includeOfficeData=false (no rates, no
+          sub-totals, no GST, no grand total), so they can verify their own
+          work without exposure to the billed numbers. */}
+      {canOfficeEdit && ticket.pdf_url ? (
         <a
           href={ticket.pdf_url.replace('www.dropbox.com', 'dl.dropboxusercontent.com').replace('&dl=0', '').replace('?dl=0', '?').replace(/[?&]$/, '')}
           target="_blank"
