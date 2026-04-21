@@ -274,9 +274,9 @@ export default function TMTicketDetailSheet({
     // Dialog wording depends on who's submitting: workers are locked out
     // of further edits once they hand off; admin/office stay unlocked.
     const confirmMsg = canOfficeEdit
-      ? 'Move this ticket to "submitted" status for approval?\n\n'
+      ? 'Move this ticket to "pending" status?\n\n'
         + 'You or another office/admin user can then approve it.'
-      : 'Submit this ticket for office approval?\n\n'
+      : 'Mark this ticket as pending for office approval?\n\n'
         + 'You will no longer be able to edit it. Office will add pricing and finalize.';
     if (!confirm(confirmMsg)) return;
     setIsSaving(true);
@@ -302,7 +302,7 @@ export default function TMTicketDetailSheet({
       const updated = await api.updateTMTicket(ticket.id, payload);
       setTicket(updated);
       setRowsEdits({});
-      alert('Ticket submitted for approval.');
+      alert('Ticket marked as pending.');
     } catch (e) {
       alert('Submit failed: ' + (e.message || 'Unknown error'));
     } finally {
@@ -458,7 +458,7 @@ export default function TMTicketDetailSheet({
           <div style={{ fontSize: '0.8rem', color: '#9ca3af', marginTop: '2px' }}>
             Created by: {ticket.created_by_name || '—'} • Status:{' '}
             <span style={{ color: ticket.status === 'approved' ? '#22c55e' : '#3b82f6' }}>
-              {ticket.status}
+              {ticket.status === 'submitted' ? 'pending' : ticket.status}
             </span>
           </div>
         </div>
@@ -791,7 +791,7 @@ export default function TMTicketDetailSheet({
               minWidth: '120px',
             }}
           >
-            {isSaving ? 'Submitting…' : '📤 Submit for Approval'}
+            {isSaving ? 'Saving…' : '📤 Mark as Pending'}
           </button>
         ) : null}
         {canOfficeEdit && ticket.status !== 'approved' ? (

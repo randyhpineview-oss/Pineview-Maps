@@ -8,7 +8,7 @@ import { getLeaseSheetDrafts, deleteLeaseSheetDraft } from '../lib/offlineStore'
  * Three top-level sub-tabs:
  *   1. Forms            — launcher for form templates
  *   2. In Progress      — 3 sub-sub-tab buttons: Uploading / Open Tickets / Drafts
- *   3. Recently Submitted — list of submitted lease sheets (+ T&M tickets)
+ *   3. Recently Submitted — list of pending/approved lease sheets (+ T&M tickets)
  */
 
 const SUB_FORMS = 'forms';
@@ -598,7 +598,7 @@ export default function FormsPanel({
             <div className="list-grid">
               {filteredAll.length === 0 ? (
                 <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: '#9ca3af' }}>
-                  Nothing submitted yet.
+                  Nothing here yet.
                 </div>
               ) : (
                 visibleAll.map((row) =>
@@ -660,7 +660,7 @@ export default function FormsPanel({
                     style={innerBtn(tmStatusFilter === TM_STATUS_SUBMITTED)}
                     onClick={() => setTmStatusFilter(TM_STATUS_SUBMITTED)}
                   >
-                    Submitted
+                    Pending
                   </button>
                   <button
                     type="button"
