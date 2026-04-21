@@ -1084,55 +1084,127 @@ export default function App() {
   const adminPanelTouchStartX = useRef(null);
   const SWIPE_THRESHOLD = 50;
 
-  // Swipe handlers for side panels (left-to-right swipe to close)
+  // Live swipe state for side panels (track actual pixel offset during drag)
+  const [sitesPanelDragOffset, setSitesPanelDragOffset] = useState(0);
+  const [formsPanelDragOffset, setFormsPanelDragOffset] = useState(0);
+  const [adminPanelDragOffset, setAdminPanelDragOffset] = useState(0);
+  const [sitesPanelDragging, setSitesPanelDragging] = useState(false);
+  const [formsPanelDragging, setFormsPanelDragging] = useState(false);
+  const [adminPanelDragging, setAdminPanelDragging] = useState(false);
+
+  // Live swipe state for bottom sheets (detail panels)
+  const [detailDragOffset, setDetailDragOffset] = useState(0);
+  const [pipelineDragOffset, setPipelineDragOffset] = useState(0);
+  const [detailDragging, setDetailDragging] = useState(false);
+  const [pipelineDragging, setPipelineDragging] = useState(false);
+
+  // Live swipe handlers for side panels (left-to-right swipe to close with live tracking)
+  // Panel width for calculating halfway threshold
+  const getPanelWidth = () => {
+    if (typeof window === 'undefined') return 380;
+    return window.innerWidth <= 768 ? window.innerWidth : 380;
+  };
+
+  // Sites panel live swipe
   const handleSitesPanelTouchStart = (e) => {
+    if (activeTab !== TAB_SITES) return;
     sitesPanelTouchStartX.current = e.touches[0].clientX;
+    setSitesPanelDragging(true);
+    setSitesPanelDragOffset(0);
+  };
+
+  const handleSitesPanelTouchMove = (e) => {
+    if (sitesPanelTouchStartX.current === null) return;
+    const currentX = e.touches[0].clientX;
+    const delta = currentX - sitesPanelTouchStartX.current;
+    // Only allow dragging to the right (positive delta)
+    if (delta > 0) {
+      setSitesPanelDragOffset(delta);
+      e.preventDefault();
+    }
   };
 
   const handleSitesPanelTouchEnd = (e) => {
     if (sitesPanelTouchStartX.current === null) return;
-    const endX = e.changedTouches[0].clientX;
-    const diff = endX - sitesPanelTouchStartX.current;
-    // Left-to-right swipe (positive diff) closes the panel
-    if (diff > SWIPE_THRESHOLD && activeTab === TAB_SITES) {
+    const panelWidth = getPanelWidth();
+    // If dragged more than halfway, close; otherwise snap back
+    if (sitesPanelDragOffset > panelWidth / 2) {
       setActiveTab(TAB_MAP);
     }
     sitesPanelTouchStartX.current = null;
+    setSitesPanelDragging(false);
+    setSitesPanelDragOffset(0);
   };
 
+  // Forms panel live swipe
   const handleFormsPanelTouchStart = (e) => {
+    if (activeTab !== TAB_FORMS) return;
     formsPanelTouchStartX.current = e.touches[0].clientX;
+    setFormsPanelDragging(true);
+    setFormsPanelDragOffset(0);
+  };
+
+  const handleFormsPanelTouchMove = (e) => {
+    if (formsPanelTouchStartX.current === null) return;
+    const currentX = e.touches[0].clientX;
+    const delta = currentX - formsPanelTouchStartX.current;
+    if (delta > 0) {
+      setFormsPanelDragOffset(delta);
+      e.preventDefault();
+    }
   };
 
   const handleFormsPanelTouchEnd = (e) => {
     if (formsPanelTouchStartX.current === null) return;
-    const endX = e.changedTouches[0].clientX;
-    const diff = endX - formsPanelTouchStartX.current;
-    if (diff > SWIPE_THRESHOLD && activeTab === TAB_FORMS) {
+    const panelWidth = getPanelWidth();
+    if (formsPanelDragOffset > panelWidth / 2) {
       setActiveTab(TAB_MAP);
     }
     formsPanelTouchStartX.current = null;
+    setFormsPanelDragging(false);
+    setFormsPanelDragOffset(0);
   };
 
+  // Admin panel live swipe
   const handleAdminPanelTouchStart = (e) => {
+    if (activeTab !== TAB_ADMIN) return;
     adminPanelTouchStartX.current = e.touches[0].clientX;
+    setAdminPanelDragging(true);
+    setAdminPanelDragOffset(0);
+  };
+
+  const handleAdminPanelTouchMove = (e) => {
+    if (adminPanelTouchStartX.current === null) return;
+    const currentX = e.touches[0].clientX;
+    const delta = currentX - adminPanelTouchStartX.current;
+    if (delta > 0) {
+      setAdminPanelDragOffset(delta);
+      e.preventDefault();
+    }
   };
 
   const handleAdminPanelTouchEnd = (e) => {
     if (adminPanelTouchStartX.current === null) return;
-    const endX = e.changedTouches[0].clientX;
-    const diff = endX - adminPanelTouchStartX.current;
-    // Left-to-right swipe (positive diff) closes the panel
-    if (diff > SWIPE_THRESHOLD && activeTab === TAB_ADMIN) {
+    const panelWidth = getPanelWidth();
+    if (adminPanelDragOffset > panelWidth / 2) {
       setActiveTab(TAB_MAP);
     }
     adminPanelTouchStartX.current = null;
+    setAdminPanelDragging(false);
+    setAdminPanelDragOffset(0);
   };
 
   function handleCloseDetail() {
     setDetailOpen(false);
   }
 
+  // Bottom sheet height for calculating halfway threshold
+  const getBottomSheetHeight = () => {
+    if (typeof window === 'undefined') return window.innerHeight * 0.55;
+    return window.innerHeight <= 768 ? window.innerHeight * 0.55 : 400;
+  };
+
+  // Live swipe handlers for site detail bottom sheet
   function handleTouchStart(e) {
     const bodyRect = detailBodyRef.current?.getBoundingClientRect();
     const touchY = e.touches[0].clientY;
@@ -1141,7 +1213,8 @@ export default function App() {
     const scrollTop = detailBodyRef.current?.scrollTop || 0;
     if (bodyRect && (touchY - bodyRect.top) < 80 && scrollTop <= 0) {
       touchStartY.current = touchY;
-      pullDistance.current = 0;
+      setDetailDragging(true);
+      setDetailDragOffset(0);
     } else {
       touchStartY.current = null;
     }
@@ -1153,23 +1226,24 @@ export default function App() {
     const delta = currentY - touchStartY.current;
     
     if (delta > 0) {
-      pullDistance.current = delta;
-      if (delta > 20) {
-        e.preventDefault();
-      }
+      setDetailDragOffset(delta);
+      e.preventDefault();
     }
   }
 
   function handleTouchEnd(e) {
     if (touchStartY.current === null) return;
-    if (pullDistance.current > 150 && detailOpen) {
+    const sheetHeight = getBottomSheetHeight();
+    // If dragged more than halfway down, close; otherwise snap back
+    if (detailDragOffset > sheetHeight / 2 && detailOpen) {
       handleCloseDetail();
     }
     touchStartY.current = null;
-    pullDistance.current = 0;
+    setDetailDragging(false);
+    setDetailDragOffset(0);
   }
 
-  // Touch handlers for pipeline detail panel (swipe down to dismiss)
+  // Live swipe handlers for pipeline detail bottom sheet
   function handlePipelineTouchStart(e) {
     const bodyRect = pipelineDetailBodyRef.current?.getBoundingClientRect();
     const touchY = e.touches[0].clientY;
@@ -1177,7 +1251,8 @@ export default function App() {
     // Only enable pull-to-dismiss when starting from the top of the scrollable body
     if (bodyRect && (touchY - bodyRect.top) < 80 && scrollTop <= 0) {
       pipelineTouchStartY.current = touchY;
-      pipelinePullDistance.current = 0;
+      setPipelineDragging(true);
+      setPipelineDragOffset(0);
     } else {
       pipelineTouchStartY.current = null;
     }
@@ -1189,20 +1264,20 @@ export default function App() {
     const delta = currentY - pipelineTouchStartY.current;
     
     if (delta > 0) {
-      pipelinePullDistance.current = delta;
-      if (delta > 20) {
-        e.preventDefault();
-      }
+      setPipelineDragOffset(delta);
+      e.preventDefault();
     }
   }
 
   function handlePipelineTouchEnd(e) {
     if (pipelineTouchStartY.current === null) return;
-    if (pipelinePullDistance.current > 150 && pipelineDetailOpen) {
+    const sheetHeight = getBottomSheetHeight();
+    if (pipelineDragOffset > sheetHeight / 2 && pipelineDetailOpen) {
       handleClosePipelineDetail();
     }
     pipelineTouchStartY.current = null;
-    pipelinePullDistance.current = 0;
+    setPipelineDragging(false);
+    setPipelineDragOffset(0);
   }
 
   function handleFabSelect(pinType) {
@@ -2411,7 +2486,14 @@ export default function App() {
         ) : null}
 
         {/* ── Detail side panel ── */}
-        <div className={`side-panel detail-priority ${detailOpen && selectedSite ? 'open' : ''}`}>
+        <div
+          className={`side-panel detail-priority ${detailOpen && selectedSite ? 'open' : ''} ${detailDragging ? 'dragging' : ''}`}
+          style={{
+            transform: detailOpen && selectedSite
+              ? `translateY(${detailDragOffset}px)`
+              : 'translateY(100%)'
+          }}
+        >
           <div className="side-panel-header">
             <button className="back-btn" type="button" onClick={handleCloseDetail}>←</button>
             <h2>Site Details</h2>
@@ -2446,13 +2528,20 @@ export default function App() {
         </div>
 
         {/* ── Pipeline detail side panel ── */}
-        <div className={`side-panel detail-priority ${pipelineDetailOpen && selectedPipeline ? 'open' : ''}`}>
+        <div
+          className={`side-panel detail-priority ${pipelineDetailOpen && selectedPipeline ? 'open' : ''} ${pipelineDragging ? 'dragging' : ''}`}
+          style={{
+            transform: pipelineDetailOpen && selectedPipeline
+              ? `translateY(${pipelineDragOffset}px)`
+              : 'translateY(100%)'
+          }}
+        >
           <div className="side-panel-header">
             <button className="back-btn" type="button" onClick={handleClosePipelineDetail}>←</button>
             <h2>Pipeline Details</h2>
             {canManagePins ? <span className="small-text">Admin</span> : null}
           </div>
-          <div 
+          <div
             className="side-panel-body"
             ref={pipelineDetailBodyRef}
             onTouchStart={handlePipelineTouchStart}
@@ -2478,11 +2567,18 @@ export default function App() {
         </div>
 
         {/* ── Sites list panel ── */}
-        <div 
-          className={`side-panel ${activeTab === TAB_SITES ? 'open' : ''}`}
+        <div
+          className={`side-panel ${activeTab === TAB_SITES ? 'open' : ''} ${sitesPanelDragging ? 'dragging' : ''}`}
           onTouchStart={handleSitesPanelTouchStart}
+          onTouchMove={handleSitesPanelTouchMove}
           onTouchEnd={handleSitesPanelTouchEnd}
+          style={{
+            transform: activeTab === TAB_SITES
+              ? `translateX(${sitesPanelDragOffset}px)`
+              : 'translateX(100%)'
+          }}
         >
+          <div className="drag-handle" />
           <div className="side-panel-header">
             <h2>Sites</h2>
             <span className="small-text">
@@ -2518,11 +2614,18 @@ export default function App() {
         </div>
 
         {/* ── Forms panel (formerly Recents) ── */}
-        <div 
-          className={`side-panel ${activeTab === TAB_FORMS ? 'open' : ''}`}
+        <div
+          className={`side-panel ${activeTab === TAB_FORMS ? 'open' : ''} ${formsPanelDragging ? 'dragging' : ''}`}
           onTouchStart={handleFormsPanelTouchStart}
+          onTouchMove={handleFormsPanelTouchMove}
           onTouchEnd={handleFormsPanelTouchEnd}
+          style={{
+            transform: activeTab === TAB_FORMS
+              ? `translateX(${formsPanelDragOffset}px)`
+              : 'translateX(100%)'
+          }}
         >
+          <div className="drag-handle" />
           <div className="side-panel-header">
             <h2>Forms</h2>
           </div>
@@ -2580,11 +2683,18 @@ export default function App() {
         </div>
 
         {/* ── Admin panel ── */}
-        <div 
-          className={`side-panel ${activeTab === TAB_ADMIN && roleCanAdmin ? 'open' : ''}`}
+        <div
+          className={`side-panel ${activeTab === TAB_ADMIN && roleCanAdmin ? 'open' : ''} ${adminPanelDragging ? 'dragging' : ''}`}
           onTouchStart={handleAdminPanelTouchStart}
+          onTouchMove={handleAdminPanelTouchMove}
           onTouchEnd={handleAdminPanelTouchEnd}
+          style={{
+            transform: activeTab === TAB_ADMIN && roleCanAdmin
+              ? `translateX(${adminPanelDragOffset}px)`
+              : 'translateX(100%)'
+          }}
         >
+          <div className="drag-handle" />
           <div className="side-panel-header">
             <h2>Admin</h2>
           </div>
