@@ -615,45 +615,6 @@ button.site-row { cursor: pointer; }
     transition: none;
   }
 
-  /* Drag handle hint for the bottom sheet */
-  .side-panel.detail-priority .side-panel-header::before {
-    content: '';
-    display: block;
-    width: 36px;
-    height: 4px;
-    border-radius: 2px;
-    background: rgba(143, 182, 255, 0.25);
-    margin: 0 auto 8px;
-  }
-
-  /* Bottom sheet drag handle bar - dedicated swipe area */
-  .bottom-sheet-drag-handle {
-    position: absolute;
-    top: 0;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 60px;
-    height: 28px;
-    background: transparent;
-    z-index: 10;
-    cursor: grab;
-    touch-action: pan-x;
-  }
-  .bottom-sheet-drag-handle::after {
-    content: '';
-    position: absolute;
-    top: 8px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 40px;
-    height: 5px;
-    border-radius: 3px;
-    background: rgba(143, 182, 255, 0.4);
-  }
-  .bottom-sheet-drag-handle:active {
-    cursor: grabbing;
-  }
-
   /* Make header swipeable on mobile */
   .side-panel.detail-priority .side-panel-header {
     touch-action: pan-y;

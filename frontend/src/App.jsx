@@ -2536,8 +2536,6 @@ export default function App() {
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
         >
-          {/* Drag handle for swiping down */}
-          <div className="bottom-sheet-drag-handle" />
           <div className="side-panel-header">
             <button className="back-btn" type="button" onClick={handleCloseDetail}>←</button>
             <h2>Site Details</h2>
@@ -2583,8 +2581,6 @@ export default function App() {
           onTouchMove={handlePipelineTouchMove}
           onTouchEnd={handlePipelineTouchEnd}
         >
-          {/* Drag handle for swiping down */}
-          <div className="bottom-sheet-drag-handle" />
           <div className="side-panel-header">
             <button className="back-btn" type="button" onClick={handleClosePipelineDetail}>←</button>
             <h2>Pipeline Details</h2>
