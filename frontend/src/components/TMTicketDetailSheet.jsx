@@ -84,7 +84,14 @@ export default function TMTicketDetailSheet({
         setPoNumber(t.po_approval_number || '');
         // Seed office lines from saved data, or start from defaults.
         // Migrate any legacy labels (e.g. renamed roadside line) on the fly.
-        const seed = t.office_data?.lines || DEFAULT_OFFICE_LINES;
+        // Falls back to defaults when lines is missing OR an empty array —
+        // the latter guards against legacy tickets saved with `lines: []`
+        // before the backend _merge_worker_office_data first-save seed was
+        // fixed (it used to wipe worker qtys to []). Without `.length`,
+        // `[] || DEFAULT` still evaluates to `[]` because [] is truthy.
+        const seed = (t.office_data?.lines && t.office_data.lines.length)
+          ? t.office_data.lines
+          : DEFAULT_OFFICE_LINES;
         setOfficeLines(seed.map((l) => ({
           label: migrateOfficeLineLabel(l.label || ''),
           qty: l.qty ?? '',

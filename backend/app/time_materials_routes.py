@@ -99,33 +99,62 @@ def _merge_worker_office_data(
     existing: dict | None,
     incoming: dict | None,
 ) -> dict | None:
-    """Merge a worker-submitted office_data onto the existing ticket office_data,
-    accepting ONLY QTY changes on the allowlisted labels. Rate, labels, and
-    non-allowlisted lines stay exactly as they were in the stored ticket.
-    Also preserves any lines the worker didn't send.
+    """Merge a worker-submitted office_data onto the existing ticket office_data.
+
+    Workers never set rates; only QTY on allowlisted labels is accepted as a
+    mutation on an already-populated office_data. On the FIRST save from a
+    worker (existing is null / has no lines yet), we seed the full shape from
+    the incoming payload with rate forced to None on every line — otherwise
+    the merge loop below iterates over an empty existing_lines list and
+    returns {"lines": []}, silently discarding the worker's typed qtys.
     """
     if incoming is None:
         return existing
-    existing = existing or {}
+
     incoming_lines = incoming.get("lines") or []
+
+    # First save: no existing lines yet. Seed the shape from incoming so the
+    # 11 default labels (worker-editable + auto-populated + office-only)
+    # persist for future reads. rate is FORCED to None on every line —
+    # workers never set prices, and rate=None coerces to 0 in
+    # computeOfficeTotals on the frontend, so totals render as $0 until
+    # office fills rates in on their pricing pass.
+    if not (existing and existing.get("lines")):
+        seeded = [
+            {"label": il.get("label") or "", "qty": il.get("qty"), "rate": None}
+            for il in incoming_lines
+            if il.get("label")
+        ]
+        return {
+            "lines": seeded,
+            "gst_percent": (existing or {}).get("gst_percent", 5),
+        }
+
+    # Subsequent saves: merge QTY-only on allowlisted labels, preserve
+    # everything else (rate, labels, non-allowlisted lines, gst_percent).
+    incoming_qty_by_label = {
+        il["label"]: il["qty"]
+        for il in incoming_lines
+        if il.get("label") in WORKER_EDITABLE_LINE_LABELS and "qty" in il
+    }
     existing_lines = list(existing.get("lines") or [])
-
-    # Build a label → incoming-qty map for quick lookup.
-    incoming_qty_by_label = {}
-    for il in incoming_lines:
-        lbl = il.get("label") or ""
-        if lbl in WORKER_EDITABLE_LINE_LABELS and "qty" in il:
-            incoming_qty_by_label[lbl] = il["qty"]
-
-    # Merge: for each existing line, swap in incoming QTY if label matches.
+    existing_labels = set()
     merged_lines = []
     for el in existing_lines:
         lbl = el.get("label") or ""
+        existing_labels.add(lbl)
         if lbl in incoming_qty_by_label:
             merged_lines.append({**el, "qty": incoming_qty_by_label[lbl]})
         else:
             merged_lines.append(el)
-    # Preserve the existing gst_percent (workers cannot change it).
+    # Defensive: if a worker-allowlisted label somehow isn't in existing
+    # (e.g. office manually deleted a default line before the worker saved),
+    # append it so the worker's typed qty isn't silently dropped.
+    for il in incoming_lines:
+        lbl = il.get("label") or ""
+        if lbl in WORKER_EDITABLE_LINE_LABELS and lbl not in existing_labels:
+            merged_lines.append({"label": lbl, "qty": il.get("qty"), "rate": None})
+
     return {
         "lines": merged_lines,
         "gst_percent": existing.get("gst_percent", 5),
