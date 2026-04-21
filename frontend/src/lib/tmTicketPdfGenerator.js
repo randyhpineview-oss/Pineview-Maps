@@ -227,13 +227,13 @@ export async function generateTMTicketPdf(ticket, options = {}) {
   // Header row (initial page)
   drawSitesHeader(false);
 
-  // Data rows — ensure at least 18 rows for manual addenda on a single-page
-  // ticket, but let the table grow as long as needed when we have more real
-  // rows than that. When we run out of vertical room, break to a new page
-  // and re-draw the Sites Treated header so the continuation is readable.
+  // Data rows — render exactly one row per actual site, no blank filler.
+  // Office Use ONLY sits immediately below the last populated row; as more
+  // sites are added, it naturally gets pushed down (onto a second page if
+  // we run out of vertical room, handled by the break check inside the
+  // loop below).
   const rows = ticket.rows || [];
-  const minRows = 18;
-  const rowCount = Math.max(rows.length, minRows);
+  const rowCount = rows.length;
 
   doc.setFont('helvetica', 'normal');
   for (let r = 0; r < rowCount; r++) {

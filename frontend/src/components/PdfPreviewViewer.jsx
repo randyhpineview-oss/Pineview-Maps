@@ -8,8 +8,9 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 ).href;
 
 /**
- * Renders a PDF onto a canvas with pinch-to-zoom + pan (mobile)
- * and Ctrl+scroll zoom (desktop). Zoom is centered on the pinch midpoint.
+ * Renders a PDF (one canvas per page, stacked vertically) with pinch-to-zoom
+ * + pan (mobile) and Ctrl+scroll zoom (desktop). Zoom is centered on the
+ * pinch midpoint and applies to the whole stack via a transformed wrapper.
  *
  * Accepts either:
  *   - `pdfBase64`: base64-encoded PDF string (existing callers).
@@ -18,7 +19,10 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
  * If both are provided, `pdfBytes` wins.
  */
 export default function PdfPreviewViewer({ pdfBase64, pdfBytes }) {
-  const canvasRef = useRef(null);
+  // Wrapper that holds one <canvas> per page. Transform (zoom/pan) is
+  // applied to the wrapper so every page scales together and the
+  // scrollable container keeps vertical scroll for reading through pages.
+  const pagesWrapperRef = useRef(null);
   const containerRef = useRef(null);
 
   // All mutable transform state lives in a ref to avoid re-renders during gestures
@@ -46,21 +50,23 @@ export default function PdfPreviewViewer({ pdfBase64, pdfBytes }) {
     canvasH: 0,
   });
 
-  // ── Apply CSS transform to canvas ──
+  // ── Apply CSS transform to the pages wrapper ──
   const applyTransform = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    const wrap = pagesWrapperRef.current;
+    if (!wrap) return;
     const s = stateRef.current;
-    // Only apply transform when zoomed — at 1x, remove it entirely so the
-    // browser renders the canvas at native resolution (no GPU layer blur).
+    // Only apply transform when zoomed — at 1x with no pan, remove it
+    // entirely so each page canvas renders at native resolution (no GPU
+    // layer blur). The wrapper covers the whole stack so every page
+    // zooms/pans together.
     if (s.zoom <= 1.001 && Math.abs(s.panX) < 1 && Math.abs(s.panY) < 1) {
-      canvas.style.transform = '';
+      wrap.style.transform = '';
     } else {
-      canvas.style.transform = `translate(${s.panX}px, ${s.panY}px) scale(${s.zoom})`;
+      wrap.style.transform = `translate(${s.panX}px, ${s.panY}px) scale(${s.zoom})`;
     }
   }, []);
 
-  // ── Load PDF and render once at high-res ──
+  // ── Load PDF and render every page onto its own canvas, stacked ──
   useEffect(() => {
     // Resolve the input: prefer pdfBytes (Uint8Array), fall back to base64.
     let uint8 = null;
@@ -83,35 +89,56 @@ export default function PdfPreviewViewer({ pdfBase64, pdfBytes }) {
         // Uint8Array isn't detached if they reuse it.
         loadingTask = pdfjsLib.getDocument({ data: uint8.slice() });
         const pdf = await loadingTask.promise;
-        const page = await pdf.getPage(1);
         if (cancelled) return;
 
         const container = containerRef.current;
-        const canvas = canvasRef.current;
-        if (!container || !canvas) return;
+        const wrap = pagesWrapperRef.current;
+        if (!container || !wrap) return;
 
-        // Fit PDF width to container
-        const vp1 = page.getViewport({ scale: 1 });
+        // Clear any prior render (e.g. when a different PDF replaces this one
+        // while the component stays mounted).
+        wrap.innerHTML = '';
+
+        // Fit every page's WIDTH to the scroll container. Each page is
+        // re-measured independently so mixed-size PDFs still render each
+        // page at its native aspect ratio.
         const containerW = container.clientWidth - 16;
-        const fitScale = containerW / vp1.width;
-
-        // Render at full DPR resolution natively through PDF.js
         const dpr = window.devicePixelRatio || 1;
-        const renderVP = page.getViewport({ scale: fitScale * dpr });
+        const pageGap = 8;  // px — thin gray gap between pages
+        let totalCssH = 0;
+        let maxCssW = 0;
 
-        canvas.width = Math.floor(renderVP.width);
-        canvas.height = Math.floor(renderVP.height);
-        // CSS display size = render size / dpr
-        const cssW = Math.floor(renderVP.width / dpr);
-        const cssH = Math.floor(renderVP.height / dpr);
-        canvas.style.width = cssW + 'px';
-        canvas.style.height = cssH + 'px';
+        for (let p = 1; p <= pdf.numPages; p++) {
+          if (cancelled) return;
+          const page = await pdf.getPage(p);
+          const vp1 = page.getViewport({ scale: 1 });
+          const fitScale = containerW / vp1.width;
+          const renderVP = page.getViewport({ scale: fitScale * dpr });
 
-        const ctx = canvas.getContext('2d');
-        await page.render({ canvasContext: ctx, viewport: renderVP }).promise;
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.floor(renderVP.width);
+          canvas.height = Math.floor(renderVP.height);
+          const cssW = Math.floor(renderVP.width / dpr);
+          const cssH = Math.floor(renderVP.height / dpr);
+          canvas.style.display = 'block';
+          canvas.style.width = cssW + 'px';
+          canvas.style.height = cssH + 'px';
+          // Page separator: thin gap between pages so the break is visible.
+          if (p > 1) canvas.style.marginTop = pageGap + 'px';
+          wrap.appendChild(canvas);
 
-        stateRef.current.canvasW = cssW;
-        stateRef.current.canvasH = cssH;
+          const ctx = canvas.getContext('2d');
+          await page.render({ canvasContext: ctx, viewport: renderVP }).promise;
+
+          totalCssH += cssH + (p > 1 ? pageGap : 0);
+          if (cssW > maxCssW) maxCssW = cssW;
+        }
+
+        // Track wrapper dimensions for any future clamp logic (currently
+        // unused by pan/zoom handlers, but kept for parity with the old
+        // single-canvas implementation).
+        stateRef.current.canvasW = maxCssW;
+        stateRef.current.canvasH = totalCssH;
       } catch (err) {
         if (!cancelled) console.error('[PdfPreviewViewer] Failed to load PDF:', err);
       }
@@ -257,10 +284,14 @@ export default function PdfPreviewViewer({ pdfBase64, pdfBytes }) {
         position: 'relative',
       }}
     >
-      <canvas
-        ref={canvasRef}
+      <div
+        ref={pagesWrapperRef}
         style={{
-          display: 'block',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          // Transform origin at top-center so zoom stays anchored to the
+          // visible top of the PDF regardless of which page the user is on.
           transformOrigin: 'center top',
         }}
       />
