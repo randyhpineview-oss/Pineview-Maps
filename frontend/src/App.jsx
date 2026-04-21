@@ -177,9 +177,65 @@ export default function App() {
   const lastLocationUpdateRef = useRef(0);
   const isEditPickingModeRef = useRef(false);
 
+  // Actual role from the Supabase session. Never changed by the view
+  // toggle \u2014 used for identity, backend auth, and deciding whether the
+  // "View as Worker" button is available at all.
   const userRole = session?.user?.user_metadata?.role || 'worker';
-  const canManagePins = userRole === 'admin' || userRole === 'office';
-  const roleCanAdmin = userRole === 'admin' || userRole === 'office';
+  const actualCanAdmin = userRole === 'admin' || userRole === 'office';
+
+  // "View as Worker" override: admin/office can flip this on to get the
+  // worker-level UI (no admin panel tab, no approve/delete buttons, no
+  // Dropbox pricing links) AND see only their own forms \u2014 handy when
+  // they're in the field and don't want extra buttons cluttering the view.
+  // Pure frontend \u2014 the backend still knows them as admin/office, so no
+  // permission loss, and the toggle survives a refresh via localStorage.
+  const [viewAsWorker, setViewAsWorker] = useState(() => {
+    try { return localStorage.getItem('pv_view_as_worker') === '1'; }
+    catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('pv_view_as_worker', viewAsWorker ? '1' : '0'); }
+    catch { /* ignore */ }
+  }, [viewAsWorker]);
+  // If the user isn't actually admin/office, force the toggle off so a
+  // stale localStorage value from a previous session/account doesn't lock
+  // a real worker into some phantom "view as worker" state. (No-op for
+  // actual workers since the effective roles are already false.)
+  useEffect(() => {
+    if (!actualCanAdmin && viewAsWorker) setViewAsWorker(false);
+  }, [actualCanAdmin, viewAsWorker]);
+
+  // If the user was sitting on the Admin tab when they flipped to worker
+  // view, bounce them back to the Map tab so they don't end up staring
+  // at a blank screen (the admin panel is hidden once roleCanAdmin is
+  // false, but `activeTab` would still be TAB_ADMIN without this snap).
+  useEffect(() => {
+    if (viewAsWorker && activeTab === TAB_ADMIN) setActiveTab(TAB_MAP);
+  }, [viewAsWorker, activeTab]);
+
+  // Effective permissions \u2014 downgraded to worker-level when the toggle
+  // is on. Every role-gated render in the app reads these, not the raw
+  // userRole, so flipping the toggle instantly updates the whole UI.
+  const canManagePins = actualCanAdmin && !viewAsWorker;
+  const roleCanAdmin = actualCanAdmin && !viewAsWorker;
+
+  // Current user's display name, matching the backend's derivation in
+  // auth.py: user_metadata.name if set, else the email prefix run through
+  // Python's str.title(). Used by FormsPanel to filter records to "mine
+  // only" when viewAsWorker is on (records carry `created_by_name` /
+  // `sprayed_by_name` \u2014 no email field).
+  const currentUserName = useMemo(() => {
+    const m = session?.user?.user_metadata?.name;
+    if (m) return m;
+    const email = session?.user?.email;
+    if (!email) return '';
+    // Python str.title() equivalent: first letter of each letter-run upper,
+    // rest lower. 'randy.hp' -> 'Randy.Hp', 'randyhp' -> 'Randyhp'.
+    return email.split('@')[0].replace(
+      /[A-Za-z]+/g,
+      (w) => w[0].toUpperCase() + w.slice(1).toLowerCase(),
+    );
+  }, [session?.user?.user_metadata?.name, session?.user?.email]);
   const isPlacingPin = addPinType !== null && addPinLocation === null;
   const isPickingLocationForEdit = isEditPickingMode;
   const showAddPopup = addPinType !== null && addPinLocation !== null;
@@ -2047,6 +2103,30 @@ export default function App() {
               Pending: {pendingSites.length + pendingPipelines.length}
             </span>
           ) : null}
+          {/* "View as Worker" toggle \u2014 only shown for users whose actual
+              role is admin/office. Orange when active so the user can't
+              forget they're in worker view and wonder where the admin
+              tab went. Click toggles back. Lives in the topbar (not the
+              admin panel) so it stays reachable in worker view. */}
+          {actualCanAdmin ? (
+            <button
+              className="badge"
+              onClick={() => setViewAsWorker((v) => !v)}
+              style={{
+                cursor: 'pointer',
+                background: viewAsWorker ? '#f59e0b' : '#1f2937',
+                color: viewAsWorker ? '#422006' : '#60a5fa',
+                border: '1px solid #374151',
+                padding: '2px 10px',
+                fontWeight: viewAsWorker ? 700 : 500,
+              }}
+              title={viewAsWorker
+                ? 'Currently viewing as Worker \u2014 click to restore your admin/office view'
+                : 'Switch to a worker-level view (hides admin buttons, only shows your own forms)'}
+            >
+              {viewAsWorker ? '\ud83d\udc77 Viewing as Worker' : '\ud83d\udc64 View as Worker'}
+            </button>
+          ) : null}
           <span className="badge">{user?.user_metadata?.name || user?.name || user?.email?.split('@')[0]?.charAt(0).toUpperCase() + user?.email?.split('@')[0]?.slice(1) || user?.email}</span>
           <button 
             onClick={() => signOut()}
@@ -2493,6 +2573,8 @@ export default function App() {
               onRequestDraftsRefresh={() => setDraftsRefreshToken((x) => x + 1)}
               draftsRefreshToken={draftsRefreshToken}
               roleCanAdmin={roleCanAdmin}
+              viewAsWorker={viewAsWorker}
+              currentUserName={currentUserName}
             />
           </div>
         </div>

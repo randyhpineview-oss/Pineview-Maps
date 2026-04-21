@@ -118,6 +118,14 @@ export default function FormsPanel({
   onRequestDraftsRefresh,    // parent can trigger a refresh when form closes
   draftsRefreshToken = 0,    // bump to trigger reload
   roleCanAdmin = false,
+  // When true, the user is an admin/office pretending to be a worker.
+  // We filter the recently-submitted + open-ticket lists down to records
+  // they themselves created, mirroring the backend's worker visibility
+  // rule (which matches by created_by_name when user_id is null, or by
+  // user_id normally \u2014 we can only see created_by_name on the frontend,
+  // so name-matching is used here too).
+  viewAsWorker = false,
+  currentUserName = '',
 }) {
   const [subTab, setSubTab] = useState(SUB_FORMS);
   const [ipTab, setIpTab] = useState(IP_UPLOADING);
@@ -222,7 +230,14 @@ export default function FormsPanel({
 
   // Filtered + sorted lease sheet recents
   const filteredLease = useMemo(() => {
-    const base = [...cachedRecents].sort(byNewest);
+    let base = [...cachedRecents].sort(byNewest);
+    // View-as-worker: admin/office are impersonating a worker, so the
+    // recents list should only include sheets THEY sprayed \u2014 matches
+    // what a real worker sees. Backend still returned everyone's, so we
+    // narrow here.
+    if (viewAsWorker && currentUserName) {
+      base = base.filter((r) => (r.sprayed_by_name || '') === currentUserName);
+    }
     if (!search) return base;
     const q = search.toLowerCase();
     return base.filter((r) =>
@@ -232,7 +247,7 @@ export default function FormsPanel({
       (r.site_lsd || '').toLowerCase().includes(q) ||
       (r.sprayed_by_name || '').toLowerCase().includes(q)
     );
-  }, [cachedRecents, search]);
+  }, [cachedRecents, search, viewAsWorker, currentUserName]);
 
   const filteredTm = useMemo(() => {
     // Recently Submitted should NEVER include status=open tickets — those
@@ -240,8 +255,16 @@ export default function FormsPanel({
     // "In Progress → Open Tickets" list.
     let base = tmSubmitted.filter((t) => t.status !== 'open');
 
+    // View-as-worker: narrow to tickets THIS user created, same as the
+    // real worker visibility rule in the backend's _visible_query.
+    if (viewAsWorker && currentUserName) {
+      base = base.filter((t) => (t.created_by_name || '') === currentUserName);
+    }
+
     // Office/admin status filter: all | submitted | approved. Workers just
     // see everything non-open (they don't get the filter buttons at all).
+    // In view-as-worker mode roleCanAdmin is false, so this branch skips
+    // naturally — admin-impersonating-worker sees the unfiltered feed.
     if (roleCanAdmin) {
       if (tmStatusFilter === TM_STATUS_SUBMITTED) {
         base = base.filter((t) => t.status === 'submitted');
@@ -259,9 +282,21 @@ export default function FormsPanel({
       (t.area || '').toLowerCase().includes(q) ||
       (t.created_by_name || '').toLowerCase().includes(q)
     );
-  }, [tmSubmitted, search, tmStatusFilter, roleCanAdmin]);
+  }, [tmSubmitted, search, tmStatusFilter, roleCanAdmin, viewAsWorker, currentUserName]);
 
-  const sortedOpenTickets = useMemo(() => [...openTickets].sort(byNewest), [openTickets]);
+  // Open T&M tickets — the /open endpoint already scopes to the caller's
+  // own tickets regardless of role (see list_open_tickets in
+  // time_materials_routes.py), so this list is already "mine only". But
+  // the main list endpoint used elsewhere is NOT, so we still apply the
+  // view-as-worker narrowing here defensively in case the data source
+  // ever changes.
+  const sortedOpenTickets = useMemo(() => {
+    let base = [...openTickets];
+    if (viewAsWorker && currentUserName) {
+      base = base.filter((t) => (t.created_by_name || '') === currentUserName);
+    }
+    return base.sort(byNewest);
+  }, [openTickets, viewAsWorker, currentUserName]);
 
   // Merged "All" feed: lease sheets + T&M tickets interleaved by created_at desc.
   // Each row keeps its native shape and gets a `_type` tag so the render
