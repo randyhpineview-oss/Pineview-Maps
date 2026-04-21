@@ -1205,13 +1205,32 @@ export default function App() {
   };
 
   // Live swipe handlers for site detail bottom sheet
+  // Refs for tracking if touch started from header/drag handle
+  const detailTouchFromHeader = useRef(false);
+  const pipelineTouchFromHeader = useRef(false);
+
   function handleTouchStart(e) {
-    const bodyRect = detailBodyRef.current?.getBoundingClientRect();
     const touchY = e.touches[0].clientY;
-    // Only enable pull-to-dismiss when starting from the top of the scrollable body
-    // (within 80px of the body top) AND scroll is at top
+    const touchX = e.touches[0].clientX;
+
+    // Check if touch is from header/drag handle area (target is header or its children)
+    const target = e.target;
+    const isHeader = target?.closest?.('.side-panel-header') || target?.classList?.contains('bottom-sheet-drag-handle');
+    detailTouchFromHeader.current = !!isHeader;
+
+    if (isHeader) {
+      // Always allow swipe from header
+      touchStartY.current = touchY;
+      setDetailDragging(true);
+      setDetailDragOffset(0);
+      return;
+    }
+
+    // For body: check scroll position
+    const bodyRect = detailBodyRef.current?.getBoundingClientRect();
     const scrollTop = detailBodyRef.current?.scrollTop || 0;
-    if (bodyRect && (touchY - bodyRect.top) < 80 && scrollTop <= 0) {
+    // Allow swipe from anywhere in body if scrolled to top
+    if (bodyRect && scrollTop <= 5) {
       touchStartY.current = touchY;
       setDetailDragging(true);
       setDetailDragOffset(0);
@@ -1224,10 +1243,13 @@ export default function App() {
     if (touchStartY.current === null) return;
     const currentY = e.touches[0].clientY;
     const delta = currentY - touchStartY.current;
-    
+
     if (delta > 0) {
       setDetailDragOffset(delta);
-      e.preventDefault();
+      // Prevent scrolling while dragging down
+      if (delta > 10) {
+        e.preventDefault();
+      }
     }
   }
 
@@ -1239,17 +1261,31 @@ export default function App() {
       handleCloseDetail();
     }
     touchStartY.current = null;
+    detailTouchFromHeader.current = false;
     setDetailDragging(false);
     setDetailDragOffset(0);
   }
 
   // Live swipe handlers for pipeline detail bottom sheet
   function handlePipelineTouchStart(e) {
-    const bodyRect = pipelineDetailBodyRef.current?.getBoundingClientRect();
     const touchY = e.touches[0].clientY;
+
+    // Check if touch is from header/drag handle area
+    const target = e.target;
+    const isHeader = target?.closest?.('.side-panel-header') || target?.classList?.contains('bottom-sheet-drag-handle');
+    pipelineTouchFromHeader.current = !!isHeader;
+
+    if (isHeader) {
+      pipelineTouchStartY.current = touchY;
+      setPipelineDragging(true);
+      setPipelineDragOffset(0);
+      return;
+    }
+
+    // For body: check scroll position
+    const bodyRect = pipelineDetailBodyRef.current?.getBoundingClientRect();
     const scrollTop = pipelineDetailBodyRef.current?.scrollTop || 0;
-    // Only enable pull-to-dismiss when starting from the top of the scrollable body
-    if (bodyRect && (touchY - bodyRect.top) < 80 && scrollTop <= 0) {
+    if (bodyRect && scrollTop <= 5) {
       pipelineTouchStartY.current = touchY;
       setPipelineDragging(true);
       setPipelineDragOffset(0);
@@ -1262,10 +1298,12 @@ export default function App() {
     if (pipelineTouchStartY.current === null) return;
     const currentY = e.touches[0].clientY;
     const delta = currentY - pipelineTouchStartY.current;
-    
+
     if (delta > 0) {
       setPipelineDragOffset(delta);
-      e.preventDefault();
+      if (delta > 10) {
+        e.preventDefault();
+      }
     }
   }
 
@@ -1276,6 +1314,7 @@ export default function App() {
       handleClosePipelineDetail();
     }
     pipelineTouchStartY.current = null;
+    pipelineTouchFromHeader.current = false;
     setPipelineDragging(false);
     setPipelineDragOffset(0);
   }
@@ -2493,13 +2532,18 @@ export default function App() {
               ? `translateY(${detailDragOffset}px)`
               : 'translateY(100%)'
           }}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
         >
+          {/* Drag handle for swiping down */}
+          <div className="bottom-sheet-drag-handle" />
           <div className="side-panel-header">
             <button className="back-btn" type="button" onClick={handleCloseDetail}>←</button>
             <h2>Site Details</h2>
             {canManagePins ? <span className="small-text">Admin</span> : null}
           </div>
-          <div className="side-panel-body" ref={detailBodyRef} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
+          <div className="side-panel-body" ref={detailBodyRef}>
             {selectedSite ? (
               <SiteDetailSheet
                 site={selectedSite}
@@ -2535,7 +2579,12 @@ export default function App() {
               ? `translateY(${pipelineDragOffset}px)`
               : 'translateY(100%)'
           }}
+          onTouchStart={handlePipelineTouchStart}
+          onTouchMove={handlePipelineTouchMove}
+          onTouchEnd={handlePipelineTouchEnd}
         >
+          {/* Drag handle for swiping down */}
+          <div className="bottom-sheet-drag-handle" />
           <div className="side-panel-header">
             <button className="back-btn" type="button" onClick={handleClosePipelineDetail}>←</button>
             <h2>Pipeline Details</h2>
@@ -2544,9 +2593,6 @@ export default function App() {
           <div
             className="side-panel-body"
             ref={pipelineDetailBodyRef}
-            onTouchStart={handlePipelineTouchStart}
-            onTouchMove={handlePipelineTouchMove}
-            onTouchEnd={handlePipelineTouchEnd}
           >
             {selectedPipeline ? (
               <PipelineDetailSheet
