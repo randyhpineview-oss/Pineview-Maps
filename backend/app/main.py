@@ -12,6 +12,7 @@ from app.config import get_settings
 from app.database import Base, SessionLocal, engine, get_db
 from app.kml_import import parse_kml_file
 from app.password_reset import router as password_reset_router
+from app.signup import router as signup_router
 from app.user_management import router as user_management_router
 from app.pipeline_routes import router as pipeline_router
 from app.lookup_routes import router as lookup_router
@@ -77,6 +78,7 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 # Include routers AFTER middleware is set up
 app.include_router(user_management_router)
 app.include_router(password_reset_router)
+app.include_router(signup_router)
 app.include_router(pipeline_router)
 app.include_router(lookup_router)
 app.include_router(time_materials_router)

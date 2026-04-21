@@ -1,6 +1,168 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import QRCode from 'qrcode';
 
 import { api } from '../lib/api';
+
+/**
+ * Worker Signup QR card.
+ *
+ * Admin-only. Fetches the invite URL from the backend (GET /api/admin/signup-invite-url)
+ * so the SIGNUP_INVITE_SECRET lives ONLY in Render env vars and never in the Vite bundle.
+ *
+ * Renders the URL as a QR code in a <canvas> via the `qrcode` npm lib, with
+ * Copy-URL and Print buttons. Shows a helpful empty state when the backend
+ * reports the secret isn't configured yet.
+ */
+function WorkerSignupQR() {
+  const [url, setUrl] = useState(null);
+  const [configured, setConfigured] = useState(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [copied, setCopied] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await api.getSignupInviteUrl();
+        if (cancelled) return;
+        setConfigured(!!resp.configured);
+        setUrl(resp.url || null);
+      } catch (err) {
+        if (cancelled) return;
+        setError(err.message || 'Failed to load invite URL');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Render QR whenever we have both a URL and the canvas is mounted (i.e. the
+  // card is expanded). QRCode.toCanvas draws directly into the canvas element.
+  useEffect(() => {
+    if (!expanded || !url || !canvasRef.current) return;
+    QRCode.toCanvas(canvasRef.current, url, {
+      width: 240,
+      margin: 2,
+      color: { dark: '#0f172a', light: '#ffffff' },
+    }).catch(() => { /* ignore render errors */ });
+  }, [expanded, url]);
+
+  async function handleCopy() {
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  function handlePrint() {
+    if (!url) return;
+    // Render the QR into a data URL, open a new tab with a minimal print-ready
+    // layout, and trigger print. Avoids printing the whole admin panel.
+    QRCode.toDataURL(url, { width: 640, margin: 4 }).then((dataUrl) => {
+      const w = window.open('', '_blank');
+      if (!w) return;
+      w.document.write(`<!doctype html><html><head><title>Pineview Maps — Worker Signup QR</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 2rem; text-align: center; color: #0f172a; }
+  h1 { margin: 0 0 0.5rem 0; font-size: 1.75rem; }
+  p { margin: 0 0 1.5rem 0; color: #475569; }
+  img { max-width: 80vmin; height: auto; border: 1px solid #e2e8f0; padding: 12px; background: #fff; }
+  .caption { margin-top: 1.5rem; font-size: 1.1rem; font-weight: 600; }
+  .sub { margin-top: 0.5rem; color: #64748b; font-size: 0.9rem; }
+  @media print { body { padding: 0; } .noprint { display: none; } }
+</style>
+</head><body>
+  <h1>Scan to join Pineview Maps</h1>
+  <p>Sign up for a worker account</p>
+  <img src="${dataUrl}" alt="Pineview Maps signup QR" />
+  <div class="caption">Scan with your phone's camera</div>
+  <div class="sub">You'll be asked for your name, email, and a password.</div>
+  <div class="noprint" style="margin-top: 2rem;"><button onclick="window.print()" style="padding: 0.6rem 1.5rem; font-size: 1rem; cursor: pointer;">Print</button></div>
+</body></html>`);
+      w.document.close();
+    }).catch(() => { /* ignore */ });
+  }
+
+  return (
+    <div className="site-row" style={{ marginBottom: '0.75rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+        <strong style={{ fontSize: '0.95rem' }}>Worker Signup QR</strong>
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          style={{ fontSize: '0.8rem', padding: '4px 12px' }}
+        >
+          {expanded ? 'Hide' : 'Show'}
+        </button>
+      </div>
+
+      {expanded && (
+        <div style={{ marginTop: '0.75rem' }}>
+          {loading && <div className="small-text">Loading…</div>}
+
+          {!loading && error && (
+            <div style={{ background: '#7f1d1d', color: '#fca5a5', padding: '0.5rem 0.75rem', borderRadius: '6px', fontSize: '0.85rem' }}>
+              {error}
+            </div>
+          )}
+
+          {!loading && !error && configured === false && (
+            <div style={{ background: '#78350f', color: '#fcd34d', padding: '0.6rem 0.8rem', borderRadius: '6px', fontSize: '0.85rem', lineHeight: 1.5 }}>
+              Self-signup is <strong>disabled</strong>. To enable the QR flow, set the{' '}
+              <code style={{ background: 'rgba(0,0,0,0.25)', padding: '1px 4px', borderRadius: '3px' }}>SIGNUP_INVITE_SECRET</code>{' '}
+              environment variable on your backend (Render → Environment), then redeploy.
+            </div>
+          )}
+
+          {!loading && !error && configured && url && (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'center', marginTop: '0.5rem' }}>
+                <canvas ref={canvasRef} style={{ background: '#fff', borderRadius: '6px', padding: '8px' }} />
+              </div>
+
+              <div className="small-text" style={{ marginTop: '0.75rem', wordBreak: 'break-all', userSelect: 'all', background: '#0f172a', color: '#e2e8f0', padding: '0.5rem', borderRadius: '4px', fontFamily: 'monospace', fontSize: '0.75rem' }}>
+                {url}
+              </div>
+
+              <div className="button-row" style={{ marginTop: '0.6rem' }}>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={handleCopy}
+                  style={{ fontSize: '0.8rem' }}
+                >
+                  {copied ? 'Copied!' : 'Copy URL'}
+                </button>
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={handlePrint}
+                  style={{ fontSize: '0.8rem' }}
+                >
+                  Print QR
+                </button>
+              </div>
+
+              <div className="small-text" style={{ marginTop: '0.6rem', color: '#fbbf24', lineHeight: 1.5 }}>
+                ⚠ Anyone with this URL can create a worker account. Keep the printed QR in a supervised area.
+                If it leaks, rotate <code>SIGNUP_INVITE_SECRET</code> on Render to invalidate the old QR.
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const ROLES = [
   { value: 'admin', label: 'Admin' },
@@ -293,6 +455,10 @@ export default function UserManagementPanel({ busy: externalBusy, currentUserEma
 
   return (
     <div>
+      {/* QR-code worker self-signup card. Admin-only; backend gates on
+          SIGNUP_INVITE_SECRET so the URL is useless without it. */}
+      <WorkerSignupQR />
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
         <h3 style={{ margin: 0 }}>User Management</h3>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
