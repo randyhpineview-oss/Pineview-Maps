@@ -189,10 +189,13 @@ export default function TMTicketDetailSheet({
   }, [officeLines]);
   const hasMissingQty = missingQtyLabels.length > 0;
 
-  // Only tickets in "open" status can be submitted by the owning worker.
-  // Office/admin go through the Approve flow instead.
-  const canWorkerSubmit =
-    !canOfficeEdit && ticket?.status === 'open';
+  // Any editor can move an open ticket into "submitted" status. Workers
+  // use this to hand a filled-out ticket off to office for pricing;
+  // admin/office can use the same button when they want to park a
+  // ticket at "submitted" rather than jumping straight to Approve \u2014
+  // useful when someone else should do the approval, or when they just
+  // want to mark a ticket done for now and come back later to approve.
+  const canSubmitForApproval = ticket?.status === 'open';
   // Workers can EDIT their own ticket while it's open OR submitted (handed
   // off but not yet approved). Once approved, the ticket is frozen on the
   // worker side \u2014 office must Unapprove to unlock edits. Matches the
@@ -252,12 +255,14 @@ export default function TMTicketDetailSheet({
     }
   };
 
-  // Worker-only: submit an open ticket for office approval. Locks the ticket
-  // on the worker's side (backend rejects further worker edits once
-  // status=submitted). Uploads the worker-view PDF (no pricing) to Dropbox
-  // so the worker's submitted list shows a real stored PDF alongside their
-  // ticket number. When office later approves, Dropbox is overwritten with
-  // the finalized priced + signed version.
+  // Move an open ticket into "submitted" status. Workers use this to hand
+  // a filled-out ticket off to office for pricing (locks further worker
+  // edits on their side \u2014 backend guard). Admin/office also get this
+  // button now, useful for parking a ticket at "submitted" when someone
+  // else should do the approval. The PDF uploaded reflects the submitter's
+  // role: worker \u2192 no pricing; admin/office \u2192 with pricing already baked
+  // in. When the ticket is later approved, Dropbox is overwritten with
+  // the final priced + signed version.
   const handleSubmit = async () => {
     if (hasMissingQty) {
       alert(
@@ -266,21 +271,33 @@ export default function TMTicketDetailSheet({
       );
       return;
     }
-    if (!confirm(
-      'Submit this ticket for office approval?\n\n'
-      + 'You will no longer be able to edit it. Office will add pricing and finalize.'
-    )) return;
+    // Dialog wording depends on who's submitting: workers are locked out
+    // of further edits once they hand off; admin/office stay unlocked.
+    const confirmMsg = canOfficeEdit
+      ? 'Move this ticket to "submitted" status for approval?\n\n'
+        + 'You or another office/admin user can then approve it.'
+      : 'Submit this ticket for office approval?\n\n'
+        + 'You will no longer be able to edit it. Office will add pricing and finalize.';
+    if (!confirm(confirmMsg)) return;
     setIsSaving(true);
     try {
-      // Regenerate the worker-view PDF (QTY only, no rates/totals) for
-      // the Dropbox upload. regenerateCurrentPdf honours canOfficeEdit so
-      // the worker role naturally gets the stripped view.
+      // regenerateCurrentPdf honours canOfficeEdit, so worker submissions
+      // upload a QTY-only PDF and admin/office submissions include rates
+      // + totals already.
       const pdfBase64 = await regenerateCurrentPdf();
       const payload = {
         description_of_work: description,
         office_data: buildOfficeDataPayload(),
         status: 'submitted',
       };
+      // Admin/office fields: PO number + row cost-code edits. Omitted for
+      // workers because the backend rejects them from that role anyway
+      // (allowlist at _merge_worker_office_data + _can_edit_ticket).
+      if (canOfficeEdit) {
+        payload.po_approval_number = poNumber;
+        const rowUps = buildRowUpdates();
+        if (rowUps.length > 0) payload.row_updates = rowUps;
+      }
       if (pdfBase64) payload.pdf_base64 = pdfBase64;
       const updated = await api.updateTMTicket(ticket.id, payload);
       setTicket(updated);
@@ -753,11 +770,14 @@ export default function TMTicketDetailSheet({
             {isSaving ? 'Saving…' : '💾 Save'}
           </button>
         ) : null}
-        {/* Worker Submit for Approval: only on their own open tickets. Disabled
-            (but visible) until every required qty is filled, so the worker
-            knows what's blocking them. Click on disabled state still shows
-            the missing-field alert via handleSubmit's guard. */}
-        {canWorkerSubmit ? (
+        {/* Submit for Approval: any editor can move an open ticket to
+            "submitted". Workers hand off for pricing; admin/office use it
+            when they want to park a ticket at "submitted" instead of
+            approving it themselves right now. Disabled (but visible)
+            until every required qty is filled, so the user knows what's
+            blocking them. Click on disabled state still shows the
+            missing-field alert via handleSubmit's guard. */}
+        {canSubmitForApproval ? (
           <button
             onClick={handleSubmit}
             disabled={isSaving || hasMissingQty}
