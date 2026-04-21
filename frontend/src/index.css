@@ -360,7 +360,6 @@ button { cursor: pointer; }
   z-index: 20;
   background: rgba(9, 17, 31, 0.96);
   border-left: 1px solid rgba(143, 182, 255, 0.10);
-  overflow-y: auto;
   transform: translateX(100%);
   transition: transform 0.25s ease;
   will-change: transform;
@@ -403,6 +402,8 @@ button { cursor: pointer; }
 
 .side-panel-body {
   padding: 1rem;
+  overflow-y: auto;
+  height: 100%;
 }
 
 /* ───── Bottom tabs ───── */
