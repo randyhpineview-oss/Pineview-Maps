@@ -615,10 +615,11 @@ button.site-row { cursor: pointer; }
     transition: none;
   }
 
-  /* Make header swipeable on mobile */
+  /* Make header swipeable on mobile and non-sticky so background moves with transform */
   .side-panel.detail-priority .side-panel-header {
     touch-action: pan-y;
     padding-top: 12px;
+    position: relative;
   }
 
   .meta-grid { grid-template-columns: 1fr; }
