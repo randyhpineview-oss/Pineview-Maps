@@ -330,7 +330,11 @@ class TimeMaterialsRowRead(BaseModel):
 
     id: int
     ticket_id: int
-    spray_record_id: int
+    # Exactly one of these two is non-null per the DB CHECK constraint
+    # ck_tm_rows_exactly_one_spray_fk. Site-sourced rows populate
+    # spray_record_id; pipeline-sourced rows populate pipeline_spray_record_id.
+    spray_record_id: int | None = None
+    pipeline_spray_record_id: int | None = None
     location: str | None = None
     site_type: str | None = None
     herbicides: str | None = None
