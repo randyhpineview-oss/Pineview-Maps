@@ -4,6 +4,7 @@ import json
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.pipeline_models import PipelineApprovalState, PipelineStatus
+from app.schemas import TimeMaterialsLink
 
 
 class SprayRecordRead(BaseModel):
@@ -24,6 +25,7 @@ class SprayRecordRead(BaseModel):
     lease_sheet_data: dict | None = None
     pdf_url: str | None = None
     photo_urls: list[str] | None = None
+    tm_ticket_id: int | None = None
 
 
 class SprayRecordSummary(BaseModel):
@@ -50,6 +52,7 @@ class SprayRecordSummary(BaseModel):
     ticket_number: str | None = None
     pdf_url: str | None = None
     photo_urls: list[str] | None = None
+    tm_ticket_id: int | None = None
     # Derived flag so the frontend can still show the "📄" lease-sheet badge
     # without hydrating the 5-10 KB JSONB blob per row. Inferred from
     # ticket_number + pdf_url so we never need to SELECT the JSONB column.
@@ -73,6 +76,11 @@ class SprayRecordCreate(BaseModel):
     lease_sheet_data: dict | None = None
     pdf_base64: str | None = None
     ticket_number: str | None = None
+    # Optional Time & Materials linking instruction — matches the field of
+    # the same name on SiteSprayRecordCreate. When present, the pipeline
+    # spray endpoint creates/attaches a T&M ticket and appends a Sites
+    # Treated row exactly like the site flow does.
+    time_materials_link: TimeMaterialsLink | None = None
 
 
 class PipelineRead(BaseModel):

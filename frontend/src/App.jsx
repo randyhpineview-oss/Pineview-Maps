@@ -3,8 +3,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AdminPanel from './components/AdminPanel';
 import FilterBar from './components/FilterBar';
 import HerbicideLeaseSheet from './components/HerbicideLeaseSheet';
+import InstallAppPrompt from './components/InstallAppPrompt';
 import LoginPage from './components/LoginPage';
 import MapView from './components/MapView';
+import SignupPage from './components/SignupPage';
 import PipelineDetailSheet from './components/PipelineDetailSheet';
 import PdfPreviewOverlay from './components/PdfPreviewOverlay';
 import FormsPanel from './components/FormsPanel';
@@ -2247,11 +2249,44 @@ export default function App() {
   }
 
   if (!user) {
+    // QR-code worker self-signup: when the URL contains ?invite=<secret>,
+    // render the signup form instead of the login page. The SIGNUP_INVITE_SECRET
+    // check happens on the backend at submit time — we're just switching UI here.
+    const inviteCode = (() => {
+      try {
+        return new URLSearchParams(window.location.search).get('invite');
+      } catch {
+        return null;
+      }
+    })();
+    if (inviteCode) {
+      return (
+        <SignupPage
+          inviteCode={inviteCode}
+          onDone={() => {
+            // Strip ?invite= so a back-button / refresh from "Check your email"
+            // returns to the normal login screen rather than re-opening signup.
+            try {
+              const url = new URL(window.location.href);
+              url.searchParams.delete('invite');
+              window.history.replaceState({}, '', url.toString());
+            } catch { /* ignore */ }
+            // Force a re-render by kicking App back through its auth check;
+            // easiest path is a full reload since we're not using a router.
+            window.location.reload();
+          }}
+        />
+      );
+    }
     return <LoginPage onLoginSuccess={() => void refreshAllData()} />;
   }
 
   return (
     <div className="app-shell">
+      {/* One-time post-login "Add to Home Screen" instructions. Component
+          self-suppresses after first dismissal (via localStorage) and when
+          already running in PWA / standalone mode. */}
+      <InstallAppPrompt />
       {/* ── Top bar ── */}
       <header className="topbar">
         <span className="topbar-title">Pineview Maps</span>

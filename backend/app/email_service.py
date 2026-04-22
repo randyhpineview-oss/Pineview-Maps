@@ -143,3 +143,127 @@ Field Mapping & Collaboration
         # Log error and re-raise
         print(f"Failed to send email to {email}: {e}")
         raise
+
+
+async def send_signup_confirmation(email: str, confirmation_url: str, name: str) -> None:
+    """Send a welcome / email-confirmation message to a newly-signed-up worker.
+
+    Args:
+        email: The recipient's email address
+        confirmation_url: Supabase Admin API-generated signup confirmation link
+        name: The worker's display name (shown in the greeting)
+
+    Raises:
+        Exception: If email sending fails
+    """
+    if not settings.smtp_user or not settings.smtp_password:
+        # In development, just print the link to console
+        print(f"\n{'='*60}")
+        print(f"SIGNUP CONFIRMATION for {email} ({name})")
+        print(f"Link: {confirmation_url}")
+        print(f"{'='*60}\n")
+        return
+
+    display_name = name or (email.split("@")[0].title() if email else "there")
+    subject = "Welcome to Pineview Maps — Confirm your email"
+
+    text_body = f"""Welcome to Pineview Maps, {display_name}!
+
+Please confirm your email address by opening this link:
+
+{confirmation_url}
+
+This link expires in 24 hours. If you didn't create a Pineview Maps account,
+you can safely ignore this email.
+
+---
+Pineview Maps
+Field Mapping & Collaboration
+"""
+
+    html_body = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Confirm your Pineview Maps account</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f3f4f6;">
+    <table role="presentation" style="width: 100%; border-collapse: collapse;">
+        <tr>
+            <td align="center" style="padding: 40px 0;">
+                <table role="presentation" style="width: 600px; border-collapse: collapse; background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                    <tr>
+                        <td style="padding: 40px 30px; text-align: center; background: linear-gradient(135deg, #2563eb, #4f46e5); border-radius: 8px 8px 0 0;">
+                            <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600;">Pineview Maps</h1>
+                            <p style="margin: 8px 0 0 0; color: rgba(255,255,255,0.9); font-size: 14px;">Field Mapping & Collaboration</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 40px 30px;">
+                            <h2 style="margin: 0 0 20px 0; color: #111827; font-size: 20px; font-weight: 600;">Welcome, {display_name}!</h2>
+                            <p style="margin: 0 0 24px 0; color: #4b5563; font-size: 16px; line-height: 1.5;">
+                                Thanks for signing up. Please confirm your email address to activate your account and log in.
+                            </p>
+
+                            <table role="presentation" style="width: 100%; margin: 24px 0;">
+                                <tr>
+                                    <td align="center">
+                                        <a href="{confirmation_url}" style="display: inline-block; background: linear-gradient(135deg, #2563eb, #4f46e5); color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px;">
+                                            Confirm my email
+                                        </a>
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <p style="margin: 24px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.5;">
+                                Or paste this URL into your browser:<br>
+                                <a href="{confirmation_url}" style="color: #2563eb; word-break: break-all;">{confirmation_url}</a>
+                            </p>
+
+                            <p style="margin: 16px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.5;">
+                                <strong style="color: #dc2626;">This link expires in 24 hours.</strong>
+                            </p>
+
+                            <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 32px 0;">
+
+                            <p style="margin: 0; color: #9ca3af; font-size: 13px; line-height: 1.5;">
+                                If you didn't create a Pineview Maps account, you can safely ignore this email.
+                            </p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 20px 30px; text-align: center; background-color: #f9fafb; border-radius: 0 0 8px 8px;">
+                            <p style="margin: 0; color: #9ca3af; font-size: 12px;">
+                                Pineview Maps &copy; {__import__('datetime').datetime.now().year}<br>
+                                Secure authentication powered by Supabase
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>"""
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email or settings.smtp_user}>"
+    msg["To"] = email
+
+    msg.attach(MIMEText(text_body, "plain"))
+    msg.attach(MIMEText(html_body, "html"))
+
+    try:
+        await aiosmtplib.send(
+            msg,
+            hostname=settings.smtp_host,
+            port=settings.smtp_port,
+            start_tls=True,
+            username=settings.smtp_user,
+            password=settings.smtp_password,
+        )
+    except Exception as e:
+        print(f"Failed to send signup confirmation to {email}: {e}")
+        raise

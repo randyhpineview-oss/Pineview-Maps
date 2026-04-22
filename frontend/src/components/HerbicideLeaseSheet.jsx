@@ -85,6 +85,24 @@ export default function HerbicideLeaseSheet({
     form.locationTypes.some(type => accessRoadTypes.includes(type)),
   [form.locationTypes, accessRoadTypes]);
 
+  // Determine if a pipeline-flagged location type is selected. Drives both
+  // the visibility of the "Total Distance (km)" input below AND the
+  // `isPipeline` flag we stamp into lease_sheet_data so the backend T&M row
+  // derivation knows to emit site_type='Pipeline'.
+  //
+  // Fallback: also match by case-insensitive name 'Pipeline' so workers get
+  // the correct UI immediately even if their cached lookup payload hasn't
+  // been refreshed since the is_pipeline column was added.
+  const pipelineTypes = useMemo(() =>
+    locationTypes
+      .filter(t => t.is_pipeline || (t.name || '').toLowerCase() === 'pipeline')
+      .map(t => t.name),
+  [locationTypes]);
+
+  const hasPipeline = useMemo(() =>
+    form.locationTypes.some(type => pipelineTypes.includes(type)),
+  [form.locationTypes, pipelineTypes]);
+
   // Auto-populate from site, pipeline, draft, or editing record (run once)
   useEffect(() => {
     // Restore draft (device-local, no API call)
@@ -194,7 +212,13 @@ export default function HerbicideLeaseSheet({
         customer: pipeline.client || '',
         area: pipeline.area || '',
         lsdOrPipeline: pipeline.name || '',
-        totalDistanceSprayed: initialDistanceMeters != null ? String(initialDistanceMeters) : prev.totalDistanceSprayed,
+        // initialDistanceMeters is sourced from the KML segment picker in
+        // meters; the lease sheet / T&M workflow now uses km for pipelines
+        // so convert on the way in (3 decimals keeps the fidelity of the
+        // original meter value).
+        totalDistanceSprayed: initialDistanceMeters != null
+          ? (Number(initialDistanceMeters) / 1000).toFixed(3)
+          : prev.totalDistanceSprayed,
       }));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -286,13 +310,10 @@ export default function HerbicideLeaseSheet({
           return p.preview;
         })
       );
-      const herbicidesUsedDisplay = herbicides
-        .filter(h => form.herbicidesUsed.includes(h.name))
-        .map(h => h.pcp_number ? `${h.name} (${h.pcp_number})` : h.name);
       const pdfData = {
         ...form,
         ticket_number: ticketNumber,
-        herbicidesUsedDisplay,
+        herbicidesLookup: herbicides,
       };
       const { base64 } = await generateLeaseSheetPdf(pdfData, photoDataUrls);
       setPdfBase64(base64);
@@ -360,11 +381,8 @@ export default function HerbicideLeaseSheet({
           return p.preview;
         })
       );
-      const herbicidesUsedDisplay = herbicides
-        .filter(h => form.herbicidesUsed.includes(h.name))
-        .map(h => h.pcp_number ? `${h.name} (${h.pcp_number})` : h.name);
       const { base64: finalPdfBase64 } = await generateLeaseSheetPdf(
-        { ...form, ticket_number: finalTicket, herbicidesUsedDisplay },
+        { ...form, ticket_number: finalTicket, herbicidesLookup: herbicides },
         photoDataUrls
       );
 
@@ -399,23 +417,34 @@ export default function HerbicideLeaseSheet({
           : null;
 
         // Tentative T&M ticket for PDF rendering (backend will allocate the real number if `create`)
+        // When the worker ticked a pipeline-flagged location type the main
+        // row mirrors the backend's derive_row_from_spray_record: site_type
+        // 'Pipeline' and area_ha holds totalDistanceSprayed directly (km,
+        // already entered in km on the lease sheet form).
+        const tentativeSiteType = hasPipeline
+          ? 'Pipeline'
+          : (site?.pin_type === 'lsd' ? 'Wellsite' : '');
+        const tentativeAreaHa = hasPipeline
+          ? (Number(form.totalDistanceSprayed) || 0)
+          : (Number(form.areaTreated) || 0);
+        const tentativeMainRow = {
+          location: form.lsdOrPipeline || '',
+          site_type: tentativeSiteType,
+          herbicides: (form.herbicidesUsed || []).length === 1
+            ? form.herbicidesUsed[0]
+            : (form.herbicidesUsed || []).length > 1
+              ? `${Math.min(form.herbicidesUsed.length, 3)} Herbicides`
+              : '',
+          liters_used: Number(form.totalLiters) || 0,
+          area_ha: tentativeAreaHa,
+          cost_code: '',
+        };
         const tentativeTicket = pickedExisting
           ? {
               ...pickedExisting,
               rows: [
                 ...(pickedExisting.rows || []),
-                {
-                  location: form.lsdOrPipeline || '',
-                  site_type: (site?.pin_type === 'lsd' ? 'Wellsite' : ''),
-                  herbicides: (form.herbicidesUsed || []).length === 1
-                    ? form.herbicidesUsed[0]
-                    : (form.herbicidesUsed || []).length > 1
-                      ? `${form.herbicidesUsed.length} Herbicides`
-                      : '',
-                  liters_used: Number(form.totalLiters) || 0,
-                  area_ha: Number(form.areaTreated) || 0,
-                  cost_code: '',
-                },
+                tentativeMainRow,
               ],
             }
           : {
@@ -424,20 +453,7 @@ export default function HerbicideLeaseSheet({
               client: form.customer,
               area: form.area,
               description_of_work: tmDescription || (tmChoice.description_of_work || ''),
-              rows: [
-                {
-                  location: form.lsdOrPipeline || '',
-                  site_type: (site?.pin_type === 'lsd' ? 'Wellsite' : ''),
-                  herbicides: (form.herbicidesUsed || []).length === 1
-                    ? form.herbicidesUsed[0]
-                    : (form.herbicidesUsed || []).length > 1
-                      ? `${form.herbicidesUsed.length} Herbicides`
-                      : '',
-                  liters_used: Number(form.totalLiters) || 0,
-                  area_ha: Number(form.areaTreated) || 0,
-                  cost_code: '',
-                },
-              ],
+              rows: [tentativeMainRow],
             };
 
         let tmPdfBase64 = null;
@@ -462,6 +478,10 @@ export default function HerbicideLeaseSheet({
           ...form,
           ticket_number: finalTicket || undefined,
           photos: photoData,
+          // Persist a boolean parallel to `isAccessRoad` so the backend
+          // row-derivation helper doesn't have to re-query location_types
+          // to know this sheet was a pipeline spray.
+          isPipeline: hasPipeline,
         },
         pdf_base64: finalPdfBase64,
         ticket_number: finalTicket || undefined,
@@ -1220,8 +1240,11 @@ export default function HerbicideLeaseSheet({
               </div>
             </div>
 
-            {/* Total Liters and Distance Sprayed */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            {/* Total Liters and (conditionally) Distance Sprayed.
+                The Metres input only shows when a pipeline-flagged location
+                type is selected; for wellsite/roadside/etc. sprays it would
+                just confuse workers into thinking it's required. */}
+            <div style={{ display: 'grid', gridTemplateColumns: hasPipeline ? '1fr 1fr' : '1fr', gap: '12px' }}>
               <div>
                 <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Total Liters</label>
                 <input
@@ -1239,23 +1262,25 @@ export default function HerbicideLeaseSheet({
                   }}
                 />
               </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Total Metres (m)</label>
-                <input
-                  type="number"
-                  value={form.totalDistanceSprayed}
-                  onChange={e => setForm(prev => ({ ...prev, totalDistanceSprayed: e.target.value }))}
-                  placeholder="Distance"
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    borderRadius: '6px',
-                    border: '1px solid #374151',
-                    backgroundColor: '#111827',
-                    color: '#f9fafb',
-                  }}
-                />
-              </div>
+              {hasPipeline && (
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Total Distance (km)</label>
+                  <input
+                    type="number"
+                    value={form.totalDistanceSprayed}
+                    onChange={e => setForm(prev => ({ ...prev, totalDistanceSprayed: e.target.value }))}
+                    placeholder="km"
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      borderRadius: '6px',
+                      border: '1px solid #374151',
+                      backgroundColor: '#111827',
+                      color: '#f9fafb',
+                    }}
+                  />
+                </div>
+              )}
               <div style={{ gridColumn: '1 / -1' }}>
                 <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Area Treated (ha)</label>
                 <input

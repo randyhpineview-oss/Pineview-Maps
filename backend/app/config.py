@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     # Frontend URL for password reset (used in email templates if needed)
     frontend_url: str = "http://localhost:5173"
 
+    # Shared secret embedded in the QR-code worker signup URL.
+    # Leave empty to disable self-signup entirely (backend returns 403).
+    # Rotate by updating the env var on Render; any printed QR stops working.
+    signup_invite_secret: str = ""
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

@@ -35,7 +35,7 @@ export const DEFAULT_OFFICE_LINES = [
   { label: '1 Herbicide (m²)', qty: '', rate: '' },
   { label: '2 Herbicides (m²)', qty: '', rate: '' },
   { label: '3 Herbicides (m²)', qty: '', rate: '' },
-  { label: 'Roadside/Access Rd Liters Applied', qty: '', rate: '' },
+  { label: 'Roadside/Access Rd/Pipeline Liters Applied', qty: '', rate: '' },
   { label: 'Travel Km', qty: '', rate: '' },
 ];
 
@@ -48,7 +48,7 @@ export const AUTO_LINE_LABELS = [
   '1 Herbicide (m²)',
   '2 Herbicides (m²)',
   '3 Herbicides (m²)',
-  'Roadside/Access Rd Liters Applied',
+  'Roadside/Access Rd/Pipeline Liters Applied',
 ];
 
 /**
@@ -70,7 +70,13 @@ export const WORKER_EDITABLE_LINE_LABELS = [
  * Keeps older tickets rendering correctly after we rename a pre-seeded line.
  */
 const LEGACY_LABEL_MIGRATIONS = {
-  'Roadside/Access Rd Kms Sprayed': 'Roadside/Access Rd Liters Applied',
+  // Kept chained-style: the original label was once
+  // 'Roadside/Access Rd Kms Sprayed', then became
+  // 'Roadside/Access Rd Liters Applied', and is now
+  // 'Roadside/Access Rd/Pipeline Liters Applied'. Map both legacy names
+  // straight to the current one so older tickets render correctly.
+  'Roadside/Access Rd Kms Sprayed': 'Roadside/Access Rd/Pipeline Liters Applied',
+  'Roadside/Access Rd Liters Applied': 'Roadside/Access Rd/Pipeline Liters Applied',
 };
 
 export function migrateOfficeLineLabel(label) {
@@ -189,8 +195,9 @@ export async function generateTMTicketPdf(ticket, options = {}) {
   y += 6;
 
   // Columns: Location | Site Type | Herbicides | (L) Used | Area (ha / km) | Cost Code
-  // Roadside rows show the area as km; everything else as ha. The unit is
-  // inferred from row.site_type === 'Roadside' at render time.
+  // Roadside and Pipeline rows show the area as km; everything else as ha.
+  // The unit is inferred from row.site_type at render time (see isKmUnit).
+
   const colWidths = [110, 70, 85, 60, 60, 155];  // sums to ~540
   const rowH = 16;
   const totalTableW = colWidths.reduce((a, b) => a + b, 0);
@@ -247,9 +254,12 @@ export async function generateTMTicketPdf(ticket, options = {}) {
 
     const row = rows[r] || {};
     let cx = marginL;
-    const isRoadside = row.site_type === 'Roadside';
+    // Pipeline rows reuse the area_ha column to store km (converted from
+    // totalDistanceSprayed on submit), so they get the same 'km' suffix
+    // as Roadside rows. All other site_type values render as hectares.
+    const isKmUnit = row.site_type === 'Roadside' || row.site_type === 'Pipeline';
     const areaValue = row.area_ha != null && row.area_ha !== '' ? Number(row.area_ha).toFixed(2) : '';
-    const areaText = areaValue ? `${areaValue} ${isRoadside ? 'km' : 'ha'}` : '';
+    const areaText = areaValue ? `${areaValue} ${isKmUnit ? 'km' : 'ha'}` : '';
     const cells = [
       row.location || '',
       row.site_type || '',

@@ -12,6 +12,7 @@ from app.config import get_settings
 from app.database import Base, SessionLocal, engine, get_db
 from app.kml_import import parse_kml_file
 from app.password_reset import router as password_reset_router
+from app.signup import router as signup_router
 from app.user_management import router as user_management_router
 from app.pipeline_routes import router as pipeline_router
 from app.lookup_routes import router as lookup_router
@@ -77,6 +78,7 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 # Include routers AFTER middleware is set up
 app.include_router(user_management_router)
 app.include_router(password_reset_router)
+app.include_router(signup_router)
 app.include_router(pipeline_router)
 app.include_router(lookup_router)
 app.include_router(time_materials_router)
@@ -862,7 +864,7 @@ def list_recent_submissions(
     only needs scalar columns + joined site context. Default limit lowered
     from 50 -> 20 since the Forms panel paginates client-side with "Load more".
     """
-    q = (
+    site_q = (
         db.query(
             SiteSprayRecord,
             Site.lsd.label('site_lsd'),
@@ -874,11 +876,23 @@ def list_recent_submissions(
         .filter(SiteSprayRecord.lease_sheet_data.isnot(None))
     )
 
+    pipeline_q = (
+        db.query(
+            SprayRecord,
+            Pipeline.name.label('pipeline_name'),
+            Pipeline.client.label('pipeline_client'),
+            Pipeline.area.label('pipeline_area'),
+        )
+        .options(defer(SprayRecord.lease_sheet_data))
+        .join(Pipeline, SprayRecord.pipeline_id == Pipeline.id)
+        .filter(SprayRecord.lease_sheet_data.isnot(None))
+    )
+
     # Workers only see their OWN lease-sheet submissions. Office/admin see all.
     # Match on sprayed_by_user_id first; fall back to a name match for legacy
     # rows that predate the `users` table seed (sprayed_by_user_id IS NULL).
     if current_user.role == RoleEnum.worker:
-        q = q.filter(
+        site_q = site_q.filter(
             or_(
                 SiteSprayRecord.sprayed_by_user_id == current_user.id,
                 and_(
@@ -887,10 +901,19 @@ def list_recent_submissions(
                 ),
             )
         )
+        pipeline_q = pipeline_q.filter(
+            or_(
+                SprayRecord.sprayed_by_user_id == current_user.id,
+                and_(
+                    SprayRecord.sprayed_by_user_id.is_(None),
+                    SprayRecord.sprayed_by_name == current_user.name,
+                ),
+            )
+        )
 
     if search:
         search_term = f"%{search}%"
-        q = q.filter(
+        site_q = site_q.filter(
             or_(
                 SiteSprayRecord.ticket_number.ilike(search_term),
                 SiteSprayRecord.sprayed_by_name.ilike(search_term),
@@ -899,20 +922,53 @@ def list_recent_submissions(
                 Site.lsd.ilike(search_term),
             )
         )
+        pipeline_q = pipeline_q.filter(
+            or_(
+                SprayRecord.ticket_number.ilike(search_term),
+                SprayRecord.sprayed_by_name.ilike(search_term),
+                Pipeline.client.ilike(search_term),
+                Pipeline.area.ilike(search_term),
+                Pipeline.name.ilike(search_term),
+            )
+        )
 
-    rows = q.order_by(SiteSprayRecord.created_at.desc()).limit(limit).all()
+    site_rows = site_q.order_by(SiteSprayRecord.created_at.desc()).limit(limit).all()
+    pipeline_rows = pipeline_q.order_by(SprayRecord.created_at.desc()).limit(limit).all()
 
     # Build the summary view without lease_sheet_data — the PDF preview
     # fetches the real Dropbox PDF via /api/pdf-proxy, and the edit flow
     # fetches the full row via /api/site-spray-records/{id}.
-    results = []
-    for record, site_lsd, site_client, site_area in rows:
+    results: list[RecentSubmissionRead] = []
+    for record, site_lsd, site_client, site_area in site_rows:
         data = SiteSprayRecordSummary.model_validate(record).model_dump()
         data['site_lsd'] = site_lsd
         data['site_client'] = site_client
         data['site_area'] = site_area
         results.append(RecentSubmissionRead(**data))
-    return results
+    for record, pipeline_name, pipeline_client, pipeline_area in pipeline_rows:
+        results.append(RecentSubmissionRead(
+            id=record.id,
+            site_id=None,
+            pipeline_id=record.pipeline_id,
+            spray_date=record.spray_date,
+            sprayed_by_user_id=record.sprayed_by_user_id,
+            sprayed_by_name=record.sprayed_by_name,
+            notes=record.notes,
+            is_avoided=record.is_avoided,
+            created_at=record.created_at,
+            ticket_number=record.ticket_number,
+            pdf_url=record.pdf_url,
+            photo_urls=record.photo_urls,
+            tm_ticket_id=None,
+            site_lsd=pipeline_name,
+            site_client=pipeline_client,
+            site_area=pipeline_area,
+        ))
+
+    # Merge the two per-table results into one newest-first feed, then cap
+    # at `limit` so the response size matches the documented contract.
+    results.sort(key=lambda r: r.created_at, reverse=True)
+    return results[:limit]
 
 
 @app.get("/api/recent-submissions/delta", response_model=RecentSubmissionsDeltaResponse)
@@ -931,7 +987,7 @@ def recent_submissions_delta(
     """
     server_time = datetime.utcnow()
 
-    q = (
+    site_q = (
         db.query(
             SiteSprayRecord,
             Site.lsd.label('site_lsd'),
@@ -946,11 +1002,26 @@ def recent_submissions_delta(
         )
     )
 
+    pipeline_q = (
+        db.query(
+            SprayRecord,
+            Pipeline.name.label('pipeline_name'),
+            Pipeline.client.label('pipeline_client'),
+            Pipeline.area.label('pipeline_area'),
+        )
+        .options(defer(SprayRecord.lease_sheet_data))
+        .join(Pipeline, SprayRecord.pipeline_id == Pipeline.id)
+        .filter(
+            SprayRecord.lease_sheet_data.isnot(None),
+            SprayRecord.created_at > since,
+        )
+    )
+
     # Match the privacy rule in /api/recent-submissions: workers see only
     # their own submissions in the delta feed too, otherwise the 2-min poll
     # would leak other workers' rows into the Recently Submitted list.
     if current_user.role == RoleEnum.worker:
-        q = q.filter(
+        site_q = site_q.filter(
             or_(
                 SiteSprayRecord.sprayed_by_user_id == current_user.id,
                 and_(
@@ -959,16 +1030,48 @@ def recent_submissions_delta(
                 ),
             )
         )
+        pipeline_q = pipeline_q.filter(
+            or_(
+                SprayRecord.sprayed_by_user_id == current_user.id,
+                and_(
+                    SprayRecord.sprayed_by_user_id.is_(None),
+                    SprayRecord.sprayed_by_name == current_user.name,
+                ),
+            )
+        )
 
-    q = q.order_by(SiteSprayRecord.created_at.desc()).limit(limit)
+    site_q = site_q.order_by(SiteSprayRecord.created_at.desc()).limit(limit)
+    pipeline_q = pipeline_q.order_by(SprayRecord.created_at.desc()).limit(limit)
 
-    items = []
-    for record, site_lsd, site_client, site_area in q.all():
+    items: list[RecentSubmissionRead] = []
+    for record, site_lsd, site_client, site_area in site_q.all():
         data = SiteSprayRecordSummary.model_validate(record).model_dump()
         data['site_lsd'] = site_lsd
         data['site_client'] = site_client
         data['site_area'] = site_area
         items.append(RecentSubmissionRead(**data))
+    for record, pipeline_name, pipeline_client, pipeline_area in pipeline_q.all():
+        items.append(RecentSubmissionRead(
+            id=record.id,
+            site_id=None,
+            pipeline_id=record.pipeline_id,
+            spray_date=record.spray_date,
+            sprayed_by_user_id=record.sprayed_by_user_id,
+            sprayed_by_name=record.sprayed_by_name,
+            notes=record.notes,
+            is_avoided=record.is_avoided,
+            created_at=record.created_at,
+            ticket_number=record.ticket_number,
+            pdf_url=record.pdf_url,
+            photo_urls=record.photo_urls,
+            tm_ticket_id=None,
+            site_lsd=pipeline_name,
+            site_client=pipeline_client,
+            site_area=pipeline_area,
+        ))
+
+    items.sort(key=lambda r: r.created_at, reverse=True)
+    items = items[:limit]
 
     return RecentSubmissionsDeltaResponse(items=items, server_time=server_time)
 
