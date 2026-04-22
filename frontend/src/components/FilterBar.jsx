@@ -29,6 +29,20 @@ export default function FilterBar({
 
   const query = filters.search.trim().toLowerCase();
 
+  // Filter areas based on selected client: when a client is chosen,
+  // only show areas that have sites/pipelines for that client.
+  const filteredAreas = useMemo(() => {
+    if (!filters.client) return areas; // All clients → show all areas
+    const clientLower = filters.client.toLowerCase();
+    const areasForClient = new Set(
+      sites
+        .filter((s) => s.client && s.client.toLowerCase() === clientLower)
+        .map((s) => s.area)
+        .filter(Boolean)
+    );
+    return areas.filter((area) => areasForClient.has(area));
+  }, [areas, filters.client, sites]);
+
   const suggestions = useMemo(() => {
     if (!query || query.length < 1) return [];
     return sites
@@ -104,7 +118,7 @@ export default function FilterBar({
       </select>
       <select value={filters.area} onChange={(event) => onChange('area', event.target.value)}>
         <option value="">All areas</option>
-        {areas.map((area) => (
+        {filteredAreas.map((area) => (
           <option key={area} value={area}>
             {area}
           </option>
