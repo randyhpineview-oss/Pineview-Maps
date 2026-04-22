@@ -313,6 +313,7 @@ export default function HerbicideLeaseSheet({
       const pdfData = {
         ...form,
         ticket_number: ticketNumber,
+        herbicidesLookup: herbicides,
       };
       const { base64 } = await generateLeaseSheetPdf(pdfData, photoDataUrls);
       setPdfBase64(base64);
@@ -381,7 +382,7 @@ export default function HerbicideLeaseSheet({
         })
       );
       const { base64: finalPdfBase64 } = await generateLeaseSheetPdf(
-        { ...form, ticket_number: finalTicket },
+        { ...form, ticket_number: finalTicket, herbicidesLookup: herbicides },
         photoDataUrls
       );
 
@@ -1069,7 +1070,7 @@ export default function HerbicideLeaseSheet({
             <div>
               <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '8px' }}>Spray Method</label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                {['Boomless', 'Covered Boom', 'Handwand'].map(method => (
+                {['Boomless', 'Covered Boom', 'Handwand', 'Backpack'].map(method => (
                   <label key={method} style={{
                     display: 'flex',
                     alignItems: 'center',
