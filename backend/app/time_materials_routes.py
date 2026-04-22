@@ -608,14 +608,16 @@ def derive_row_from_spray_record(record) -> dict:
             or (pipeline.name if pipeline else None)
             or (site.lsd if site else None)
         )
-        distance_m = _to_float(data.get("totalDistanceSprayed"))
-        km = distance_m / 1000.0 if distance_m is not None else None
+        # totalDistanceSprayed is stored in km for pipeline lease sheets
+        # (single unit end-to-end: UI form, lease-sheet PDF, T&M row, T&M
+        # PDF all agree). Reuse the area_ha column as the km carrier — same
+        # trick the Roadside companion row uses with roadsideKm.
         return {
             "location": location,
             "site_type": "Pipeline",
             "herbicides": _herbicides_text(data.get("herbicidesUsed") or []),
             "liters_used": _to_float(data.get("totalLiters")),
-            "area_ha": km,
+            "area_ha": _to_float(data.get("totalDistanceSprayed")),
         }
     if _is_pipeline_record(record):
         pipeline = getattr(record, "pipeline", None)

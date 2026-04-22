@@ -86,11 +86,17 @@ export default function HerbicideLeaseSheet({
   [form.locationTypes, accessRoadTypes]);
 
   // Determine if a pipeline-flagged location type is selected. Drives both
-  // the visibility of the "Total Metres" input below AND the `isPipeline`
-  // flag we stamp into lease_sheet_data so the backend T&M row derivation
-  // knows to emit site_type='Pipeline' with area as km.
+  // the visibility of the "Total Distance (km)" input below AND the
+  // `isPipeline` flag we stamp into lease_sheet_data so the backend T&M row
+  // derivation knows to emit site_type='Pipeline'.
+  //
+  // Fallback: also match by case-insensitive name 'Pipeline' so workers get
+  // the correct UI immediately even if their cached lookup payload hasn't
+  // been refreshed since the is_pipeline column was added.
   const pipelineTypes = useMemo(() =>
-    locationTypes.filter(t => t.is_pipeline).map(t => t.name),
+    locationTypes
+      .filter(t => t.is_pipeline || (t.name || '').toLowerCase() === 'pipeline')
+      .map(t => t.name),
   [locationTypes]);
 
   const hasPipeline = useMemo(() =>
@@ -206,7 +212,13 @@ export default function HerbicideLeaseSheet({
         customer: pipeline.client || '',
         area: pipeline.area || '',
         lsdOrPipeline: pipeline.name || '',
-        totalDistanceSprayed: initialDistanceMeters != null ? String(initialDistanceMeters) : prev.totalDistanceSprayed,
+        // initialDistanceMeters is sourced from the KML segment picker in
+        // meters; the lease sheet / T&M workflow now uses km for pipelines
+        // so convert on the way in (3 decimals keeps the fidelity of the
+        // original meter value).
+        totalDistanceSprayed: initialDistanceMeters != null
+          ? (Number(initialDistanceMeters) / 1000).toFixed(3)
+          : prev.totalDistanceSprayed,
       }));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -406,12 +418,13 @@ export default function HerbicideLeaseSheet({
         // Tentative T&M ticket for PDF rendering (backend will allocate the real number if `create`)
         // When the worker ticked a pipeline-flagged location type the main
         // row mirrors the backend's derive_row_from_spray_record: site_type
-        // 'Pipeline' and area_ha holds totalDistanceSprayed / 1000 (km).
+        // 'Pipeline' and area_ha holds totalDistanceSprayed directly (km,
+        // already entered in km on the lease sheet form).
         const tentativeSiteType = hasPipeline
           ? 'Pipeline'
           : (site?.pin_type === 'lsd' ? 'Wellsite' : '');
         const tentativeAreaHa = hasPipeline
-          ? (Number(form.totalDistanceSprayed) || 0) / 1000
+          ? (Number(form.totalDistanceSprayed) || 0)
           : (Number(form.areaTreated) || 0);
         const tentativeMainRow = {
           location: form.lsdOrPipeline || '',
@@ -1250,12 +1263,12 @@ export default function HerbicideLeaseSheet({
               </div>
               {hasPipeline && (
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Total Metres (m)</label>
+                  <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Total Distance (km)</label>
                   <input
                     type="number"
                     value={form.totalDistanceSprayed}
                     onChange={e => setForm(prev => ({ ...prev, totalDistanceSprayed: e.target.value }))}
-                    placeholder="Distance"
+                    placeholder="km"
                     style={{
                       width: '100%',
                       padding: '8px 12px',
