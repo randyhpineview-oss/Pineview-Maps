@@ -465,6 +465,14 @@ export default function App() {
                 return prev;
               });
             } catch { /* ignore refresh failure */ }
+          } else if (item.targetType === 'tm_ticket') {
+            // Worker "Mark as pending" on a T&M ticket. We queue instead of
+            // awaiting so the worker doesn't sit on a spinner while the
+            // backend talks to Dropbox for the PDF. Payload is the full
+            // updateTMTicket body (description_of_work, office_data,
+            // status: 'submitted', pdf_base64, and — for office/admin —
+            // po_approval_number and row_updates).
+            await api.updateTMTicket(item.targetId, item.payload);
           }
           await removeUploadEntry(item.id);
           completed++;
@@ -1749,6 +1757,31 @@ export default function App() {
     }
   }
 
+  // Worker (and admin/office-impersonating-worker) "Mark as pending" on a
+  // T&M ticket. The sheet builds the full updateTMTicket payload (including
+  // pdf_base64 from regenerateCurrentPdf) and hands it here; we queue it
+  // through the same upload queue used by lease sheets so the user doesn't
+  // sit on a spinner while the backend talks to Dropbox, and the item shows
+  // up in "In Progress → Uploading" with progress.
+  async function handleQueueTMSubmit({ ticketId, payload, ticketNumber, sprayDate }) {
+    await queueUpload({
+      targetType: 'tm_ticket',
+      targetId: ticketId,
+      payload,
+      // Top-level display fields so the Uploading row can show something
+      // useful without poking inside the API payload.
+      ticket_number: ticketNumber || null,
+      spray_date: sprayDate || null,
+      form_type: 'tm_ticket',
+    });
+    await refreshUploadQueue();
+    setMessage('Ticket queued for submission.');
+    // Kick the queue immediately — if online it'll start uploading right
+    // away; if offline it stays put and processUploadQueue retries on the
+    // back-online handler.
+    processUploadQueue();
+  }
+
   async function handleLeaseSheetSubmit(payload) {
     if (inspectionSite) {
       await queueUpload({
@@ -2524,6 +2557,7 @@ export default function App() {
               roleCanOffice={roleCanAdmin}
               currentUserEmail={user?.email}
               onClose={() => setActiveTMTicketId(null)}
+              onQueueSubmit={handleQueueTMSubmit}
             />
           </div>
         )}

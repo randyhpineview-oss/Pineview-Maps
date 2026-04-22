@@ -480,23 +480,35 @@ export default function FormsPanel({
                   Nothing in upload queue.
                 </div>
               ) : (
-                uploadQueue.map((item) => (
-                  <div key={item.id} className="site-row" style={{ padding: '10px', borderRadius: '6px', opacity: 0.85 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <div className="small-text" style={{ fontWeight: 600 }}>
-                          {item.payload?.ticket_number || 'Pending'} — {item.payload?.spray_date || ''}
+                uploadQueue.map((item) => {
+                  // T&M submit entries carry their display fields at the
+                  // top level (ticket_number, spray_date). Lease-sheet
+                  // entries tuck them inside `payload`. Fall back across
+                  // both so the row renders a useful label either way.
+                  const ticketNumber = item.ticket_number || item.payload?.ticket_number || 'Pending';
+                  const sprayDate = item.spray_date || item.payload?.spray_date || '';
+                  const typeLabel =
+                    item.targetType === 'tm_ticket' ? 'T&M Ticket'
+                    : item.targetType === 'site' ? 'Site'
+                    : 'Pipeline';
+                  return (
+                    <div key={item.id} className="site-row" style={{ padding: '10px', borderRadius: '6px', opacity: 0.85 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <div className="small-text" style={{ fontWeight: 600 }}>
+                            {ticketNumber} — {sprayDate}
+                          </div>
+                          <div className="small-text" style={{ color: '#9ca3af' }}>
+                            {typeLabel} • {item.status === 'uploading' ? 'Uploading...' : 'Queued'}
+                          </div>
                         </div>
-                        <div className="small-text" style={{ color: '#9ca3af' }}>
-                          {item.targetType === 'site' ? 'Site' : 'Pipeline'} • {item.status === 'uploading' ? 'Uploading...' : 'Queued'}
-                        </div>
+                        <span className="pending-badge" style={{ background: '#3b82f6', fontSize: '0.65rem' }}>
+                          {item.status === 'uploading' ? '⟳' : '⏳'}
+                        </span>
                       </div>
-                      <span className="pending-badge" style={{ background: '#3b82f6', fontSize: '0.65rem' }}>
-                        {item.status === 'uploading' ? '⟳' : '⏳'}
-                      </span>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           )}

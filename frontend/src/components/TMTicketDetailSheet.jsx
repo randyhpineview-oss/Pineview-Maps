@@ -59,6 +59,12 @@ export default function TMTicketDetailSheet({
   roleCanAdmin = false,
   roleCanOffice = false,
   currentUserEmail = null,
+  // Optional queue handler provided by App.jsx. When present, "Mark as
+  // pending" hands the payload off to the shared upload queue and closes
+  // the sheet immediately instead of awaiting the PATCH round-trip. When
+  // omitted the sheet falls back to the old synchronous flow (useful for
+  // any call site that doesn't want background uploads).
+  onQueueSubmit = null,
 }) {
   const canOfficeEdit = roleCanAdmin || roleCanOffice;
   const [ticket, setTicket] = useState(null);
@@ -304,6 +310,25 @@ export default function TMTicketDetailSheet({
         if (rowUps.length > 0) payload.row_updates = rowUps;
       }
       if (pdfBase64) payload.pdf_base64 = pdfBase64;
+
+      // Preferred path: hand off to the shared upload queue so the worker
+      // can get back to the map immediately while Dropbox uploads finish in
+      // the background. The Uploading tab shows progress + retries on
+      // failure, matching the lease-sheet flow.
+      if (typeof onQueueSubmit === 'function') {
+        await onQueueSubmit({
+          ticketId: ticket.id,
+          payload,
+          ticketNumber: ticket.ticket_number,
+          sprayDate: ticket.spray_date,
+        });
+        setRowsEdits({});
+        if (onClose) onClose();
+        return;
+      }
+
+      // Fallback: legacy synchronous submit (kept so the sheet still works
+      // if mounted somewhere without a queue handler wired up).
       const updated = await api.updateTMTicket(ticket.id, payload);
       setTicket(updated);
       setRowsEdits({});
