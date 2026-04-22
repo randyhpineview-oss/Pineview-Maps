@@ -1275,7 +1275,7 @@ export default function HerbicideLeaseSheet({
                       onChange={() => handleCheckboxGroup('herbicidesUsed', herb.name)}
                       style={{ display: 'none' }}
                     />
-                    {herb.name} {herb.pcp_number && `(${herb.pcp_number})`}
+                    {herb.name}
                   </label>
                 ))}
               </div>
