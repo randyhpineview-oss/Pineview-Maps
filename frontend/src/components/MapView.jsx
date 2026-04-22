@@ -8,6 +8,42 @@ const mapContainerStyle = { width: '100%', height: '100%' };
 // Fort St. John, BC coordinates
 const defaultCenter = { lat: 56.2498, lng: -120.8464 };
 
+// Mobile detail bottom-sheet height (keep in sync with .side-panel.detail-priority in index.css)
+const DETAIL_PANEL_VH = 0.55;
+
+function isPhoneDevice() {
+  if (typeof window === 'undefined') return false;
+  return (
+    (window.innerWidth <= 480 || window.innerHeight <= 600) &&
+    /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+  );
+}
+
+// Pixel shift applied to the map center so the pin lands in the middle of the
+// visible (non-overlapped) map area above the bottom sheet. The sheet covers
+// the bottom `DETAIL_PANEL_VH * innerHeight` pixels; shifting the center south
+// by half that amount centers the pin in the remaining visible strip.
+function getDetailOffsetPx() {
+  return window.innerHeight * (DETAIL_PANEL_VH / 2);
+}
+
+// Convert a pixel-space offset into a lat/lng at the map's current zoom via
+// the Google Maps projection. Positive `pixelY` shifts the returned point
+// south on screen (increases screen Y). Falls back to the input point if the
+// projection is not yet available (e.g. before the first idle event).
+function offsetLatLngByPixels(map, lat, lng, pixelX, pixelY) {
+  const projection = map && typeof map.getProjection === 'function' ? map.getProjection() : null;
+  if (!projection || !window.google) return { lat, lng };
+  const scale = Math.pow(2, map.getZoom());
+  const world = projection.fromLatLngToPoint(new window.google.maps.LatLng(lat, lng));
+  const shifted = new window.google.maps.Point(
+    world.x + pixelX / scale,
+    world.y + pixelY / scale
+  );
+  const ll = projection.fromPointToLatLng(shifted);
+  return { lat: ll.lat(), lng: ll.lng() };
+}
+
 function getInterpolatedSubPath(coords, startFrac, endFrac) {
   if (coords.length < 2) return coords;
   
@@ -183,96 +219,91 @@ export default function MapView({
     hasInitiallyFitted.current = true;
   }, [isLoaded, siteBoundsKey, sites]);
 
+  // Tracks the last logical zoomToSite we applied (keyed by its _ts) so that
+  // detailOpen toggles or stale zoomToSite references don't re-issue setZoom(15)
+  // and stomp the user's current zoom level.
+  const lastZoomTsRef = useRef(0);
+
   useEffect(() => {
     if (!isLoaded || !mapRef.current || !zoomToSite) return;
-    
-    // Check if mobile phone
-    const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) && 
-                    /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    
-    // Handle PC/iPad sites list click - center only, no zoom
+
+    const isPhone = isPhoneDevice();
+
+    // PC/iPad sites list click - center only, no zoom change
     if (zoomToSite._centerOnly) {
       mapRef.current.panTo({ lat: zoomToSite.latitude, lng: zoomToSite.longitude });
       return;
     }
-    
-    // Always center for follow mode (user location tracking) regardless of device
+
+    // Follow mode (user location tracking) - always center, regardless of device, no zoom change
     if (zoomToSite._isFollowMode) {
       isFollowModeRef.current = true;
       mapRef.current.panTo({ lat: zoomToSite.latitude, lng: zoomToSite.longitude });
-      // Don't force zoom level - allow user to zoom in/out while following
       return;
     }
-    
-    // Only zoom/center on phones - PC/iPad/tablet pin taps should stay put
-    if (!isPhone) {
-      return;
-    }
-    
-    // On phones, offset center to account for bottom panel
-    const targetLat = zoomToSite.latitude;
-    const targetLng = zoomToSite.longitude;
-    
-    if (detailOpen) {
-      // Center pin in visible map area (above slide-up panel)
-      const visibleHeight = window.innerHeight * 0.6; // 60% of screen height
-      const centerLat = targetLat + (visibleHeight / 111000); // Move center north so pin appears in visible area
-      mapRef.current.panTo({ lat: centerLat, lng: targetLng });
-    } else {
-      // No detail panel - center exactly
-      mapRef.current.panTo({ lat: targetLat, lng: targetLng });
-    }
-    
-    // Only set zoom if this is not a follow mode update
-    if (!zoomToSite._isFollowMode) {
+
+    // Pin taps on PC/iPad/tablet should stay put
+    if (!isPhone) return;
+
+    // Phone pin-open: pan with pixel-accurate offset when a detail sheet is open so
+    // the pin ends up centered in the visible map area above the card.
+    const target = detailOpen
+      ? offsetLatLngByPixels(
+          mapRef.current,
+          zoomToSite.latitude,
+          zoomToSite.longitude,
+          0,
+          getDetailOffsetPx()
+        )
+      : { lat: zoomToSite.latitude, lng: zoomToSite.longitude };
+    mapRef.current.panTo(target);
+
+    // Only force zoom when a new logical target arrives (new _ts). detailOpen
+    // toggles or re-renders with the same zoomToSite must not reset the zoom.
+    const ts = zoomToSite._ts || 0;
+    if (ts && ts !== lastZoomTsRef.current) {
+      lastZoomTsRef.current = ts;
       mapRef.current.setZoom(15);
     }
   }, [isLoaded, zoomToSite, detailOpen]);
 
-  // Simplified: whenever detail panel is open on mobile, center pin in visible area
-  const prevDetailOpen = useRef(detailOpen);
-  const originalSitePosition = useRef(null);
-  
+  // Re-apply the offset when the detail sheet toggles without a fresh zoomToSite
+  // (e.g. closing the sheet to recenter, or opening the same pin twice in a row).
+  const prevDetailOpenRef = useRef(detailOpen);
+
   useEffect(() => {
-    console.log('[DEBUG] Detail panel effect:', { detailOpen, prevDetailOpen: prevDetailOpen.current, selectedSite: selectedSite?.id });
-    
-    if (!isLoaded || !mapRef.current || !selectedSite) return;
-    
-    const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) && 
-                    /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    
-    console.log('[DEBUG] Phone check:', { isPhone, innerHeight: window.innerHeight, innerWidth: window.innerWidth });
-    
-    // If detail panel just opened, store position and apply offset on mobile
-    if (detailOpen && !prevDetailOpen.current) {
-      console.log('[DEBUG] Panel just opened, applying offset');
-      originalSitePosition.current = {
+    if (!isLoaded || !mapRef.current) {
+      prevDetailOpenRef.current = detailOpen;
+      return;
+    }
+    if (!isPhoneDevice()) {
+      prevDetailOpenRef.current = detailOpen;
+      return;
+    }
+    if (detailOpen === prevDetailOpenRef.current) return;
+
+    const prev = prevDetailOpenRef.current;
+    prevDetailOpenRef.current = detailOpen;
+
+    // Pipeline detail positioning is handled by fitBounds in App.jsx; this
+    // effect only handles the site-pin case.
+    if (!selectedSite) return;
+
+    if (detailOpen && !prev) {
+      const shifted = offsetLatLngByPixels(
+        mapRef.current,
+        selectedSite.latitude,
+        selectedSite.longitude,
+        0,
+        getDetailOffsetPx()
+      );
+      mapRef.current.panTo(shifted);
+    } else if (!detailOpen && prev) {
+      mapRef.current.panTo({
         lat: selectedSite.latitude,
-        lng: selectedSite.longitude
-      };
-      
-      if (isPhone) {
-        const visibleHeight = window.innerHeight * 0.45;
-        const centerLat = selectedSite.latitude - (visibleHeight / 111000);
-        console.log('[DEBUG] Applying mobile offset:', { originalLat: selectedSite.latitude, centerLat });
-        mapRef.current.panTo({ lat: centerLat, lng: selectedSite.longitude });
-      }
-    }
-    
-    // If detail panel just closed, re-center to original position (only if same site still selected)
-    if (!detailOpen && prevDetailOpen.current && originalSitePosition.current && selectedSite) {
-      console.log('[DEBUG] Panel just closed, re-centering');
-      mapRef.current.panTo({ 
-        lat: originalSitePosition.current.lat, 
-        lng: originalSitePosition.current.lng 
+        lng: selectedSite.longitude,
       });
-      originalSitePosition.current = null;
     }
-    if (!selectedSite) {
-      originalSitePosition.current = null;
-    }
-    
-    prevDetailOpen.current = detailOpen;
   }, [isLoaded, detailOpen, selectedSite]);
 
   if (!apiKey) {
