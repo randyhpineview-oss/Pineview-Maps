@@ -92,7 +92,10 @@ class RecentSubmissionRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    site_id: int
+    # site_id is None for pipeline-sourced lease sheets; pipeline_id is None
+    # for site-sourced ones. Exactly one is set per row.
+    site_id: int | None = None
+    pipeline_id: int | None = None
     spray_date: date
     sprayed_by_user_id: int | None
     sprayed_by_name: str | None
@@ -103,7 +106,9 @@ class RecentSubmissionRead(BaseModel):
     pdf_url: str | None = None
     photo_urls: list[str] | None = None
     tm_ticket_id: int | None = None
-    # Joined site context
+    # Joined site/pipeline context. For pipeline rows, site_lsd holds the
+    # pipeline name so the existing "lsd • client • area" row renders
+    # meaningfully without changing the frontend schema.
     site_lsd: str | None = None
     site_client: str | None = None
     site_area: str | None = None
