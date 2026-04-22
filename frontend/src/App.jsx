@@ -2018,8 +2018,12 @@ export default function App() {
 }
 
   function handleSearchSelect(site) {
+    // On PC/iPad, pan-only so we don't stomp the user's zoom level; on phones
+    // we keep the existing behaviour (MapView will pan + zoom to 15).
+    const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) &&
+                    /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     setSelectedSite(site);
-    setZoomTarget({ ...site, _ts: Date.now() });
+    setZoomTarget({ ...site, _ts: Date.now(), _centerOnly: !isPhone });
     setDetailOpen(true);
     setIsFilterOpen(false);
     setActiveTab(TAB_MAP);
