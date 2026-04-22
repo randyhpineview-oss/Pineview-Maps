@@ -56,6 +56,19 @@ function fixPhotoOrientation(dataUrl) {
  * @param {string[]} [photoDataUrls] - array of data URLs for photos (max 2)
  * Returns { blob, base64 }
  */
+// Given a list of herbicide names and a lookup of { name, pcp_number },
+// return display strings like "Name (PCP 12345)". Names with no PCP match
+// fall back to just the name.
+function formatHerbicidesWithPcp(names, herbicideLookup) {
+  const list = Array.isArray(names) ? names : [];
+  const lookup = Array.isArray(herbicideLookup) ? herbicideLookup : [];
+  const byName = new Map(lookup.map(h => [String(h.name).toLowerCase(), h.pcp_number]));
+  return list.map(n => {
+    const pcp = byName.get(String(n).toLowerCase());
+    return pcp ? `${n} (PCP ${pcp})` : n;
+  });
+}
+
 export async function generateLeaseSheetPdf(data, photoDataUrls = []) {
   // Fix photo orientations first
   const fixedPhotos = await Promise.all(
@@ -179,7 +192,8 @@ export async function generateLeaseSheetPdf(data, photoDataUrls = []) {
   doc.setFont('helvetica', 'bold');
   doc.text('Products Applied:', marginL + 3, y + 11);
   doc.setFont('helvetica', 'normal');
-  const herbLines = doc.splitTextToSize((data.herbicidesUsed || []).join(', '), contentW - 8);
+  const herbDisplay = formatHerbicidesWithPcp(data.herbicidesUsed, data.herbicidesLookup);
+  const herbLines = doc.splitTextToSize(herbDisplay.join(', '), contentW - 8);
   doc.text(herbLines, marginL + 3, y + 23);
   y += prodH;
 
@@ -203,7 +217,7 @@ export async function generateLeaseSheetPdf(data, photoDataUrls = []) {
     doc.setFont('helvetica', 'bold');
     doc.text('Total Distance Sprayed:', marginL + 3, y + 13);
     doc.setFont('helvetica', 'normal');
-    doc.text(`${data.totalDistanceSprayed} m`, marginL + 110, y + 13);
+    doc.text(`${data.totalDistanceSprayed} km`, marginL + 110, y + 13);
     y += distH;
   }
 
@@ -227,7 +241,8 @@ export async function generateLeaseSheetPdf(data, photoDataUrls = []) {
     doc.text('Roadside Details:', marginL + 3, y + 11);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
-    doc.text(`Distance: ${data.roadsideKm || '___'} km   Herbicides: ${(data.roadsideHerbicides || []).join(', ')}`, marginL + 3, y + 23);
+    const roadsideHerbDisplay = formatHerbicidesWithPcp(data.roadsideHerbicides, data.herbicidesLookup);
+    doc.text(`Distance: ${data.roadsideKm || '___'} km   Herbicides: ${roadsideHerbDisplay.join(', ')}`, marginL + 3, y + 23);
     doc.text(`Liters: ${data.roadsideLiters || '___'} L   Area: ${data.roadsideAreaTreated || '___'} ha`, marginL + 3, y + 33);
     y += roadH;
   }

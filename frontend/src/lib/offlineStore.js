@@ -169,6 +169,29 @@ export async function getAllLookups() {
   return result;
 }
 
+// Returns the age, in ms, of the oldest lookup cache entry across all four
+// lookup tables (herbicides / applicators / weeds / locations). Returns
+// `Infinity` if any table is missing so callers can treat the cache as stale.
+// Used by the boot-hydrate path to skip the lookups server re-fetch when the
+// cache is still fresh — admin edits bypass this TTL and always re-fetch.
+export async function getLookupsMaxAgeMs() {
+  const db = await dbPromise;
+  const all = await db.getAll('lookups');
+  const LOOKUP_KEYS = ['herbicides', 'applicators', 'weeds', 'locations'];
+  const keys = new Set(all.map((e) => e.key));
+  for (const k of LOOKUP_KEYS) {
+    if (!keys.has(k)) return Infinity;
+  }
+  const now = Date.now();
+  let maxAge = 0;
+  for (const entry of all) {
+    const t = entry.updatedAt ? new Date(entry.updatedAt).getTime() : 0;
+    const age = now - t;
+    if (age > maxAge) maxAge = age;
+  }
+  return maxAge;
+}
+
 // ── Users cache ──
 
 export async function replaceUsers(users) {

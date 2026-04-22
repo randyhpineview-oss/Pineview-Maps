@@ -443,7 +443,43 @@ def create_spray_record(
 
     # Check if pipeline is now 100% sprayed
     db.flush()
+    # Ensure pipeline relationship is populated so T&M row derivation can
+    # fall back to pipeline.name / pipeline.client / pipeline.area when the
+    # lease_sheet_data doesn't include them explicitly.
+    record.pipeline = pipeline
     _update_pipeline_spray_status(db, pipeline)
+
+    # ── Time & Materials linking ──
+    # Mirror the site-side flow in app/main.py:create_site_spray_record so
+    # pipeline lease sheets show up on T&M tickets just like site lease
+    # sheets do. Without this block the pipeline endpoint silently dropped
+    # `time_materials_link` and the ticket was never created / appended.
+    tm_link = getattr(payload, "time_materials_link", None)
+    if tm_link and not payload.is_avoided:
+        # Local import to avoid a circular import at module load:
+        # time_materials_routes imports pipeline_models, and pipeline_routes
+        # imports pipeline_schemas which pulls TimeMaterialsLink out of
+        # app.schemas. Doing the T&M-helper import lazily keeps the import
+        # graph clean.
+        from app.time_materials_routes import (
+            _upload_tm_pdf,
+            append_row_for_spray_record,
+            find_or_create_ticket_for_link,
+        )
+        ticket = find_or_create_ticket_for_link(
+            db=db,
+            record=record,
+            link_ticket_id=tm_link.ticket_id,
+            link_create=tm_link.create,
+            description_of_work=tm_link.description_of_work,
+            current_user=current_user,
+        )
+        if ticket is not None:
+            append_row_for_spray_record(db, ticket, record)
+            if tm_link.tm_pdf_base64:
+                new_url = _upload_tm_pdf(ticket, tm_link.tm_pdf_base64)
+                if new_url:
+                    ticket.pdf_url = new_url
 
     # DELTA-SYNC: always bump the pipeline's updated_at so /api/pipelines/delta
     # picks up the new spray record even if _update_pipeline_spray_status didn't

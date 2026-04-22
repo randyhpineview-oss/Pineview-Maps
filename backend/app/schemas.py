@@ -92,7 +92,10 @@ class RecentSubmissionRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    site_id: int
+    # site_id is None for pipeline-sourced lease sheets; pipeline_id is None
+    # for site-sourced ones. Exactly one is set per row.
+    site_id: int | None = None
+    pipeline_id: int | None = None
     spray_date: date
     sprayed_by_user_id: int | None
     sprayed_by_name: str | None
@@ -103,7 +106,9 @@ class RecentSubmissionRead(BaseModel):
     pdf_url: str | None = None
     photo_urls: list[str] | None = None
     tm_ticket_id: int | None = None
-    # Joined site context
+    # Joined site/pipeline context. For pipeline rows, site_lsd holds the
+    # pipeline name so the existing "lsd • client • area" row renders
+    # meaningfully without changing the frontend schema.
     site_lsd: str | None = None
     site_client: str | None = None
     site_area: str | None = None
@@ -121,6 +126,15 @@ class SiteUpdateRead(BaseModel):
 
 
 class SiteRead(BaseModel):
+    """Full site view — returned ONLY by `GET /api/sites/{id}` and by the
+    create/update/patch endpoints. Includes heavy fields (`updates`,
+    `spray_records`, `raw_attributes`, nested user objects) that the map and
+    list views don't need.
+
+    For lists (map pins, filter panels, delta polls) use `SiteListRead` — it
+    omits everything listed above, which is the single biggest egress win on
+    the Supabase pooler.
+    """
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -163,6 +177,54 @@ class SiteRead(BaseModel):
             except json.JSONDecodeError:
                 return None
         return v
+
+
+class SiteListRead(BaseModel):
+    """Slim site view — only what the map / filter panels / delta poll need.
+
+    Dropped vs. `SiteRead`:
+      - `updates`          (history shipped on every delta; frontend never reads it)
+      - `spray_records`    (each site accumulates these forever; detail view
+                            refetches via /api/sites/{id})
+      - `raw_attributes`   (KML metadata blob, unused by the frontend)
+      - `created_by_user`, `approved_by_user`, `last_inspected_by_user`
+                           (nested user objects; the scalar `*_name` /
+                            `*_email` columns cover every UI use-case)
+
+    Kept: everything the map pin, marker icon, filter, and site-row rendering
+    actually read — plus a cheap `has_spray_records` boolean so the UI can
+    show a "📄 N spray records" badge without loading the full list.
+
+    Net effect on /api/sites egress: ~50-70% reduction on medium datasets.
+    """
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    pin_type: PinType
+    lsd: str | None
+    client: str | None
+    area: str | None
+    latitude: float
+    longitude: float
+    status: SiteStatus
+    approval_state: ApprovalState
+    gate_code: str | None
+    phone_number: str | None
+    notes: str | None
+    source: str
+    source_name: str | None
+    last_inspected_at: datetime | None
+    last_inspected_by_user_id: int | None
+    last_inspected_by_email: str | None
+    last_inspected_by_name: str | None
+    created_at: datetime
+    updated_at: datetime
+    created_by_user_id: int | None
+    approved_by_user_id: int | None
+    pending_pin_type: PinType | None = None
+    # Cheap flag so the UI can still show a "has lease sheets" badge without
+    # hydrating the spray_records list. Populated by the endpoint.
+    has_spray_records: bool = False
 
 
 class SiteCreate(BaseModel):
@@ -247,8 +309,13 @@ class SitesDeltaResponse(BaseModel):
     `ids_removed` — site IDs that were soft-deleted or rejected since `since`;
     frontend should drop them from its cache/map.
     `server_time` — pass this back as `?since=` on the next call.
+
+    Uses the slim `SiteListRead` schema — heavy relations (updates,
+    spray_records, raw_attributes, nested users) are NOT shipped in the delta.
+    The frontend merges these items into its cache without clobbering any
+    previously-loaded heavy fields; detail views refetch via /api/sites/{id}.
     """
-    items: list[SiteRead]
+    items: list[SiteListRead]
     ids_removed: list[int]
     server_time: datetime
 
@@ -268,7 +335,11 @@ class TimeMaterialsRowRead(BaseModel):
 
     id: int
     ticket_id: int
-    spray_record_id: int
+    # Exactly one of these two is non-null per the DB CHECK constraint
+    # ck_tm_rows_exactly_one_spray_fk. Site-sourced rows populate
+    # spray_record_id; pipeline-sourced rows populate pipeline_spray_record_id.
+    spray_record_id: int | None = None
+    pipeline_spray_record_id: int | None = None
     location: str | None = None
     site_type: str | None = None
     herbicides: str | None = None

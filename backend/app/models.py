@@ -5,7 +5,7 @@ import secrets
 import string
 from datetime import datetime, timedelta
 
-from sqlalchemy import Date, DateTime, Enum, Float, ForeignKey, Integer, Numeric, String, Text, Boolean, UniqueConstraint
+from sqlalchemy import CheckConstraint, Date, DateTime, Enum, Float, ForeignKey, Integer, Numeric, String, Text, Boolean, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -222,6 +222,14 @@ class TimeMaterialsTicket(Base):
         back_populates="tm_ticket",
         foreign_keys=[SiteSprayRecord.tm_ticket_id],
     )
+    # Pipeline-side link. Uses a string-keyed foreign_keys clause so this
+    # model file doesn't need to import pipeline_models (avoids a circular
+    # import with app.pipeline_models, which imports from app.database).
+    pipeline_spray_records: Mapped[list["pipeline_models.SprayRecord"]] = relationship(
+        "SprayRecord",
+        back_populates="tm_ticket",
+        foreign_keys="SprayRecord.tm_ticket_id",
+    )
 
 
 class TimeMaterialsRow(Base):
@@ -236,6 +244,18 @@ class TimeMaterialsRow(Base):
     __tablename__ = "time_materials_rows"
     __table_args__ = (
         UniqueConstraint("spray_record_id", "site_type", name="uq_tm_rows_spray_site_type"),
+        UniqueConstraint(
+            "pipeline_spray_record_id", "site_type",
+            name="uq_tm_rows_pipeline_spray_site_type",
+        ),
+        # Exactly one of the two spray-record FKs must be set. Site-sourced
+        # rows point at site_spray_records; pipeline-sourced rows point at
+        # spray_records (the pipeline table). Enforced in DB so no code path
+        # can accidentally orphan a row or link it to both sides.
+        CheckConstraint(
+            "(spray_record_id IS NOT NULL) <> (pipeline_spray_record_id IS NOT NULL)",
+            name="ck_tm_rows_exactly_one_spray_fk",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -244,9 +264,14 @@ class TimeMaterialsRow(Base):
         nullable=False,
         index=True,
     )
-    spray_record_id: Mapped[int] = mapped_column(
+    spray_record_id: Mapped[int | None] = mapped_column(
         ForeignKey("site_spray_records.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
+        index=True,
+    )
+    pipeline_spray_record_id: Mapped[int | None] = mapped_column(
+        ForeignKey("spray_records.id", ondelete="CASCADE"),
+        nullable=True,
         index=True,
     )
     location: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -258,7 +283,15 @@ class TimeMaterialsRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     ticket: Mapped[TimeMaterialsTicket] = relationship(back_populates="rows")
-    spray_record: Mapped[SiteSprayRecord] = relationship(back_populates="tm_rows")
+    spray_record: Mapped[SiteSprayRecord | None] = relationship(
+        back_populates="tm_rows",
+        foreign_keys=[spray_record_id],
+    )
+    pipeline_spray_record: Mapped["pipeline_models.SprayRecord | None"] = relationship(
+        "SprayRecord",
+        back_populates="tm_rows",
+        foreign_keys=[pipeline_spray_record_id],
+    )
 
 
 class PasswordResetCode(Base):

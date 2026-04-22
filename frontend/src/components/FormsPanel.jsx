@@ -59,14 +59,20 @@ function renderLeaseRow(record, onViewPdf, onEditRecord) {
               📄 View
             </button>
           )}
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() => onEditRecord?.(record)}
-            style={{ padding: '4px 10px', fontSize: '0.75rem' }}
-          >
-            ✏️ Edit
-          </button>
+          {/* Edit is only wired for site-sourced lease sheets. Pipeline-sourced
+              rows (site_id === null) use a different update endpoint that
+              this panel doesn't know how to drive — hide the button to avoid
+              hitting /api/site-spray-records with a pipeline record id. */}
+          {record.site_id != null && (
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => onEditRecord?.(record)}
+              style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+            >
+              ✏️ Edit
+            </button>
+          )}
         </div>
       </div>
     </div>

@@ -24,6 +24,7 @@ from app.models import (
     TimeMaterialsTicket,
     User,
 )
+from app.pipeline_models import SprayRecord as PipelineSprayRecord
 from app.schemas import (
     TimeMaterialsRowRead,
     TimeMaterialsTicketCreate,
@@ -529,8 +530,12 @@ def delete_ticket(
     ticket = db.query(TimeMaterialsTicket).filter(TimeMaterialsTicket.id == ticket_id).first()
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
-    # Unlink spray records rather than cascade-delete (rows cascade automatically via FK)
+    # Unlink spray records rather than cascade-delete (rows cascade automatically via FK).
+    # Do this for BOTH site spray records and pipeline spray records so a
+    # deleted ticket doesn't leave dangling tm_ticket_id FKs on either side.
     for rec in list(ticket.spray_records):
+        rec.tm_ticket_id = None
+    for rec in list(ticket.pipeline_spray_records):
         rec.tm_ticket_id = None
     db.delete(ticket)
     db.commit()
@@ -552,6 +557,9 @@ def _herbicides_text(herb_list: list) -> str:
     # Always show a count, even for a single herbicide, so the Sites Treated
     # column reads consistently and lines up 1:1 with the "N Herbicide (m³)"
     # rows in the Office Use ONLY section below.
+    # Cap at 3 — jobs with 4+ herbicides still follow the 3-Herbicide pricing
+    # workflow on the T&M ticket.
+    n = min(n, 3)
     return f"{n} Herbicide" if n == 1 else f"{n} Herbicides"
 
 
@@ -564,13 +572,67 @@ def _site_type_from_site(site) -> str:
     return type_map.get(pin_val, "")
 
 
-def derive_row_from_spray_record(record: SiteSprayRecord) -> dict:
-    """Derive the MAIN T&M row fields from a site spray record's lease_sheet_data + site."""
+def _is_pipeline_record(record) -> bool:
+    """True iff `record` is a pipeline SprayRecord (vs a SiteSprayRecord).
+
+    The two share almost the same shape (lease_sheet_data, spray_date,
+    is_avoided, etc.) but come from different tables with different parent
+    objects (`record.site` vs `record.pipeline`) and different FK columns on
+    TimeMaterialsRow. All row-derivation helpers branch on this.
+    """
+    return isinstance(record, PipelineSprayRecord)
+
+
+def derive_row_from_spray_record(record) -> dict:
+    """Derive the MAIN T&M row fields from a spray record's lease_sheet_data.
+
+    Works for both SiteSprayRecord and pipeline SprayRecord. Three cases for
+    site_type, in priority order:
+
+    1. Lease sheet has `isPipeline=True` (worker ticked a pipeline-flagged
+       location type): site_type='Pipeline', and the area_ha column carries
+       `totalDistanceSprayed / 1000` (km) rather than hectares — same column
+       reuse trick the Roadside companion row uses. Rendered as 'km' in the
+       PDF / detail view.
+    2. Pipeline spray record (came in via a pipeline pin) with no isPipeline
+       flag: fall back to site_type='Pipeline' with the usual hectare area,
+       so existing rows keep rendering sensibly.
+    3. Site spray record: site_type derived from the site's pin_type.
+    """
     data = record.lease_sheet_data or {}
-    site = getattr(record, "site", None)
+    is_pipeline_sheet = bool(data.get("isPipeline"))
+    if is_pipeline_sheet:
+        # Prefer pipeline.name for pipeline records, fall back to site.lsd
+        # for the rare case where a worker tags 'Pipeline' from a site pin.
+        pipeline = getattr(record, "pipeline", None)
+        site = getattr(record, "site", None)
+        location = (
+            data.get("lsdOrPipeline")
+            or (pipeline.name if pipeline else None)
+            or (site.lsd if site else None)
+        )
+        # totalDistanceSprayed is stored in km for pipeline lease sheets
+        # (single unit end-to-end: UI form, lease-sheet PDF, T&M row, T&M
+        # PDF all agree). Reuse the area_ha column as the km carrier — same
+        # trick the Roadside companion row uses with roadsideKm.
+        return {
+            "location": location,
+            "site_type": "Pipeline",
+            "herbicides": _herbicides_text(data.get("herbicidesUsed") or []),
+            "liters_used": _to_float(data.get("totalLiters")),
+            "area_ha": _to_float(data.get("totalDistanceSprayed")),
+        }
+    if _is_pipeline_record(record):
+        pipeline = getattr(record, "pipeline", None)
+        location = data.get("lsdOrPipeline") or (pipeline.name if pipeline else None)
+        site_type = "Pipeline"
+    else:
+        site = getattr(record, "site", None)
+        location = data.get("lsdOrPipeline") or (site.lsd if site else None)
+        site_type = _site_type_from_site(site)
     return {
-        "location": data.get("lsdOrPipeline") or (site.lsd if site else None),
-        "site_type": _site_type_from_site(site),
+        "location": location,
+        "site_type": site_type,
         "herbicides": _herbicides_text(data.get("herbicidesUsed") or []),
         "liters_used": _to_float(data.get("totalLiters")),
         "area_ha": _to_float(data.get("areaTreated")),
@@ -587,18 +649,24 @@ def _has_roadside(data: dict) -> bool:
     return False
 
 
-def derive_roadside_row_from_spray_record(record: SiteSprayRecord) -> dict | None:
+def derive_roadside_row_from_spray_record(record) -> dict | None:
     """Derive a second 'Roadside' T&M row from a lease sheet if applicable.
 
     The roadside row uses `area_ha` to store the roadsideKm value (unit is
     swapped to 'km' at render time by inspecting site_type == 'Roadside').
+    Supports both site and pipeline spray records.
     """
     data = record.lease_sheet_data or {}
     if not _has_roadside(data):
         return None
-    site = getattr(record, "site", None)
+    if _is_pipeline_record(record):
+        pipeline = getattr(record, "pipeline", None)
+        location = data.get("lsdOrPipeline") or (pipeline.name if pipeline else None)
+    else:
+        site = getattr(record, "site", None)
+        location = data.get("lsdOrPipeline") or (site.lsd if site else None)
     return {
-        "location": data.get("lsdOrPipeline") or (site.lsd if site else None),
+        "location": location,
         "site_type": "Roadside",
         "herbicides": _herbicides_text(data.get("roadsideHerbicides") or []),
         "liters_used": _to_float(data.get("roadsideLiters")),
@@ -609,13 +677,21 @@ def derive_roadside_row_from_spray_record(record: SiteSprayRecord) -> dict | Non
 def _upsert_row(
     db: Session,
     ticket: TimeMaterialsTicket,
-    record: SiteSprayRecord,
+    record,
     fields: dict,
     is_roadside: bool,
 ) -> TimeMaterialsRow:
-    """Upsert a single row keyed by (spray_record_id, is_roadside). Roadside
-    vs main is disambiguated via site_type == 'Roadside'."""
-    q = db.query(TimeMaterialsRow).filter(TimeMaterialsRow.spray_record_id == record.id)
+    """Upsert a single row keyed by (spray_record_id or
+    pipeline_spray_record_id, is_roadside). Roadside vs main is disambiguated
+    via site_type == 'Roadside'. Picks the correct FK column based on which
+    kind of spray record was passed in.
+    """
+    is_pipeline = _is_pipeline_record(record)
+    fk_col = (
+        TimeMaterialsRow.pipeline_spray_record_id if is_pipeline
+        else TimeMaterialsRow.spray_record_id
+    )
+    q = db.query(TimeMaterialsRow).filter(fk_col == record.id)
     if is_roadside:
         q = q.filter(TimeMaterialsRow.site_type == "Roadside")
     else:
@@ -629,9 +705,13 @@ def _upsert_row(
         if row.ticket_id != ticket.id:
             row.ticket_id = ticket.id
     else:
+        fk_kwargs = (
+            {"pipeline_spray_record_id": record.id} if is_pipeline
+            else {"spray_record_id": record.id}
+        )
         row = TimeMaterialsRow(
             ticket_id=ticket.id,
-            spray_record_id=record.id,
+            **fk_kwargs,
             **fields,
         )
         db.add(row)
@@ -641,7 +721,7 @@ def _upsert_row(
 def append_row_for_spray_record(
     db: Session,
     ticket: TimeMaterialsTicket,
-    record: SiteSprayRecord,
+    record,
 ) -> TimeMaterialsRow:
     """Create (or update existing) rows for a spray record on the given ticket.
 
@@ -666,7 +746,7 @@ def append_row_for_spray_record(
 
 def find_or_create_ticket_for_link(
     db: Session,
-    record: SiteSprayRecord,
+    record,
     link_ticket_id: Optional[int],
     link_create: bool,
     description_of_work: Optional[str],
@@ -696,9 +776,14 @@ def find_or_create_ticket_for_link(
             current_user.email.split("@")[0].title() if current_user.email else None
         )
         data = record.lease_sheet_data or {}
-        site = getattr(record, "site", None)
-        client = data.get("customer") or (site.client if site else "") or ""
-        area = data.get("area") or (site.area if site else "") or ""
+        # Parent varies by record type: site spray records have `.site`,
+        # pipeline spray records have `.pipeline`. Either provides client/area.
+        if _is_pipeline_record(record):
+            parent = getattr(record, "pipeline", None)
+        else:
+            parent = getattr(record, "site", None)
+        client = data.get("customer") or (parent.client if parent else "") or ""
+        area = data.get("area") or (parent.area if parent else "") or ""
         spray_date_val = record.spray_date
         # record.spray_date is DateTime in the model but often stored as a date. Normalize to date.
         if isinstance(spray_date_val, datetime):
