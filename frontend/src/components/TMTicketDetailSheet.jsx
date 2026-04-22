@@ -14,11 +14,12 @@ import PdfPreviewViewer from './PdfPreviewViewer';
 const DEFAULT_LABELS_SET = new Set(DEFAULT_OFFICE_LINES.map((l) => l.label));
 
 // Parse herbicide count from a row's herbicides text.
-// '' → 0, 'N Herbicides' → N, anything else (single product name) → 1.
+// '' → 0, 'N Herbicides' → N (capped at 3), anything else (single product name) → 1.
+// 4+ herbicides still follow the 3-Herbicide pricing workflow.
 function herbicideCount(text) {
   if (!text) return 0;
   const m = String(text).match(/^(\d+)\s+Herbicides$/);
-  if (m) return parseInt(m[1], 10);
+  if (m) return Math.min(parseInt(m[1], 10), 3);
   return 1;
 }
 

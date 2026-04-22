@@ -289,6 +289,7 @@ export default function HerbicideLeaseSheet({
       const pdfData = {
         ...form,
         ticket_number: ticketNumber,
+        herbicidesLookup: herbicides,
       };
       const { base64 } = await generateLeaseSheetPdf(pdfData, photoDataUrls);
       setPdfBase64(base64);
@@ -357,7 +358,7 @@ export default function HerbicideLeaseSheet({
         })
       );
       const { base64: finalPdfBase64 } = await generateLeaseSheetPdf(
-        { ...form, ticket_number: finalTicket },
+        { ...form, ticket_number: finalTicket, herbicidesLookup: herbicides },
         photoDataUrls
       );
 
@@ -403,7 +404,7 @@ export default function HerbicideLeaseSheet({
                   herbicides: (form.herbicidesUsed || []).length === 1
                     ? form.herbicidesUsed[0]
                     : (form.herbicidesUsed || []).length > 1
-                      ? `${form.herbicidesUsed.length} Herbicides`
+                      ? `${Math.min(form.herbicidesUsed.length, 3)} Herbicides`
                       : '',
                   liters_used: Number(form.totalLiters) || 0,
                   area_ha: Number(form.areaTreated) || 0,
@@ -424,7 +425,7 @@ export default function HerbicideLeaseSheet({
                   herbicides: (form.herbicidesUsed || []).length === 1
                     ? form.herbicidesUsed[0]
                     : (form.herbicidesUsed || []).length > 1
-                      ? `${form.herbicidesUsed.length} Herbicides`
+                      ? `${Math.min(form.herbicidesUsed.length, 3)} Herbicides`
                       : '',
                   liters_used: Number(form.totalLiters) || 0,
                   area_ha: Number(form.areaTreated) || 0,
