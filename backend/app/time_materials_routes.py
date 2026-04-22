@@ -557,6 +557,9 @@ def _herbicides_text(herb_list: list) -> str:
     # Always show a count, even for a single herbicide, so the Sites Treated
     # column reads consistently and lines up 1:1 with the "N Herbicide (m³)"
     # rows in the Office Use ONLY section below.
+    # Cap at 3 — jobs with 4+ herbicides still follow the 3-Herbicide pricing
+    # workflow on the T&M ticket.
+    n = min(n, 3)
     return f"{n} Herbicide" if n == 1 else f"{n} Herbicides"
 
 

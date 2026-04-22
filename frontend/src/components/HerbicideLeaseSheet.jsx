@@ -432,7 +432,7 @@ export default function HerbicideLeaseSheet({
           herbicides: (form.herbicidesUsed || []).length === 1
             ? form.herbicidesUsed[0]
             : (form.herbicidesUsed || []).length > 1
-              ? `${form.herbicidesUsed.length} Herbicides`
+              ? `${Math.min(form.herbicidesUsed.length, 3)} Herbicides`
               : '',
           liters_used: Number(form.totalLiters) || 0,
           area_ha: tentativeAreaHa,
