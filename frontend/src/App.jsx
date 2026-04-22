@@ -773,6 +773,15 @@ export default function App() {
   // the full site/pipeline lists on every wifi-to-cell handoff in the field.
   const runPollTickRef = useRef(null);
 
+  // Stable callback children can invoke to force an immediate delta sync
+  // (sync-status check + any dependent deltas). Used by FormsPanel when
+  // the user opens Recently Submitted so newly uploaded lease sheets show
+  // up without waiting for the 5-minute poll cycle. Cheap: sync-status is
+  // ~100B and the deltas only fire for resources that actually changed.
+  const handleRequestSync = useCallback(() => {
+    try { runPollTickRef.current?.(); } catch { /* non-fatal */ }
+  }, []);
+
   useEffect(() => {
     if (!isOnline) {
       wasOnline.current = false;
@@ -2902,6 +2911,7 @@ export default function App() {
               }}
               onOpenTMTicket={(ticketId) => setActiveTMTicketId(ticketId)}
               onRequestDraftsRefresh={() => setDraftsRefreshToken((x) => x + 1)}
+              onRequestSync={handleRequestSync}
               draftsRefreshToken={draftsRefreshToken}
               tmRefreshToken={tmRefreshToken}
               roleCanAdmin={roleCanAdmin}

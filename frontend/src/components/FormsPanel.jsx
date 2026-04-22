@@ -154,6 +154,12 @@ export default function FormsPanel({
   onStartNewTMTicket,    // called with ({ client, area, spray_date, description_of_work })
   onOpenTMTicket,
   onRequestDraftsRefresh,    // parent can trigger a refresh when form closes
+  // Fire-and-forget "hey parent, run a delta sync now". Used when the user
+  // opens Recently Submitted so the lease sheet list (sourced from App's
+  // `cachedRecents`) catches up in real time instead of waiting for the
+  // next 5-minute poll tick. Cheap: hits /api/sync-status first and only
+  // fetches deltas for resources that actually changed.
+  onRequestSync,
   draftsRefreshToken = 0,    // bump to trigger reload
   // Bumped by App's poll loop when sync-status reports T&M tickets changed.
   // We wire it into the open / submitted ticket effects so the lists refresh
@@ -296,6 +302,18 @@ export default function FormsPanel({
     })();
     return () => { cancelled = true; };
   }, [visible, subTab, recTab, tmRefreshToken]);
+
+  // When the user opens Recently Submitted, ask the parent to run an
+  // immediate delta sync. This catches up `cachedRecents` (lease sheets)
+  // and T&M tickets without waiting for the normal 5-minute poll cycle —
+  // so a sheet a teammate uploaded a minute ago shows up the instant the
+  // tab is opened. Cheap: sync-status is ~100B and only the resources
+  // that actually changed get their delta pulled.
+  useEffect(() => {
+    if (!visible) return;
+    if (subTab !== SUB_RECENTS) return;
+    try { onRequestSync?.(); } catch { /* non-fatal */ }
+  }, [visible, subTab, onRequestSync]);
 
   // Load drafts when In Progress → Drafts tab is shown (or refresh token bumps)
   useEffect(() => {
