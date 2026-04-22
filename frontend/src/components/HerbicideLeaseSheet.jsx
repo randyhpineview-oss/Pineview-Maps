@@ -1451,11 +1451,13 @@ export default function HerbicideLeaseSheet({
 
             {/* Photos — max 2 */}
             <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '8px' }}>Photos (max 2) <span style={{ color: '#f87171' }}>*</span></label>
+              <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '8px' }}>Photos (max 2)</label>
               <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                 {/* Slot 1: LSD / Location ID */}
                 <div style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginBottom: '4px' }}>LSD / Location ID</div>
+                  <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginBottom: '4px' }}>
+                    LSD / Location ID {!photos[0] && <span style={{ color: '#f87171' }}>*</span>}
+                  </div>
                   {photos[0] ? (
                     <div style={{ position: 'relative', display: 'inline-block' }}>
                       <img src={photos[0].preview} alt="LSD Photo" style={{ width: '100px', height: '100px', objectFit: 'cover', borderRadius: '6px' }} />
@@ -1470,7 +1472,9 @@ export default function HerbicideLeaseSheet({
                 </div>
                 {/* Slot 2: Site Photo */}
                 <div style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginBottom: '4px' }}>Site Photo</div>
+                  <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginBottom: '4px' }}>
+                    Site Photo {!photos[1] && <span style={{ color: '#f87171' }}>*</span>}
+                  </div>
                   {photos[1] ? (
                     <div style={{ position: 'relative', display: 'inline-block' }}>
                       <img src={photos[1].preview} alt="Site Photo" style={{ width: '100px', height: '100px', objectFit: 'cover', borderRadius: '6px' }} />
