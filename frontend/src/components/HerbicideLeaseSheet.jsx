@@ -286,9 +286,13 @@ export default function HerbicideLeaseSheet({
           return p.preview;
         })
       );
+      const herbicidesUsedDisplay = herbicides
+        .filter(h => form.herbicidesUsed.includes(h.name))
+        .map(h => h.pcp_number ? `${h.name} (${h.pcp_number})` : h.name);
       const pdfData = {
         ...form,
         ticket_number: ticketNumber,
+        herbicidesUsedDisplay,
       };
       const { base64 } = await generateLeaseSheetPdf(pdfData, photoDataUrls);
       setPdfBase64(base64);
@@ -356,8 +360,11 @@ export default function HerbicideLeaseSheet({
           return p.preview;
         })
       );
+      const herbicidesUsedDisplay = herbicides
+        .filter(h => form.herbicidesUsed.includes(h.name))
+        .map(h => h.pcp_number ? `${h.name} (${h.pcp_number})` : h.name);
       const { base64: finalPdfBase64 } = await generateLeaseSheetPdf(
-        { ...form, ticket_number: finalTicket },
+        { ...form, ticket_number: finalTicket, herbicidesUsedDisplay },
         photoDataUrls
       );
 
@@ -1043,7 +1050,7 @@ export default function HerbicideLeaseSheet({
             <div>
               <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '8px' }}>Spray Method</label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                {['Boomless', 'Covered Boom', 'Handwand'].map(method => (
+                {['Boomless', 'Covered Boom', 'Handwand', 'Backpack'].map(method => (
                   <label key={method} style={{
                     display: 'flex',
                     alignItems: 'center',

@@ -179,7 +179,7 @@ export async function generateLeaseSheetPdf(data, photoDataUrls = []) {
   doc.setFont('helvetica', 'bold');
   doc.text('Products Applied:', marginL + 3, y + 11);
   doc.setFont('helvetica', 'normal');
-  const herbLines = doc.splitTextToSize((data.herbicidesUsed || []).join(', '), contentW - 8);
+  const herbLines = doc.splitTextToSize((data.herbicidesUsedDisplay || data.herbicidesUsed || []).join(', '), contentW - 8);
   doc.text(herbLines, marginL + 3, y + 23);
   y += prodH;
 
