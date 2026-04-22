@@ -59,6 +59,23 @@ export default function PdfPreviewOverlay({ record, onClose }) {
     };
   }, [record?.id, record?.pdf_url]);
 
+  // Print handler: open PDF in a new window and trigger browser print dialog
+  const handlePrint = () => {
+    if (!pdfBytes || pdfBytes.length === 0) return;
+    const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const printWindow = window.open(url, '_blank');
+    if (printWindow) {
+      printWindow.onload = () => {
+        printWindow.print();
+        // Clean up the blob URL after print dialog closes
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      };
+    } else {
+      URL.revokeObjectURL(url);
+    }
+  };
+
   return (
     <div style={{
       position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
@@ -73,12 +90,20 @@ export default function PdfPreviewOverlay({ record, onClose }) {
         <span style={{ color: '#f9fafb', fontWeight: 600, flex: 1, fontSize: '0.95rem' }}>
           Lease Sheet {ticket ? `— ${ticket}` : ''}
         </span>
-        {directUrl ? (
-          <a href={directUrl} target="_blank" rel="noopener noreferrer"
-            style={{ color: '#60a5fa', fontSize: '0.85rem', textDecoration: 'none', whiteSpace: 'nowrap' }}>
-            Open PDF ↗
-          </a>
-        ) : null}
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          {pdfBytes ? (
+            <button onClick={handlePrint}
+              style={{ background: 'none', border: 'none', color: '#60a5fa', fontSize: '0.85rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+              Print
+            </button>
+          ) : null}
+          {directUrl ? (
+            <a href={directUrl} target="_blank" rel="noopener noreferrer"
+              style={{ color: '#60a5fa', fontSize: '0.85rem', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+              Open PDF ↗
+            </a>
+          ) : null}
+        </div>
         <button onClick={onClose}
           style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer' }}>
           ×
