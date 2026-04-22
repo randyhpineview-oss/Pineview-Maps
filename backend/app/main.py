@@ -43,6 +43,7 @@ from app.schemas import (
     SiteAdminUpdate,
     SiteApprovalUpdate,
     SiteCreate,
+    SiteListRead,
     SiteQuickEdit,
     SiteRead,
     SitesDeltaResponse,
@@ -329,7 +330,40 @@ def sync_status(
     }
 
 
-@app.get("/api/sites", response_model=list[SiteRead])
+def _build_site_list_items(sites: list[Site], has_spray_map: dict[int, bool]) -> list[SiteListRead]:
+    """Turn ORM Site rows into SiteListRead DTOs, attaching `has_spray_records`.
+
+    Keeps the slim-list path free of nested loads — callers compute
+    `has_spray_map` in a single lightweight `EXISTS`-style query instead of
+    joinedload-ing the full spray_records collection.
+    """
+    out: list[SiteListRead] = []
+    for s in sites:
+        dto = SiteListRead.model_validate(s)
+        dto.has_spray_records = bool(has_spray_map.get(s.id, False))
+        out.append(dto)
+    return out
+
+
+def _has_spray_map_for(db: Session, site_ids: list[int]) -> dict[int, bool]:
+    """Return {site_id: True} for every site that has at least one spray record.
+
+    Single GROUP-BY query, so cost is O(1) round-trip regardless of how many
+    sites are in the list. Skipping this when `site_ids` is empty avoids an
+    unnecessary DB hit on empty deltas.
+    """
+    if not site_ids:
+        return {}
+    rows = (
+        db.query(SiteSprayRecord.site_id)
+        .filter(SiteSprayRecord.site_id.in_(site_ids))
+        .distinct()
+        .all()
+    )
+    return {row[0]: True for row in rows}
+
+
+@app.get("/api/sites", response_model=list[SiteListRead])
 def list_sites(
     search: str | None = Query(default=None),
     client: str | None = Query(default=None),
@@ -339,18 +373,19 @@ def list_sites(
     site_status: SiteStatus | None = Query(default=None, alias="status"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> list[SiteRead]:
-    # EGRESS CRITICAL: defer lease_sheet_data (JSONB blob) on the joined
-    # spray_records. The response schema (SiteSprayRecordSummary) already
-    # doesn't expose this field, but without defer() SQLAlchemy still SELECTs
-    # it from the DB, which counts as Supabase egress per pooler byte.
-    query = db.query(Site).options(
-        joinedload(Site.updates),
-        joinedload(Site.spray_records).defer(SiteSprayRecord.lease_sheet_data),
-        joinedload(Site.created_by_user),
-        joinedload(Site.approved_by_user),
-        joinedload(Site.last_inspected_by_user)
-    ).filter(Site.deleted_at.is_(None)).order_by(Site.updated_at.desc())
+) -> list[SiteListRead]:
+    """Map / list / filter panel view of sites.
+
+    EGRESS: returns the slim `SiteListRead` schema — no `updates`,
+    `spray_records`, `raw_attributes`, or nested user relations. For any of
+    those, the detail view calls `GET /api/sites/{id}`, which returns the
+    full `SiteRead`. This is the single biggest egress saver on the pooler.
+    """
+    query = (
+        db.query(Site)
+        .filter(Site.deleted_at.is_(None))
+        .order_by(Site.updated_at.desc())
+    )
 
     if client:
         query = query.filter(Site.client == client)
@@ -376,7 +411,8 @@ def list_sites(
         )
 
     sites = query.all()
-    return [SiteRead.model_validate(site) for site in sites]
+    has_spray_map = _has_spray_map_for(db, [s.id for s in sites])
+    return _build_site_list_items(sites, has_spray_map)
 
 
 # NOTE: /api/sites/delta MUST be declared before /api/sites/{site_id},
@@ -394,29 +430,26 @@ def sites_delta(
     merges `items` into its cache and drops `ids_removed` from it.
 
     `server_time` is what the caller should send back as `?since=` next time.
+
+    EGRESS: same slim `SiteListRead` schema as /api/sites — no heavy
+    relations shipped per delta tick.
     """
     # Capture server_time FIRST so any row written during this request is
     # guaranteed to be caught by the next `?since=server_time` call.
     server_time = datetime.utcnow()
 
-    # Active rows updated since the caller's watermark (same shape as list_sites
-    # but without pagination/search filters — delta is always the full changed set).
+    # Active rows updated since the caller's watermark.
     items_q = (
         db.query(Site)
-        .options(
-            joinedload(Site.updates),
-            joinedload(Site.spray_records).defer(SiteSprayRecord.lease_sheet_data),
-            joinedload(Site.created_by_user),
-            joinedload(Site.approved_by_user),
-            joinedload(Site.last_inspected_by_user),
-        )
         .filter(
             Site.updated_at > since,
             Site.deleted_at.is_(None),
             Site.approval_state != ApprovalState.rejected,
         )
     )
-    items = [SiteRead.model_validate(s) for s in items_q.all()]
+    sites = items_q.all()
+    has_spray_map = _has_spray_map_for(db, [s.id for s in sites])
+    items = _build_site_list_items(sites, has_spray_map)
 
     # Rows that became invisible since the caller's watermark: soft-deleted
     # OR rejected. Frontend drops these IDs from its local cache/map.

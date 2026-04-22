@@ -16,6 +16,7 @@ import { onAuthStateChange, signOut } from './lib/supabaseClient';
 import {
   getAllLookups,
   getLastSyncAt,
+  getLookupsMaxAgeMs,
   getPipelines,
   getQueuedActions,
   getRecents,
@@ -283,7 +284,18 @@ export default function App() {
   const loadServerSites = useCallback(async () => {
     const sitesPayload = await api.listSites(serverFilters);
 
-    setSites(sitesPayload);
+    // Spread-merge against current state so a manual refresh while a site
+    // detail is open doesn't wipe the heavy fields (spray_records, updates,
+    // …) that were hydrated by /api/sites/{id}. The slim SiteListRead schema
+    // omits those keys, and Object spread keeps existing values whenever the
+    // incoming payload doesn't override them.
+    setSites((prev) => {
+      const byId = new Map(prev.map((s) => [s.id, s]));
+      return sitesPayload.map((item) => {
+        const existing = byId.get(item.id);
+        return existing ? { ...existing, ...item } : item;
+      });
+    });
     await replaceSites(sitesPayload);
     const now = new Date().toISOString();
     await setLastSyncAt(now);
@@ -617,10 +629,18 @@ export default function App() {
 
         // Still refresh the non-delta-tracked bits in the background so
         // the admin pending counts + lookups don't go stale silently.
+        // Lookups get a 6-hour TTL: skip the server re-fetch when the
+        // IndexedDB cache is fresh. Admin edits bypass this by calling
+        // `loadServerLookups()` directly via `onLookupsChanged`.
+        const LOOKUPS_TTL_MS = 6 * 60 * 60 * 1000;
+        let lookupsStale = true;
+        try {
+          lookupsStale = (await getLookupsMaxAgeMs()) >= LOOKUPS_TTL_MS;
+        } catch { /* treat as stale on error */ }
         void (async () => {
           try {
             await Promise.all([
-              loadServerLookups(),
+              lookupsStale ? loadServerLookups() : Promise.resolve(),
               loadServerUsers(),
               loadPendingSites(),
               loadPendingPipelines(),
@@ -732,6 +752,11 @@ export default function App() {
     };
   }, [bootHydrate, refreshQueueCount, refreshUploadQueue, processUploadQueue]);
 
+  // Ref wired up by the auto-poll useEffect below. Lets the back-online
+  // handler reuse the same delta-poll logic without duplicating it or pulling
+  // the full site/pipeline lists on every wifi-to-cell handoff in the field.
+  const runPollTickRef = useRef(null);
+
   useEffect(() => {
     if (!isOnline) {
       wasOnline.current = false;
@@ -745,7 +770,16 @@ export default function App() {
       setIsSyncing(true);
       try {
         await syncQueuedActions();
-        await refreshAllData();
+        // Prefer a cheap delta tick when watermarks are fresh. Field workers
+        // flip online/offline often (truck → yard → truck), and refetching
+        // the full sites+pipelines list on every flip was a major egress
+        // hit. Cold cache (no watermark) still falls back to refreshAllData.
+        const haveWatermark = !!(sitesSinceRef.current && pipelinesSinceRef.current);
+        if (haveWatermark && runPollTickRef.current) {
+          await runPollTickRef.current();
+        } else {
+          await refreshAllData();
+        }
       } catch (error) {
         setMessage(error.message || 'Automatic sync failed.');
       } finally {
@@ -768,7 +802,10 @@ export default function App() {
   useEffect(() => {
     if (!isOnline) return;
 
-    const POLL_MS = 120000;
+    // 5-minute poll cadence. Visibility change still triggers an immediate
+    // tick when the tab becomes visible, so users get fresh data on wake
+    // without the 2-min background drum-beat that used to churn the pooler.
+    const POLL_MS = 300000;
 
     // ── Delta merge helpers ────────────────────────────────────────────────
     // Each is defined inline so it closes over the latest setState setters
@@ -776,16 +813,27 @@ export default function App() {
     // state (instant UI) and IndexedDB (offline persistence).
 
     async function syncSitesIncrementally(syncStatus) {
+      // Merge helper: /api/sites and /api/sites/delta ship the slim
+      // SiteListRead schema (no spray_records / updates / raw_attributes /
+      // nested users — egress saver). We spread-merge so any heavy fields
+      // previously hydrated by handleOpenDetail's /api/sites/{id} call are
+      // preserved across delta ticks. Keys omitted by the incoming payload
+      // simply keep their existing value.
+      const mergeSite = (existing, incoming) => (existing ? { ...existing, ...incoming } : incoming);
+
       // No watermark yet → do a full fetch, which also seeds the watermark
       // for future delta calls.
       if (!sitesSinceRef.current) {
         try {
           const full = await api.listSites(serverFilters);
-          setSites(full);
+          setSites((prev) => {
+            const byId = new Map(prev.map((s) => [s.id, s]));
+            return full.map((item) => mergeSite(byId.get(item.id), item));
+          });
           await replaceSites(full);
           if (selectedSite && Number.isInteger(selectedSite.id)) {
             const updated = full.find((s) => s.id === selectedSite.id);
-            if (updated) setSelectedSite(updated);
+            if (updated) setSelectedSite((prev) => mergeSite(prev, updated));
           }
           sitesSinceRef.current = syncStatus.sites_last_updated || new Date().toISOString();
         } catch { /* silently fail */ }
@@ -798,10 +846,12 @@ export default function App() {
         const idsRemoved = Array.isArray(delta?.ids_removed) ? delta.ids_removed : [];
 
         if (items.length > 0 || idsRemoved.length > 0) {
-          // Merge into React state (upsert by id, drop removed).
+          // Merge into React state (upsert by id, drop removed). Spread-merge
+          // preserves heavy fields (spray_records, updates, ...) that the
+          // slim delta schema doesn't ship.
           setSites((prev) => {
             const byId = new Map(prev.map((s) => [s.id, s]));
-            for (const item of items) byId.set(item.id, item);
+            for (const item of items) byId.set(item.id, mergeSite(byId.get(item.id), item));
             for (const id of idsRemoved) byId.delete(id);
             return Array.from(byId.values());
           });
@@ -809,10 +859,12 @@ export default function App() {
           // Keep the currently-viewed site in sync when the delta includes it.
           if (selectedSite && Number.isInteger(selectedSite.id)) {
             const hit = items.find((s) => s.id === selectedSite.id);
-            if (hit) setSelectedSite(hit);
+            if (hit) setSelectedSite((prev) => mergeSite(prev, hit));
           }
 
-          // Persist to IndexedDB.
+          // Persist to IndexedDB. We store the slim delta item as-is; the
+          // heavy fields live in the in-memory state only and are refreshed
+          // via /api/sites/{id} whenever the user opens a detail view.
           for (const item of items) await upsertSite(item);
           for (const id of idsRemoved) await removeSite({ id });
         }
@@ -822,11 +874,14 @@ export default function App() {
         // Delta failed — fall back to a full fetch and re-seed the watermark.
         try {
           const full = await api.listSites(serverFilters);
-          setSites(full);
+          setSites((prev) => {
+            const byId = new Map(prev.map((s) => [s.id, s]));
+            return full.map((item) => mergeSite(byId.get(item.id), item));
+          });
           await replaceSites(full);
           if (selectedSite && Number.isInteger(selectedSite.id)) {
             const updated = full.find((s) => s.id === selectedSite.id);
-            if (updated) setSelectedSite(updated);
+            if (updated) setSelectedSite((prev) => mergeSite(prev, updated));
           }
           sitesSinceRef.current = syncStatus.sites_last_updated || new Date().toISOString();
         } catch { /* silently fail */ }
@@ -926,6 +981,11 @@ export default function App() {
         const recentsChanged = !lastSyncStatusRef.current?.spray_records_last_updated ||
                               syncStatus.spray_records_last_updated !== lastSyncStatusRef.current.spray_records_last_updated;
 
+        // Snapshot prev pending counts BEFORE overwriting the ref so the
+        // pending-list re-fetch guard below sees the real delta.
+        const prevPendingSites = lastSyncStatusRef.current?.pending_sites_count;
+        const prevPendingPipelines = lastSyncStatusRef.current?.pending_pipelines_count;
+
         lastSyncStatusRef.current = syncStatus;
 
         if (sitesChanged) await syncSitesIncrementally(syncStatus);
@@ -950,9 +1010,28 @@ export default function App() {
         if (syncStatus.pending_sites_count !== undefined) setPendingSitesCount(syncStatus.pending_sites_count);
         if (syncStatus.pending_pipelines_count !== undefined) setPendingPipelinesCount(syncStatus.pending_pipelines_count);
 
-        if ((syncStatus.pending_sites_count > 0 || syncStatus.pending_pipelines_count > 0) && roleCanAdmin) {
-          try { setPendingSites(await api.listPendingSites()); } catch { /* silently fail */ }
-          try { setPendingPipelines(await api.listPendingPipelines()); } catch { /* silently fail */ }
+        // Only re-fetch the pending lists when the counts actually moved
+        // since the last tick. Before, we'd re-download the full pending
+        // list every 2 minutes as long as ANY rows were pending, which
+        // dominated the egress of any admin session. `prevPending*` was
+        // snapshot above before `lastSyncStatusRef.current = syncStatus`.
+        if (roleCanAdmin) {
+          const sitesPendingChanged = syncStatus.pending_sites_count !== prevPendingSites;
+          const pipelinesPendingChanged = syncStatus.pending_pipelines_count !== prevPendingPipelines;
+          if (sitesPendingChanged) {
+            if (syncStatus.pending_sites_count > 0) {
+              try { setPendingSites(await api.listPendingSites()); } catch { /* silently fail */ }
+            } else {
+              setPendingSites([]);
+            }
+          }
+          if (pipelinesPendingChanged) {
+            if (syncStatus.pending_pipelines_count > 0) {
+              try { setPendingPipelines(await api.listPendingPipelines()); } catch { /* silently fail */ }
+            } else {
+              setPendingPipelines([]);
+            }
+          }
         }
       } catch { /* silently fail polling to avoid spam */ }
 
@@ -961,6 +1040,11 @@ export default function App() {
     };
 
     const pollInterval = setInterval(runPollTick, POLL_MS);
+
+    // Expose the latest tick to the back-online handler so it can trigger a
+    // cheap delta sync instead of running a full refreshAllData() whenever
+    // the network flaps.
+    runPollTickRef.current = runPollTick;
 
     // Immediate refresh when tab becomes visible again (covers phone-unlock, tab-switch).
     const onVisibilityChange = () => {
@@ -973,6 +1057,7 @@ export default function App() {
     return () => {
       clearInterval(pollInterval);
       document.removeEventListener('visibilitychange', onVisibilityChange);
+      runPollTickRef.current = null;
     };
   }, [isOnline, serverFilters, roleCanAdmin, selectedSite, processUploadQueue]);
 
@@ -1060,10 +1145,23 @@ export default function App() {
     setSelectedSite(site);
     setDetailOpen(true);
     // Only trigger zoomToSite on phones, or on PC/iPad if coming from sites list (just center, no zoom)
-    const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) && 
+    const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) &&
                     /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     if (isPhone || options.fromSitesList) {
       setZoomTarget({ ...site, _ts: Date.now(), _centerOnly: options.fromSitesList && !isPhone });
+    }
+    // Hydrate the heavy fields (spray_records, updates, raw_attributes,
+    // nested user objects) that the slim list/delta schema doesn't ship.
+    // Mirrors handleOpenPipelineDetail's /api/pipelines/{id} call — keeps
+    // the map/list egress tiny while the detail view still shows full data.
+    if (Number.isInteger(site.id) && window.navigator.onLine) {
+      api.getSite(site.id).then((full) => {
+        if (!full) return;
+        setSelectedSite((prev) => (prev && prev.id === full.id ? { ...prev, ...full } : prev));
+        // Also fold the heavy fields into the cached list so re-opening the
+        // same site (or a sibling delta tick) doesn't wipe them.
+        setSites((prev) => prev.map((s) => (s.id === full.id ? { ...s, ...full } : s)));
+      }).catch(() => { /* non-fatal — cached data is fine */ });
     }
   }
 
