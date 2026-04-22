@@ -778,6 +778,25 @@ export default function HerbicideLeaseSheet({
 
   // ── Preview overlay ──
   if (isPreviewing) {
+    // Print handler: convert base64 to Blob, open in new window, trigger print
+    const handlePrint = () => {
+      if (!pdfBase64) return;
+      const raw = atob(pdfBase64);
+      const uint8 = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) uint8[i] = raw.charCodeAt(i);
+      const blob = new Blob([uint8], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const printWindow = window.open(url, '_blank');
+      if (printWindow) {
+        printWindow.onload = () => {
+          printWindow.print();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        };
+      } else {
+        URL.revokeObjectURL(url);
+      }
+    };
+
     return (
       <div style={{
         backgroundColor: '#4b5563',
@@ -789,6 +808,7 @@ export default function HerbicideLeaseSheet({
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', flexShrink: 0, background: '#1f2937' }}>
           <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600, color: '#f9fafb' }}>Preview{ticketNumber ? ` — ${ticketNumber}` : ''}</h2>
+          <button onClick={handlePrint} style={{ background: 'none', border: 'none', color: '#60a5fa', fontSize: '0.85rem', cursor: 'pointer' }}>Print</button>
         </div>
         <PdfPreviewViewer pdfBase64={pdfBase64} />
         <div style={{ display: 'flex', gap: '10px', padding: '12px 16px', flexShrink: 0, background: '#1f2937' }}>

@@ -465,11 +465,33 @@ export default function TMTicketDetailSheet({
 
   // ── PDF preview overlay ──
   if (isPreviewOpen) {
+    // Print handler: convert base64 to Blob, open in new window, trigger print
+    const handlePrint = () => {
+      if (!previewBase64) return;
+      const raw = atob(previewBase64);
+      const uint8 = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) uint8[i] = raw.charCodeAt(i);
+      const blob = new Blob([uint8], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const printWindow = window.open(url, '_blank');
+      if (printWindow) {
+        printWindow.onload = () => {
+          printWindow.print();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        };
+      } else {
+        URL.revokeObjectURL(url);
+      }
+    };
+
     return (
       <div style={{ position: 'fixed', inset: 0, zIndex: 80, background: '#4b5563', display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: '10px 16px', background: '#1f2937', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ color: '#f9fafb', fontWeight: 600 }}>T&M Preview — {ticket.ticket_number}</span>
-          <button onClick={() => setIsPreviewOpen(false)} style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer' }}>×</button>
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            <button onClick={handlePrint} style={{ background: 'none', border: 'none', color: '#60a5fa', fontSize: '0.85rem', cursor: 'pointer' }}>Print</button>
+            <button onClick={() => setIsPreviewOpen(false)} style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer' }}>×</button>
+          </div>
         </div>
         <PdfPreviewViewer pdfBase64={previewBase64} />
       </div>
