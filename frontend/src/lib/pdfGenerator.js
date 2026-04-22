@@ -217,7 +217,7 @@ export async function generateLeaseSheetPdf(data, photoDataUrls = []) {
     doc.setFont('helvetica', 'bold');
     doc.text('Total Distance Sprayed:', marginL + 3, y + 13);
     doc.setFont('helvetica', 'normal');
-    doc.text(`${data.totalDistanceSprayed} m`, marginL + 110, y + 13);
+    doc.text(`${data.totalDistanceSprayed} km`, marginL + 110, y + 13);
     y += distH;
   }
 

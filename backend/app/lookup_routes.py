@@ -209,9 +209,18 @@ def list_location_types(
 ):
     """List all active location types."""
     result = db.execute(text(
-        "SELECT id, name, is_active, is_access_road FROM location_types WHERE is_active = TRUE ORDER BY name"
+        "SELECT id, name, is_active, is_access_road, is_pipeline FROM location_types WHERE is_active = TRUE ORDER BY name"
     ))
-    return [{"id": row[0], "name": row[1], "is_active": row[2], "is_access_road": row[3]} for row in result]
+    return [
+        {
+            "id": row[0],
+            "name": row[1],
+            "is_active": row[2],
+            "is_access_road": row[3],
+            "is_pipeline": row[4],
+        }
+        for row in result
+    ]
 
 
 @router.post("/location-types", dependencies=[Depends(require_roles(RoleEnum.admin))])
@@ -222,11 +231,21 @@ def create_location_type(
 ):
     """Create a new location type (admin only)."""
     result = db.execute(text(
-        "INSERT INTO location_types (name, is_access_road) VALUES (:name, :is_access_road) RETURNING id"
-    ), {"name": payload["name"], "is_access_road": payload.get("is_access_road", False)})
+        "INSERT INTO location_types (name, is_access_road, is_pipeline) "
+        "VALUES (:name, :is_access_road, :is_pipeline) RETURNING id"
+    ), {
+        "name": payload["name"],
+        "is_access_road": payload.get("is_access_road", False),
+        "is_pipeline": payload.get("is_pipeline", False),
+    })
     db.commit()
     new_id = result.scalar()
-    return {"id": new_id, "name": payload["name"], "is_access_road": payload.get("is_access_road", False)}
+    return {
+        "id": new_id,
+        "name": payload["name"],
+        "is_access_road": payload.get("is_access_road", False),
+        "is_pipeline": payload.get("is_pipeline", False),
+    }
 
 
 @router.patch("/location-types/{type_id}", dependencies=[Depends(require_roles(RoleEnum.admin))])
@@ -238,12 +257,14 @@ def update_location_type(
 ):
     """Update a location type (admin only)."""
     db.execute(text(
-        "UPDATE location_types SET name = :name, is_access_road = :is_access_road, is_active = :is_active WHERE id = :id"
+        "UPDATE location_types SET name = :name, is_access_road = :is_access_road, "
+        "is_pipeline = :is_pipeline, is_active = :is_active WHERE id = :id"
     ), {
         "id": type_id,
         "name": payload.get("name"),
         "is_access_road": payload.get("is_access_road", False),
-        "is_active": payload.get("is_active", True)
+        "is_pipeline": payload.get("is_pipeline", False),
+        "is_active": payload.get("is_active", True),
     })
     db.commit()
     return {"id": type_id, **payload}

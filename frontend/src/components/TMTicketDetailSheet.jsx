@@ -24,11 +24,15 @@ function herbicideCount(text) {
 }
 
 // Derived QTY for the 4 auto-populated office lines.
-// - 1/2/3 Herbicide (m²): sum area_ha × 10_000 for non-Roadside rows with that herbicide count.
-// - Roadside/Access Rd Liters Applied: sum liters_used for Roadside rows.
+// - 1/2/3 Herbicide (m²): sum area_ha × 10_000 for non-Roadside/non-Pipeline
+//   rows with that herbicide count. Pipeline rows are excluded because their
+//   area_ha column stores km (distance), not hectares — their liters roll
+//   into the Roadside/Access Rd/Pipeline line below instead.
+// - Roadside/Access Rd/Pipeline Liters Applied: sum liters_used across rows
+//   whose site_type is Roadside OR Pipeline.
 function derivedQtyFor(label, rows) {
   const safe = rows || [];
-  const main = safe.filter((r) => r.site_type !== 'Roadside');
+  const main = safe.filter((r) => r.site_type !== 'Roadside' && r.site_type !== 'Pipeline');
   const sumAreaM2 = (count) =>
     main.filter((r) => herbicideCount(r.herbicides) === count)
       .reduce((s, r) => s + (Number(r.area_ha) || 0), 0) * 10000;
@@ -36,8 +40,8 @@ function derivedQtyFor(label, rows) {
     case '1 Herbicide (m²)': return sumAreaM2(1);
     case '2 Herbicides (m²)': return sumAreaM2(2);
     case '3 Herbicides (m²)': return sumAreaM2(3);
-    case 'Roadside/Access Rd Liters Applied':
-      return safe.filter((r) => r.site_type === 'Roadside')
+    case 'Roadside/Access Rd/Pipeline Liters Applied':
+      return safe.filter((r) => r.site_type === 'Roadside' || r.site_type === 'Pipeline')
         .reduce((s, r) => s + (Number(r.liters_used) || 0), 0);
     default: return null;
   }
@@ -497,7 +501,8 @@ export default function TMTicketDetailSheet({
       ) : null}
 
       {/* Sites Treated — read-only for workers (auto-filled from lease sheets).
-          Office/admin can edit Cost Code. Area unit swaps to 'km' for Roadside rows. */}
+          Office/admin can edit Cost Code. Area unit swaps to 'km' for Roadside
+          and Pipeline rows (both store their distance in the area_ha column). */}
       <h3 style={{ fontSize: '1rem', margin: '14px 0 6px' }}>Sites Treated ({ticket.rows?.length || 0})</h3>
       <div style={{ background: '#111827', borderRadius: '8px', overflow: 'hidden', border: '1px solid #374151' }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 0.9fr 1.2fr 0.8fr 0.8fr 1fr', gap: '4px', padding: '8px', background: '#1f2937', fontSize: '0.75rem', fontWeight: 600, color: '#9ca3af' }}>
@@ -513,8 +518,8 @@ export default function TMTicketDetailSheet({
         ) : null}
         {(ticket.rows || []).map((r) => {
           const rowEdit = rowsEdits[r.id] || {};
-          const isRoadside = r.site_type === 'Roadside';
-          const unit = isRoadside ? 'km' : 'ha';
+          const isKmUnit = r.site_type === 'Roadside' || r.site_type === 'Pipeline';
+          const unit = isKmUnit ? 'km' : 'ha';
           return (
             <div key={r.id} style={{
               display: 'grid', gridTemplateColumns: '1.4fr 0.9fr 1.2fr 0.8fr 0.8fr 1fr',

@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS location_types (
     name VARCHAR(255) NOT NULL,
     is_active BOOLEAN DEFAULT TRUE,
     is_access_road BOOLEAN DEFAULT FALSE,  -- triggers roadside fields in form
+    is_pipeline BOOLEAN DEFAULT FALSE,     -- triggers the Total Metres field + Pipeline T&M row
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -141,15 +142,15 @@ CREATE TRIGGER location_types_updated_at
     EXECUTE FUNCTION update_updated_at_column();
 
 -- 7. Insert default location types
-INSERT INTO location_types (name, is_access_road) VALUES
-    ('Compressor', FALSE),
-    ('Wellsite', FALSE),
-    ('Riser', FALSE),
-    ('Access Road', TRUE),
-    ('Plant Site', FALSE),
-    ('Roadside', TRUE),
-    ('Municipal', FALSE),
-    ('Pipeline', FALSE)
+INSERT INTO location_types (name, is_access_road, is_pipeline) VALUES
+    ('Compressor', FALSE, FALSE),
+    ('Wellsite', FALSE, FALSE),
+    ('Riser', FALSE, FALSE),
+    ('Access Road', TRUE, FALSE),
+    ('Plant Site', FALSE, FALSE),
+    ('Roadside', TRUE, FALSE),
+    ('Municipal', FALSE, FALSE),
+    ('Pipeline', FALSE, TRUE)
 ON CONFLICT DO NOTHING;
 
 -- 8. Insert sample herbicides

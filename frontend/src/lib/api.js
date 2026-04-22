@@ -392,4 +392,16 @@ export const api = {
   resetPasswordWithToken(resetToken, newPassword) {
     return request('/api/auth/reset-password', { method: 'POST', body: { reset_token: resetToken, new_password: newPassword } });
   },
+
+  // ── Worker self-signup (QR-gated) ──
+  // Public endpoint: no auth header needed, but our request() still attaches
+  // whatever token is in localStorage. That's fine — the backend ignores
+  // Authorization for this route.
+  signupWithInvite(payload) {
+    return request('/api/auth/signup', { method: 'POST', body: payload });
+  },
+  // Admin-only: returns { url, configured } for the Worker Signup QR card.
+  getSignupInviteUrl() {
+    return request('/api/admin/signup-invite-url');
+  },
 };

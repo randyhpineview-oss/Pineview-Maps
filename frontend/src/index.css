@@ -358,6 +358,8 @@ button { cursor: pointer; }
   width: var(--panel-width);
   max-width: 100%;
   z-index: 20;
+  display: flex;
+  flex-direction: column;
   background: rgba(9, 17, 31, 0.96);
   border-left: 1px solid rgba(143, 182, 255, 0.10);
   transform: translateX(100%);
@@ -403,7 +405,8 @@ button { cursor: pointer; }
 .side-panel-body {
   padding: 1rem;
   overflow-y: auto;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
 }
 
 /* ───── Bottom tabs ───── */

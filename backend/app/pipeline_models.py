@@ -73,5 +73,32 @@ class SprayRecord(Base):
     lease_sheet_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     pdf_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     photo_urls: Mapped[list] = mapped_column(JSONB, nullable=True, default=list)
+    # Optional link to a Time & Materials ticket, mirroring
+    # SiteSprayRecord.tm_ticket_id. Set when a pipeline lease sheet is
+    # submitted with a `time_materials_link` instruction. SET NULL on ticket
+    # delete so we don't cascade-delete the pipeline spray record itself.
+    tm_ticket_id: Mapped[int | None] = mapped_column(
+        ForeignKey("time_materials_tickets.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     pipeline: Mapped[Pipeline] = relationship(back_populates="spray_records")
+    # String-keyed target class to avoid importing models.py (circular-
+    # import risk: models.py imports pipeline_models indirectly via the
+    # relationship graph already).
+    tm_ticket: Mapped["TimeMaterialsTicket | None"] = relationship(
+        "TimeMaterialsTicket",
+        back_populates="pipeline_spray_records",
+        foreign_keys=[tm_ticket_id],
+    )
+    # Companion rows on the ticket's Sites Treated table, sourced from this
+    # spray record's lease sheet (one main row + optional Roadside row).
+    # cascade="all, delete-orphan" mirrors the site side so deleting a
+    # pipeline spray record wipes its ticket rows too.
+    tm_rows: Mapped[list["TimeMaterialsRow"]] = relationship(
+        "TimeMaterialsRow",
+        back_populates="pipeline_spray_record",
+        foreign_keys="TimeMaterialsRow.pipeline_spray_record_id",
+        cascade="all, delete-orphan",
+    )
