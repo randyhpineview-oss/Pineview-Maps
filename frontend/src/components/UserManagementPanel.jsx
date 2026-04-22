@@ -172,7 +172,6 @@ export default function UserManagementPanel({ busy: externalBusy, currentUserEma
 
   // New user form
   const [showForm, setShowForm] = useState(false);
-  const [inviteMode, setInviteMode] = useState(false);
   const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newName, setNewName] = useState('');
@@ -184,6 +183,7 @@ export default function UserManagementPanel({ busy: externalBusy, currentUserEma
     setError('');
     setSuccess('');
   }
+
 
   async function handleCreateUser(e) {
     e.preventDefault();
@@ -215,35 +215,6 @@ export default function UserManagementPanel({ busy: externalBusy, currentUserEma
       onUsersChanged?.();
     } catch (err) {
       setError(err.message || 'Failed to create user');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleInviteUser(e) {
-    e.preventDefault();
-    clearMessages();
-
-    if (!newEmail.trim()) {
-      setError('Email address is required');
-      return;
-    }
-
-    setBusy(true);
-    try {
-      await api.inviteUser({
-        email: newEmail.trim(),
-        name: newName.trim() || undefined,
-        role: newRole,
-      });
-      setSuccess(`Invitation sent to ${newEmail.trim()}`);
-      setNewEmail('');
-      setNewName('');
-      setNewRole('worker');
-      setShowForm(false);
-      onUsersChanged?.();
-    } catch (err) {
-      setError(err.message || 'Failed to send invitation');
     } finally {
       setBusy(false);
     }
@@ -295,24 +266,14 @@ export default function UserManagementPanel({ busy: externalBusy, currentUserEma
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
         <h3 style={{ margin: 0 }}>User Management</h3>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() => { setShowForm((c) => !c); setInviteMode(true); clearMessages(); }}
-            style={{ fontSize: '0.8rem', padding: '4px 12px' }}
-          >
-            {showForm && inviteMode ? 'Cancel' : '+ Invite'}
-          </button>
-          <button
-            className="primary-button"
-            type="button"
-            onClick={() => { setShowForm((c) => !c); setInviteMode(false); clearMessages(); }}
-            style={{ fontSize: '0.8rem', padding: '4px 12px' }}
-          >
-            {showForm && !inviteMode ? 'Cancel' : '+ Add User'}
-          </button>
-        </div>
+        <button
+          className="primary-button"
+          type="button"
+          onClick={() => { setShowForm((c) => !c); clearMessages(); }}
+          style={{ fontSize: '0.8rem', padding: '4px 12px' }}
+        >
+          {showForm ? 'Cancel' : '+ Add User'}
+        </button>
       </div>
 
       {error ? (
@@ -328,15 +289,8 @@ export default function UserManagementPanel({ busy: externalBusy, currentUserEma
       ) : null}
 
       {showForm ? (
-        <form onSubmit={inviteMode ? handleInviteUser : handleCreateUser} className="site-row" style={{ marginBottom: '0.75rem' }}>
-          <strong style={{ fontSize: '0.9rem' }}>
-            {inviteMode ? 'Invite User' : 'Create User'}
-            {inviteMode && (
-              <span className="small-text" style={{ marginLeft: '0.5rem', color: '#6b7280', fontWeight: 'normal' }}>
-                They'll set their own password
-              </span>
-            )}
-          </strong>
+        <form onSubmit={handleCreateUser} className="site-row" style={{ marginBottom: '0.75rem' }}>
+          <strong style={{ fontSize: '0.9rem' }}>Create User</strong>
           <div className="list-grid" style={{ marginTop: '0.5rem' }}>
             <input
               type="email"
@@ -351,23 +305,21 @@ export default function UserManagementPanel({ busy: externalBusy, currentUserEma
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
             />
-            {!inviteMode && (
-              <input
-                type="password"
-                placeholder="Password (min 6 characters)"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                required
-                minLength={6}
-              />
-            )}
+            <input
+              type="password"
+              placeholder="Password (min 6 characters)"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              required
+              minLength={6}
+            />
             <select value={newRole} onChange={(e) => setNewRole(e.target.value)}>
               {ROLES.map((r) => (
                 <option key={r.value} value={r.value}>{r.label}</option>
               ))}
             </select>
             <button className="primary-button" type="submit" disabled={isBusy}>
-              {busy ? (inviteMode ? 'Inviting…' : 'Creating…') : (inviteMode ? 'Send Invitation' : 'Create User')}
+              {busy ? 'Creating…' : 'Create User'}
             </button>
           </div>
         </form>

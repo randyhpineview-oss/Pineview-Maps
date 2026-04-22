@@ -159,10 +159,7 @@ export const api = {
   createUser(payload) {
     return request('/api/admin/users', { method: 'POST', body: payload });
   },
-  inviteUser(payload) {
-    return request('/api/admin/users/invite', { method: 'POST', body: payload });
-  },
-  updateUser(userId, payload) {
+    updateUser(userId, payload) {
     return request(`/api/admin/users/${userId}`, { method: 'PATCH', body: payload });
   },
   deleteUser(userId) {
