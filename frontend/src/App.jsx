@@ -449,6 +449,16 @@ export default function App() {
       let completed = 0;
       for (const item of items.sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
         try {
+          // Lease sheets can carry a `time_materials_link` in their payload
+          // which tells the backend to either (a) create a fresh T&M ticket
+          // pre-populated with this sheet's hours or (b) append a row to an
+          // existing open ticket. In both cases the Open Tickets list in
+          // FormsPanel should refresh as soon as the upload finishes —
+          // otherwise the worker waits up to 5 minutes (or has to bounce
+          // off the Forms tab and back) before seeing the new/updated
+          // ticket. We detect the link and bump `tmRefreshToken` at the
+          // end of the branch so the delta fetch happens immediately.
+          const bumpsTm = !!item.payload?.time_materials_link;
           if (item.targetType === 'site') {
             await api.createSiteSprayRecord(item.targetId, item.payload);
             // Refresh the site data in background (including pdf_url from Dropbox)
@@ -458,6 +468,7 @@ export default function App() {
               setSelectedSite((prev) => prev && prev.id === updated.id ? updated : prev);
               await upsertSite(updated);
             } catch { /* ignore refresh failure */ }
+            if (bumpsTm) setTmRefreshToken((x) => x + 1);
           } else if (item.targetType === 'pipeline') {
             await api.createSprayRecord(item.targetId, item.payload);
             try {
@@ -471,6 +482,7 @@ export default function App() {
                 return prev;
               });
             } catch { /* ignore refresh failure */ }
+            if (bumpsTm) setTmRefreshToken((x) => x + 1);
           } else if (item.targetType === 'tm_ticket') {
             // Worker "Mark as pending" on a T&M ticket. We queue instead of
             // awaiting so the worker doesn't sit on a spinner while the
