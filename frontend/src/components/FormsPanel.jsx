@@ -194,6 +194,12 @@ export default function FormsPanel({
   const [tmTickets, setTmTickets] = useState([]);
   const tmTicketsSinceRef = useRef(null);
   const tmSyncingRef = useRef(false);
+  // Local ticker that forces a TM delta poll every TM_FAST_POLL_MS while
+  // the user is on a TM-relevant sub-tab. Independent of the 5-minute
+  // App-level sync-status poll — gives office approvals a near-realtime
+  // feel for the worker who's looking at their open ticket list, without
+  // forcing everyone on the app to poll that fast.
+  const [tmLocalTick, setTmLocalTick] = useState(0);
   const [drafts, setDrafts] = useState([]);
 
   // Derived views over the unified cache.
@@ -301,7 +307,25 @@ export default function FormsPanel({
       }
     })();
     return () => { cancelled = true; };
-  }, [visible, subTab, recTab, tmRefreshToken]);
+  }, [visible, subTab, recTab, tmRefreshToken, tmLocalTick]);
+
+  // Fast local poll for TM tickets while the user is actively looking at
+  // them. Bumps a local counter every 30s; the sync effect above picks it
+  // up via the `tmLocalTick` dep and calls `/api/time-materials/delta`.
+  // When nothing has changed the response is essentially empty (~60 bytes
+  // gzipped), so this costs next-to-nothing in egress but makes office
+  // approvals visible to the worker within ~30s instead of up to 5 min.
+  // Interval auto-clears as soon as the user navigates away from a
+  // TM-relevant sub-tab, so it never burns cycles when nobody's looking.
+  useEffect(() => {
+    if (!visible) return;
+    const onInProgress = subTab === SUB_IN_PROGRESS;
+    const onRecentsTm = subTab === SUB_RECENTS && recTab !== REC_LEASE;
+    if (!onInProgress && !onRecentsTm) return;
+    const TM_FAST_POLL_MS = 30_000;
+    const id = setInterval(() => setTmLocalTick((x) => x + 1), TM_FAST_POLL_MS);
+    return () => clearInterval(id);
+  }, [visible, subTab, recTab]);
 
   // When the user opens Recently Submitted, ask the parent to run an
   // immediate delta sync. This catches up `cachedRecents` (lease sheets)
