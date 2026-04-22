@@ -16,10 +16,7 @@ export default function FilterBar({
   areas,
   sites = [],
   onChange,
-  onRefresh,
-  onSyncCurrentView,
   onSearchSelect,
-  syncing,
   layers = { lsd: true, water: true, quad_access: true, reclaimed: true, pipelines: true },
   onLayerToggle,
 }) {
@@ -185,14 +182,6 @@ export default function FilterBar({
         <option value="pending_review">Pending</option>
         <option value="rejected">Rejected</option>
       </select>
-      <div className="button-row">
-        <button className="secondary-button" type="button" onClick={onRefresh} style={{ flex: 1 }}>
-          Refresh
-        </button>
-        <button className="primary-button" type="button" onClick={onSyncCurrentView} disabled={syncing} style={{ flex: 1 }}>
-          {syncing ? 'Syncing…' : 'Sync'}
-        </button>
-      </div>
     </>
   );
 }

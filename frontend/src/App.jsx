@@ -2516,10 +2516,7 @@ export default function App() {
               areas={areas}
               sites={sites}
               onChange={(key, value) => setFilters((c) => ({ ...c, [key]: value }))}
-              onRefresh={refreshAllData}
-              onSyncCurrentView={handleSyncCurrentView}
               onSearchSelect={handleSearchSelect}
-              syncing={isSyncing}
               layers={layers}
               onLayerToggle={handleLayerToggle}
             />
