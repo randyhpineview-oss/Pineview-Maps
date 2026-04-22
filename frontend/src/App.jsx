@@ -168,6 +168,12 @@ export default function App() {
   const [resumingDraft, setResumingDraft] = useState(null);
   // Token used to force FormsPanel to refresh drafts list
   const [draftsRefreshToken, setDraftsRefreshToken] = useState(0);
+  // Token bumped by the poll loop whenever sync-status reports
+  // `tm_tickets_last_updated` has moved. FormsPanel listens to it and
+  // re-fetches its Open / Recently Submitted T&M lists so users see
+  // updates without a full page reload — at the cost of only one extra
+  // MAX(updated_at) query in sync-status, which is already indexed.
+  const [tmRefreshToken, setTmRefreshToken] = useState(0);
   // Recents cache (IndexedDB-backed, pre-loaded at startup)
   const [cachedRecents, setCachedRecents] = useState([]);
   // Lookups cache (IndexedDB-backed)
@@ -990,6 +996,13 @@ export default function App() {
                                syncStatus.pipelines_last_updated !== lastSyncStatusRef.current.pipelines_last_updated;
         const recentsChanged = !lastSyncStatusRef.current?.spray_records_last_updated ||
                               syncStatus.spray_records_last_updated !== lastSyncStatusRef.current.spray_records_last_updated;
+        // T&M ticket watermark. Bumps whenever a ticket is created, edited,
+        // submitted, or approved. The FormsPanel uses tmRefreshToken to
+        // decide when to re-fetch its Open / Submitted lists so users see
+        // updates without a full page reload — egress stays near zero when
+        // nothing has changed (sync-status is ~100B).
+        const tmTicketsChanged = !lastSyncStatusRef.current?.tm_tickets_last_updated ||
+                                syncStatus.tm_tickets_last_updated !== lastSyncStatusRef.current.tm_tickets_last_updated;
 
         // Snapshot prev pending counts BEFORE overwriting the ref so the
         // pending-list re-fetch guard below sees the real delta.
@@ -1001,6 +1014,10 @@ export default function App() {
         if (sitesChanged) await syncSitesIncrementally(syncStatus);
         if (pipelinesChanged) await syncPipelinesIncrementally(syncStatus);
         if (recentsChanged) await syncRecentsIncrementally(syncStatus);
+        // Don't fetch tickets here — bumping the token lets the visible
+        // FormsPanel decide whether to fetch (it only does when the
+        // relevant tab is in view, saving egress when nobody's looking).
+        if (tmTicketsChanged) setTmRefreshToken((x) => x + 1);
 
         // Persist the latest watermarks to IndexedDB so the NEXT browser
         // reload can take the hydrate-from-cache fast path and skip the
@@ -2886,6 +2903,7 @@ export default function App() {
               onOpenTMTicket={(ticketId) => setActiveTMTicketId(ticketId)}
               onRequestDraftsRefresh={() => setDraftsRefreshToken((x) => x + 1)}
               draftsRefreshToken={draftsRefreshToken}
+              tmRefreshToken={tmRefreshToken}
               roleCanAdmin={roleCanAdmin}
               viewAsWorker={viewAsWorker}
               currentUserName={currentUserName}

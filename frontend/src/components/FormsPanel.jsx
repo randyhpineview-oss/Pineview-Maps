@@ -32,9 +32,19 @@ const TM_STATUS_APPROVED = 'approved';
 // Format an ISO timestamp as a short, worker-friendly "submitted on" label
 // used in the Recently Submitted list. Falls back to an em dash when the
 // incoming value is missing or invalid so rows never render "Invalid Date".
+//
+// NOTE on timezones: the backend stores timestamps as naive UTC
+// (datetime.utcnow()). Pydantic serializes them WITHOUT a trailing 'Z',
+// so JS's Date() would parse them as LOCAL time — displaying the UTC hour
+// as if it were local, which was off by the UTC offset (e.g. 7h in PDT).
+// Force UTC parsing by appending 'Z' when no timezone designator is present,
+// then toLocaleString() converts back to the user's local time correctly.
 function formatSubmittedAt(iso) {
   if (!iso) return '—';
-  const d = new Date(iso);
+  const s = String(iso);
+  // If the string has no timezone suffix (Z or ±HH:MM), treat it as UTC.
+  const hasTz = /Z|[+-]\d{2}:?\d{2}$/.test(s);
+  const d = new Date(hasTz ? s : `${s}Z`);
   if (isNaN(d.getTime())) return '—';
   return d.toLocaleString(undefined, {
     month: 'short',
@@ -145,6 +155,11 @@ export default function FormsPanel({
   onOpenTMTicket,
   onRequestDraftsRefresh,    // parent can trigger a refresh when form closes
   draftsRefreshToken = 0,    // bump to trigger reload
+  // Bumped by App's poll loop when sync-status reports T&M tickets changed.
+  // We wire it into the open / submitted ticket effects so the lists refresh
+  // automatically without a page reload — egress stays near zero in the
+  // steady state because sync-status only ships a MAX(updated_at) timestamp.
+  tmRefreshToken = 0,
   roleCanAdmin = false,
   // When true, the user is an admin/office pretending to be a worker.
   // We filter the recently-submitted + open-ticket lists down to records
@@ -199,10 +214,15 @@ export default function FormsPanel({
   // "Load more" count honest against the filtered list.
   useEffect(() => { setTmCount(PAGE_SIZE); setAllCount(PAGE_SIZE); }, [tmStatusFilter]);
 
-  // Load open T&M tickets when In Progress → Open Tickets tab is shown
+  // Load open T&M tickets while the In Progress sub-tab is in view. We
+  // relaxed the gate from "only while Open Tickets ipTab is active" to
+  // "any time the user is inside In Progress" so the "(N)" count badge
+  // on the Open Tickets button stays accurate without forcing the user
+  // to visit that sub-tab first. Re-runs on tmRefreshToken bumps too, so
+  // new tickets created elsewhere show up within a poll cycle.
   useEffect(() => {
     if (!visible) return;
-    if (subTab !== SUB_IN_PROGRESS || ipTab !== IP_OPEN) return;
+    if (subTab !== SUB_IN_PROGRESS) return;
     let cancelled = false;
     (async () => {
       try {
@@ -213,7 +233,7 @@ export default function FormsPanel({
       }
     })();
     return () => { cancelled = true; };
-  }, [visible, subTab, ipTab]);
+  }, [visible, subTab, tmRefreshToken]);
 
   // Load drafts when In Progress → Drafts tab is shown (or refresh token bumps)
   useEffect(() => {
@@ -231,7 +251,10 @@ export default function FormsPanel({
     return () => { cancelled = true; };
   }, [visible, subTab, ipTab, draftsRefreshToken]);
 
-  // Load submitted T&M tickets when Recently Submitted → (All | T&M) tab is shown
+  // Load submitted T&M tickets when Recently Submitted → (All | T&M) tab is shown.
+  // Re-runs on tmRefreshToken bumps so the list refreshes as soon as the
+  // poll loop learns about a backend change, instead of requiring a full
+  // page reload.
   useEffect(() => {
     if (!visible) return;
     if (subTab !== SUB_RECENTS) return;
@@ -246,7 +269,7 @@ export default function FormsPanel({
       }
     })();
     return () => { cancelled = true; };
-  }, [visible, subTab, recTab]);
+  }, [visible, subTab, recTab, tmRefreshToken]);
 
   // Sort helper: newest first by created_at (fall back to id for stable ordering).
   const byNewest = (a, b) => {

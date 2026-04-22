@@ -252,6 +252,12 @@ export const api = {
   recentSubmissionsDelta(since) {
     return request(`/api/recent-submissions/delta?since=${encodeURIComponent(since)}`);
   },
+  // T&M tickets delta. Returns a plain array — callers should pair it with
+  // the `tm_tickets_last_updated` watermark from /api/sync-status to decide
+  // when to poll. Empty array means "nothing changed since `since`".
+  tmTicketsDelta(since) {
+    return request(`/api/time-materials/delta?since=${encodeURIComponent(since)}`);
+  },
 
   /**
    * Fetch a Dropbox-hosted PDF through the backend proxy and return its raw bytes.

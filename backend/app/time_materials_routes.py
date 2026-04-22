@@ -317,6 +317,37 @@ def list_tickets(
     return [_strip_office_fields_for_worker(t, current_user) for t in tickets]
 
 
+# ── Delta ────────────────────────────────────────────────────────
+#
+# Declared BEFORE the /{ticket_id} route so FastAPI doesn't route "delta"
+# as a ticket_id path parameter. Same gotcha as /api/sites/delta.
+
+
+@router.get("/delta", response_model=list[TimeMaterialsTicketRead])
+def tm_tickets_delta(
+    since: datetime = Query(..., description="ISO timestamp from a previous server_time"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Incremental T&M tickets sync — rows whose `updated_at > since`.
+
+    Mirrors `/api/sites/delta` and `/api/pipelines/delta`. Poll loop pairs
+    this with the `tm_tickets_last_updated` watermark in `/api/sync-status`
+    so the frontend only calls this when something actually changed.
+
+    Scope: respects the same visibility rules as the main list endpoint
+    (workers see their own tickets, office/admin see all). No soft-delete
+    column exists for tickets today, so hard-deleted tickets won't appear
+    in the delta — acceptable for now because deletes are admin-only and
+    rare; the tab-entry refetch will clean those up on next visit.
+    """
+    q = _visible_query(db, current_user).filter(
+        TimeMaterialsTicket.updated_at > since
+    )
+    tickets = q.order_by(TimeMaterialsTicket.updated_at.desc()).limit(500).all()
+    return [_strip_office_fields_for_worker(t, current_user) for t in tickets]
+
+
 # ── Detail ───────────────────────────────────────────────────────
 
 @router.get("/{ticket_id}", response_model=TimeMaterialsTicketRead)

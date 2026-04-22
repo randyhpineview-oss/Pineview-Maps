@@ -307,7 +307,11 @@ def sync_status(
     sites_updated = db.execute(text("SELECT MAX(updated_at) FROM sites")).scalar()
     pipelines_updated = db.execute(text("SELECT MAX(updated_at) FROM pipelines")).scalar()
     spray_records_updated = db.execute(text("SELECT MAX(created_at) FROM site_spray_records")).scalar()
-    
+    # Cheap watermark for T&M tickets so the frontend can detect "something
+    # changed" without re-downloading the full list every poll tick. Matches
+    # the sites/pipelines pattern above — single MAX on an indexed column.
+    tm_tickets_updated = db.execute(text("SELECT MAX(updated_at) FROM time_materials_tickets")).scalar()
+
     # Get pending counts for admins
     pending_sites_count = 0
     pending_pipelines_count = 0
@@ -322,11 +326,12 @@ def sync_status(
             PipelineModel.approval_state == "pending_review",
             PipelineModel.deleted_at.is_(None)
         ).count()
-    
+
     return {
         "sites_last_updated": sites_updated.isoformat() if sites_updated else None,
         "pipelines_last_updated": pipelines_updated.isoformat() if pipelines_updated else None,
         "spray_records_last_updated": spray_records_updated.isoformat() if spray_records_updated else None,
+        "tm_tickets_last_updated": tm_tickets_updated.isoformat() if tm_tickets_updated else None,
         "pending_sites_count": pending_sites_count,
         "pending_pipelines_count": pending_pipelines_count,
     }
