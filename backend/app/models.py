@@ -212,6 +212,11 @@ class TimeMaterialsTicket(Base):
         default=TMTicketStatus.open,
         index=True,
     )
+    # Soft-delete so the /delta endpoint can ship removed IDs to the frontend
+    # cache in `ids_removed`, mirroring the sites/pipelines pattern. A
+    # hard-deleted row would never appear in a delta and stale client caches
+    # would keep showing the ticket until the next full refresh.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
     rows: Mapped[list["TimeMaterialsRow"]] = relationship(
         back_populates="ticket",

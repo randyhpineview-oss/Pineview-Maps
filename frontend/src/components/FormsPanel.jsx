@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { getLeaseSheetDrafts, deleteLeaseSheetDraft } from '../lib/offlineStore';
 
@@ -178,9 +178,27 @@ export default function FormsPanel({
   // split; they can narrow to "submitted" to triage pending approvals.
   const [tmStatusFilter, setTmStatusFilter] = useState(TM_STATUS_ALL);
 
-  const [openTickets, setOpenTickets] = useState([]);
+  // Unified T&M tickets cache used by BOTH the Open Tickets (In Progress)
+  // list and the Recently Submitted (Recents) list. The first load pulls
+  // the full list via /api/time-materials; every subsequent refresh (tab
+  // switch or tmRefreshToken bump) goes through /api/time-materials/delta
+  // using `tmTicketsSinceRef.current` as the watermark, so we only ship
+  // rows that actually changed — soft-deleted IDs come back in the
+  // delta's `ids_removed` and get pruned locally.
+  const [tmTickets, setTmTickets] = useState([]);
+  const tmTicketsSinceRef = useRef(null);
+  const tmSyncingRef = useRef(false);
   const [drafts, setDrafts] = useState([]);
-  const [tmSubmitted, setTmSubmitted] = useState([]);
+
+  // Derived views over the unified cache.
+  const openTickets = useMemo(
+    () => tmTickets.filter((t) => t.status === 'open'),
+    [tmTickets],
+  );
+  // Alias kept so the existing `filteredTm`/recents code doesn't need to
+  // be renamed. It's just the same underlying list — the filter that
+  // strips `status === 'open'` lives inside `filteredTm` itself.
+  const tmSubmitted = tmTickets;
 
   // "New T&M ticket" modal
   const [newTMOpen, setNewTMOpen] = useState(false);
@@ -214,26 +232,70 @@ export default function FormsPanel({
   // "Load more" count honest against the filtered list.
   useEffect(() => { setTmCount(PAGE_SIZE); setAllCount(PAGE_SIZE); }, [tmStatusFilter]);
 
-  // Load open T&M tickets while the In Progress sub-tab is in view. We
-  // relaxed the gate from "only while Open Tickets ipTab is active" to
-  // "any time the user is inside In Progress" so the "(N)" count badge
-  // on the Open Tickets button stays accurate without forcing the user
-  // to visit that sub-tab first. Re-runs on tmRefreshToken bumps too, so
-  // new tickets created elsewhere show up within a poll cycle.
+  // Unified T&M sync — replaces the two prior fetch effects. Runs while the
+  // FormsPanel is visible AND the user is on a sub-tab that actually needs
+  // ticket data (In Progress, or Recently Submitted with recTab !== Lease).
+  //
+  // First call of a session: full `api.listTMTickets({})` fetch. Seeds
+  // the local cache AND the watermark so subsequent ticks go through
+  // `api.tmTicketsDelta(since)` instead — that endpoint ships only rows
+  // whose `updated_at > since`, plus `ids_removed` for soft-deleted
+  // tickets, cutting egress to near-zero when nothing has changed.
+  //
+  // Triggered by: visible/subTab/recTab (user navigation) and tmRefreshToken
+  // (App's poll loop saw `tm_tickets_last_updated` bump in sync-status).
   useEffect(() => {
     if (!visible) return;
-    if (subTab !== SUB_IN_PROGRESS) return;
+    const onInProgress = subTab === SUB_IN_PROGRESS;
+    const onRecentsTm = subTab === SUB_RECENTS && recTab !== REC_LEASE;
+    if (!onInProgress && !onRecentsTm) return;
+    // Guard against overlapping runs when multiple deps change in the same
+    // tick (e.g. tab switch + token bump). The in-flight request completes
+    // and commits before we fire another.
+    if (tmSyncingRef.current) return;
+
     let cancelled = false;
+    tmSyncingRef.current = true;
     (async () => {
       try {
-        const list = await api.listTMTickets({ status: 'open' });
-        if (!cancelled) setOpenTickets(list || []);
+        const since = tmTicketsSinceRef.current;
+        if (!since) {
+          // Cold start — full list. Seeds both state and the watermark so
+          // the NEXT call can take the delta path. We use the current wall
+          // clock as the watermark rather than a per-row max(updated_at):
+          // simpler, and any race with a row written mid-request is caught
+          // by the next delta tick anyway (updated_at > since still holds).
+          const list = await api.listTMTickets({});
+          if (cancelled) return;
+          setTmTickets(list || []);
+          tmTicketsSinceRef.current = new Date().toISOString();
+        } else {
+          // Delta — merges new/updated rows and prunes soft-deleted ones.
+          const delta = await api.tmTicketsDelta(since);
+          if (cancelled) return;
+          const items = Array.isArray(delta?.items) ? delta.items : [];
+          const idsRemoved = Array.isArray(delta?.ids_removed) ? delta.ids_removed : [];
+          if (items.length > 0 || idsRemoved.length > 0) {
+            setTmTickets((prev) => {
+              const byId = new Map(prev.map((t) => [t.id, t]));
+              for (const it of items) byId.set(it.id, it);
+              for (const id of idsRemoved) byId.delete(id);
+              return Array.from(byId.values());
+            });
+          }
+          // Advance the watermark. Server sends `server_time` captured
+          // BEFORE its query so nothing can slip through on the next tick.
+          tmTicketsSinceRef.current = delta?.server_time || tmTicketsSinceRef.current;
+        }
       } catch (e) {
-        console.warn('[FORMS] listTMTickets open failed:', e.message);
+        console.warn('[FORMS] TM tickets sync failed:', e.message);
+        // Leave the watermark alone so the next tick retries the same range.
+      } finally {
+        tmSyncingRef.current = false;
       }
     })();
     return () => { cancelled = true; };
-  }, [visible, subTab, tmRefreshToken]);
+  }, [visible, subTab, recTab, tmRefreshToken]);
 
   // Load drafts when In Progress → Drafts tab is shown (or refresh token bumps)
   useEffect(() => {
@@ -250,26 +312,6 @@ export default function FormsPanel({
     })();
     return () => { cancelled = true; };
   }, [visible, subTab, ipTab, draftsRefreshToken]);
-
-  // Load submitted T&M tickets when Recently Submitted → (All | T&M) tab is shown.
-  // Re-runs on tmRefreshToken bumps so the list refreshes as soon as the
-  // poll loop learns about a backend change, instead of requiring a full
-  // page reload.
-  useEffect(() => {
-    if (!visible) return;
-    if (subTab !== SUB_RECENTS) return;
-    if (recTab === REC_LEASE) return;  // don't need TM list for lease-only view
-    let cancelled = false;
-    (async () => {
-      try {
-        const list = await api.listTMTickets({});
-        if (!cancelled) setTmSubmitted(list || []);
-      } catch (e) {
-        console.warn('[FORMS] listTMTickets failed:', e.message);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [visible, subTab, recTab, tmRefreshToken]);
 
   // Sort helper: newest first by created_at (fall back to id for stable ordering).
   const byNewest = (a, b) => {

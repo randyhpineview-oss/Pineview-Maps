@@ -382,6 +382,19 @@ class TimeMaterialsTicketRead(BaseModel):
     rows: list[TimeMaterialsRowRead] = Field(default_factory=list)
 
 
+class TMTicketsDeltaResponse(BaseModel):
+    """Incremental T&M tickets update — see /api/time-materials/delta.
+
+    `items` — tickets created/updated (and still visible) since `since`.
+    `ids_removed` — ticket IDs that were soft-deleted since `since`;
+    frontend should drop them from its local cache.
+    `server_time` — pass this back as `?since=` on the next call.
+    """
+    items: list[TimeMaterialsTicketRead]
+    ids_removed: list[int]
+    server_time: datetime
+
+
 class TimeMaterialsTicketCreate(BaseModel):
     spray_date: date
     client: str

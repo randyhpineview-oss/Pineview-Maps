@@ -30,6 +30,7 @@ from app.schemas import (
     TimeMaterialsTicketCreate,
     TimeMaterialsTicketRead,
     TimeMaterialsTicketUpdate,
+    TMTicketsDeltaResponse,
 )
 
 router = APIRouter(prefix="/api/time-materials", tags=["time-materials"])
@@ -207,14 +208,21 @@ def _can_edit_ticket(ticket: TimeMaterialsTicket, current_user: User) -> bool:
     return _worker_owns_ticket(ticket, current_user)
 
 
-def _visible_query(db: Session, current_user: User):
+def _visible_query(db: Session, current_user: User, include_deleted: bool = False):
     """Base query scoped to what the current user can see.
 
     Workers see tickets where (a) created_by_user_id matches their id, OR
     (b) created_by_user_id is NULL but created_by_name matches theirs (covers
     legacy tickets created before users were seeded into the local table).
+
+    `include_deleted=True` is used ONLY by the delta endpoint, which needs
+    to see soft-deleted rows to emit their IDs in `ids_removed`. Every other
+    caller filters `deleted_at IS NULL` so deleted tickets disappear from
+    lists / detail views immediately.
     """
     q = db.query(TimeMaterialsTicket).options(joinedload(TimeMaterialsTicket.rows))
+    if not include_deleted:
+        q = q.filter(TimeMaterialsTicket.deleted_at.is_(None))
     if current_user.role == RoleEnum.worker:
         q = q.filter(
             or_(
@@ -281,6 +289,7 @@ def list_open_tickets(
     # linking picker must always be "mine only" regardless of role.
     q = db.query(TimeMaterialsTicket).options(joinedload(TimeMaterialsTicket.rows)).filter(
         TimeMaterialsTicket.status == TMTicketStatus.open,
+        TimeMaterialsTicket.deleted_at.is_(None),
         or_(
             TimeMaterialsTicket.created_by_user_id == current_user.id,
             and_(
@@ -323,7 +332,7 @@ def list_tickets(
 # as a ticket_id path parameter. Same gotcha as /api/sites/delta.
 
 
-@router.get("/delta", response_model=list[TimeMaterialsTicketRead])
+@router.get("/delta", response_model=TMTicketsDeltaResponse)
 def tm_tickets_delta(
     since: datetime = Query(..., description="ISO timestamp from a previous server_time"),
     db: Session = Depends(get_db),
@@ -331,21 +340,40 @@ def tm_tickets_delta(
 ):
     """Incremental T&M tickets sync — rows whose `updated_at > since`.
 
-    Mirrors `/api/sites/delta` and `/api/pipelines/delta`. Poll loop pairs
-    this with the `tm_tickets_last_updated` watermark in `/api/sync-status`
-    so the frontend only calls this when something actually changed.
+    Mirrors `/api/sites/delta` and `/api/pipelines/delta`:
+      - `items`: active tickets (deleted_at IS NULL) touched since `since`.
+      - `ids_removed`: soft-deleted ticket IDs touched since `since` so the
+        frontend can prune its cache.
+      - `server_time`: captured BEFORE the query so anything written during
+        this request is guaranteed to be caught by the next call.
 
-    Scope: respects the same visibility rules as the main list endpoint
-    (workers see their own tickets, office/admin see all). No soft-delete
-    column exists for tickets today, so hard-deleted tickets won't appear
-    in the delta — acceptable for now because deletes are admin-only and
-    rare; the tab-entry refetch will clean those up on next visit.
+    Poll loop pairs this with the `tm_tickets_last_updated` watermark in
+    `/api/sync-status` so we only hit this endpoint when something actually
+    changed — egress stays near zero in the steady state.
     """
-    q = _visible_query(db, current_user).filter(
+    # Capture server_time first so rows written mid-request are caught next tick.
+    server_time = datetime.utcnow()
+
+    # include_deleted=True so the same scoped query returns soft-deleted rows
+    # for the `ids_removed` pass below; we split active vs removed in Python.
+    base = _visible_query(db, current_user, include_deleted=True).filter(
         TimeMaterialsTicket.updated_at > since
     )
-    tickets = q.order_by(TimeMaterialsTicket.updated_at.desc()).limit(500).all()
-    return [_strip_office_fields_for_worker(t, current_user) for t in tickets]
+    rows = base.order_by(TimeMaterialsTicket.updated_at.desc()).limit(500).all()
+
+    items: list[TimeMaterialsTicketRead] = []
+    ids_removed: list[int] = []
+    for t in rows:
+        if t.deleted_at is not None:
+            ids_removed.append(t.id)
+        else:
+            items.append(_strip_office_fields_for_worker(t, current_user))
+
+    return TMTicketsDeltaResponse(
+        items=items,
+        ids_removed=ids_removed,
+        server_time=server_time,
+    )
 
 
 # ── Detail ───────────────────────────────────────────────────────
@@ -558,17 +586,28 @@ def delete_ticket(
     ticket_id: int,
     db: Session = Depends(get_db),
 ):
-    ticket = db.query(TimeMaterialsTicket).filter(TimeMaterialsTicket.id == ticket_id).first()
+    ticket = (
+        db.query(TimeMaterialsTicket)
+        .filter(
+            TimeMaterialsTicket.id == ticket_id,
+            TimeMaterialsTicket.deleted_at.is_(None),
+        )
+        .first()
+    )
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
-    # Unlink spray records rather than cascade-delete (rows cascade automatically via FK).
-    # Do this for BOTH site spray records and pipeline spray records so a
-    # deleted ticket doesn't leave dangling tm_ticket_id FKs on either side.
+    # Soft-delete: we stamp `deleted_at` + bump `updated_at` so the row
+    # shows up in the next /api/time-materials/delta call with its ID in
+    # `ids_removed`. Frontend caches can prune accordingly. We also unlink
+    # the spray records here (same as before) so they don't keep pointing
+    # at a ticket that's effectively gone.
+    now = datetime.utcnow()
     for rec in list(ticket.spray_records):
         rec.tm_ticket_id = None
     for rec in list(ticket.pipeline_spray_records):
         rec.tm_ticket_id = None
-    db.delete(ticket)
+    ticket.deleted_at = now
+    ticket.updated_at = now
     db.commit()
 
 
@@ -785,7 +824,14 @@ def find_or_create_ticket_for_link(
 ) -> Optional[TimeMaterialsTicket]:
     """Resolve a time_materials_link into a concrete ticket to append the row to."""
     if link_ticket_id is not None:
-        ticket = db.query(TimeMaterialsTicket).filter(TimeMaterialsTicket.id == link_ticket_id).first()
+        ticket = (
+            db.query(TimeMaterialsTicket)
+            .filter(
+                TimeMaterialsTicket.id == link_ticket_id,
+                TimeMaterialsTicket.deleted_at.is_(None),
+            )
+            .first()
+        )
         if not ticket:
             return None
         # Cannot attach additional rows to a ticket that is no longer open

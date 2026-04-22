@@ -178,6 +178,23 @@ def _migrate_add_columns() -> None:
         except Exception as e:
             print(f"[STARTUP] Could not ensure T&M tables: {e}")
 
+        # Add `deleted_at` to time_materials_tickets on upgrade. Required by
+        # the /api/time-materials/delta endpoint to ship removed IDs to
+        # the frontend cache via `ids_removed`.
+        if insp.has_table("time_materials_tickets"):
+            existing_tm = {col["name"] for col in insp.get_columns("time_materials_tickets")}
+            if "deleted_at" not in existing_tm:
+                conn.execute(text("ALTER TABLE time_materials_tickets ADD COLUMN deleted_at TIMESTAMP"))
+                # Index matches the ORM `index=True` on the column so the
+                # delta query's `deleted_at IS (NOT) NULL` filters stay cheap.
+                try:
+                    conn.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_time_materials_tickets_deleted_at "
+                        "ON time_materials_tickets(deleted_at)"
+                    ))
+                except Exception as e:
+                    print(f"[STARTUP] Could not create tm_tickets.deleted_at index: {e}")
+
         # site_spray_records migrations
         if insp.has_table("site_spray_records"):
             existing_site_records = {col["name"] for col in insp.get_columns("site_spray_records")}
