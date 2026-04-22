@@ -479,6 +479,14 @@ export default function App() {
             // status: 'submitted', pdf_base64, and — for office/admin —
             // po_approval_number and row_updates).
             await api.updateTMTicket(item.targetId, item.payload);
+            // Nudge FormsPanel to immediately delta-sync its ticket cache.
+            // Without this, the worker would see the just-submitted ticket
+            // stuck in "Open Tickets" for up to 5 minutes until the next
+            // poll tick — visually the row appears in both Open Tickets
+            // AND Recently Submitted because the local status is stale.
+            // Bumping the token causes an instant `/api/time-materials/delta`
+            // call which overwrites the cached row with status='submitted'.
+            setTmRefreshToken((x) => x + 1);
           }
           await removeUploadEntry(item.id);
           completed++;
