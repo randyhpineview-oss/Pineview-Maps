@@ -29,6 +29,22 @@ const TM_STATUS_ALL = 'all';
 const TM_STATUS_SUBMITTED = 'submitted';
 const TM_STATUS_APPROVED = 'approved';
 
+// Format an ISO timestamp as a short, worker-friendly "submitted on" label
+// used in the Recently Submitted list. Falls back to an em dash when the
+// incoming value is missing or invalid so rows never render "Invalid Date".
+function formatSubmittedAt(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 // ── Row renderers ──
 // Lifted to module scope so they can be shared between the per-type tabs
 // (Lease / T&M) and the merged "All" tab, without inlining the same JSX
@@ -46,6 +62,9 @@ function renderLeaseRow(record, onViewPdf, onEditRecord) {
           </div>
           <div className="small-text" style={{ color: '#9ca3af', marginTop: '2px' }}>
             {record.site_lsd || ''} • {record.site_client || ''} • {record.site_area || ''}
+          </div>
+          <div className="small-text" style={{ color: '#6b7280', marginTop: '2px', fontSize: '0.75rem' }}>
+            Submitted: {formatSubmittedAt(record.created_at)}
           </div>
         </div>
         <div style={{ display: 'flex', gap: '6px', flexShrink: 0, marginLeft: '8px' }}>
@@ -93,6 +112,9 @@ function renderTmRow(t, onOpenTMTicket) {
           </div>
           <div className="small-text" style={{ color: '#9ca3af', marginTop: '2px' }}>
             {t.client} / {t.area} • {(t.rows?.length || 0)} row(s)
+          </div>
+          <div className="small-text" style={{ color: '#6b7280', marginTop: '2px', fontSize: '0.75rem' }}>
+            Submitted: {formatSubmittedAt(t.submitted_at || t.updated_at || t.created_at)}
           </div>
         </div>
         <div style={{ display: 'flex', gap: '6px', flexShrink: 0, marginLeft: '8px' }}>
