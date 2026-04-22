@@ -407,7 +407,13 @@ button { cursor: pointer; }
   overflow-y: auto;
   flex: 1;
   min-height: 0;
+  /* Hide the visible scrollbar on desktop (Windows) — the user scrolls with
+     the mouse wheel / trackpad, so the bar is visual noise. Keeps scrolling
+     fully functional. */
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
+.side-panel-body::-webkit-scrollbar { display: none; }
 
 /* ───── Bottom tabs ───── */
 .bottom-tabs {
