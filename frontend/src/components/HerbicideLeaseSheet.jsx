@@ -212,7 +212,41 @@ export default function HerbicideLeaseSheet({
             existingBase64: p,
           };
         });
-        setPhotos(restored);
+        if (restored.length > 0) {
+          setPhotos(restored);
+        } else {
+          // Photos exist but have no data (stripped by backend migration), use photo_urls fallback
+          if (editingRecord.photo_urls && editingRecord.photo_urls.length > 0) {
+            (async () => {
+              const restored = await Promise.all(
+                editingRecord.photo_urls.map(async (url) => {
+                  const rawUrl = url.replace('dl=0', 'raw=1');
+                  try {
+                    const resp = await fetch(rawUrl);
+                    const blob = await resp.blob();
+                    const dataUrl = await new Promise((resolve) => {
+                      const reader = new FileReader();
+                      reader.onloadend = () => resolve(reader.result);
+                      reader.readAsDataURL(blob);
+                    });
+                    return {
+                      file: null,
+                      preview: dataUrl,
+                      existingBase64: {
+                        data: dataUrl.split(',')[1],
+                        type: blob.type || 'image/jpeg',
+                      },
+                    };
+                  } catch {
+                    // If fetch fails, use URL as preview (photos won't embed in PDF)
+                    return { file: null, preview: rawUrl, existingUrl: url };
+                  }
+                })
+              );
+              setPhotos(restored);
+            })();
+          }
+        }
       } else if (editingRecord.photo_urls && editingRecord.photo_urls.length > 0) {
         // Fallback: fetch Dropbox photos and convert to base64 to avoid CORS issues
         (async () => {
