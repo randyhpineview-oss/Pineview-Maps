@@ -99,10 +99,6 @@ export default function HerbicideLeaseSheet({
       .map(t => t.name),
   [locationTypes]);
 
-  const hasPipeline = useMemo(() =>
-    pipelineTypes.includes(mainSiteType),
-  [mainSiteType, pipelineTypes]);
-
   // The "main" site types are everything that isn't access-road-flagged or
   // pipeline-flagged — Wellsite, Compressor, Battery, etc. Workers pick
   // EXACTLY ONE of these per lease sheet; access-road and pipeline are
@@ -120,6 +116,10 @@ export default function HerbicideLeaseSheet({
     const selected = form.locationTypes.filter(name => mainSiteTypeNames.includes(name));
     return selected[0] || '';
   }, [form.locationTypes, mainSiteTypeNames]);
+
+  const hasPipeline = useMemo(() =>
+    pipelineTypes.includes(mainSiteType),
+  [mainSiteType, pipelineTypes]);
 
   // List of required fields that are currently empty. Used both to disable the
   // Preview button and to surface a specific error message when the worker
