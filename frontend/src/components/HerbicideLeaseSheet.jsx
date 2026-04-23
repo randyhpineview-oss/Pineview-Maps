@@ -238,8 +238,8 @@ export default function HerbicideLeaseSheet({
                       },
                     };
                   } catch {
-                    // If fetch fails, use URL as preview (photos won't embed in PDF)
-                    return { file: null, preview: rawUrl, existingUrl: url };
+                    // If fetch fails due to CORS, use original Dropbox URL for preview (works in img tag)
+                    return { file: null, preview: url, existingUrl: url };
                   }
                 })
               );
@@ -270,8 +270,8 @@ export default function HerbicideLeaseSheet({
                   },
                 };
               } catch {
-                // If fetch fails, use URL as preview (photos won't embed in PDF)
-                return { file: null, preview: rawUrl, existingUrl: url };
+                // If fetch fails due to CORS, use original Dropbox URL for preview (works in img tag)
+                return { file: null, preview: url, existingUrl: url };
               }
             })
           );
