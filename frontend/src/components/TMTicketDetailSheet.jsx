@@ -77,6 +77,8 @@ export default function TMTicketDetailSheet({
 
   // Local editable state
   const [description, setDescription] = useState('');
+  const [client, setClient] = useState('');
+  const [area, setArea] = useState('');
   const [poNumber, setPoNumber] = useState('');
   const [officeLines, setOfficeLines] = useState(DEFAULT_OFFICE_LINES.map((l) => ({ ...l })));
   const [gstPercent, setGstPercent] = useState(5);
@@ -94,6 +96,8 @@ export default function TMTicketDetailSheet({
         if (cancelled) return;
         setTicket(t);
         setDescription(t.description_of_work || '');
+        setClient(t.client || '');
+        setArea(t.area || '');
         setPoNumber(t.po_approval_number || '');
         // Seed office lines from saved data, or start from defaults.
         // Migrate any legacy labels (e.g. renamed roadside line) on the fly.
@@ -257,6 +261,8 @@ export default function TMTicketDetailSheet({
     if (!ticket) return null;
     const mergedTicket = {
       ...ticket,
+      client,
+      area,
       description_of_work: description,
       po_approval_number: poNumber,
       rows: effectiveRows,
@@ -282,6 +288,8 @@ export default function TMTicketDetailSheet({
         office_data: buildOfficeDataPayload(),
       };
       if (canOfficeEdit) {
+        payload.client = client;
+        payload.area = area;
         payload.po_approval_number = poNumber;
         const rowUps = buildRowUpdates();
         if (rowUps.length > 0) payload.row_updates = rowUps;
@@ -343,6 +351,8 @@ export default function TMTicketDetailSheet({
       // workers because the backend rejects them from that role anyway
       // (allowlist at _merge_worker_office_data + _can_edit_ticket).
       if (canOfficeEdit) {
+        payload.client = client;
+        payload.area = area;
         payload.po_approval_number = poNumber;
         const rowUps = buildRowUpdates();
         if (rowUps.length > 0) payload.row_updates = rowUps;
@@ -410,6 +420,8 @@ export default function TMTicketDetailSheet({
       const pdfBase64 = await regenerateCurrentPdf({ signaturePng: sigDataUrl });
       const payload = {
         description_of_work: description,
+        client,
+        area,
         po_approval_number: poNumber,
         office_data: buildOfficeDataPayload(),
         approved_signature: signatureBase64,
@@ -476,6 +488,8 @@ export default function TMTicketDetailSheet({
       const pdfBase64 = await regenerateCurrentPdf();
       const payload = {
         description_of_work: description,
+        client,
+        area,
         po_approval_number: poNumber,
         office_data: buildOfficeDataPayload(),
         approve: true,
@@ -591,6 +605,32 @@ export default function TMTicketDetailSheet({
           }}
         />
       </div>
+      {canOfficeEdit ? (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+          <div>
+            <label style={{ display: 'block', fontSize: '0.85rem', color: '#9ca3af', marginBottom: '4px' }}>Client</label>
+            <input
+              value={client}
+              onChange={(e) => setClient(e.target.value)}
+              style={{
+                width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '6px',
+                border: '1px solid #374151', backgroundColor: '#111827', color: '#f9fafb',
+              }}
+            />
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: '0.85rem', color: '#9ca3af', marginBottom: '4px' }}>Area</label>
+            <input
+              value={area}
+              onChange={(e) => setArea(e.target.value)}
+              style={{
+                width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '6px',
+                border: '1px solid #374151', backgroundColor: '#111827', color: '#f9fafb',
+              }}
+            />
+          </div>
+        </div>
+      ) : null}
       {canOfficeEdit ? (
         <div style={{ marginBottom: '16px' }}>
           <label style={{ display: 'block', fontSize: '0.85rem', color: '#9ca3af', marginBottom: '4px' }}>PO/Approval #</label>

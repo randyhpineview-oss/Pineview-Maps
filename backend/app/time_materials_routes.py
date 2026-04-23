@@ -474,6 +474,10 @@ def update_ticket(
 
     # Office-only fields
     if is_office:
+        if payload.client is not None:
+            ticket.client = payload.client
+        if payload.area is not None:
+            ticket.area = payload.area
         if payload.po_approval_number is not None:
             ticket.po_approval_number = payload.po_approval_number
         if payload.office_data is not None:

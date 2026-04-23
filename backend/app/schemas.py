@@ -443,6 +443,8 @@ class TimeMaterialsTicketCreate(BaseModel):
 
 class TimeMaterialsTicketUpdate(BaseModel):
     description_of_work: str | None = None
+    client: str | None = None
+    area: str | None = None
     po_approval_number: str | None = None
     office_data: dict | None = None
     status: TMTicketStatus | None = None
