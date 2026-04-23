@@ -257,6 +257,22 @@ class SiteAdminUpdate(BaseModel):
     notes: str | None = None
 
 
+class SprayRecordApprovalUpdate(BaseModel):
+    """Per-spray-record instruction emitted by the approval dialog.
+
+    Carries the regenerated lease-sheet PDF (so Dropbox stays in sync with
+    the corrected client/area/lsd) and, when the spray record currently
+    lives on a shared T&M ticket and meta has changed, a `tm_link`
+    directive telling the backend how to re-home this record's T&M rows
+    (pick an existing ticket by id, or create a new one for the corrected
+    `(client, area, spray_date)`).
+    """
+    spray_record_id: int
+    lease_pdf_base64: str | None = None
+    tm_link: TimeMaterialsLink | None = None
+    tm_pdf_base64: str | None = None
+
+
 class SiteApprovalUpdate(BaseModel):
     approval_state: ApprovalState
     lsd: str | None = None
@@ -265,6 +281,29 @@ class SiteApprovalUpdate(BaseModel):
     notes: str | None = None
     gate_code: str | None = None
     phone_number: str | None = None
+    # Regenerated artifacts + re-home choices for each linked spray record.
+    # Required when approval_state=approved AND any linked spray record
+    # exists AND lsd/client/area is being changed. See update_site_approval.
+    spray_record_updates: list[SprayRecordApprovalUpdate] | None = None
+    # Regenerated T&M PDF when the linked ticket is DEDICATED (all rows on
+    # it trace to the one spray record being approved). Shared-ticket
+    # re-homes carry their own tm_pdf_base64 inside tm_link.
+    dedicated_tm_pdf_base64: str | None = None
+
+
+class SiteApprovalConflictDetail(BaseModel):
+    """Structured 409 body surfaced by POST /api/sites/{id}/approval and
+    POST /pipelines/{id}/approval so the frontend can show an actionable
+    dialog without re-parsing error strings.
+    """
+    # "has_linked_spray_records" → reject blocked because lease sheets exist.
+    # "shared_tm_ticket_needs_rehome" → approve blocked because a meta change
+    #     would corrupt a T&M ticket shared with other spray records; admin
+    #     must resubmit with tm_link choices.
+    reason: str
+    linked_spray_records: list[dict] = Field(default_factory=list)
+    shared_ticket_conflicts: list[dict] = Field(default_factory=list)
+    open_tm_tickets: list[dict] = Field(default_factory=list)
 
 
 class SiteQuickEdit(BaseModel):

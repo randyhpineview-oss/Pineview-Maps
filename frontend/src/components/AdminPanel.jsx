@@ -5,31 +5,9 @@ import UserManagementPanel from './UserManagementPanel';
 import LookupManager from './LookupManager';
 
 function PendingSiteCard({ site, busy, onApprove, onReject, onApproveAndEdit, onSelectSite }) {
-  const [editing, setEditing] = useState(false);
-  const [edits, setEdits] = useState({
-    lsd: site.lsd || '',
-    client: site.client || '',
-    area: site.area || '',
-    gate_code: site.gate_code || '',
-    phone_number: site.phone_number || '',
-    notes: site.notes || '',
-  });
-
-  function update(key, value) {
-    setEdits((prev) => ({ ...prev, [key]: value }));
-  }
-
-  function buildOverrides() {
-    const overrides = {};
-    if (edits.lsd !== (site.lsd || '')) overrides.lsd = edits.lsd || null;
-    if (edits.client !== (site.client || '')) overrides.client = edits.client || null;
-    if (edits.area !== (site.area || '')) overrides.area = edits.area || null;
-    if (edits.gate_code !== (site.gate_code || '')) overrides.gate_code = edits.gate_code || null;
-    if (edits.phone_number !== (site.phone_number || '')) overrides.phone_number = edits.phone_number || null;
-    if (edits.notes !== (site.notes || '')) overrides.notes = edits.notes || null;
-    return overrides;
-  }
-
+  // Approve & Edit now opens the full review modal (ApproveEditModal)
+  // via onApproveAndEdit; nothing is submitted until the admin confirms
+  // in the modal, which also handles T&M re-homing and PDF regeneration.
   return (
     <div className="site-row" onClick={() => onSelectSite?.(site)} style={{ cursor: onSelectSite ? 'pointer' : 'default' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
@@ -45,43 +23,19 @@ function PendingSiteCard({ site, busy, onApprove, onReject, onApproveAndEdit, on
           Type change requested → <strong>{site.pending_pin_type === 'reclaimed' ? 'Reclaimed' : site.pending_pin_type === 'lsd' ? 'LSD' : site.pending_pin_type}</strong>
         </div>
       ) : null}
-      {!editing ? (
-        <div className="small-text" style={{ marginTop: '0.55rem' }}>
-          {site.notes || 'No notes'}
-        </div>
-      ) : (
-        <div className="list-grid" style={{ marginTop: '0.55rem' }}>
-          <input value={edits.lsd} onChange={(e) => update('lsd', e.target.value)} placeholder="LSD or site label" />
-          <input value={edits.client} onChange={(e) => update('client', e.target.value)} placeholder="Client" />
-          <input value={edits.area} onChange={(e) => update('area', e.target.value)} placeholder="Area" />
-          <input value={edits.gate_code} onChange={(e) => update('gate_code', e.target.value)} placeholder="Gate code" />
-          <input value={edits.phone_number} onChange={(e) => update('phone_number', e.target.value)} placeholder="Phone number" />
-          <textarea value={edits.notes} onChange={(e) => update('notes', e.target.value)} placeholder="Notes" rows="2" />
-        </div>
-      )}
-      <div className="button-row" style={{ marginTop: '0.75rem' }}>
-        {!editing ? (
-          <>
-            <button className="primary-button" type="button" disabled={busy} onClick={() => onApprove(site.id, {})}>
-              Approve
-            </button>
-            <button className="secondary-button" type="button" disabled={busy} onClick={() => setEditing(true)}>
-              Approve & Edit
-            </button>
-            <button className="danger-button" type="button" disabled={busy} onClick={() => onReject(site.id)}>
-              Reject
-            </button>
-          </>
-        ) : (
-          <>
-            <button className="primary-button" type="button" disabled={busy} onClick={() => { onApproveAndEdit ? onApproveAndEdit(site, buildOverrides()) : onApprove(site.id, buildOverrides()); }}>
-              Confirm Approve
-            </button>
-            <button className="secondary-button" type="button" onClick={() => setEditing(false)}>
-              Cancel
-            </button>
-          </>
-        )}
+      <div className="small-text" style={{ marginTop: '0.55rem' }}>
+        {site.notes || 'No notes'}
+      </div>
+      <div className="button-row" style={{ marginTop: '0.75rem' }} onClick={(e) => e.stopPropagation()}>
+        <button className="primary-button" type="button" disabled={busy} onClick={() => onApprove(site.id, {})}>
+          Approve
+        </button>
+        <button className="secondary-button" type="button" disabled={busy} onClick={() => onApproveAndEdit?.(site)}>
+          Approve &amp; Edit
+        </button>
+        <button className="danger-button" type="button" disabled={busy} onClick={() => onReject(site.id)}>
+          Reject
+        </button>
       </div>
     </div>
   );
@@ -129,6 +83,7 @@ export default function AdminPanel({
   pendingPipelines = [],
   onApprovePipeline,
   onRejectPipeline,
+  onApprovePipelineAndEdit,
   onImportPipelineKml,
   onBulkResetPipelines,
   onSelectPipeline,
@@ -213,6 +168,10 @@ export default function AdminPanel({
                       <button className="primary-button" type="button" disabled={busy}
                         onClick={() => onApprovePipeline?.(pipeline.id, { approval_state: 'approved' })}>
                         Approve
+                      </button>
+                      <button className="secondary-button" type="button" disabled={busy}
+                        onClick={() => onApprovePipelineAndEdit?.(pipeline)}>
+                        Approve &amp; Edit
                       </button>
                       <button className="danger-button" type="button" disabled={busy}
                         onClick={() => onRejectPipeline?.(pipeline.id)}>

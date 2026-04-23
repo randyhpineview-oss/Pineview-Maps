@@ -699,7 +699,11 @@ def derive_row_from_spray_record(record) -> dict:
     else:
         site = getattr(record, "site", None)
         location = data.get("lsdOrPipeline") or (site.lsd if site else None)
-        site_type = _site_type_from_site(site)
+        # Prefer the worker's actual location-type selection (stamped into
+        # lease_sheet_data as `mainSiteType` at submit time) over the coarse
+        # pin_type → display-name map. The fallback keeps legacy rows that
+        # predate the mainSiteType key rendering the same as before.
+        site_type = data.get("mainSiteType") or _site_type_from_site(site)
     return {
         "location": location,
         "site_type": site_type,
@@ -812,6 +816,69 @@ def append_row_for_spray_record(
     ticket.updated_at = datetime.utcnow()
     db.flush()
     return main_row
+
+
+def classify_ticket_ownership(ticket, record) -> str:
+    """Classify a T&M ticket's relationship to a single spray record.
+
+    Returns one of:
+    - "none":       record has no tm_ticket (or the ticket is soft-deleted).
+    - "dedicated":  every non-deleted row on the ticket traces back to THIS
+                    record. Safe to edit the ticket's client/area in place
+                    when the underlying site/pipeline metadata is corrected.
+    - "shared":     ticket carries rows from other spray records too. A
+                    metadata correction on this record would desync the
+                    ticket header from its other rows, so the admin must
+                    re-home this record's rows onto a different ticket.
+
+    Classification keys on spray_record_id vs pipeline_spray_record_id so
+    we don't accidentally treat a co-tenant pipeline row as "this record".
+    """
+    if ticket is None or ticket.deleted_at is not None:
+        return "none"
+    is_pipeline = _is_pipeline_record(record)
+    rec_fk_name = "pipeline_spray_record_id" if is_pipeline else "spray_record_id"
+    other_fk_name = "spray_record_id" if is_pipeline else "pipeline_spray_record_id"
+    own_count = 0
+    foreign_count = 0
+    for row in ticket.rows or []:
+        own = getattr(row, rec_fk_name, None)
+        other = getattr(row, other_fk_name, None)
+        if own == record.id:
+            own_count += 1
+        elif own is not None or other is not None:
+            foreign_count += 1
+    if foreign_count > 0:
+        return "shared"
+    if own_count > 0:
+        return "dedicated"
+    # Ticket with no rows pointing at either side — treat as dedicated so
+    # the ticket header can still be updated and this record can re-own it.
+    return "dedicated"
+
+
+def detach_rows_for_record(db: Session, ticket, record) -> None:
+    """Delete every TimeMaterialsRow on `ticket` that belongs to `record`.
+
+    Used by the approval cascade when a meta change forces this spray
+    record off a shared ticket onto a freshly-picked one. The caller is
+    responsible for subsequently calling append_row_for_spray_record
+    against the new ticket and clearing/resetting record.tm_ticket_id.
+    """
+    if ticket is None:
+        return
+    is_pipeline = _is_pipeline_record(record)
+    fk_col = (
+        TimeMaterialsRow.pipeline_spray_record_id if is_pipeline
+        else TimeMaterialsRow.spray_record_id
+    )
+    (
+        db.query(TimeMaterialsRow)
+        .filter(TimeMaterialsRow.ticket_id == ticket.id, fk_col == record.id)
+        .delete(synchronize_session=False)
+    )
+    ticket.updated_at = datetime.utcnow()
+    db.flush()
 
 
 def find_or_create_ticket_for_link(

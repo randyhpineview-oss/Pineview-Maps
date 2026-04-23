@@ -59,13 +59,27 @@ async function request(path, options = {}) {
 
   if (!response.ok) {
     let message = 'Request failed';
+    let detail = null;
     try {
       const payload = await response.json();
-      message = payload.detail || message;
+      detail = payload.detail;
+      if (typeof detail === 'string') {
+        message = detail;
+      } else if (detail && typeof detail === 'object' && detail.reason) {
+        // Structured 409 payload (e.g. has_linked_spray_records,
+        // shared_tm_ticket_needs_rehome). Keep a human message for
+        // fallback alerts and attach the raw object below.
+        message = detail.reason;
+      }
     } catch {
       message = response.statusText || message;
     }
-    throw new Error(`${response.status}: ${message}`);
+    const err = new Error(`${response.status}: ${message}`);
+    err.status = response.status;
+    // Surface the structured detail so callers (e.g. the approval modal)
+    // can render pickers / conflict lists without re-parsing the message.
+    err.detail = (detail && typeof detail === 'object') ? detail : null;
+    throw err;
   }
 
   if (response.status === 204) {

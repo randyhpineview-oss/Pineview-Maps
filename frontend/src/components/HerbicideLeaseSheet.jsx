@@ -103,6 +103,24 @@ export default function HerbicideLeaseSheet({
     form.locationTypes.some(type => pipelineTypes.includes(type)),
   [form.locationTypes, pipelineTypes]);
 
+  // The "main" site types are everything that isn't access-road-flagged or
+  // pipeline-flagged — Wellsite, Compressor, Battery, etc. Workers pick
+  // EXACTLY ONE of these per lease sheet; access-road and pipeline are
+  // orthogonal and peel off into their own T&M rows.
+  const mainSiteTypeNames = useMemo(() =>
+    locationTypes
+      .filter(t => !t.is_access_road && !t.is_pipeline && (t.name || '').toLowerCase() !== 'pipeline')
+      .map(t => t.name),
+  [locationTypes]);
+
+  // The single selected main site type (or '' if none yet). Stamped into
+  // lease_sheet_data.mainSiteType so the backend T&M row derivation shows
+  // what the worker actually picked (not a default from site.pin_type).
+  const mainSiteType = useMemo(() => {
+    const selected = form.locationTypes.filter(name => mainSiteTypeNames.includes(name));
+    return selected[0] || '';
+  }, [form.locationTypes, mainSiteTypeNames]);
+
   // List of required fields that are currently empty. Used both to disable the
   // Preview button and to surface a specific error message when the worker
   // taps it anyway. Comments is intentionally NOT required.
@@ -115,7 +133,7 @@ export default function HerbicideLeaseSheet({
     if (!form.area || !String(form.area).trim()) missing.push('Area');
     if (!form.lsdOrPipeline || !String(form.lsdOrPipeline).trim()) missing.push('LSD / Pipeline');
     if (!form.applicators?.length) missing.push('Applicators');
-    if (!form.locationTypes?.length) missing.push('Location Type');
+    if (!mainSiteType) missing.push('Site Type');
     if (isBlank(form.temperature)) missing.push('Temperature');
     if (isBlank(form.windSpeed)) missing.push('Wind Speed');
     if (!form.windDirection?.length) missing.push('Wind Direction');
@@ -138,7 +156,7 @@ export default function HerbicideLeaseSheet({
     }
     if (photos.length < 2) missing.push('Photos (both slots)');
     return missing;
-  }, [form, hasPipeline, hasAccessRoad, photos]);
+  }, [form, hasPipeline, hasAccessRoad, mainSiteType, photos]);
 
   // Auto-populate from site, pipeline, draft, or editing record (run once)
   useEffect(() => {
@@ -462,9 +480,13 @@ export default function HerbicideLeaseSheet({
         // row mirrors the backend's derive_row_from_spray_record: site_type
         // 'Pipeline' and area_ha holds totalDistanceSprayed directly (km,
         // already entered in km on the lease sheet form).
+        // Mirrors backend derive_row_from_spray_record: pipeline sheets
+        // force 'Pipeline', otherwise use the worker's actual selection
+        // (falling back to the site's pin_type-derived default only as a
+        // safety net — validation already requires mainSiteType).
         const tentativeSiteType = hasPipeline
           ? 'Pipeline'
-          : (site?.pin_type === 'lsd' ? 'Wellsite' : '');
+          : (mainSiteType || (site?.pin_type === 'lsd' ? 'Wellsite' : ''));
         const tentativeAreaHa = hasPipeline
           ? (Number(form.totalDistanceSprayed) || 0)
           : (Number(form.areaTreated) || 0);
@@ -523,6 +545,11 @@ export default function HerbicideLeaseSheet({
           // row-derivation helper doesn't have to re-query location_types
           // to know this sheet was a pipeline spray.
           isPipeline: hasPipeline,
+          // The single main site-type name the worker picked (Wellsite /
+          // Compressor / Battery / etc). Backend reads this directly for
+          // the T&M row's site_type column so the billing row matches the
+          // lease-sheet PDF.
+          mainSiteType: mainSiteType || null,
         },
         pdf_base64: finalPdfBase64,
         ticket_number: finalTicket || undefined,
@@ -1010,32 +1037,72 @@ export default function HerbicideLeaseSheet({
               </div>
             </div>
 
-            {/* Location Types */}
+            {/* Site Type (single-select main type, required) + separate
+                Access Road / Pipeline toggles that can be layered on top. */}
             <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '8px' }}>Location Type {!form.locationTypes?.length && <span style={{ color: '#f87171' }}>*</span>}</label>
+              <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '8px' }}>Site Type {!mainSiteType && <span style={{ color: '#f87171' }}>*</span>}</label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                {locationTypes.map(type => (
-                  <label key={type.id} style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    padding: '6px 12px',
-                    borderRadius: '6px',
-                    backgroundColor: form.locationTypes.includes(type.name) ? '#3b82f6' : '#374151',
-                    cursor: 'pointer',
-                    fontSize: '0.875rem',
-                  }}>
-                    <input
-                      type="checkbox"
-                      checked={form.locationTypes.includes(type.name)}
-                      onChange={() => handleCheckboxGroup('locationTypes', type.name)}
-                      style={{ display: 'none' }}
-                    />
-                    {type.name}
-                  </label>
-                ))}
+                {locationTypes
+                  .filter(t => !t.is_access_road && !t.is_pipeline && (t.name || '').toLowerCase() !== 'pipeline')
+                  .map(type => (
+                    <label key={type.id} style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '6px 12px',
+                      borderRadius: '6px',
+                      backgroundColor: mainSiteType === type.name ? '#3b82f6' : '#374151',
+                      cursor: 'pointer',
+                      fontSize: '0.875rem',
+                    }}>
+                      <input
+                        type="radio"
+                        name="mainSiteType"
+                        checked={mainSiteType === type.name}
+                        onChange={() => setForm(prev => {
+                          // Replace any currently-selected main type with this
+                          // one, while preserving access-road / pipeline picks.
+                          const retained = (prev.locationTypes || []).filter(n => !mainSiteTypeNames.includes(n));
+                          return { ...prev, locationTypes: [...retained, type.name] };
+                        })}
+                        style={{ display: 'none' }}
+                      />
+                      {type.name}
+                    </label>
+                  ))}
               </div>
             </div>
+
+            {/* Add-ons: Access Road + Pipeline (each its own T&M row) */}
+            {locationTypes.some(t => t.is_access_road) || locationTypes.some(t => t.is_pipeline || (t.name || '').toLowerCase() === 'pipeline') ? (
+              <div>
+                <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '8px' }}>Add-ons</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                  {locationTypes
+                    .filter(t => t.is_access_road || t.is_pipeline || (t.name || '').toLowerCase() === 'pipeline')
+                    .map(type => (
+                      <label key={type.id} style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '6px 12px',
+                        borderRadius: '6px',
+                        backgroundColor: form.locationTypes.includes(type.name) ? '#3b82f6' : '#374151',
+                        cursor: 'pointer',
+                        fontSize: '0.875rem',
+                      }}>
+                        <input
+                          type="checkbox"
+                          checked={form.locationTypes.includes(type.name)}
+                          onChange={() => handleCheckboxGroup('locationTypes', type.name)}
+                          style={{ display: 'none' }}
+                        />
+                        {type.name}
+                      </label>
+                    ))}
+                </div>
+              </div>
+            ) : null}
 
             {/* Weather */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
