@@ -1665,6 +1665,79 @@ def list_deleted_sites(
     return [SiteRead.model_validate(site) for site in sites]
 
 
+@app.get(
+    "/api/deleted-lease-sheets",
+    response_model=list[RecentSubmissionRead],
+    dependencies=[Depends(require_roles(RoleEnum.admin, RoleEnum.office))],
+)
+def list_deleted_lease_sheets(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[RecentSubmissionRead]:
+    """List soft-deleted lease sheets (site and pipeline)."""
+    site_q = (
+        db.query(
+            SiteSprayRecord,
+            Site.lsd.label('site_lsd'),
+            Site.client.label('site_client'),
+            Site.area.label('site_area'),
+        )
+        .options(defer(SiteSprayRecord.lease_sheet_data))
+        .join(Site, SiteSprayRecord.site_id == Site.id)
+        .filter(
+            SiteSprayRecord.lease_sheet_data.isnot(None),
+            SiteSprayRecord.deleted_at.isnot(None),
+        )
+        .order_by(SiteSprayRecord.deleted_at.desc())
+    )
+
+    pipeline_q = (
+        db.query(
+            SprayRecord,
+            Pipeline.name.label('pipeline_name'),
+            Pipeline.client.label('pipeline_client'),
+            Pipeline.area.label('pipeline_area'),
+        )
+        .options(defer(SprayRecord.lease_sheet_data))
+        .join(Pipeline, SprayRecord.pipeline_id == Pipeline.id)
+        .filter(
+            SprayRecord.lease_sheet_data.isnot(None),
+            SprayRecord.deleted_at.isnot(None),
+        )
+        .order_by(SprayRecord.deleted_at.desc())
+    )
+
+    results: list[RecentSubmissionRead] = []
+    for record, site_lsd, site_client, site_area in site_q.all():
+        data = SiteSprayRecordSummary.model_validate(record).model_dump()
+        data['site_lsd'] = site_lsd
+        data['site_client'] = site_client
+        data['site_area'] = site_area
+        results.append(RecentSubmissionRead(**data))
+    for record, pipeline_name, pipeline_client, pipeline_area in pipeline_q.all():
+        results.append(RecentSubmissionRead(
+            id=record.id,
+            site_id=None,
+            pipeline_id=record.pipeline_id,
+            spray_date=record.spray_date,
+            sprayed_by_user_id=record.sprayed_by_user_id,
+            sprayed_by_name=record.sprayed_by_name,
+            notes=record.notes,
+            is_avoided=record.is_avoided,
+            created_at=record.created_at,
+            ticket_number=record.ticket_number,
+            pdf_url=record.pdf_url,
+            photo_urls=record.photo_urls,
+            tm_ticket_id=None,
+            site_lsd=pipeline_name,
+            site_client=pipeline_client,
+            site_area=pipeline_area,
+        ))
+
+    results.sort(key=lambda r: r.created_at, reverse=True)
+    return results
+
+
 @app.post(
     "/api/sites/{site_id}/restore",
     response_model=SiteRead,

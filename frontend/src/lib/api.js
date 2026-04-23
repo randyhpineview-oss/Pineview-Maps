@@ -279,6 +279,12 @@ export const api = {
     const params = search ? `?search=${encodeURIComponent(search)}` : '';
     return request(`/api/recent-submissions${params}`);
   },
+  listDeletedLeaseSheets() {
+    return request('/api/deleted-lease-sheets');
+  },
+  listDeletedTMTickets() {
+    return request('/api/time-materials/deleted');
+  },
 
   // ── Delta-sync endpoints (bandwidth-efficient polling) ──
   //

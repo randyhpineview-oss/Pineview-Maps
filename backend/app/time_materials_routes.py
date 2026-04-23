@@ -326,6 +326,40 @@ def list_tickets(
     return [_strip_office_fields_for_worker(t, current_user) for t in tickets]
 
 
+@router.get("/all", response_model=list[TimeMaterialsTicketRead])
+def list_all_tickets(
+    status_filter: TMTicketStatus | None = Query(default=None, alias="status"),
+    spray_date: date | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List all T&M tickets (admin/office only)."""
+    require_roles(RoleEnum.admin, RoleEnum.office)(current_user)
+    q = db.query(TimeMaterialsTicket)
+    if status_filter:
+        q = q.filter(TimeMaterialsTicket.status == status_filter)
+    if spray_date:
+        q = q.filter(TimeMaterialsTicket.spray_date == spray_date)
+    tickets = q.order_by(TimeMaterialsTicket.created_at.desc()).all()
+    return [TimeMaterialsTicketRead.model_validate(t) for t in tickets]
+
+
+@router.get("/deleted", response_model=list[TimeMaterialsTicketRead])
+def list_deleted_tickets(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List soft-deleted T&M tickets (admin/office only)."""
+    require_roles(RoleEnum.admin, RoleEnum.office)(current_user)
+    tickets = (
+        db.query(TimeMaterialsTicket)
+        .filter(TimeMaterialsTicket.deleted_at.isnot(None))
+        .order_by(TimeMaterialsTicket.deleted_at.desc())
+        .all()
+    )
+    return [TimeMaterialsTicketRead.model_validate(t) for t in tickets]
+
+
 # ── Delta ────────────────────────────────────────────────────────
 #
 # Declared BEFORE the /{ticket_id} route so FastAPI doesn't route "delta"

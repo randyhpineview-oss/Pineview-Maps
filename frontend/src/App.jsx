@@ -102,6 +102,8 @@ export default function App() {
   const [sites, setSites] = useState([]);
   const [pendingSites, setPendingSites] = useState([]);
   const [deletedSites, setDeletedSites] = useState([]);
+  const [deletedLeaseSheets, setDeletedLeaseSheets] = useState([]);
+  const [deletedTMTickets, setDeletedTMTickets] = useState([]);
   const [selectedSite, setSelectedSite] = useState(null);
   const [message, setMessage] = useState('Loading project data...');
   const [isOnline, setIsOnline] = useState(window.navigator.onLine);
@@ -432,6 +434,32 @@ export default function App() {
     }
   }, [roleCanAdmin]);
 
+  const loadDeletedLeaseSheets = useCallback(async () => {
+    if (!roleCanAdmin || !window.navigator.onLine) {
+      setDeletedLeaseSheets([]);
+      return;
+    }
+    try {
+      const deleted = await api.listDeletedLeaseSheets();
+      setDeletedLeaseSheets(deleted);
+    } catch {
+      setDeletedLeaseSheets([]);
+    }
+  }, [roleCanAdmin]);
+
+  const loadDeletedTMTickets = useCallback(async () => {
+    if (!roleCanAdmin || !window.navigator.onLine) {
+      setDeletedTMTickets([]);
+      return;
+    }
+    try {
+      const deleted = await api.listDeletedTMTickets();
+      setDeletedTMTickets(deleted);
+    } catch {
+      setDeletedTMTickets([]);
+    }
+  }, [roleCanAdmin]);
+
   const refreshUploadQueue = useCallback(async () => {
     const items = await getUploadQueue();
     setUploadQueueItems(items);
@@ -563,6 +591,8 @@ export default function App() {
             loadPipelines(),
             loadPendingPipelines(),
             loadDeletedPipelines(),
+            loadDeletedLeaseSheets(),
+            loadDeletedTMTickets(),
           ]);
 
           // Seed delta-sync watermarks from sync-status RIGHT AFTER the full
@@ -602,7 +632,8 @@ export default function App() {
     }
   }, [loadCachedSites, loadCachedPipelines, loadCachedRecents, loadCachedLookups, loadCachedUsers,
       loadServerSites, loadServerRecents, loadServerLookups, loadServerUsers,
-      loadPipelines, loadPendingPipelines, loadDeletedPipelines]);
+      loadPipelines, loadPendingPipelines, loadDeletedPipelines,
+      loadDeletedLeaseSheets, loadDeletedTMTickets]);
 
   // ── Boot hydration: hydrate-from-cache fast path ──────────────────────────
   // On first mount we used to unconditionally call refreshAllData(), which
@@ -2344,6 +2375,45 @@ export default function App() {
     );
   }
 
+  async function handleRestoreLeaseSheet(record) {
+    const isSite = record.site_id != null;
+    await runAdminAction(async () => {
+      if (isSite) {
+        await api.restoreSiteSprayRecord(record.id);
+      } else {
+        await api.restoreSprayRecord(record.id);
+      }
+      await loadDeletedLeaseSheets();
+      await handleRequestSync();
+    }, 'Lease sheet restored successfully.');
+  }
+
+  async function handleDeleteLeaseSheetPermanent(record) {
+    const isSite = record.site_id != null;
+    await runAdminAction(async () => {
+      if (isSite) {
+        await api.deleteSiteSprayRecordPermanent(record.id);
+      } else {
+        await api.deleteSprayRecordPermanent(record.id);
+      }
+      await loadDeletedLeaseSheets();
+    }, 'Lease sheet permanently deleted.');
+  }
+
+  async function handleRestoreTMTicket(ticketId) {
+    await runAdminAction(async () => {
+      await api.restoreTMTicket(ticketId);
+      await loadDeletedTMTickets();
+    }, 'T&M ticket restored successfully.');
+  }
+
+  async function handleDeleteTMTicketPermanent(ticketId) {
+    await runAdminAction(async () => {
+      await api.deleteTMTicketPermanent(ticketId);
+      await loadDeletedTMTickets();
+    }, 'T&M ticket permanently deleted.');
+  }
+
   if (isAuthLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 flex items-center justify-center">
@@ -3047,6 +3117,12 @@ export default function App() {
               deletedPipelines={deletedPipelines}
               onRestorePipeline={(pipelineId) => runAdminAction(async () => { await api.restorePipeline(pipelineId); await loadPipelines(); await loadDeletedPipelines(); }, 'Pipeline restored.')}
               onDeletePipelinePermanent={(pipelineId) => runAdminAction(async () => { await api.deletePipelinePermanent(pipelineId); await loadDeletedPipelines(); }, 'Pipeline permanently deleted.')}
+              deletedLeaseSheets={deletedLeaseSheets}
+              onRestoreLeaseSheet={handleRestoreLeaseSheet}
+              onDeleteLeaseSheetPermanent={handleDeleteLeaseSheetPermanent}
+              deletedTMTickets={deletedTMTickets}
+              onRestoreTMTicket={handleRestoreTMTicket}
+              onDeleteTMTicketPermanent={handleDeleteTMTicketPermanent}
               cachedLookups={cachedLookups}
               onLookupsChanged={loadServerLookups}
               cachedUsers={cachedUsers}
