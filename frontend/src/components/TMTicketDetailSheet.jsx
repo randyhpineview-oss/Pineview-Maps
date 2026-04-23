@@ -81,6 +81,8 @@ export default function TMTicketDetailSheet({
   const [officeLines, setOfficeLines] = useState(DEFAULT_OFFICE_LINES.map((l) => ({ ...l })));
   const [gstPercent, setGstPercent] = useState(5);
   const [rowsEdits, setRowsEdits] = useState({});  // rowId → { cost_code, ... }
+  const [newRows, setNewRows] = useState([]);        // manual site rows not yet saved
+  const [rowsToDelete, setRowsToDelete] = useState([]); // ids of saved manual rows to remove
 
   // Load ticket
   useEffect(() => {
@@ -118,11 +120,14 @@ export default function TMTicketDetailSheet({
     return () => { cancelled = true; };
   }, [ticketId]);
 
-  // Rows including any pending edits — used both in the UI render and as the
-  // source of truth for derived auto-populated QTYs.
+  // Rows including any pending edits and new manual rows — used both in the
+  // UI render and as the source of truth for derived auto-populated QTYs.
   const effectiveRows = useMemo(() => {
-    return (ticket?.rows || []).map((r) => ({ ...r, ...(rowsEdits[r.id] || {}) }));
-  }, [ticket?.rows, rowsEdits]);
+    const existing = (ticket?.rows || [])
+      .filter((r) => !rowsToDelete.includes(r.id))
+      .map((r) => ({ ...r, ...(rowsEdits[r.id] || {}) }));
+    return [...existing, ...newRows];
+  }, [ticket?.rows, rowsEdits, newRows, rowsToDelete]);
 
   // Resolve the effective QTY for an office line, substituting the derived
   // value for auto-populated labels (workers cannot override these).
@@ -163,6 +168,33 @@ export default function TMTicketDetailSheet({
 
   const buildRowUpdates = () => {
     return Object.entries(rowsEdits).map(([id, fields]) => ({ id: Number(id), ...fields }));
+  };
+
+  const addSiteRow = () => {
+    setNewRows((prev) => [
+      ...prev,
+      { tempId: -(prev.length + 1), location: '', site_type: '', herbicides: '', liters_used: '', area_ha: '', cost_code: '' },
+    ]);
+  };
+
+  const updateNewRow = (tempId, field, value) => {
+    setNewRows((prev) => prev.map((r) => (r.tempId === tempId ? { ...r, [field]: value } : r)));
+  };
+
+  const removeNewRow = (tempId) => {
+    setNewRows((prev) => prev.filter((r) => r.tempId !== tempId));
+  };
+
+  const removeExistingRow = (rowId) => {
+    setRowsToDelete((prev) => [...prev, rowId]);
+  };
+
+  const buildNewRows = () => {
+    return newRows.map(({ tempId, ...rest }) => rest);
+  };
+
+  const buildRowsToDelete = () => {
+    return rowsToDelete;
   };
 
   // Build the office_data payload with derived QTY baked into auto-populated
@@ -253,11 +285,17 @@ export default function TMTicketDetailSheet({
         payload.po_approval_number = poNumber;
         const rowUps = buildRowUpdates();
         if (rowUps.length > 0) payload.row_updates = rowUps;
+        const newR = buildNewRows();
+        if (newR.length > 0) payload.new_rows = newR;
+        const delR = buildRowsToDelete();
+        if (delR.length > 0) payload.rows_to_delete = delR;
       }
       if (pdfBase64) payload.pdf_base64 = pdfBase64;
       const updated = await api.updateTMTicket(ticket.id, payload);
       setTicket(updated);
       setRowsEdits({});
+      setNewRows([]);
+      setRowsToDelete([]);
       alert('Saved.');
     } catch (e) {
       alert('Save failed: ' + (e.message || 'Unknown error'));
@@ -308,6 +346,10 @@ export default function TMTicketDetailSheet({
         payload.po_approval_number = poNumber;
         const rowUps = buildRowUpdates();
         if (rowUps.length > 0) payload.row_updates = rowUps;
+        const newR = buildNewRows();
+        if (newR.length > 0) payload.new_rows = newR;
+        const delR = buildRowsToDelete();
+        if (delR.length > 0) payload.rows_to_delete = delR;
       }
       if (pdfBase64) payload.pdf_base64 = pdfBase64;
 
@@ -323,6 +365,8 @@ export default function TMTicketDetailSheet({
           sprayDate: ticket.spray_date,
         });
         setRowsEdits({});
+        setNewRows([]);
+        setRowsToDelete([]);
         if (onClose) onClose();
         return;
       }
@@ -332,6 +376,8 @@ export default function TMTicketDetailSheet({
       const updated = await api.updateTMTicket(ticket.id, payload);
       setTicket(updated);
       setRowsEdits({});
+      setNewRows([]);
+      setRowsToDelete([]);
       alert('Ticket marked as pending.');
     } catch (e) {
       alert('Submit failed: ' + (e.message || 'Unknown error'));
@@ -371,10 +417,16 @@ export default function TMTicketDetailSheet({
       };
       const rowUps = buildRowUpdates();
       if (rowUps.length > 0) payload.row_updates = rowUps;
+      const newR = buildNewRows();
+      if (newR.length > 0) payload.new_rows = newR;
+      const delR = buildRowsToDelete();
+      if (delR.length > 0) payload.rows_to_delete = delR;
       if (pdfBase64) payload.pdf_base64 = pdfBase64;
       const updated = await api.updateTMTicket(ticket.id, payload);
       setTicket(updated);
       setRowsEdits({});
+      setNewRows([]);
+      setRowsToDelete([]);
     } catch (e) {
       alert('Approval failed: ' + (e.message || 'Unknown error'));
     } finally {
@@ -430,10 +482,16 @@ export default function TMTicketDetailSheet({
       };
       const rowUps = buildRowUpdates();
       if (rowUps.length > 0) payload.row_updates = rowUps;
+      const newR = buildNewRows();
+      if (newR.length > 0) payload.new_rows = newR;
+      const delR = buildRowsToDelete();
+      if (delR.length > 0) payload.rows_to_delete = delR;
       if (pdfBase64) payload.pdf_base64 = pdfBase64;
       const updated = await api.updateTMTicket(ticket.id, payload);
       setTicket(updated);
       setRowsEdits({});
+      setNewRows([]);
+      setRowsToDelete([]);
     } catch (e) {
       alert('Approval failed: ' + (e.message || 'Unknown error'));
     } finally {
@@ -548,35 +606,81 @@ export default function TMTicketDetailSheet({
       ) : null}
 
       {/* Sites Treated — read-only for workers (auto-filled from lease sheets).
-          Office/admin can edit Cost Code. Area unit swaps to 'km' for Roadside
-          and Pipeline rows (both store their distance in the area_ha column). */}
-      <h3 style={{ fontSize: '1rem', margin: '14px 0 6px' }}>Sites Treated ({ticket.rows?.length || 0})</h3>
+          Office/admin can edit all fields and add/remove manual rows. Area unit
+          swaps to 'km' for Roadside and Pipeline rows. */}
+      <h3 style={{ fontSize: '1rem', margin: '14px 0 6px' }}>
+        Sites Treated ({((ticket.rows || []).filter((r) => !rowsToDelete.includes(r.id)).length + newRows.length) || 0})
+      </h3>
       <div style={{ background: '#111827', borderRadius: '8px', overflow: 'hidden', border: '1px solid #374151' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 0.9fr 1.2fr 0.8fr 0.8fr 1fr', gap: '4px', padding: '8px', background: '#1f2937', fontSize: '0.75rem', fontWeight: 600, color: '#9ca3af' }}>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: canOfficeEdit ? '1.4fr 0.9fr 1.2fr 0.8fr 0.8fr 1fr 0.25fr' : '1.4fr 0.9fr 1.2fr 0.8fr 0.8fr 1fr',
+          gap: '4px', padding: '8px', background: '#1f2937', fontSize: '0.75rem', fontWeight: 600, color: '#9ca3af',
+        }}>
           <span>Location</span>
           <span>Type</span>
           <span>Herbicides</span>
           <span>(L) Used</span>
           <span>Area</span>
           <span>Cost Code</span>
+          {canOfficeEdit ? <span></span> : null}
         </div>
-        {(ticket.rows || []).length === 0 ? (
+        {(ticket.rows || []).length === 0 && newRows.length === 0 ? (
           <div style={{ padding: '12px', color: '#9ca3af', fontSize: '0.85rem' }}>No rows yet.</div>
         ) : null}
-        {(ticket.rows || []).map((r) => {
+        {/* Existing rows */}
+        {(ticket.rows || []).filter((r) => !rowsToDelete.includes(r.id)).map((r) => {
           const rowEdit = rowsEdits[r.id] || {};
-          const isKmUnit = r.site_type === 'Roadside' || r.site_type === 'Pipeline';
+          const isKmUnit = (rowEdit.site_type ?? r.site_type) === 'Roadside' || (rowEdit.site_type ?? r.site_type) === 'Pipeline';
           const unit = isKmUnit ? 'km' : 'ha';
           return (
             <div key={r.id} style={{
-              display: 'grid', gridTemplateColumns: '1.4fr 0.9fr 1.2fr 0.8fr 0.8fr 1fr',
+              display: 'grid',
+              gridTemplateColumns: canOfficeEdit ? '1.4fr 0.9fr 1.2fr 0.8fr 0.8fr 1fr 0.25fr' : '1.4fr 0.9fr 1.2fr 0.8fr 0.8fr 1fr',
               gap: '4px', padding: '8px', borderTop: '1px solid #374151', fontSize: '0.8rem', alignItems: 'center',
             }}>
-              <span>{r.location || '—'}</span>
-              <span>{r.site_type || '—'}</span>
-              <span>{r.herbicides || '—'}</span>
-              <span>{r.liters_used != null && r.liters_used !== '' ? Number(r.liters_used).toFixed(2) : '—'}</span>
-              <span>{r.area_ha != null && r.area_ha !== '' ? `${Number(r.area_ha).toFixed(2)} ${unit}` : '—'}</span>
+              {canOfficeEdit ? (
+                <input
+                  value={rowEdit.location ?? (r.location ?? '')}
+                  onChange={(e) => updateRowEdit(r.id, 'location', e.target.value)}
+                  placeholder="—"
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+                />
+              ) : <span>{r.location || '—'}</span>}
+              {canOfficeEdit ? (
+                <input
+                  value={rowEdit.site_type ?? (r.site_type ?? '')}
+                  onChange={(e) => updateRowEdit(r.id, 'site_type', e.target.value)}
+                  placeholder="—"
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+                />
+              ) : <span>{r.site_type || '—'}</span>}
+              {canOfficeEdit ? (
+                <input
+                  value={rowEdit.herbicides ?? (r.herbicides ?? '')}
+                  onChange={(e) => updateRowEdit(r.id, 'herbicides', e.target.value)}
+                  placeholder="—"
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+                />
+              ) : <span>{r.herbicides || '—'}</span>}
+              {canOfficeEdit ? (
+                <input
+                  type="number" inputMode="decimal" step="0.01"
+                  value={rowEdit.liters_used ?? (r.liters_used != null ? r.liters_used : '')}
+                  onChange={(e) => updateRowEdit(r.id, 'liters_used', e.target.value)}
+                  placeholder="—"
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+                />
+              ) : <span>{r.liters_used != null && r.liters_used !== '' ? Number(r.liters_used).toFixed(2) : '—'}</span>}
+              {canOfficeEdit ? (
+                <input
+                  type="number" inputMode="decimal" step="0.01"
+                  value={rowEdit.area_ha ?? (r.area_ha != null ? r.area_ha : '')}
+                  onChange={(e) => updateRowEdit(r.id, 'area_ha', e.target.value)}
+                  placeholder={unit}
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+                />
+              ) : <span>{r.area_ha != null && r.area_ha !== '' ? `${Number(r.area_ha).toFixed(2)} ${unit}` : '—'}</span>}
               {canOfficeEdit ? (
                 <input
                   value={rowEdit.cost_code ?? (r.cost_code ?? '')}
@@ -584,12 +688,103 @@ export default function TMTicketDetailSheet({
                   placeholder="—"
                   style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
                 />
-              ) : (
-                <span>{r.cost_code || '—'}</span>
-              )}
+              ) : <span>{r.cost_code || '—'}</span>}
+              {canOfficeEdit ? (
+                <button
+                  type="button"
+                  onClick={() => removeExistingRow(r.id)}
+                  aria-label="Remove row"
+                  title="Remove this row"
+                  style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '1rem', padding: 0 }}
+                >
+                  ×
+                </button>
+              ) : null}
             </div>
           );
         })}
+        {/* New manual rows */}
+        {canOfficeEdit && newRows.map((r) => {
+          const isKmUnit = r.site_type === 'Roadside' || r.site_type === 'Pipeline';
+          const unit = isKmUnit ? 'km' : 'ha';
+          return (
+            <div key={r.tempId} style={{
+              display: 'grid', gridTemplateColumns: '1.4fr 0.9fr 1.2fr 0.8fr 0.8fr 1fr 0.25fr',
+              gap: '4px', padding: '8px', borderTop: '1px solid #374151', fontSize: '0.8rem', alignItems: 'center',
+            }}>
+              <input
+                value={r.location}
+                onChange={(e) => updateNewRow(r.tempId, 'location', e.target.value)}
+                placeholder="—"
+                style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+              />
+              <input
+                value={r.site_type}
+                onChange={(e) => updateNewRow(r.tempId, 'site_type', e.target.value)}
+                placeholder="—"
+                style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+              />
+              <input
+                value={r.herbicides}
+                onChange={(e) => updateNewRow(r.tempId, 'herbicides', e.target.value)}
+                placeholder="—"
+                style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+              />
+              <input
+                type="number" inputMode="decimal" step="0.01"
+                value={r.liters_used}
+                onChange={(e) => updateNewRow(r.tempId, 'liters_used', e.target.value)}
+                placeholder="—"
+                style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+              />
+              <input
+                type="number" inputMode="decimal" step="0.01"
+                value={r.area_ha}
+                onChange={(e) => updateNewRow(r.tempId, 'area_ha', e.target.value)}
+                placeholder={unit}
+                style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+              />
+              <input
+                value={r.cost_code}
+                onChange={(e) => updateNewRow(r.tempId, 'cost_code', e.target.value)}
+                placeholder="—"
+                style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+              />
+              <button
+                type="button"
+                onClick={() => removeNewRow(r.tempId)}
+                aria-label="Remove row"
+                title="Remove this new row"
+                style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '1rem', padding: 0 }}
+              >
+                ×
+              </button>
+            </div>
+          );
+        })}
+
+        {/* Add Site Row — office/admin only */}
+        {canOfficeEdit ? (
+          <div style={{ padding: '8px', borderTop: '1px solid #374151', background: '#0b1220' }}>
+            <button
+              type="button"
+              onClick={addSiteRow}
+              style={{
+                width: '100%',
+                padding: '6px',
+                background: '#1f2937',
+                border: '1px dashed #374151',
+                borderRadius: '6px',
+                color: '#60a5fa',
+                fontSize: '0.8rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              + Add Site Row
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {/* Office Use ONLY

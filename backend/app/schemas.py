@@ -450,3 +450,5 @@ class TimeMaterialsTicketUpdate(BaseModel):
     approved_signature: str | None = None   # base64 PNG from draw-pad
     approve: bool = False                    # set approved_by/at, status=approved
     row_updates: list[dict] | None = None    # [{ id, cost_code, ... }] batch update rows
+    new_rows: list[dict] | None = None       # admin-added manual rows (no spray_record_id)
+    rows_to_delete: list[int] | None = None  # ids of manual rows to remove

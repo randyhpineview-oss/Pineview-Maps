@@ -456,6 +456,8 @@ def update_ticket(
             payload.status is not None,
             payload.pdf_base64,
             payload.row_updates,
+            payload.new_rows,
+            payload.rows_to_delete,
             payload.po_approval_number is not None,
             payload.approved_signature is not None,
             payload.approve,
@@ -524,6 +526,25 @@ def update_ticket(
                 for fld in ("location", "site_type", "herbicides", "liters_used", "area_ha", "cost_code"):
                     if fld in ru and ru[fld] is not None:
                         setattr(row, fld, ru[fld])
+        if payload.new_rows:
+            for nr in payload.new_rows:
+                db.add(TimeMaterialsRow(
+                    ticket_id=ticket.id,
+                    location=nr.get("location") or None,
+                    site_type=nr.get("site_type") or None,
+                    herbicides=nr.get("herbicides") or None,
+                    liters_used=_to_float(nr.get("liters_used")),
+                    area_ha=_to_float(nr.get("area_ha")),
+                    cost_code=nr.get("cost_code") or None,
+                ))
+        if payload.rows_to_delete:
+            for del_id in payload.rows_to_delete:
+                row = db.query(TimeMaterialsRow).filter(
+                    TimeMaterialsRow.id == del_id,
+                    TimeMaterialsRow.ticket_id == ticket.id,
+                ).first()
+                if row:
+                    db.delete(row)
     else:
         # Worker path: reject approval + office-only write attempts outright,
         # but accept office_data WITH QTY-only merge on allowlisted labels,
