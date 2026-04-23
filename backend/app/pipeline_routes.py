@@ -308,8 +308,139 @@ def update_pipeline_approval(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
 ):
-    """Approve or reject a pipeline."""
+    """Approve or reject a pipeline, cascading metadata corrections.
+
+    Mirrors update_site_approval (sites endpoint): a reject with linked
+    spray records is hard-blocked; an approve that changes name/client/
+    area rewrites each linked lease sheet's lease_sheet_data snapshot,
+    refreshes T&M row location/site_type, and either updates a
+    DEDICATED ticket in place or forces a re-home onto a freshly-picked
+    ticket when the current one is SHARED.
+    """
+    from app.models import TimeMaterialsTicket
+    from app.time_materials_routes import (
+        _upload_tm_pdf,
+        append_row_for_spray_record,
+        classify_ticket_ownership,
+        detach_rows_for_record,
+        find_or_create_ticket_for_link,
+    )
+
     pipeline = _get_pipeline_or_404(db, pipeline_id)
+
+    linked_records = (
+        db.query(SprayRecord)
+        .options(
+            joinedload(SprayRecord.tm_ticket).joinedload(TimeMaterialsTicket.rows),
+        )
+        .filter(SprayRecord.pipeline_id == pipeline.id)
+        .all()
+    )
+
+    # ── Reject branch ────────────────────────────────────────────────
+    if payload.approval_state == PipelineApprovalState.rejected.value:
+        if linked_records:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "reason": "has_linked_spray_records",
+                    "linked_spray_records": [
+                        {
+                            "id": r.id,
+                            "ticket_number": r.ticket_number,
+                            "tm_ticket_id": r.tm_ticket_id,
+                            "spray_date": (
+                                r.spray_date.isoformat() if r.spray_date else None
+                            ),
+                            "is_avoided": r.is_avoided,
+                        }
+                        for r in linked_records
+                    ],
+                },
+            )
+        pipeline.approval_state = payload.approval_state
+        pipeline.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(pipeline)
+        return PipelineListRead.model_validate(pipeline)
+
+    # ── Approve branch ──────────────────────────────────────────────
+    new_name = payload.name if payload.name is not None else pipeline.name
+    new_client = payload.client if payload.client is not None else pipeline.client
+    new_area = payload.area if payload.area is not None else pipeline.area
+    is_meta_change = (
+        (payload.name is not None and payload.name != pipeline.name)
+        or (payload.client is not None and payload.client != pipeline.client)
+        or (payload.area is not None and payload.area != pipeline.area)
+    )
+
+    updates_by_id = {
+        u.spray_record_id: u for u in (payload.spray_record_updates or [])
+    }
+
+    # Shared-ticket re-home validation (409 before any mutation).
+    if is_meta_change and linked_records:
+        shared_conflicts: list[dict] = []
+        for record in linked_records:
+            if record.is_avoided:
+                continue
+            ownership = classify_ticket_ownership(record.tm_ticket, record)
+            if ownership != "shared":
+                continue
+            update = updates_by_id.get(record.id)
+            if update is None or update.tm_link is None:
+                shared_conflicts.append(
+                    {
+                        "spray_record_id": record.id,
+                        "ticket_number": record.ticket_number,
+                        "current_tm_ticket_id": record.tm_ticket_id,
+                        "current_tm_ticket_number": (
+                            record.tm_ticket.ticket_number if record.tm_ticket else None
+                        ),
+                        "spray_date": (
+                            record.spray_date.isoformat() if record.spray_date else None
+                        ),
+                    }
+                )
+        if shared_conflicts:
+            spray_dates = {
+                c["spray_date"] for c in shared_conflicts if c.get("spray_date")
+            }
+            open_tickets: list[dict] = []
+            if new_client and new_area and spray_dates:
+                ticket_rows = (
+                    db.query(TimeMaterialsTicket)
+                    .filter(
+                        TimeMaterialsTicket.deleted_at.is_(None),
+                        TimeMaterialsTicket.client == new_client,
+                        TimeMaterialsTicket.area == new_area,
+                    )
+                    .order_by(TimeMaterialsTicket.created_at.desc())
+                    .all()
+                )
+                for t in ticket_rows:
+                    t_date = t.spray_date.isoformat() if t.spray_date else None
+                    if t_date in spray_dates:
+                        open_tickets.append(
+                            {
+                                "id": t.id,
+                                "ticket_number": t.ticket_number,
+                                "client": t.client,
+                                "area": t.area,
+                                "spray_date": t_date,
+                                "status": t.status.value if hasattr(t.status, "value") else t.status,
+                            }
+                        )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "reason": "shared_tm_ticket_needs_rehome",
+                    "shared_ticket_conflicts": shared_conflicts,
+                    "open_tm_tickets": open_tickets,
+                },
+            )
+
+    # Validation passed — apply mutations atomically.
     pipeline.approval_state = payload.approval_state
     if payload.name is not None:
         pipeline.name = payload.name
@@ -318,6 +449,81 @@ def update_pipeline_approval(
     if payload.area is not None:
         pipeline.area = payload.area
     pipeline.updated_at = datetime.utcnow()
+
+    if is_meta_change:
+        for record in linked_records:
+            update = updates_by_id.get(record.id)
+            # 1. Rewrite lease_sheet_data snapshot.
+            data = dict(record.lease_sheet_data or {})
+            if payload.client is not None:
+                data["customer"] = payload.client
+            if payload.area is not None:
+                data["area"] = payload.area
+            if payload.name is not None:
+                # Pipelines use `name` as the LSD-equivalent location label.
+                data["lsdOrPipeline"] = payload.name
+            record.lease_sheet_data = data
+
+            # 2. Regenerate lease-sheet PDF on Dropbox.
+            if update and update.lease_pdf_base64:
+                try:
+                    pdf_content = base64.b64decode(update.lease_pdf_base64)
+                    pdf_path = build_pdf_path(
+                        date_str=str(record.spray_date),
+                        client=data.get("customer", "") or "",
+                        area=data.get("area", "") or "",
+                        ticket=record.ticket_number or "",
+                        lsd_or_pipeline=data.get("lsdOrPipeline", "") or "",
+                    )
+                    new_url = upload_pdf_to_dropbox(pdf_content, pdf_path)
+                    if new_url:
+                        record.pdf_url = new_url
+                except Exception as e:  # noqa: BLE001
+                    print(f"[APPROVE-PIPE] Lease PDF upload failed for record {record.id}: {e}")
+
+            if record.is_avoided:
+                continue
+
+            ownership = classify_ticket_ownership(record.tm_ticket, record)
+            if ownership == "dedicated" and record.tm_ticket is not None:
+                record.tm_ticket.client = new_client or record.tm_ticket.client
+                record.tm_ticket.area = new_area or record.tm_ticket.area
+                append_row_for_spray_record(db, record.tm_ticket, record)
+                b64_pdf = None
+                if update and update.tm_pdf_base64:
+                    b64_pdf = update.tm_pdf_base64
+                elif payload.dedicated_tm_pdf_base64:
+                    b64_pdf = payload.dedicated_tm_pdf_base64
+                if b64_pdf:
+                    new_url = _upload_tm_pdf(record.tm_ticket, b64_pdf)
+                    if new_url:
+                        record.tm_ticket.pdf_url = new_url
+            elif ownership == "shared":
+                old_ticket = record.tm_ticket
+                detach_rows_for_record(db, old_ticket, record)
+                record.tm_ticket_id = None
+                new_ticket = find_or_create_ticket_for_link(
+                    db=db,
+                    record=record,
+                    link_ticket_id=(update.tm_link.ticket_id if update and update.tm_link else None),
+                    link_create=bool(update and update.tm_link and update.tm_link.create),
+                    description_of_work=(
+                        update.tm_link.description_of_work if update and update.tm_link else None
+                    ),
+                    current_user=current_user,
+                )
+                if new_ticket is not None:
+                    append_row_for_spray_record(db, new_ticket, record)
+                    b64_pdf = None
+                    if update and update.tm_link and update.tm_link.tm_pdf_base64:
+                        b64_pdf = update.tm_link.tm_pdf_base64
+                    elif update and update.tm_pdf_base64:
+                        b64_pdf = update.tm_pdf_base64
+                    if b64_pdf:
+                        new_url = _upload_tm_pdf(new_ticket, b64_pdf)
+                        if new_url:
+                            new_ticket.pdf_url = new_url
+
     db.commit()
     db.refresh(pipeline)
     return PipelineListRead.model_validate(pipeline)

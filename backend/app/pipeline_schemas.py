@@ -4,7 +4,7 @@ import json
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.pipeline_models import PipelineApprovalState, PipelineStatus
-from app.schemas import TimeMaterialsLink
+from app.schemas import SprayRecordApprovalUpdate, TimeMaterialsLink
 
 
 class SprayRecordRead(BaseModel):
@@ -178,6 +178,11 @@ class PipelineApprovalUpdate(BaseModel):
     name: str | None = None
     client: str | None = None
     area: str | None = None
+    # Per-spray-record re-home instructions + regenerated PDFs, required
+    # when approving a pipeline with meta changes and linked sheets on
+    # shared T&M tickets. Mirrors SiteApprovalUpdate.
+    spray_record_updates: list[SprayRecordApprovalUpdate] | None = None
+    dedicated_tm_pdf_base64: str | None = None
 
 
 class PipelineImportResponse(BaseModel):

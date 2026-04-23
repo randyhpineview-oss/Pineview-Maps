@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import AdminPanel from './components/AdminPanel';
+import ApproveEditModal from './components/ApproveEditModal';
 import FilterBar from './components/FilterBar';
 import HerbicideLeaseSheet from './components/HerbicideLeaseSheet';
 import InstallAppPrompt from './components/InstallAppPrompt';
@@ -2281,19 +2282,37 @@ export default function App() {
     finally { setAdminBusy(false); }
   }
 
-  async function handleApproveAndEdit(site, overrides) {
-    setAdminBusy(true);
-    try {
-      const approved = await api.approveSite(site.id, { approval_state: 'approved', ...overrides });
-      await refreshAllData();
-      const target = approved || site;
-      setSelectedSite(target);
-      // Don't zoom after approval - stay at current view to prevent flash
-      setActiveTab(TAB_MAP);
-      setDetailOpen(true);
-      setMessage('Approved.');
-    } catch (error) { setMessage(error.message || 'Approve failed.'); }
-    finally { setAdminBusy(false); }
+  // Target of the Approve & Edit review modal. Either null (modal closed)
+  // or { kind: 'site'|'pipeline', target: <row> }.
+  const [approveEditTarget, setApproveEditTarget] = useState(null);
+
+  function handleApproveAndEdit(site) {
+    setApproveEditTarget({ kind: 'site', target: site });
+  }
+
+  function handleApprovePipelineAndEdit(pipeline) {
+    setApproveEditTarget({ kind: 'pipeline', target: pipeline });
+  }
+
+  // Surfaces a structured 409 from the approval endpoint (reject branch
+  // only — the approve branch is handled inside ApproveEditModal). Keeps
+  // the user's billable work intact by refusing to reject a pin that
+  // still has linked lease sheets.
+  function explainRejectConflict(error, kind = 'site') {
+    const detail = error?.detail;
+    if (!detail || detail.reason !== 'has_linked_spray_records') return false;
+    const linked = detail.linked_spray_records || [];
+    const lines = linked.map((r) => {
+      const date = r.spray_date ? ` (${r.spray_date})` : '';
+      const tn = r.ticket_number ? ` ${r.ticket_number}` : ` #${r.id}`;
+      return `• Lease sheet${tn}${date}${r.is_avoided ? ' [avoided]' : ''}`;
+    }).join('\n');
+    alert(
+      `Cannot reject this ${kind} — ${linked.length} lease sheet(s) are still linked:\n\n` +
+      `${lines}\n\n` +
+      `Delete those lease sheets (and any linked T&M rows) first, then retry reject.`
+    );
+    return true;
   }
 
   async function runAdminAction(action, successMessage) {
@@ -2962,8 +2981,22 @@ export default function App() {
               areas={areas}
               busy={adminBusy}
               onApprove={(siteId, overrides) => runAdminAction(() => api.approveSite(siteId, { approval_state: 'approved', ...overrides }), 'Approved.')}
-              onReject={(siteId) => runAdminAction(() => api.approveSite(siteId, { approval_state: 'rejected' }), 'Rejected.')}
+              onReject={async (siteId) => {
+                setAdminBusy(true);
+                try {
+                  await api.approveSite(siteId, { approval_state: 'rejected' });
+                  await refreshAllData();
+                  setMessage('Rejected.');
+                } catch (error) {
+                  if (!explainRejectConflict(error, 'pin')) {
+                    setMessage(error?.message || 'Reject failed.');
+                  }
+                } finally {
+                  setAdminBusy(false);
+                }
+              }}
               onApproveAndEdit={handleApproveAndEdit}
+              onApprovePipelineAndEdit={handleApprovePipelineAndEdit}
               onBulkReset={(payload) => runAdminAction(() => api.bulkResetStatus(payload), 'Reset complete.')}
               onImport={(file) => runAdminAction(() => api.importKml(file), 'KML imported.')}
               onRestore={handleRestoreSite}
@@ -2972,7 +3005,21 @@ export default function App() {
               currentUserEmail={user?.email}
               pendingPipelines={pendingPipelines}
               onApprovePipeline={(pipelineId, payload) => runAdminAction(async () => { await api.approvePipeline(pipelineId, payload); await loadPipelines(); await loadPendingPipelines(); }, 'Pipeline approved.')}
-              onRejectPipeline={(pipelineId) => runAdminAction(async () => { await api.approvePipeline(pipelineId, { approval_state: 'rejected' }); await loadPipelines(); await loadPendingPipelines(); }, 'Pipeline rejected.')}
+              onRejectPipeline={async (pipelineId) => {
+                setAdminBusy(true);
+                try {
+                  await api.approvePipeline(pipelineId, { approval_state: 'rejected' });
+                  await loadPipelines();
+                  await loadPendingPipelines();
+                  setMessage('Pipeline rejected.');
+                } catch (error) {
+                  if (!explainRejectConflict(error, 'pipeline')) {
+                    setMessage(error?.message || 'Reject failed.');
+                  }
+                } finally {
+                  setAdminBusy(false);
+                }
+              }}
               onImportPipelineKml={(file) => runAdminAction(async () => { await api.importPipelineKml(file); await loadPipelines(); }, 'Pipeline KML imported.')}
               onBulkResetPipelines={(payload) => runAdminAction(async () => { await api.bulkResetPipelines(payload); await loadPipelines(); }, 'Pipelines reset to not sprayed.')}
               onSelectPipeline={(pipeline) => { handleOpenPipelineDetail(pipeline); setActiveTab(TAB_MAP); }}
@@ -2987,6 +3034,22 @@ export default function App() {
           </div>
         </div>
       </main>
+
+      {/* ── Approve & Edit review modal (admin) ── */}
+      {approveEditTarget ? (
+        <ApproveEditModal
+          kind={approveEditTarget.kind}
+          target={approveEditTarget.target}
+          onClose={() => setApproveEditTarget(null)}
+          onSubmitted={async () => {
+            await refreshAllData();
+            if (approveEditTarget.kind === 'pipeline') {
+              await loadPendingPipelines();
+            }
+            setMessage('Approved.');
+          }}
+        />
+      ) : null}
 
       {/* ── Bottom tabs ── */}
       <nav className="bottom-tabs">
