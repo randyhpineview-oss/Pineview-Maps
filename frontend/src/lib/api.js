@@ -258,6 +258,18 @@ export const api = {
   updateSiteSprayRecord(recordId, payload) {
     return request(`/api/site-spray-records/${recordId}`, { method: 'PATCH', body: payload });
   },
+  restoreSiteSprayRecord(recordId) {
+    return request(`/api/site-spray-records/${recordId}/restore`, { method: 'POST' });
+  },
+  deleteSiteSprayRecordPermanent(recordId) {
+    return request(`/api/site-spray-records/${recordId}/permanent`, { method: 'DELETE' });
+  },
+  restoreSprayRecord(recordId) {
+    return request(`/api/spray-records/${recordId}/restore`, { method: 'POST' });
+  },
+  deleteSprayRecordPermanent(recordId) {
+    return request(`/api/spray-records/${recordId}/permanent`, { method: 'DELETE' });
+  },
   // Full spray record including lease_sheet_data (used by the edit flow).
   // List endpoints return a slimmer summary without lease_sheet_data to keep egress tiny.
   getSiteSprayRecord(recordId) {
@@ -321,6 +333,20 @@ export const api = {
     }
     const buf = await resp.arrayBuffer();
     return new Uint8Array(buf);
+  },
+
+  /**
+   * Fetch a Dropbox-hosted image through the backend proxy and return base64 data.
+   *
+   * Uses /api/proxy-photo (server-side fetch) to sidestep browser-CORS issues with
+   * Dropbox shared links. Returns { data: base64_string, type: mime_type }.
+   *
+   * @param {string} imageUrl      Dropbox shared-link URL (or any direct image URL).
+   * @returns {Promise<{ data: string, type: string }>}
+   */
+  async proxyPhoto(imageUrl) {
+    if (!imageUrl) throw new Error('No image URL provided.');
+    return request('/api/proxy-photo', { method: 'POST', body: { url: imageUrl } });
   },
   bulkResetPipelines(payload) {
     return request('/api/admin/pipelines/bulk-reset', { method: 'POST', body: payload });
@@ -413,6 +439,12 @@ export const api = {
   },
   deleteTMTicket(ticketId) {
     return request(`/api/time-materials/${ticketId}`, { method: 'DELETE' });
+  },
+  restoreTMTicket(ticketId) {
+    return request(`/api/time-materials/${ticketId}/restore`, { method: 'POST' });
+  },
+  deleteTMTicketPermanent(ticketId) {
+    return request(`/api/time-materials/${ticketId}/permanent`, { method: 'DELETE' });
   },
 
   // ── Password reset (6-digit code flow) ──

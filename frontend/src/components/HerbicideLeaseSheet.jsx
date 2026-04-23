@@ -220,25 +220,19 @@ export default function HerbicideLeaseSheet({
             (async () => {
               const restored = await Promise.all(
                 editingRecord.photo_urls.map(async (url) => {
-                  const rawUrl = url.replace('dl=0', 'raw=1');
                   try {
-                    const resp = await fetch(rawUrl);
-                    const blob = await resp.blob();
-                    const dataUrl = await new Promise((resolve) => {
-                      const reader = new FileReader();
-                      reader.onloadend = () => resolve(reader.result);
-                      reader.readAsDataURL(blob);
-                    });
+                    const { data, type } = await api.proxyPhoto(url);
+                    const dataUrl = `data:${type};base64,${data}`;
                     return {
                       file: null,
                       preview: dataUrl,
                       existingBase64: {
-                        data: dataUrl.split(',')[1],
-                        type: blob.type || 'image/jpeg',
+                        data: data,
+                        type: type,
                       },
                     };
                   } catch {
-                    // If fetch fails due to CORS, use original Dropbox URL for preview (works in img tag)
+                    // If proxy fails, use original Dropbox URL for preview (works in img tag)
                     return { file: null, preview: url, existingUrl: url };
                   }
                 })
@@ -248,29 +242,23 @@ export default function HerbicideLeaseSheet({
           }
         }
       } else if (editingRecord.photo_urls && editingRecord.photo_urls.length > 0) {
-        // Fallback: fetch Dropbox photos and convert to base64 to avoid CORS issues
+        // Fallback: fetch Dropbox photos via backend proxy to avoid CORS issues
         (async () => {
           const restored = await Promise.all(
             editingRecord.photo_urls.map(async (url) => {
-              const rawUrl = url.replace('dl=0', 'raw=1');
               try {
-                const resp = await fetch(rawUrl);
-                const blob = await resp.blob();
-                const dataUrl = await new Promise((resolve) => {
-                  const reader = new FileReader();
-                  reader.onloadend = () => resolve(reader.result);
-                  reader.readAsDataURL(blob);
-                });
+                const { data, type } = await api.proxyPhoto(url);
+                const dataUrl = `data:${type};base64,${data}`;
                 return {
                   file: null,
                   preview: dataUrl,
                   existingBase64: {
-                    data: dataUrl.split(',')[1],
-                    type: blob.type || 'image/jpeg',
+                    data: data,
+                    type: type,
                   },
                 };
               } catch {
-                // If fetch fails due to CORS, use original Dropbox URL for preview (works in img tag)
+                // If proxy fails, use original Dropbox URL for preview (works in img tag)
                 return { file: null, preview: url, existingUrl: url };
               }
             })

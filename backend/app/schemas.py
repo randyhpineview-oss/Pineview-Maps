@@ -360,10 +360,11 @@ class SitesDeltaResponse(BaseModel):
 
 
 class RecentSubmissionsDeltaResponse(BaseModel):
-    """Incremental recent-submissions update. Append-only: no removal list
-    needed because these are typically created and never deleted. Only new
-    submissions since `since` are returned, already capped by the server."""
+    """Incremental recent-submissions update. Includes new/updated rows
+    and ids_removed for soft-deleted lease sheets so frontend caches can
+    prune accordingly."""
     items: list[RecentSubmissionRead]
+    ids_removed: list[int]
     server_time: datetime
 
 

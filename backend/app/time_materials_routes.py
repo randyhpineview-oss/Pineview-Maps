@@ -636,6 +636,50 @@ def delete_ticket(
     db.commit()
 
 
+@router.post("/{ticket_id}/restore")
+def restore_ticket(
+    ticket_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
+):
+    """Restore a soft-deleted T&M ticket."""
+    ticket = (
+        db.query(TimeMaterialsTicket)
+        .filter(
+            TimeMaterialsTicket.id == ticket_id,
+            TimeMaterialsTicket.deleted_at.isnot(None),
+        )
+        .first()
+    )
+    if not ticket:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+
+    ticket.deleted_at = None
+    ticket.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(ticket)
+    return {"success": True}
+
+
+@router.delete("/{ticket_id}/permanent", status_code=status.HTTP_204_NO_CONTENT)
+def delete_ticket_permanent(
+    ticket_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(RoleEnum.admin)),
+):
+    """Permanently delete a T&M ticket."""
+    ticket = (
+        db.query(TimeMaterialsTicket)
+        .filter(TimeMaterialsTicket.id == ticket_id)
+        .first()
+    )
+    if not ticket:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+
+    db.delete(ticket)
+    db.commit()
+
+
 # ── Row helpers used internally by spray record endpoints ────────
 
 def _to_float(v):

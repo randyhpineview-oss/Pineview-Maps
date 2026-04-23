@@ -732,16 +732,64 @@ def delete_spray_record(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
 ):
-    """Delete a spray record."""
+    """Soft-delete a pipeline spray record. Unlinks its T&M rows so they
+    become manual rows rather than orphaning them."""
     record = db.query(SprayRecord).filter(SprayRecord.id == record_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="Spray record not found")
+
+    now = datetime.utcnow()
+    record.deleted_at = now
+    record.deleted_by_user_id = current_user.id
+
+    # Unlink T&M rows so they become manual rows (ticket stays intact)
+    for tm_row in list(record.tm_rows):
+        tm_row.pipeline_spray_record_id = None
+
+    pipeline_id = record.pipeline_id
+    pipeline = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+    if pipeline:
+        _update_pipeline_spray_status(db, pipeline)
+        pipeline.updated_at = datetime.utcnow()
+
+    db.commit()
+
+
+@router.post("/spray-records/{record_id}/restore")
+def restore_spray_record(
+    record_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
+):
+    """Restore a soft-deleted pipeline spray record."""
+    record = db.query(SprayRecord).filter(SprayRecord.id == record_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Spray record not found")
+    if record.deleted_at is None:
+        raise HTTPException(status_code=400, detail="Record is not deleted")
+
+    record.deleted_at = None
+    record.deleted_by_user_id = None
+    db.commit()
+    db.refresh(record)
+    return {"success": True}
+
+
+@router.delete("/spray-records/{record_id}/permanent", status_code=204)
+def delete_spray_record_permanent(
+    record_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(RoleEnum.admin)),
+):
+    """Permanently delete a pipeline spray record."""
+    record = db.query(SprayRecord).filter(SprayRecord.id == record_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Spray record not found")
+
     pipeline_id = record.pipeline_id
     db.delete(record)
     db.flush()
 
-    # Update pipeline status + DELTA-SYNC: always bump updated_at so
-    # /api/pipelines/delta surfaces this change even when status didn't flip.
     pipeline = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
     if pipeline:
         _update_pipeline_spray_status(db, pipeline)

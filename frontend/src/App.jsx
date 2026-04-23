@@ -987,17 +987,22 @@ export default function App() {
       try {
         const delta = await api.recentSubmissionsDelta(recentsSinceRef.current);
         const items = Array.isArray(delta?.items) ? delta.items : [];
+        const idsRemoved = Array.isArray(delta?.ids_removed) ? delta.ids_removed : [];
 
-        if (items.length > 0) {
+        if (items.length > 0 || idsRemoved.length > 0) {
           // Prepend new items, dedupe by id, keep the list bounded.
           setCachedRecents((prev) => {
             const byId = new Map();
             for (const item of items) byId.set(item.id, item);
             for (const row of prev) if (!byId.has(row.id)) byId.set(row.id, row);
+            // Drop soft-deleted IDs
+            for (const id of idsRemoved) byId.delete(id);
             return Array.from(byId.values())
               .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
           });
           for (const item of items) await upsertRecent(item);
+          // Remove deleted items from IndexedDB
+          for (const id of idsRemoved) await deleteRecent(id);
         }
 
         recentsSinceRef.current = delta.server_time || recentsSinceRef.current;
@@ -2911,6 +2916,22 @@ export default function App() {
               areas={areas}
               onViewPdf={(record) => setPreviewingRecord(record)}
               onEditRecord={(record) => openEditRecord(record)}
+              onDeleteRecord={async (record) => {
+                if (!window.confirm(`Delete lease sheet ${record.ticket_number || ''}?`)) return;
+                try {
+                  // Check if it's a site or pipeline lease sheet
+                  if (record.site_id != null) {
+                    await api.deleteSiteSprayRecord(record.id);
+                  } else {
+                    await api.deleteSprayRecord(record.id);
+                  }
+                  // Trigger delta sync to remove from cachedRecents
+                  handleRequestSync();
+                  setMessage('Lease sheet deleted');
+                } catch (e) {
+                  setMessage('Failed to delete lease sheet: ' + (e.message || 'unknown'));
+                }
+              }}
               onStartLeaseSheetFromDraft={(draft) => {
                 // Tapping a draft (or "New lease sheet") opens the lease sheet overlay.
                 // When draft is null, the user needs to pick a site from the Map tab first.

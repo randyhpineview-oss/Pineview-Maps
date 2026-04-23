@@ -646,7 +646,10 @@ def list_site_spray_records(
     q = (
         db.query(SiteSprayRecord)
         .options(defer(SiteSprayRecord.lease_sheet_data))
-        .filter(SiteSprayRecord.site_id == site_id)
+        .filter(
+            SiteSprayRecord.site_id == site_id,
+            SiteSprayRecord.deleted_at.is_(None),
+        )
     )
     return [SiteSprayRecordSummary.model_validate(r) for r in q.order_by(SiteSprayRecord.created_at.desc()).all()]
 
@@ -775,26 +778,66 @@ def create_site_spray_record(
                 if new_url:
                     ticket.pdf_url = new_url
 
-    db.commit()
-    db.refresh(record)
-    return SiteSprayRecordRead.model_validate(record)
-
-
 @app.delete("/api/site-spray-records/{record_id}", status_code=204)
 def delete_site_spray_record(
     record_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
 ):
-    """Delete a site spray record."""
+    """Soft-delete a site spray record. Unlinks its T&M rows so they become
+    manual rows rather than orphaning them."""
     record = db.query(SiteSprayRecord).filter(SiteSprayRecord.id == record_id).first()
     if not record:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Site spray record not found")
 
+    now = datetime.utcnow()
+    record.deleted_at = now
+    record.deleted_by_user_id = current_user.id
+
+    # Unlink T&M rows so they become manual rows (ticket stays intact)
+    for tm_row in list(record.tm_rows):
+        tm_row.spray_record_id = None
+
     # DELTA-SYNC: bump the parent site's updated_at so the incremental
-    # /api/sites/delta endpoint picks up this change. SQLAlchemy's onupdate
-    # only fires for direct edits to the Site row — child-table changes
-    # are invisible to it, so we bump manually.
+    # /api/sites/delta endpoint picks up this change.
+    site = db.query(Site).filter(Site.id == record.site_id).first()
+    if site is not None:
+        site.updated_at = now
+
+    db.commit()
+
+
+@app.post("/api/site-spray-records/{record_id}/restore")
+def restore_site_spray_record(
+    record_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
+):
+    """Restore a soft-deleted site spray record."""
+    record = db.query(SiteSprayRecord).filter(SiteSprayRecord.id == record_id).first()
+    if not record:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Site spray record not found")
+    if record.deleted_at is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Record is not deleted")
+
+    record.deleted_at = None
+    record.deleted_by_user_id = None
+    db.commit()
+    db.refresh(record)
+    return {"success": True}
+
+
+@app.delete("/api/site-spray-records/{record_id}/permanent", status_code=204)
+def delete_site_spray_record_permanent(
+    record_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(RoleEnum.admin)),
+):
+    """Permanently delete a site spray record."""
+    record = db.query(SiteSprayRecord).filter(SiteSprayRecord.id == record_id).first()
+    if not record:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Site spray record not found")
+
     site = db.query(Site).filter(Site.id == record.site_id).first()
     if site is not None:
         site.updated_at = datetime.utcnow()
@@ -897,7 +940,10 @@ def list_recent_submissions(
         )
         .options(defer(SiteSprayRecord.lease_sheet_data))
         .join(Site, SiteSprayRecord.site_id == Site.id)
-        .filter(SiteSprayRecord.lease_sheet_data.isnot(None))
+        .filter(
+            SiteSprayRecord.lease_sheet_data.isnot(None),
+            SiteSprayRecord.deleted_at.is_(None),
+        )
     )
 
     pipeline_q = (
@@ -909,7 +955,10 @@ def list_recent_submissions(
         )
         .options(defer(SprayRecord.lease_sheet_data))
         .join(Pipeline, SprayRecord.pipeline_id == Pipeline.id)
-        .filter(SprayRecord.lease_sheet_data.isnot(None))
+        .filter(
+            SprayRecord.lease_sheet_data.isnot(None),
+            SprayRecord.deleted_at.is_(None),
+        )
     )
 
     # Workers only see their OWN lease-sheet submissions. Office/admin see all.
@@ -1002,12 +1051,12 @@ def recent_submissions_delta(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> RecentSubmissionsDeltaResponse:
-    """Incremental recent-submissions sync — only rows created since `since`.
+    """Incremental recent-submissions sync — rows created or touched since `since`.
 
-    Recents are append-only (we don't delete lease sheets from here), so no
-    removal list is needed. Limit is generous (100) because in practice far
-    fewer rows will land between 30s polls; the cap only matters when a
-    client comes back from a long absence.
+    Ships `ids_removed` for soft-deleted lease sheets so the frontend can
+    prune its cache. Limit is generous (100) because in practice far fewer
+    rows land between 30s polls; the cap only matters when a client comes
+    back from a long absence.
     """
     server_time = datetime.utcnow()
 
@@ -1022,7 +1071,8 @@ def recent_submissions_delta(
         .join(Site, SiteSprayRecord.site_id == Site.id)
         .filter(
             SiteSprayRecord.lease_sheet_data.isnot(None),
-            SiteSprayRecord.created_at > since,
+            SiteSprayRecord.updated_at > since,
+            SiteSprayRecord.deleted_at.is_(None),
         )
     )
 
@@ -1037,7 +1087,8 @@ def recent_submissions_delta(
         .join(Pipeline, SprayRecord.pipeline_id == Pipeline.id)
         .filter(
             SprayRecord.lease_sheet_data.isnot(None),
-            SprayRecord.created_at > since,
+            SprayRecord.updated_at > since,
+            SprayRecord.deleted_at.is_(None),
         )
     )
 
@@ -1064,8 +1115,8 @@ def recent_submissions_delta(
             )
         )
 
-    site_q = site_q.order_by(SiteSprayRecord.created_at.desc()).limit(limit)
-    pipeline_q = pipeline_q.order_by(SprayRecord.created_at.desc()).limit(limit)
+    site_q = site_q.order_by(SiteSprayRecord.updated_at.desc()).limit(limit)
+    pipeline_q = pipeline_q.order_by(SprayRecord.updated_at.desc()).limit(limit)
 
     items: list[RecentSubmissionRead] = []
     for record, site_lsd, site_client, site_area in site_q.all():
@@ -1097,7 +1148,29 @@ def recent_submissions_delta(
     items.sort(key=lambda r: r.created_at, reverse=True)
     items = items[:limit]
 
-    return RecentSubmissionsDeltaResponse(items=items, server_time=server_time)
+    # Soft-deleted lease sheet IDs since `since`
+    ids_removed: list[int] = []
+    removed_site = (
+        db.query(SiteSprayRecord.id)
+        .filter(
+            SiteSprayRecord.lease_sheet_data.isnot(None),
+            SiteSprayRecord.deleted_at > since,
+        )
+        .all()
+    )
+    removed_pipeline = (
+        db.query(SprayRecord.id)
+        .filter(
+            SprayRecord.lease_sheet_data.isnot(None),
+            SprayRecord.deleted_at > since,
+        )
+        .all()
+    )
+    ids_removed = [r[0] for r in removed_site] + [r[0] for r in removed_pipeline]
+
+    return RecentSubmissionsDeltaResponse(
+        items=items, ids_removed=ids_removed, server_time=server_time
+    )
 
 
 @app.patch("/api/sites/{site_id}/status", response_model=SiteRead)
@@ -1650,3 +1723,50 @@ async def pdf_proxy(
     except Exception as e:
         print(f"[PDF_PROXY] Error: {type(e).__name__}: {e}")
         raise HTTPException(status_code=502, detail="Failed to fetch PDF")
+
+
+from pydantic import BaseModel
+
+
+class PhotoProxyRequest(BaseModel):
+    url: str
+
+
+@app.post("/api/proxy-photo")
+async def proxy_photo(
+    payload: PhotoProxyRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Proxy a Dropbox image to avoid CORS issues. Returns base64 data and MIME type."""
+    import httpx
+    import base64
+
+    # Convert Dropbox shared link to direct download URL
+    download_url = payload.url
+    if 'dropbox.com' in download_url:
+        download_url = (
+            download_url
+            .replace('www.dropbox.com', 'dl.dropboxusercontent.com')
+            .replace('&dl=0', '').replace('?dl=0', '?').replace('dl=1', '')
+        )
+        # Clean trailing ? or &
+        download_url = download_url.rstrip('?&')
+
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+            resp = await client.get(download_url)
+            if resp.status_code != 200:
+                raise HTTPException(status_code=502, detail=f"Image source returned {resp.status_code}")
+            
+            # Detect MIME type from Content-Type header
+            content_type = resp.headers.get("content-type", "image/jpeg")
+            
+            # Convert to base64
+            base64_data = base64.b64encode(resp.content).decode("utf-8")
+            
+            return {"data": base64_data, "type": content_type}
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Timeout fetching image from Dropbox")
+    except Exception as e:
+        print(f"[PHOTO_PROXY] Error: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=502, detail="Failed to fetch image")

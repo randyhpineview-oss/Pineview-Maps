@@ -59,7 +59,7 @@ function formatSubmittedAt(iso) {
 // Lifted to module scope so they can be shared between the per-type tabs
 // (Lease / T&M) and the merged "All" tab, without inlining the same JSX
 // in three places. Returns a plain element — no hook usage inside.
-function renderLeaseRow(record, onViewPdf, onEditRecord) {
+function renderLeaseRow(record, onViewPdf, onEditRecord, onDeleteRecord, canOfficeEdit) {
   return (
     <div key={`ls-${record.id}`} className="site-row" style={{ padding: '10px', borderRadius: '6px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -100,6 +100,17 @@ function renderLeaseRow(record, onViewPdf, onEditRecord) {
               style={{ padding: '4px 10px', fontSize: '0.75rem' }}
             >
               ✏️ Edit
+            </button>
+          )}
+          {/* Delete button for admin/office */}
+          {canOfficeEdit && (
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => onDeleteRecord?.(record)}
+              style={{ padding: '4px 10px', fontSize: '0.75rem', color: '#ef4444', borderColor: '#7f1d1d' }}
+            >
+              ✕
             </button>
           )}
         </div>
@@ -150,6 +161,7 @@ export default function FormsPanel({
   areas = [],            // shared global area list from the map's pins
   onViewPdf,
   onEditRecord,
+  onDeleteRecord,    // delete lease sheet (admin/office only)
   onStartLeaseSheetFromDraft,
   onStartNewTMTicket,    // called with ({ client, area, spray_date, description_of_work })
   onOpenTMTicket,
@@ -756,7 +768,7 @@ export default function FormsPanel({
               ) : (
                 visibleAll.map((row) =>
                   row._type === 'lease'
-                    ? renderLeaseRow(row, onViewPdf, onEditRecord)
+                    ? renderLeaseRow(row, onViewPdf, onEditRecord, onDeleteRecord, roleCanAdmin)
                     : renderTmRow(row, onOpenTMTicket)
                 )
               )}
@@ -779,7 +791,7 @@ export default function FormsPanel({
                   No lease sheets.
                 </div>
               ) : (
-                visibleLease.map((record) => renderLeaseRow(record, onViewPdf, onEditRecord))
+                visibleLease.map((record) => renderLeaseRow(record, onViewPdf, onEditRecord, onDeleteRecord, roleCanAdmin))
               )}
               {filteredLease.length > leaseCount && (
                 <button

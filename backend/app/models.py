@@ -153,10 +153,19 @@ class SiteSprayRecord(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_avoided: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+        index=True,
+    )
     ticket_number: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     lease_sheet_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     pdf_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     photo_urls: Mapped[list | None] = mapped_column(JSONB, nullable=True, default=list)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    deleted_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     tm_ticket_id: Mapped[int | None] = mapped_column(
         ForeignKey("time_materials_tickets.id", ondelete="SET NULL"),
         nullable=True,

@@ -90,6 +90,13 @@ export default function AdminPanel({
   deletedPipelines = [],
   onRestorePipeline,
   onDeletePipelinePermanent,
+  // Deleted lease sheets and T&M tickets
+  deletedLeaseSheets = [],
+  onRestoreLeaseSheet,
+  onDeleteLeaseSheetPermanent,
+  deletedTMTickets = [],
+  onRestoreTMTicket,
+  onDeleteTMTicketPermanent,
   // Pre-loaded cached data from IndexedDB
   cachedLookups = { herbicides: [], applicators: [], weeds: [], locations: [] },
   onLookupsChanged,
@@ -191,9 +198,9 @@ export default function AdminPanel({
           </div>
         </CollapsibleSection>
 
-        <CollapsibleSection title="Recent Deletes" count={deletedSites.length + deletedPipelines.length} defaultOpen={false}>
+        <CollapsibleSection title="Recent Deletes" count={deletedSites.length + deletedPipelines.length + deletedLeaseSheets.length + deletedTMTickets.length} defaultOpen={false}>
           <div className="list-grid">
-            {deletedSites.length === 0 && deletedPipelines.length === 0 ? (
+            {deletedSites.length === 0 && deletedPipelines.length === 0 && deletedLeaseSheets.length === 0 && deletedTMTickets.length === 0 ? (
               <div className="site-row">
                 <div className="small-text">No deleted items.</div>
               </div>
@@ -236,6 +243,62 @@ export default function AdminPanel({
                       <button className="danger-button" type="button" disabled={busy} onClick={() => {
                         if (window.confirm(`Permanently delete "${pipeline.name || 'Unnamed pipeline'}"? This cannot be undone.`)) {
                           onDeletePipelinePermanent?.(pipeline.id);
+                        }
+                      }} style={{ marginLeft: '0.5rem' }}>
+                        Delete Forever
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {deletedLeaseSheets.map((record) => (
+                  <div className="site-row" key={`lease-${record.id}`}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
+                      <div>
+                        <strong>{record.ticket_number || 'No Ticket'}</strong>
+                        <div className="small-text">
+                          Lease Sheet • {record.spray_date} • {record.sprayed_by_name || 'Unknown'}
+                        </div>
+                        <div className="small-text" style={{ color: '#9ca3af' }}>
+                          {record.site_lsd || record.site_client || record.site_area || ''}
+                        </div>
+                      </div>
+                      <span className="pending-badge" style={{ background: '#64748b' }}>Deleted</span>
+                    </div>
+                    <div className="button-row" style={{ marginTop: '0.75rem' }}>
+                      <button className="primary-button" type="button" disabled={busy} onClick={() => onRestoreLeaseSheet?.(record)}>
+                        Restore
+                      </button>
+                      <button className="danger-button" type="button" disabled={busy} onClick={() => {
+                        if (window.confirm(`Permanently delete lease sheet "${record.ticket_number || ''}"? This cannot be undone.`)) {
+                          onDeleteLeaseSheetPermanent?.(record);
+                        }
+                      }} style={{ marginLeft: '0.5rem' }}>
+                        Delete Forever
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {deletedTMTickets.map((ticket) => (
+                  <div className="site-row" key={`tm-${ticket.id}`}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
+                      <div>
+                        <strong>{ticket.ticket_number || 'No Ticket'}</strong>
+                        <div className="small-text">
+                          T&M Ticket • {ticket.spray_date} • {ticket.client || 'No client'} / {ticket.area || 'No area'}
+                        </div>
+                        <div className="small-text" style={{ color: '#9ca3af' }}>
+                          {ticket.description_of_work || 'No description'}
+                        </div>
+                      </div>
+                      <span className="pending-badge" style={{ background: '#64748b' }}>Deleted</span>
+                    </div>
+                    <div className="button-row" style={{ marginTop: '0.75rem' }}>
+                      <button className="primary-button" type="button" disabled={busy} onClick={() => onRestoreTMTicket?.(ticket.id)}>
+                        Restore
+                      </button>
+                      <button className="danger-button" type="button" disabled={busy} onClick={() => {
+                        if (window.confirm(`Permanently delete T&M ticket "${ticket.ticket_number || ''}"? This cannot be undone.`)) {
+                          onDeleteTMTicketPermanent?.(ticket.id);
                         }
                       }} style={{ marginLeft: '0.5rem' }}>
                         Delete Forever
