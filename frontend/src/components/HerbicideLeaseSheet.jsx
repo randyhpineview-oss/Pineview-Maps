@@ -100,8 +100,8 @@ export default function HerbicideLeaseSheet({
   [locationTypes]);
 
   const hasPipeline = useMemo(() =>
-    form.locationTypes.some(type => pipelineTypes.includes(type)),
-  [form.locationTypes, pipelineTypes]);
+    pipelineTypes.includes(mainSiteType),
+  [mainSiteType, pipelineTypes]);
 
   // The "main" site types are everything that isn't access-road-flagged or
   // pipeline-flagged — Wellsite, Compressor, Battery, etc. Workers pick
@@ -109,7 +109,7 @@ export default function HerbicideLeaseSheet({
   // orthogonal and peel off into their own T&M rows.
   const mainSiteTypeNames = useMemo(() =>
     locationTypes
-      .filter(t => !t.is_access_road && !t.is_pipeline && (t.name || '').toLowerCase() !== 'pipeline')
+      .filter(t => !t.is_access_road)
       .map(t => t.name),
   [locationTypes]);
 
@@ -1043,7 +1043,7 @@ export default function HerbicideLeaseSheet({
               <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '8px' }}>Site Type {!mainSiteType && <span style={{ color: '#f87171' }}>*</span>}</label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                 {locationTypes
-                  .filter(t => !t.is_access_road && !t.is_pipeline && (t.name || '').toLowerCase() !== 'pipeline')
+                  .filter(t => !t.is_access_road)
                   .map(type => (
                     <label key={type.id} style={{
                       display: 'flex',
@@ -1074,12 +1074,12 @@ export default function HerbicideLeaseSheet({
             </div>
 
             {/* Add-ons: Access Road + Pipeline (each its own T&M row) */}
-            {locationTypes.some(t => t.is_access_road) || locationTypes.some(t => t.is_pipeline || (t.name || '').toLowerCase() === 'pipeline') ? (
+            {locationTypes.some(t => t.is_access_road) ? (
               <div>
                 <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '8px' }}>Add-ons</label>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                   {locationTypes
-                    .filter(t => t.is_access_road || t.is_pipeline || (t.name || '').toLowerCase() === 'pipeline')
+                    .filter(t => t.is_access_road)
                     .map(type => (
                       <label key={type.id} style={{
                         display: 'flex',
