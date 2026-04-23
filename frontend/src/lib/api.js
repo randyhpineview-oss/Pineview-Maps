@@ -18,7 +18,7 @@ if (typeof window !== 'undefined') {
 }
 
 async function request(path, options = {}) {
-  const { demoUser = 'worker', body, formData, headers = {}, ...rest } = options;
+  const { demoUser = 'worker', body, formData, headers = {}, timeoutMs = 20_000, ...rest } = options;
 
   const requestHeaders = { ...headers };
 
@@ -44,18 +44,34 @@ async function request(path, options = {}) {
   }
 
   const url = `${API_BASE_URL}${path}`;
+  const isGet = !rest.method || rest.method === 'GET';
 
-  let response;
-  try {
-    response = await fetch(url, {
-      ...rest,
-      headers: requestHeaders,
-      body: requestBody,
-    });
-  } catch (error) {
-    console.error('[API] Fetch error:', error);
-    throw new Error(`Network error: ${error.message}`);
+  async function doFetch(retry = false) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let response;
+    try {
+      response = await fetch(url, {
+        ...rest,
+        headers: requestHeaders,
+        body: requestBody,
+        signal: controller.signal,
+      });
+    } catch (error) {
+      clearTimeout(timer);
+      if (isGet && !retry && error.name !== 'AbortError') {
+        // Transient blip (deploy restart, offline, etc.) — retry once after 1 s
+        await new Promise((r) => setTimeout(r, 1000));
+        return doFetch(true);
+      }
+      console.error('[API] Fetch error:', error);
+      throw new Error(`Network error: ${error.message}`);
+    }
+    clearTimeout(timer);
+    return response;
   }
+
+  let response = await doFetch();
 
   if (!response.ok) {
     let message = 'Request failed';

@@ -204,7 +204,7 @@ export default function HerbicideLeaseSheet({
 
       // Restore photos from saved base64 data
       if (d.photos && d.photos.length > 0) {
-        const restored = d.photos.map((p) => {
+        const restored = d.photos.filter((p) => p && p.data).map((p) => {
           const dataUrl = `data:${p.type || 'image/jpeg'};base64,${p.data}`;
           return {
             file: null,
@@ -355,7 +355,7 @@ export default function HerbicideLeaseSheet({
     try {
       // Build photo data URLs for embedding in PDF
       const photoDataUrls = await Promise.all(
-        photos.map(p => {
+        photos.filter(p => p && (p.file || (p.existingBase64?.data) || p.preview)).map(p => {
           if (p.file) {
             return new Promise(resolve => {
               const reader = new FileReader();
@@ -363,7 +363,7 @@ export default function HerbicideLeaseSheet({
               reader.readAsDataURL(p.file);
             });
           }
-          if (p.existingBase64) {
+          if (p.existingBase64?.data) {
             return `data:${p.existingBase64.type || 'image/jpeg'};base64,${p.existingBase64.data}`;
           }
           return p.preview;
@@ -433,8 +433,8 @@ export default function HerbicideLeaseSheet({
 
       // Regenerate PDF with the ticket number so Dropbox copy has it
       const photoDataUrls = await Promise.all(
-        photos.map(async (p) => {
-          if (p.existingBase64) {
+        photos.filter(p => p && (p.file || (p.existingBase64?.data) || p.preview)).map(async (p) => {
+          if (p.existingBase64?.data) {
             return `data:${p.existingBase64.type || 'image/jpeg'};base64,${p.existingBase64.data}`;
           }
           return p.preview;
@@ -589,7 +589,7 @@ export default function HerbicideLeaseSheet({
     setIsSavingDraft(true);
     try {
       // Convert any file-based photos to base64 so they survive a reload
-      const photoPromises = photos.map(async (p) => {
+      const photoPromises = photos.filter(p => p && (p.file || (p.existingBase64?.data) || p.preview)).map(async (p) => {
         if (p.existingBase64) return p;
         if (p.preview?.startsWith('data:')) return p;
         if (p.file) {
