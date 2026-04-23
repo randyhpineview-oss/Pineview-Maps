@@ -198,6 +198,7 @@ class TimeMaterialsTicket(Base):
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
         nullable=False,
+        index=True,
     )
     pdf_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Free-form office pricing: { lines: [{ label, qty, rate }, ...], gst_percent: 5 }

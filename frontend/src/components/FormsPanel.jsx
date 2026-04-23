@@ -194,6 +194,7 @@ export default function FormsPanel({
   const [tmTickets, setTmTickets] = useState([]);
   const tmTicketsSinceRef = useRef(null);
   const tmSyncingRef = useRef(false);
+  const tmDeltaFailCountRef = useRef(0);
   // Local ticker that forces a TM delta poll every TM_FAST_POLL_MS while
   // the user is on a TM-relevant sub-tab. Independent of the 5-minute
   // App-level sync-status poll — gives office approvals a near-realtime
@@ -279,12 +280,14 @@ export default function FormsPanel({
           // by the next delta tick anyway (updated_at > since still holds).
           const list = await api.listTMTickets({});
           if (cancelled) return;
+          tmDeltaFailCountRef.current = 0;
           setTmTickets(list || []);
           tmTicketsSinceRef.current = new Date().toISOString();
         } else {
           // Delta — merges new/updated rows and prunes soft-deleted ones.
           const delta = await api.tmTicketsDelta(since);
           if (cancelled) return;
+          tmDeltaFailCountRef.current = 0;
           const items = Array.isArray(delta?.items) ? delta.items : [];
           const idsRemoved = Array.isArray(delta?.ids_removed) ? delta.ids_removed : [];
           if (items.length > 0 || idsRemoved.length > 0) {
@@ -300,7 +303,10 @@ export default function FormsPanel({
           tmTicketsSinceRef.current = delta?.server_time || tmTicketsSinceRef.current;
         }
       } catch (e) {
-        console.warn('[FORMS] TM tickets sync failed:', e.message);
+        tmDeltaFailCountRef.current += 1;
+        if (tmDeltaFailCountRef.current >= 2) {
+          console.warn('[FORMS] TM tickets sync failed:', e.message);
+        }
         // Leave the watermark alone so the next tick retries the same range.
       } finally {
         tmSyncingRef.current = false;
