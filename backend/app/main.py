@@ -239,20 +239,24 @@ def _migrate_add_columns() -> None:
             # supports `WHERE`; SQLite (used in dev) doesn't enforce partial
             # uniqueness the same way but the explicit dedupe SELECT in the
             # endpoint guards both.
-            site_spray_indexes = {idx["name"] for idx in insp.get_indexes("site_spray_records")}
-            if "uq_site_spray_records_client_submission_id" not in site_spray_indexes:
-                if is_sqlite:
-                    conn.execute(text(
-                        "CREATE UNIQUE INDEX IF NOT EXISTS uq_site_spray_records_client_submission_id "
-                        "ON site_spray_records(client_submission_id) "
-                        "WHERE client_submission_id IS NOT NULL"
-                    ))
-                else:
-                    conn.execute(text(
-                        "CREATE UNIQUE INDEX IF NOT EXISTS uq_site_spray_records_client_submission_id "
-                        "ON site_spray_records(client_submission_id) "
-                        "WHERE client_submission_id IS NOT NULL"
-                    ))
+            #
+            # NOTE: We deliberately don't call `insp.get_indexes(...)` here.
+            # On Render's hosted Postgres, the pg_catalog reflection query
+            # SQLAlchemy emits is heavy enough to hit the database's
+            # statement_timeout during boot — that's what blew up the
+            # 71bdf67 deploy. `CREATE … IF NOT EXISTS` is natively
+            # idempotent, so the membership check was redundant anyway.
+            try:
+                conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_site_spray_records_client_submission_id "
+                    "ON site_spray_records(client_submission_id) "
+                    "WHERE client_submission_id IS NOT NULL"
+                ))
+            except Exception as e:
+                # Don't block startup on a non-critical index creation —
+                # the explicit dedupe SELECT in create_site_spray_record
+                # still enforces uniqueness functionally.
+                print(f"Warning: uq_site_spray_records_client_submission_id index creation failed: {e}")
 
         if insp.has_table("spray_records"):
             existing_records = {col["name"] for col in insp.get_columns("spray_records")}
@@ -284,21 +288,30 @@ def _migrate_add_columns() -> None:
                         ))
                         break
             
-            # Create index for ticket_number if it doesn't exist
-            indexes = {idx["name"] for idx in insp.get_indexes("spray_records")}
-            if "idx_spray_records_ticket_number" not in indexes:
-                conn.execute(text("CREATE INDEX idx_spray_records_ticket_number ON spray_records(ticket_number)"))
+            # Create index for ticket_number if it doesn't exist.
+            # Same rationale as above for skipping insp.get_indexes() —
+            # `IF NOT EXISTS` makes the membership check unnecessary and
+            # avoids the pg_catalog reflection that timed out on Render.
+            try:
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_spray_records_ticket_number "
+                    "ON spray_records(ticket_number)"
+                ))
+            except Exception as e:
+                print(f"Warning: idx_spray_records_ticket_number index creation failed: {e}")
 
             # Idempotency key for offline-queued pipeline lease sheets — see
             # the matching block in site_spray_records above.
             if "client_submission_id" not in existing_records:
                 conn.execute(text("ALTER TABLE spray_records ADD COLUMN client_submission_id VARCHAR(64)"))
-            if "uq_spray_records_client_submission_id" not in indexes:
+            try:
                 conn.execute(text(
                     "CREATE UNIQUE INDEX IF NOT EXISTS uq_spray_records_client_submission_id "
                     "ON spray_records(client_submission_id) "
                     "WHERE client_submission_id IS NOT NULL"
                 ))
+            except Exception as e:
+                print(f"Warning: uq_spray_records_client_submission_id index creation failed: {e}")
 
 
 def get_site_or_404(db: Session, site_id: int) -> Site:
