@@ -162,6 +162,13 @@ export default function App() {
   const [uploadQueueItems, setUploadQueueItems] = useState([]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  // Per-batch counters for the header progress bar. `uploadTotal` is the
+  // number of items in the batch when processUploadQueue started; queue
+  // size in IDB shrinks as items finish, so we can't derive total from
+  // there. `uploadCompleted` tracks how many of those have been
+  // committed server-side.
+  const [uploadTotal, setUploadTotal] = useState(0);
+  const [uploadCompleted, setUploadCompleted] = useState(0);
   const uploadingRef = useRef(false);
   // Lease-sheet record preview state
   const [previewingRecord, setPreviewingRecord] = useState(null);
@@ -594,6 +601,10 @@ export default function App() {
       setUploadProgress(0);
       const total = items.length;
       let completed = 0;
+      // Expose the batch counters so the header progress bar can render
+      // "Uploading 33% (1/3)" instead of just "Syncing…".
+      setUploadTotal(total);
+      setUploadCompleted(0);
       for (const item of items.sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
         try {
           // Lease sheets can carry a `time_materials_link` in their payload
@@ -675,6 +686,7 @@ export default function App() {
           }
           await removeUploadEntry(item.id);
           completed++;
+          setUploadCompleted(completed);
           setUploadProgress(Math.round((completed / total) * 100));
         } catch (err) {
           console.warn('[UPLOAD_QUEUE] Failed to upload item', item.id, '— will retry next cycle:', err?.message || err);
@@ -685,6 +697,8 @@ export default function App() {
       uploadingRef.current = false;
       setIsUploading(false);
       setUploadProgress(0);
+      setUploadTotal(0);
+      setUploadCompleted(0);
       await refreshUploadQueue();
     }
   }, [refreshUploadQueue, ensurePdfAndTicket]);
@@ -2646,24 +2660,93 @@ export default function App() {
             {isRefreshing ? '↻ Refreshing…' : '↻ Refresh'}
           </button>
           {(uploadQueueItems.length > 0 || isUploading) ? (
-            <span
-              className="badge"
-              style={{
-                background: isUploading
-                  ? `linear-gradient(to right, #3b82f6 ${uploadProgress}%, #374151 ${uploadProgress}%)`
-                  : '#3b82f6',
-                color: 'white',
-                cursor: 'pointer',
-                transition: 'background 0.3s ease',
-              }}
+            // Real upload progress bar — fills left-to-right with smooth
+            // CSS width transition as items finish, with a percentage
+            // readout in the center. Diagonal stripe overlay animates
+            // continuously while uploading so the bar never looks frozen
+            // between item completions (each item is atomic — backend
+            // PDF generation + Dropbox upload — so progress bumps in
+            // discrete steps; the stripe gives motion in between).
+            <div
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={isUploading ? uploadProgress : 0}
+              aria-label={isUploading
+                ? `Uploading ${uploadProgress} percent, ${uploadCompleted} of ${uploadTotal} items`
+                : `${uploadQueueItems.length} items queued for upload`}
               onClick={async () => {
                 const items = await getUploadQueue();
-                console.log('[UPLOAD_QUEUE] Clicked badge — queued items:', items);
+                console.log('[UPLOAD_QUEUE] Clicked progress bar — queued items:', items);
                 alert(`${items.length} item(s) in queue. Check console for details or run window.clearQueue() to clear.`);
               }}
+              style={{
+                position: 'relative',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                height: '24px',
+                minWidth: '180px',
+                borderRadius: '12px',
+                overflow: 'hidden',
+                background: '#1f2937',
+                border: '1px solid #374151',
+                cursor: 'pointer',
+                userSelect: 'none',
+              }}
             >
-              {isUploading ? `Syncing (${uploadQueueItems.length})…` : `Queued (${uploadQueueItems.length})`}
-            </span>
+              {/* Filled portion — width animates smoothly when progress jumps. */}
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  bottom: 0,
+                  width: isUploading ? `${uploadProgress}%` : '100%',
+                  background: isUploading
+                    ? 'linear-gradient(to right, #2563eb, #3b82f6)'
+                    : '#3b82f6',
+                  transition: 'width 0.4s ease',
+                  pointerEvents: 'none',
+                }}
+              />
+              {/* Animated diagonal stripe — only while actively uploading
+                  so the queued (idle) state stays solid and clean. */}
+              {isUploading ? (
+                <div
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    background: 'repeating-linear-gradient(45deg, transparent 0, transparent 8px, rgba(255,255,255,0.18) 8px, rgba(255,255,255,0.18) 16px)',
+                    animation: 'upload-stripe 1.2s linear infinite',
+                    pointerEvents: 'none',
+                  }}
+                />
+              ) : null}
+              {/* Centered text overlay. Mix-blend ensures the text stays
+                  legible over both the filled and unfilled portions. */}
+              <span
+                style={{
+                  position: 'relative',
+                  zIndex: 1,
+                  color: 'white',
+                  fontSize: '0.72rem',
+                  fontWeight: 600,
+                  letterSpacing: '0.02em',
+                  whiteSpace: 'nowrap',
+                  padding: '0 12px',
+                  textShadow: '0 1px 2px rgba(0,0,0,0.4)',
+                }}
+              >
+                {isUploading
+                  ? `Uploading ${uploadProgress}% (${uploadCompleted}/${uploadTotal})`
+                  : `Queued (${uploadQueueItems.length})`}
+              </span>
+              {/* Inject the stripe-shift keyframes once. Using a global
+                  <style> tag keeps this self-contained — no theme-css
+                  edits required. */}
+              <style>{`@keyframes upload-stripe { 0% { background-position: 0 0; } 100% { background-position: 22.6px 0; } }`}</style>
+            </div>
           ) : null}
           {queuedCount > 0 ? (
             <button 
