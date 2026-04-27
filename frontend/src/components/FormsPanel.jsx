@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../lib/api';
-import { getLeaseSheetDrafts, deleteLeaseSheetDraft } from '../lib/offlineStore';
+import {
+  deleteLeaseSheetDraft,
+  getLeaseSheetDrafts,
+  upsertTMTickets,
+} from '../lib/offlineStore';
 
 /**
  * The Forms panel replaces the old Recents panel.
@@ -295,6 +299,10 @@ export default function FormsPanel({
           tmDeltaFailCountRef.current = 0;
           setTmTickets(list || []);
           tmTicketsSinceRef.current = new Date().toISOString();
+          // Fix #5 — warm the IDB detail cache so TMTicketDetailSheet
+          // can open offline. Cheap: a single batched IDB transaction
+          // per sync, no extra network calls.
+          try { await upsertTMTickets(list || []); } catch { /* non-fatal */ }
         } else {
           // Delta — merges new/updated rows and prunes soft-deleted ones.
           const delta = await api.tmTicketsDelta(since);
@@ -309,6 +317,14 @@ export default function FormsPanel({
               for (const id of idsRemoved) byId.delete(id);
               return Array.from(byId.values());
             });
+            // Fix #5 — keep the offline detail cache in sync with deltas
+            // (new tickets, edits, status changes). Soft-deleted IDs are
+            // pruned in the parent App store via the existing delta flow;
+            // we don't bother removing them from the detail cache since
+            // it just lazy-loads on demand.
+            if (items.length > 0) {
+              try { await upsertTMTickets(items); } catch { /* non-fatal */ }
+            }
           }
           // Advance the watermark. Server sends `server_time` captured
           // BEFORE its query so nothing can slip through on the next tick.

@@ -585,6 +585,22 @@ def create_spray_record(
     """Record a sprayed section of a pipeline."""
     pipeline = _get_pipeline_or_404(db, pipeline_id)
 
+    # Idempotency — see app/main.py:create_site_spray_record. If the offline
+    # queue retries after the server already committed, return the existing
+    # record instead of creating a duplicate (and burning another HL ticket).
+    if payload.client_submission_id:
+        existing = (
+            db.query(SprayRecord)
+            .filter(
+                SprayRecord.pipeline_id == pipeline_id,
+                SprayRecord.client_submission_id == payload.client_submission_id,
+                SprayRecord.deleted_at.is_(None),
+            )
+            .first()
+        )
+        if existing is not None:
+            return SprayRecordRead.model_validate(existing)
+
     user_id = None
     if current_user.id:
         local_user = db.query(User).filter(User.id == current_user.id).first()
@@ -644,6 +660,7 @@ def create_spray_record(
         is_avoided=payload.is_avoided,
         lease_sheet_data=payload.lease_sheet_data,
         ticket_number=ticket_number,
+        client_submission_id=payload.client_submission_id,
     )
     db.add(record)
 

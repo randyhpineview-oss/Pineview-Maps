@@ -441,19 +441,34 @@ export default function HerbicideLeaseSheet({
   const handleConfirmSubmit = async () => {
     setIsSubmitting(true);
     try {
+      // Network detection. When offline we deliberately SKIP the next-ticket
+      // fetch and the PDF regeneration: both need data the worker doesn't
+      // have yet (ticket number from herb_lease_seq) and would otherwise
+      // bake a blank "No: " into the Dropbox PDF. Instead we queue the
+      // sheet without `ticket_number` / `pdf_base64`; processUploadQueue
+      // re-generates them at upload time, when we know we have a network.
+      const isOnline = typeof window !== 'undefined' && window.navigator?.onLine !== false;
+
       // For new records, fetch ticket number now so it appears in the PDF
+      // (online path only; offline records get their ticket assigned and
+      // their PDF rendered at upload time in processUploadQueue).
       let finalTicket = ticketNumber;
-      if (!finalTicket && !isEditMode) {
+      if (!finalTicket && !isEditMode && isOnline) {
         try {
           const resp = await api.getNextTicket();
           finalTicket = resp.ticket_number;
           setTicketNumber(finalTicket);
         } catch (err) {
-          console.warn('[LEASE] Could not fetch ticket number:', err?.message);
+          // Edge case: navigator.onLine returned true but the request still
+          // failed (captive portal, DNS hiccup). Fall through to the offline
+          // path below — PDF will be regenerated when the queue retries.
+          console.warn('[LEASE] Could not fetch ticket number, will defer to upload-time:', err?.message);
         }
       }
 
-      // Regenerate PDF with the ticket number so Dropbox copy has it
+      // Convert photos to base64 once — used by both the PDF render below
+      // (when we have a ticket) and the queued payload (always, so the
+      // backend has the bytes to upload to Dropbox).
       const photoDataUrls = await Promise.all(
         photos.filter(p => p && (p.file || (p.existingBase64?.data) || p.preview)).map(async (p) => {
           if (p.existingBase64?.data) {
@@ -462,10 +477,19 @@ export default function HerbicideLeaseSheet({
           return p.preview;
         })
       );
-      const { base64: finalPdfBase64 } = await generateLeaseSheetPdf(
-        { ...form, ticket_number: finalTicket, herbicidesLookup: herbicides },
-        photoDataUrls
-      );
+
+      // Regenerate PDF with the ticket number so Dropbox copy has it.
+      // Skipped offline: we don't have a real ticket number yet, and a
+      // blank-ticket PDF would end up in Dropbox. processUploadQueue
+      // renders the PDF at retry time using the saved lease_sheet_data.
+      let finalPdfBase64 = null;
+      if (finalTicket || isEditMode) {
+        const out = await generateLeaseSheetPdf(
+          { ...form, ticket_number: finalTicket, herbicidesLookup: herbicides },
+          photoDataUrls
+        );
+        finalPdfBase64 = out.base64;
+      }
 
       // Convert photos to base64
       const photoPromises = photos.map(async (p) => {
@@ -541,12 +565,26 @@ export default function HerbicideLeaseSheet({
               rows: [tentativeMainRow],
             };
 
+        // T&M PDF only renders when we have BOTH a real lease ticket number
+        // AND (for the create-new case) we'd otherwise upload a tentative
+        // PDF with a blank ticket header. processUploadQueue regenerates
+        // the lease-sheet PDF with the real ticket; for the linked T&M PDF
+        // we either:
+        //   - have a `pickedExisting` ticket → its number is real, render now
+        //   - are creating a new T&M → wait until upload time when we know
+        //     the lease ticket number; the new T&M ticket number is still
+        //     allocated server-side so its header line ("T&M Ticket: ...")
+        //     stays blank either way (acceptable degradation; the *body*
+        //     of the PDF — rows, dates, totals — renders correctly).
         let tmPdfBase64 = null;
-        try {
-          const { base64 } = await generateTMTicketPdf(tentativeTicket, { includeOfficeData: false });
-          tmPdfBase64 = base64;
-        } catch (err) {
-          console.warn('[LEASE] T&M PDF generation failed (continuing):', err?.message);
+        const canRenderTmNow = !!pickedExisting || !!finalTicket;
+        if (canRenderTmNow) {
+          try {
+            const { base64 } = await generateTMTicketPdf(tentativeTicket, { includeOfficeData: false });
+            tmPdfBase64 = base64;
+          } catch (err) {
+            console.warn('[LEASE] T&M PDF generation failed (continuing):', err?.message);
+          }
         }
 
         tm_link = pickedExisting
@@ -557,6 +595,16 @@ export default function HerbicideLeaseSheet({
               tm_pdf_base64: tmPdfBase64,
             };
       }
+
+      // Idempotency key — see backend SiteSprayRecord.client_submission_id.
+      // Reusing the draft id when present means a worker can "Save Draft",
+      // close the form, reopen + submit later, and have it dedupe correctly
+      // if the upload retries. Otherwise mint a fresh UUID at submit time.
+      const clientSubmissionId = draftId || (
+        typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+      );
 
       const payload = {
         lease_sheet_data: {
@@ -579,6 +627,7 @@ export default function HerbicideLeaseSheet({
         notes: form.comments,
         is_avoided: false,
         time_materials_link: tm_link,
+        client_submission_id: clientSubmissionId,
       };
 
       // For edit mode, regenerate the linked T&M PDF as well

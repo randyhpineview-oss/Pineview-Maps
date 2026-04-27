@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api';
+import { getTMTicket as getCachedTMTicket, upsertTMTicket } from '../lib/offlineStore';
 import {
   DEFAULT_OFFICE_LINES,
   AUTO_LINE_LABELS,
@@ -86,14 +87,22 @@ export default function TMTicketDetailSheet({
   const [newRows, setNewRows] = useState([]);        // manual site rows not yet saved
   const [rowsToDelete, setRowsToDelete] = useState([]); // ids of saved manual rows to remove
 
-  // Load ticket
+  // Load ticket — cache-first so the detail sheet opens offline (Fix #5).
+  // Strategy:
+  //   1. Hit IndexedDB first. If we have the ticket cached, render
+  //      immediately so the worker sees the form without spinning.
+  //   2. In parallel, request the latest from the network. On success,
+  //      replace state and warm the cache. On network error, only surface
+  //      "failed" if we *also* don't have a cached copy — otherwise the
+  //      cached view is the right answer and a transient network blip
+  //      shouldn't surface as a hard error.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      try {
-        const t = await api.getTMTicket(ticketId);
-        if (cancelled) return;
+
+      const applyTicket = (t) => {
+        if (cancelled || !t) return;
         setTicket(t);
         setDescription(t.description_of_work || '');
         setClient(t.client || '');
@@ -115,8 +124,32 @@ export default function TMTicketDetailSheet({
           rate: l.rate ?? '',
         })));
         setGstPercent(Number(t.office_data?.gst_percent ?? 5));
+      };
+
+      // 1. Cache-first render
+      let haveCached = false;
+      try {
+        const cached = await getCachedTMTicket(ticketId);
+        if (cached) {
+          haveCached = true;
+          applyTicket(cached);
+          // We can stop showing the spinner; the network fetch below
+          // updates state in place when (and if) it succeeds.
+          if (!cancelled) setLoading(false);
+        }
+      } catch { /* IDB error is non-fatal — fall through to network */ }
+
+      // 2. Network refresh
+      try {
+        const t = await api.getTMTicket(ticketId);
+        if (cancelled) return;
+        applyTicket(t);
+        // Warm the cache for the next offline open.
+        try { await upsertTMTicket(t); } catch { /* non-fatal */ }
       } catch (e) {
-        if (!cancelled) setError(e.message || 'Failed to load ticket');
+        if (!cancelled && !haveCached) {
+          setError(e.message || 'Failed to load ticket');
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }

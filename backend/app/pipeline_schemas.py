@@ -81,6 +81,8 @@ class SprayRecordCreate(BaseModel):
     # spray endpoint creates/attaches a T&M ticket and appends a Sites
     # Treated row exactly like the site flow does.
     time_materials_link: TimeMaterialsLink | None = None
+    # Idempotency key — see SiteSprayRecordCreate.client_submission_id.
+    client_submission_id: str | None = None
 
 
 class PipelineRead(BaseModel):

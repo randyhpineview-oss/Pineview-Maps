@@ -228,6 +228,31 @@ def _migrate_add_columns() -> None:
                             "USING COALESCE(to_jsonb(photo_urls), '[]'::jsonb)"
                         ))
                         break
+            # Offline-submission idempotency key. Frontend mints a UUID per
+            # queued submission; backend dedupes against this column on the
+            # create endpoint so retries (after a network drop *between*
+            # server-commit and client-ack) don't burn a 2nd ticket number.
+            if "client_submission_id" not in existing_site_records:
+                conn.execute(text("ALTER TABLE site_spray_records ADD COLUMN client_submission_id VARCHAR(64)"))
+            # Partial unique index — null IDs aren't constrained (legacy rows
+            # and any non-offline-path inserts that skip the key). Postgres
+            # supports `WHERE`; SQLite (used in dev) doesn't enforce partial
+            # uniqueness the same way but the explicit dedupe SELECT in the
+            # endpoint guards both.
+            site_spray_indexes = {idx["name"] for idx in insp.get_indexes("site_spray_records")}
+            if "uq_site_spray_records_client_submission_id" not in site_spray_indexes:
+                if is_sqlite:
+                    conn.execute(text(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS uq_site_spray_records_client_submission_id "
+                        "ON site_spray_records(client_submission_id) "
+                        "WHERE client_submission_id IS NOT NULL"
+                    ))
+                else:
+                    conn.execute(text(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS uq_site_spray_records_client_submission_id "
+                        "ON site_spray_records(client_submission_id) "
+                        "WHERE client_submission_id IS NOT NULL"
+                    ))
 
         if insp.has_table("spray_records"):
             existing_records = {col["name"] for col in insp.get_columns("spray_records")}
@@ -263,6 +288,17 @@ def _migrate_add_columns() -> None:
             indexes = {idx["name"] for idx in insp.get_indexes("spray_records")}
             if "idx_spray_records_ticket_number" not in indexes:
                 conn.execute(text("CREATE INDEX idx_spray_records_ticket_number ON spray_records(ticket_number)"))
+
+            # Idempotency key for offline-queued pipeline lease sheets — see
+            # the matching block in site_spray_records above.
+            if "client_submission_id" not in existing_records:
+                conn.execute(text("ALTER TABLE spray_records ADD COLUMN client_submission_id VARCHAR(64)"))
+            if "uq_spray_records_client_submission_id" not in indexes:
+                conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_spray_records_client_submission_id "
+                    "ON spray_records(client_submission_id) "
+                    "WHERE client_submission_id IS NOT NULL"
+                ))
 
 
 def get_site_or_404(db: Session, site_id: int) -> Site:
@@ -534,7 +570,34 @@ def create_site(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> SiteRead:
+    # Idempotency for offline-queued pin creation. We don't have a dedicated
+    # column on `sites`, so the key is stamped into raw_attributes JSONB
+    # under "_client_submission_id". Lookup is a single jsonb_extract_path
+    # match — cheap, no migration. If the same key is already in the DB,
+    # return that pin instead of inserting a duplicate. Wrapped in try/except
+    # because SQLite dialects older than 3.38 don't support the `->>`
+    # operator; production (Postgres) has full JSONB support.
+    if payload.client_submission_id:
+        try:
+            existing = (
+                db.query(Site)
+                .filter(
+                    Site.deleted_at.is_(None),
+                    Site.raw_attributes.op("->>")("_client_submission_id") == payload.client_submission_id,
+                )
+                .first()
+            )
+            if existing is not None:
+                return SiteRead.model_validate(existing)
+        except Exception as e:
+            # Non-fatal: fall through to insert. A duplicate from a stuck
+            # retry is much rarer for pins than for spray records (no
+            # ticket number to burn), so dev SQLite skipping the dedupe
+            # is an acceptable degradation.
+            print(f"[CREATE_SITE] dedupe lookup failed (non-fatal): {e}")
+
     created_at = datetime.utcnow()
+    raw_attrs = {"_client_submission_id": payload.client_submission_id} if payload.client_submission_id else None
     site = Site(
         pin_type=payload.pin_type,
         lsd=payload.lsd,
@@ -549,6 +612,7 @@ def create_site(
         approval_state=ApprovalState.pending_review,
         status=payload.status,
         last_inspected_at=created_at if payload.status == SiteStatus.inspected else None,
+        raw_attributes=raw_attrs,
     )
     
     # Only set created_by_user_id if user exists in local DB to avoid FK constraint
@@ -679,7 +743,26 @@ def create_site_spray_record(
     from app.dropbox_integration import upload_pdf_to_dropbox, upload_photo_to_dropbox, build_pdf_path, build_photo_path
 
     site = get_site_or_404(db, site_id)
-    
+
+    # Idempotency: if the frontend retried an offline-queued submission and
+    # we already committed the record, return the existing one instead of
+    # inserting a second row + burning another HL ticket from the sequence.
+    # `client_submission_id` is a UUID minted on the frontend before
+    # queueing; the partial unique index on the column also enforces this
+    # at the DB level as a backstop.
+    if payload.client_submission_id:
+        existing = (
+            db.query(SiteSprayRecord)
+            .filter(
+                SiteSprayRecord.site_id == site_id,
+                SiteSprayRecord.client_submission_id == payload.client_submission_id,
+                SiteSprayRecord.deleted_at.is_(None),
+            )
+            .first()
+        )
+        if existing is not None:
+            return SiteSprayRecordRead.model_validate(existing)
+
     user_id = None
     if current_user.id:
         local_user = db.query(User).filter(User.id == current_user.id).first()
@@ -748,6 +831,7 @@ def create_site_spray_record(
         lease_sheet_data=persisted_lease_data,
         pdf_url=pdf_url,
         photo_urls=photo_urls if photo_urls else None,
+        client_submission_id=payload.client_submission_id,
     )
     db.add(record)
     
@@ -777,6 +861,11 @@ def create_site_spray_record(
                 new_url = _upload_tm_pdf(ticket, tm_link.tm_pdf_base64)
                 if new_url:
                     ticket.pdf_url = new_url
+
+    db.commit()
+    db.refresh(record)
+    return SiteSprayRecordRead.model_validate(record)
+
 
 @app.delete("/api/site-spray-records/{record_id}", status_code=204)
 def delete_site_spray_record(

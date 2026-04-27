@@ -91,6 +91,9 @@ class SprayRecord(Base):
         nullable=True,
         index=True,
     )
+    # Idempotency key for offline-queued pipeline lease sheets. Mirrors
+    # SiteSprayRecord.client_submission_id — see that field's docstring.
+    client_submission_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
     pipeline: Mapped[Pipeline] = relationship(back_populates="spray_records")
     # String-keyed target class to avoid importing models.py (circular-

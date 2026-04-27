@@ -3,7 +3,11 @@ import { openDB } from 'idb';
 const DB_NAME = 'pineview-offline-db';
 // v6: added `pipelines` store to support hydrate-from-cache on boot, so the
 // 30+ KB pipeline list no longer re-downloads on every page refresh.
-const DB_VERSION = 6;
+// v7: added `tmTickets` store so the T&M ticket detail sheet can open
+// offline. The list-level cache in FormsPanel only carries enough columns
+// for the row UI; the detail view needs the full row including
+// `office_data`, signature, and the joined `rows` array.
+const DB_VERSION = 7;
 
 function ensureCacheId(site) {
   return {
@@ -40,6 +44,9 @@ const dbPromise = openDB(DB_NAME, DB_VERSION, {
     }
     if (!db.objectStoreNames.contains('pipelines')) {
       db.createObjectStore('pipelines', { keyPath: 'id' });
+    }
+    if (!db.objectStoreNames.contains('tmTickets')) {
+      db.createObjectStore('tmTickets', { keyPath: 'id' });
     }
   },
 });
@@ -340,4 +347,48 @@ export async function getWatermarks() {
 export async function clearWatermarks() {
   const db = await dbPromise;
   await db.delete('meta', WATERMARK_KEY);
+}
+
+// ── T&M tickets cache (Fix #5) ──
+//
+// Caches the full ticket payload — including `rows`, `office_data`,
+// `approved_signature` and any other heavy fields — so the
+// TMTicketDetailSheet can open offline. The list cache in FormsPanel
+// already round-trips a slim view via /api/time-materials/delta; this
+// store is specifically for the detail view (which historically called
+// /api/time-materials/{id} on every open and hard-failed offline).
+//
+// We upsert from two places:
+//   1. FormsPanel's TM list/delta sync — covers the common case where
+//      the worker has scrolled past the ticket and we already have it
+//   2. TMTicketDetailSheet itself, after a successful online fetch —
+//      ensures the detail view stays warm even when the list-level
+//      delta only ships partial rows
+
+export async function upsertTMTicket(ticket) {
+  if (!ticket || !ticket.id) return;
+  const db = await dbPromise;
+  await db.put('tmTickets', ticket);
+}
+
+export async function upsertTMTickets(tickets) {
+  if (!Array.isArray(tickets) || tickets.length === 0) return;
+  const db = await dbPromise;
+  const tx = db.transaction('tmTickets', 'readwrite');
+  for (const t of tickets) {
+    if (t && t.id) await tx.store.put(t);
+  }
+  await tx.done;
+}
+
+export async function getTMTicket(id) {
+  if (id == null) return null;
+  const db = await dbPromise;
+  return db.get('tmTickets', id);
+}
+
+export async function removeTMTicket(id) {
+  if (id == null) return;
+  const db = await dbPromise;
+  await db.delete('tmTickets', id);
 }

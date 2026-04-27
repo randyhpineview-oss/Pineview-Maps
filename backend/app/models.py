@@ -171,6 +171,14 @@ class SiteSprayRecord(Base):
         nullable=True,
         index=True,
     )
+    # Idempotency key for offline-submitted lease sheets. The frontend
+    # generates a UUID before queueing the upload; if a retry posts the same
+    # ID, the backend returns the existing record instead of creating a
+    # duplicate. Prevents double-burning a ticket number when the network
+    # drops *after* the server processed the request but before the client
+    # got the 200. Nullable for legacy rows (pre-migration); enforced via a
+    # partial unique index in _migrate_add_columns().
+    client_submission_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
     site: Mapped[Site] = relationship(back_populates="spray_records")
     tm_ticket: Mapped["TimeMaterialsTicket | None"] = relationship(

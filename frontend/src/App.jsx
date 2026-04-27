@@ -15,10 +15,13 @@ import TMTicketDetailSheet from './components/TMTicketDetailSheet';
 import SiteDetailSheet from './components/SiteDetailSheet';
 import { api } from './lib/api';
 import { nearestFraction } from './lib/mapUtils';
+import { generateLeaseSheetPdf } from './lib/pdfGenerator';
+import { generateTMTicketPdf } from './lib/tmTicketPdfGenerator';
 import { onAuthStateChange, signOut } from './lib/supabaseClient';
 import {
   getAllLookups,
   getLastSyncAt,
+  getLookups,
   getLookupsMaxAgeMs,
   getPipelines,
   getQueuedActions,
@@ -41,6 +44,7 @@ import {
   replaceUsers,
   setLastSyncAt,
   setWatermarks,
+  updateUploadEntry,
   upsertPipeline,
   upsertRecent,
   upsertSite,
@@ -77,16 +81,14 @@ function matchSiteIdentity(site, selectedSite) {
 }
 
 export default function App() {
-  // Unregister any stale service workers from previous PWA builds
-  useEffect(() => {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistrations().then((registrations) => {
-        for (const registration of registrations) {
-          registration.unregister();
-        }
-      });
-    }
-  }, []);
+  // Service-worker lifecycle is now owned by vite-plugin-pwa (see
+  // vite.config.js Fix #3). The previous "unregister every SW on load"
+  // block here defeated app-shell caching entirely — it ran on every
+  // boot, killing any SW that vite-plugin-pwa had just installed and
+  // forcing the next visit to refetch HTML/JS/CSS from the server.
+  // Dev builds still get a one-shot unregister in main.jsx so leftover
+  // production SWs don't intercept HMR; production no longer wipes its
+  // own SW.
   const wasOnline = useRef(window.navigator.onLine);
   const lastSyncStatusRef = useRef(null);
   // Delta-sync watermarks: the `server_time` returned by the last successful
@@ -466,6 +468,122 @@ export default function App() {
     return items;
   }, []);
 
+  // ── Upload-time PDF regeneration for offline-queued lease sheets ──
+  //
+  // When a sheet is submitted offline, HerbicideLeaseSheet skips
+  // `getNextTicket()` and skips PDF rendering (a blank-ticket PDF would
+  // otherwise be uploaded to Dropbox — see audit comment trail). At upload
+  // time we now have the network back, so we:
+  //   1. Reserve a real ticket number from herb_lease_seq
+  //   2. Re-render the lease-sheet PDF with the real number embedded
+  //   3. Re-render the linked T&M PDF body (if `tm_link.create`) so the
+  //      site/area/date/rows match the now-finalized data
+  //   4. Persist the patched payload back into the queue *before* posting
+  //      so a crash mid-upload doesn't lose the work — next retry will
+  //      see the already-stamped ticket and skip this branch.
+  //
+  // Returns the patched payload to use for the actual API call. If the
+  // payload already has a ticket + PDF, returns it unchanged.
+  const ensurePdfAndTicket = useCallback(async (item) => {
+    const payload = item.payload || {};
+    if (payload.ticket_number && payload.pdf_base64) return payload;
+
+    // Reconstruct the PDF input shape the form used. lease_sheet_data is
+    // the full form snapshot; herbicidesLookup comes from the local cache
+    // so we still produce PCP numbers even when the API roundtrip would
+    // otherwise add latency to the upload path.
+    const leaseData = payload.lease_sheet_data || {};
+    const photoArr = Array.isArray(leaseData.photos) ? leaseData.photos : [];
+    const photoDataUrls = photoArr
+      .filter((p) => p && p.data)
+      .map((p) => `data:${p.type || 'image/jpeg'};base64,${p.data}`);
+
+    let herbicidesLookup = [];
+    try { herbicidesLookup = await getLookups('herbicides'); } catch { /* fall through with empty lookup */ }
+
+    let ticketNumber = payload.ticket_number;
+    if (!ticketNumber) {
+      try {
+        const resp = await api.getNextTicket();
+        ticketNumber = resp?.ticket_number;
+      } catch (err) {
+        // No network OR endpoint failed — bail out; caller leaves item in
+        // queue for the next retry tick. Better to wait than to upload
+        // another blank-ticket PDF.
+        throw new Error(`Could not reserve ticket number: ${err?.message || err}`);
+      }
+    }
+
+    let pdfBase64 = payload.pdf_base64;
+    try {
+      const out = await generateLeaseSheetPdf(
+        { ...leaseData, ticket_number: ticketNumber, herbicidesLookup },
+        photoDataUrls
+      );
+      pdfBase64 = out.base64;
+    } catch (err) {
+      throw new Error(`Could not regenerate lease-sheet PDF: ${err?.message || err}`);
+    }
+
+    // Re-render the linked T&M PDF body when offline submission deferred it.
+    // We can't allocate the new T&M ticket number from here (that's done by
+    // the backend's _allocate_ticket_number on commit), but the rest of the
+    // PDF — site, area, date, row totals — renders correctly with the
+    // tentative shape we already stored on the queue item.
+    let tmLink = payload.time_materials_link || null;
+    if (tmLink && !tmLink.tm_pdf_base64) {
+      try {
+        const tentativeMainRow = {
+          location: leaseData.lsdOrPipeline || '',
+          site_type: leaseData.isPipeline
+            ? 'Pipeline'
+            : (leaseData.mainSiteType || ''),
+          herbicides: (leaseData.herbicidesUsed || []).length === 1
+            ? leaseData.herbicidesUsed[0]
+            : (leaseData.herbicidesUsed || []).length > 1
+              ? `${Math.min(leaseData.herbicidesUsed.length, 3)} Herbicides`
+              : '',
+          liters_used: Number(leaseData.totalLiters) || 0,
+          area_ha: leaseData.isPipeline
+            ? (Number(leaseData.totalDistanceSprayed) || 0)
+            : (Number(leaseData.areaTreated) || 0),
+          cost_code: '',
+        };
+        const tentativeTicket = {
+          ticket_number: '',  // backend allocates the real one on create
+          spray_date: leaseData.date || payload.spray_date,
+          client: leaseData.customer || '',
+          area: leaseData.area || '',
+          description_of_work: tmLink.description_of_work || '',
+          rows: [tentativeMainRow],
+        };
+        const out = await generateTMTicketPdf(tentativeTicket, { includeOfficeData: false });
+        tmLink = { ...tmLink, tm_pdf_base64: out.base64 };
+      } catch (err) {
+        // T&M PDF regen is best-effort — leaving tm_pdf_base64 null just
+        // means the linked T&M Dropbox copy won't be uploaded on this
+        // submission (existing tickets keep their previous PDF). The DB
+        // row + ticket linkage still get created correctly.
+        console.warn('[UPLOAD_QUEUE] T&M PDF regen failed (continuing):', err?.message || err);
+      }
+    }
+
+    const patched = {
+      ...payload,
+      ticket_number: ticketNumber,
+      pdf_base64: pdfBase64,
+      time_materials_link: tmLink,
+      lease_sheet_data: { ...leaseData, ticket_number: ticketNumber },
+    };
+
+    // Persist the patched payload before posting so a crash here doesn't
+    // lose the freshly-allocated ticket number. If the POST fails, the
+    // next retry tick sees the stamped item and skips straight to the
+    // network call (no second herb_lease_seq nextval).
+    try { await updateUploadEntry(item.id, { payload: patched }); } catch { /* non-fatal */ }
+    return patched;
+  }, []);
+
   const processUploadQueue = useCallback(async () => {
     if (uploadingRef.current || !window.navigator.onLine) return;
     uploadingRef.current = true;
@@ -489,7 +607,11 @@ export default function App() {
           // end of the branch so the delta fetch happens immediately.
           const bumpsTm = !!item.payload?.time_materials_link;
           if (item.targetType === 'site') {
-            await api.createSiteSprayRecord(item.targetId, item.payload);
+            // Offline-queued sheets may not have a ticket / PDF yet —
+            // render and reserve at upload time so Dropbox gets a PDF
+            // with the real ticket number printed on it.
+            const patched = await ensurePdfAndTicket(item);
+            await api.createSiteSprayRecord(item.targetId, patched);
             // Refresh the site data in background (including pdf_url from Dropbox)
             try {
               const updated = await api.getSite(item.targetId);
@@ -499,7 +621,8 @@ export default function App() {
             } catch { /* ignore refresh failure */ }
             if (bumpsTm) setTmRefreshToken((x) => x + 1);
           } else if (item.targetType === 'pipeline') {
-            await api.createSprayRecord(item.targetId, item.payload);
+            const patched = await ensurePdfAndTicket(item);
+            await api.createSprayRecord(item.targetId, patched);
             try {
               const updatedPipeline = await api.getPipeline(item.targetId);
               setPipelines((prev) => prev.map((p) => (p.id === updatedPipeline.id ? updatedPipeline : p)));
@@ -512,6 +635,27 @@ export default function App() {
               });
             } catch { /* ignore refresh failure */ }
             if (bumpsTm) setTmRefreshToken((x) => x + 1);
+          } else if (item.targetType === 'site_spray_edit') {
+            // Fix #2 — offline-queued lease-sheet edits. Mirrors the create
+            // path but uses the PATCH endpoint. Edit payloads always carry
+            // an existing ticket number (from the record being edited),
+            // so we don't need to call ensurePdfAndTicket — the form
+            // already produced a fresh PDF when the worker hit Save.
+            await api.updateSiteSprayRecord(item.targetId, item.payload);
+            try {
+              const siteId = item.payload?.site_id || 0;
+              if (Number.isInteger(siteId) && siteId > 0) {
+                const updated = await api.getSite(siteId);
+                if (updated && updated.id) {
+                  setSites((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+                  await upsertSite(updated);
+                }
+              }
+            } catch { /* non-fatal */ }
+            // Bump the T&M token (edits cascade to T&M rows). The recents
+            // list refreshes automatically on the next poll tick — no
+            // need to spend an extra round-trip here.
+            setTmRefreshToken((x) => x + 1);
           } else if (item.targetType === 'tm_ticket') {
             // Worker "Mark as pending" on a T&M ticket. We queue instead of
             // awaiting so the worker doesn't sit on a spinner while the
@@ -543,7 +687,7 @@ export default function App() {
       setUploadProgress(0);
       await refreshUploadQueue();
     }
-  }, [refreshUploadQueue]);
+  }, [refreshUploadQueue, ensurePdfAndTicket]);
 
   const syncQueuedActions = useCallback(async () => {
     if (!window.navigator.onLine) {
@@ -1945,27 +2089,32 @@ export default function App() {
     const record = editingSprayRecord;
     // Close form immediately — upload happens in background
     setEditingSprayRecord(null);
-    setMessage('Updating record…');
 
-    // Fire off API call in background (don't await before closing form)
-    (async () => {
-      try {
-        await api.updateSiteSprayRecord(record.id, payload);
-        setMessage('Record updated.');
-        // Refresh site data
-        if (record.site_id) {
-          try {
-            const updated = await api.getSite(record.site_id);
-            setSites((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-            setSelectedSite((prev) => prev && prev.id === updated.id ? updated : prev);
-          } catch { /* ignore */ }
-        }
-        // Refresh recents so View PDF button and data stay current
-        loadServerRecents();
-      } catch (error) {
-        setMessage('Update failed: ' + (error.message || 'Unknown error'));
-      }
-    })();
+    // Fix #2 — route through the upload queue instead of firing the PATCH
+    // directly. Before this change, an edit attempted while offline threw
+    // and the worker's changes were silently lost (only a transient toast
+    // surfaced the error). Now the edit is durable: it persists in
+    // IndexedDB until the device reconnects, and processUploadQueue
+    // handles the retry loop just like the create path does.
+    //
+    // The edit endpoint is naturally idempotent (PATCH against the same
+    // record id), so we don't need a client_submission_id here — even if
+    // the request commits server-side and the client never sees the 200,
+    // a retry just re-applies the same patch and produces the same row.
+    await queueUpload({
+      targetType: 'site_spray_edit',
+      targetId: record.id,
+      payload: { ...payload, site_id: record.site_id },
+      // Top-level display fields so the Uploading row in FormsPanel can
+      // show something meaningful for queued edits (no ticket number on
+      // the queue entry — backend already assigned one to the record).
+      ticket_number: record.ticket_number || payload?.ticket_number || null,
+      spray_date: payload?.spray_date || record.spray_date || null,
+      form_type: 'site_spray_edit',
+    });
+    await refreshUploadQueue();
+    setMessage(window.navigator.onLine ? 'Updating record…' : 'Edit queued for upload.');
+    processUploadQueue();
   }
 
   function handleLeaseSheetCancel() {
@@ -2148,6 +2297,14 @@ export default function App() {
   async function handleSubmitNewPin() {
     if (!addPinLocation || !addPinType) return;
     setSubmittingPin(true);
+    // Mint a UUID up front so both the online and offline paths can pass it
+    // through to the backend's dedupe check (Site.raw_attributes._client_submission_id).
+    // Online paths benefit too: a 504 from the gateway after the row was
+    // committed would otherwise produce a duplicate pin on the user's
+    // next manual retry.
+    const clientSubmissionId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const payload = {
       pin_type: addPinType,
       status: 'not_inspected',
@@ -2156,6 +2313,7 @@ export default function App() {
       area: addPinForm.area || null,
       latitude: addPinLocation.latitude,
       longitude: addPinLocation.longitude,
+      client_submission_id: clientSubmissionId,
     };
     try {
       console.log('[PIN] Creating pin:', payload);
