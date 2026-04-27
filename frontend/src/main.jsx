@@ -29,3 +29,16 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     <App />
   </React.StrictMode>
 );
+
+// Hide the inline boot splash (defined in index.html) once React has
+// committed and painted the first frame. Two nested rAFs guarantee the
+// browser has actually flushed the new DOM to the screen before we start
+// fading the splash, otherwise users would see a brief flash of empty
+// background between splash removal and the first React paint.
+if (typeof window !== 'undefined' && typeof window.__pineviewHideSplash === 'function') {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      window.__pineviewHideSplash();
+    });
+  });
+}
