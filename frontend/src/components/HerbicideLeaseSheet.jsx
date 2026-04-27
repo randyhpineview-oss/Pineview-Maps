@@ -43,6 +43,10 @@ export default function HerbicideLeaseSheet({
   const [openTMTickets, setOpenTMTickets] = useState([]);
   const [tmChoice, setTmChoice] = useState(null);  // { ticket_id } | { create: true, description_of_work }
   const [tmDescription, setTmDescription] = useState('');
+  // True while the background open-T&M-tickets fetch is in flight after
+  // pressing Continue from preview. Drives the small spinner in the
+  // picker so the worker knows the tickets list is still populating.
+  const [isLoadingTMTickets, setIsLoadingTMTickets] = useState(false);
   const [draftId, setDraftId] = useState(draft?.id || null);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
   // Local-only input for typing custom (Other) weeds. Not persisted.
@@ -407,46 +411,70 @@ export default function HerbicideLeaseSheet({
 
   // Called when user taps "Continue" from Preview.
   // In edit mode: skip linking step (record already linked); go straight to submit.
-  // In create mode: fetch open T&M tickets matching client/area/date, show picker.
+  // In create mode: navigate to T&M picker INSTANTLY, then fetch existing
+  // tickets in the background with a short timeout.
+  //
+  // History: the previous version awaited `api.listOpenTMTickets(...)` in
+  // series before transitioning, which could hang 5-10 seconds when the
+  // browser reported `navigator.onLine === true` but couldn't actually
+  // reach the server (captive portal, cell drop, Render cold-start).
+  // api.js's internal retry-once-after-1s compounded that. The worker
+  // would tap Continue and see the button do nothing.
+  //
+  // New flow:
+  //   1. Switch to the picker immediately, defaulted to "create new".
+  //   2. Kick off the open-tickets fetch in the background with a 2.5s
+  //      race-timeout. The UI stays responsive the whole time.
+  //   3. If tickets arrive in time, populate the list. If exactly one
+  //      matches AND the worker hasn't already changed the radio,
+  //      auto-select it (preserves the previous auto-pick behavior).
+  //   4. If the fetch times out or errors, stay on create-new.
   const handleContinueFromPreview = async () => {
     if (isEditMode) {
       await handleConfirmSubmit();
       return;
     }
-    // Offline shortcut — `listOpenTMTickets` would otherwise block for
-    // ~1-2s waiting on the api.js retry-once timer before falling into
-    // the catch below, and the worker would see Continue "do nothing".
-    // Offline submissions create a fresh T&M ticket on the server side
-    // when the queue uploads anyway, so jumping straight to the
-    // "create new" picker is the right behavior here.
-    if (typeof window !== 'undefined' && window.navigator?.onLine === false) {
-      setOpenTMTickets([]);
-      setTmChoice({ create: true });
-      setIsPickingTM(true);
-      return;
-    }
+
+    // 1. Instant transition — no await before this.
+    setOpenTMTickets([]);
+    setTmChoice({ create: true });
+    setIsPickingTM(true);
+
+    // Offline short-circuit — don't even attempt the fetch.
+    const isOffline = typeof window !== 'undefined' && window.navigator?.onLine === false;
+    if (isOffline) return;
+
+    // 2. Background fetch with hard timeout.
+    setIsLoadingTMTickets(true);
     try {
-      const tickets = await api.listOpenTMTickets({
-        client: form.customer || undefined,
-        area: form.area || undefined,
-        spray_date: form.date || undefined,
-      });
+      const TIMEOUT_MS = 2500;
+      const tickets = await Promise.race([
+        api.listOpenTMTickets({
+          client: form.customer || undefined,
+          area: form.area || undefined,
+          spray_date: form.date || undefined,
+        }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('T&M tickets lookup timed out')), TIMEOUT_MS)
+        ),
+      ]);
       setOpenTMTickets(tickets || []);
-      // Default pick: if exactly one matches auto-pick it; if multiple require user to choose;
-      // if none, default to "create new".
+      // 3. Auto-pick single match ONLY if the worker hasn't already
+      // interacted with the radio group. Using the functional setState
+      // form avoids a stale-closure race if they tap during the fetch.
       if (tickets && tickets.length === 1) {
-        setTmChoice({ ticket_id: tickets[0].id });
+        setTmChoice((current) => (current?.create ? { ticket_id: tickets[0].id } : current));
       } else if (tickets && tickets.length > 1) {
-        setTmChoice(null);  // force user to pick
-      } else {
-        setTmChoice({ create: true });
+        // Multiple matches → clear the default create-new so the worker
+        // is forced to pick, matching the previous behavior. But only
+        // clear if they haven't picked something else during the wait.
+        setTmChoice((current) => (current?.create ? null : current));
       }
-      setIsPickingTM(true);
     } catch (err) {
-      console.warn('[LEASE] Could not fetch open T&M tickets (continuing without link):', err?.message);
-      setOpenTMTickets([]);
-      setTmChoice({ create: true });
-      setIsPickingTM(true);
+      // 4. Timeout / network error — stay on create-new (already defaulted above).
+      console.warn('[LEASE] T&M tickets lookup failed/timed out (continuing with create-new):', err?.message);
+    } finally {
+      setIsLoadingTMTickets(false);
     }
   };
 
@@ -740,7 +768,35 @@ export default function HerbicideLeaseSheet({
           Today's open tickets for <strong>{form.customer || '—'}</strong> / <strong>{form.area || '—'}</strong>:
         </p>
 
-        {openTMTickets.length > 0 ? (
+        {isLoadingTMTickets && openTMTickets.length === 0 ? (
+          // Small inline loading state while the background fetch is in
+          // flight (capped at ~2.5s). Picker is already interactive so
+          // the worker can pick "create new" + type a description while
+          // this loads — they don't have to wait for it.
+          <div style={{
+            fontSize: '0.85rem',
+            color: '#9ca3af',
+            background: '#111827',
+            padding: '12px',
+            borderRadius: '8px',
+            marginBottom: '14px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+          }}>
+            <span style={{
+              display: 'inline-block',
+              width: '14px',
+              height: '14px',
+              border: '2px solid #374151',
+              borderTopColor: '#60a5fa',
+              borderRadius: '50%',
+              animation: 'spin 0.8s linear infinite',
+            }} />
+            Looking for open T&M tickets…
+            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+          </div>
+        ) : openTMTickets.length > 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '14px' }}>
             {openTMTickets.map((t) => (
               <label
