@@ -44,14 +44,19 @@ export default defineConfig({
         'logo.png',
       ],
       workbox: {
-        // Precache the JS/CSS/HTML produced by the build. PDFs, fonts,
-        // and images aren't precached — they're served via runtime
-        // strategies below if the user actually visits them.
-        globPatterns: ['**/*.{js,css,html,svg,png,ico,webp}'],
-        // Don't precache massive map tile chunks — they load lazily and
-        // are re-fetched online anyway. Caps the SW install size so the
-        // first visit isn't slow.
-        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024, // 4 MB
+        // Precache the JS/CSS/HTML produced by the build. `.mjs` is
+        // critical: pdfjs-dist ships its worker as
+        // `pdf.worker-<hash>.mjs` (~2 MB), and without it the lease-sheet
+        // / T&M PDF preview can't render offline (PdfPreviewViewer's
+        // getDocument() rejects with a network error). `.wasm` is
+        // included defensively — neither lib uses one today, but a
+        // dependency upgrade could silently introduce one.
+        globPatterns: ['**/*.{js,mjs,css,html,svg,png,ico,webp,wasm}'],
+        // Map-tile chunks aren't matched (they're loaded at runtime
+        // from Google's CDN, not bundled). The pdf.worker.mjs at ~2 MB
+        // is the largest precached asset; bumped the cap to 6 MB so
+        // a slightly larger build doesn't silently start dropping it.
+        maximumFileSizeToCacheInBytes: 6 * 1024 * 1024, // 6 MB
         navigateFallback: '/index.html',
         // /api/* is excluded from the navigation fallback so a 404 from
         // an API hit doesn't accidentally resolve to the SPA shell.

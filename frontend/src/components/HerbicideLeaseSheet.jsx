@@ -413,6 +413,18 @@ export default function HerbicideLeaseSheet({
       await handleConfirmSubmit();
       return;
     }
+    // Offline shortcut — `listOpenTMTickets` would otherwise block for
+    // ~1-2s waiting on the api.js retry-once timer before falling into
+    // the catch below, and the worker would see Continue "do nothing".
+    // Offline submissions create a fresh T&M ticket on the server side
+    // when the queue uploads anyway, so jumping straight to the
+    // "create new" picker is the right behavior here.
+    if (typeof window !== 'undefined' && window.navigator?.onLine === false) {
+      setOpenTMTickets([]);
+      setTmChoice({ create: true });
+      setIsPickingTM(true);
+      return;
+    }
     try {
       const tickets = await api.listOpenTMTickets({
         client: form.customer || undefined,
