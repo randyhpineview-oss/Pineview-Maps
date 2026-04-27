@@ -517,6 +517,29 @@ export default function MapView({
           />
         ) : null}
 
+        {/*
+          OverlayView pre-warm. `@react-google-maps/api`'s OverlayView wraps
+          `google.maps.OverlayView`, whose first-ever mount on a given map
+          instance triggers Google's internal pane setup (CSS + MVCObject
+          subscriptions). If the user's network drops between map ready
+          and their first pin tap, that first-mount can fail silently and
+          the popup never appears — but every subsequent mount is fine.
+          We mount one zero-size, off-pane overlay eagerly so the first
+          *user-visible* popup is never the first OverlayView in the tree.
+          display:none keeps it out of the layout; pointer-events:none
+          guarantees it can never intercept a tap. Anchored on the default
+          center so it has a valid projection from the start.
+        */}
+        <OverlayView
+          position={defaultCenter}
+          mapPaneName={OverlayView.OVERLAY_LAYER}
+        >
+          <div
+            aria-hidden="true"
+            style={{ display: 'none', width: 0, height: 0, pointerEvents: 'none' }}
+          />
+        </OverlayView>
+
         {sites.map((site) => (
           <Marker
             key={`${site.id || site.cacheId}-${site.approval_state || ''}`}

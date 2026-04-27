@@ -225,6 +225,20 @@ export default function App() {
   const userRole = session?.user?.user_metadata?.role || 'worker';
   const actualCanAdmin = userRole === 'admin' || userRole === 'office';
 
+  // Display label for the current user, computed once and reused by both
+  // the inline (tablet/PC) name badge and the mobile avatar menu. Mirrors
+  // the previous inline expression so existing accounts render identically.
+  const userDisplayName = useMemo(() => {
+    if (!user) return '';
+    const metaName = user.user_metadata?.name || user.name;
+    if (metaName) return metaName;
+    const local = user.email ? user.email.split('@')[0] : '';
+    if (local) return local.charAt(0).toUpperCase() + local.slice(1);
+    return user.email || '';
+  }, [user]);
+  // Initial used inside the round avatar trigger on mobile.
+  const userInitial = (userDisplayName || 'U').trim().charAt(0).toUpperCase() || 'U';
+
   // "View as Worker" override: admin/office can flip this on to get the
   // worker-level UI (no admin panel tab, no approve/delete buttons, no
   // Dropbox pricing links) AND see only their own forms \u2014 handy when
@@ -239,6 +253,30 @@ export default function App() {
     try { localStorage.setItem('pv_view_as_worker', viewAsWorker ? '1' : '0'); }
     catch { /* ignore */ }
   }, [viewAsWorker]);
+  // ── Account menu (mobile-only avatar dropdown) ───────────────────────────
+  // The topbar packs a lot into a small space on phones: Online/Offline,
+  // Refresh, Pending alerts, Sync indicators, the user's name, View as
+  // Worker, and Sign Out. On a 375 px screen those wrap to two rows and
+  // crowd the map. This state powers a single avatar popover that
+  // collapses the three identity-related items (name, View as Worker,
+  // Sign Out) into one compact trigger on mobile only. Tablet/PC keeps
+  // the inline layout unchanged via CSS (see `.topbar-account-menu` /
+  // `.topbar-account-inline-only` in index.css).
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const accountMenuRef = useRef(null);
+  useEffect(() => {
+    if (!accountMenuOpen) return;
+    const handleOutside = (e) => {
+      if (accountMenuRef.current && !accountMenuRef.current.contains(e.target)) {
+        setAccountMenuOpen(false);
+      }
+    };
+    // pointerdown covers both mouse and touch in one listener and fires
+    // before the click that would otherwise re-toggle the menu.
+    document.addEventListener('pointerdown', handleOutside);
+    return () => document.removeEventListener('pointerdown', handleOutside);
+  }, [accountMenuOpen]);
+
   // If the user isn't actually admin/office, force the toggle off so a
   // stale localStorage value from a previous session/account doesn't lock
   // a real worker into some phantom "view as worker" state. (No-op for
@@ -2783,10 +2821,12 @@ export default function App() {
               role is admin/office. Orange when active so the user can't
               forget they're in worker view and wonder where the admin
               tab went. Click toggles back. Lives in the topbar (not the
-              admin panel) so it stays reachable in worker view. */}
+              admin panel) so it stays reachable in worker view.
+              `.topbar-account-inline-only` hides this on mobile; the same
+              toggle lives inside the avatar menu below. */}
           {actualCanAdmin ? (
             <button
-              className="badge"
+              className="badge topbar-account-inline-only"
               onClick={() => setViewAsWorker((v) => !v)}
               style={{
                 cursor: 'pointer',
@@ -2803,14 +2843,63 @@ export default function App() {
               {viewAsWorker ? '\ud83d\udc77 Viewing as Worker' : '\ud83d\udc64 View as Worker'}
             </button>
           ) : null}
-          <span className="badge">{user?.user_metadata?.name || user?.name || user?.email?.split('@')[0]?.charAt(0).toUpperCase() + user?.email?.split('@')[0]?.slice(1) || user?.email}</span>
-          <button 
+          <span className="badge topbar-account-inline-only">{userDisplayName}</span>
+          <button
             onClick={() => signOut()}
-            className="badge"
+            className="badge topbar-account-inline-only"
             style={{ cursor: 'pointer', background: '#ef4444', color: 'white' }}
           >
             Sign Out
           </button>
+
+          {/* Mobile-only avatar menu: collapses name + View as Worker +
+              Sign Out into a single 28 px circle with the user's initial.
+              Hidden on tablet/PC via CSS so the existing inline badges
+              keep their full-width layout. The orange dot on the trigger
+              mirrors the View-as-Worker toggle so admins always see at a
+              glance which view they're in, even with the menu closed. */}
+          <div className="topbar-account-menu" ref={accountMenuRef}>
+            <button
+              type="button"
+              className="topbar-account-trigger"
+              onClick={() => setAccountMenuOpen((v) => !v)}
+              aria-label="Account menu"
+              aria-expanded={accountMenuOpen}
+              aria-haspopup="menu"
+              title={userDisplayName}
+            >
+              {userInitial}
+              {viewAsWorker ? <span className="topbar-account-trigger-dot" aria-hidden="true" /> : null}
+            </button>
+            {accountMenuOpen ? (
+              <div className="topbar-account-popover" role="menu">
+                <div className="topbar-account-name" role="presentation">
+                  {userDisplayName}
+                  {viewAsWorker ? (
+                    <span className="topbar-account-name-sub">Viewing as Worker</span>
+                  ) : null}
+                </div>
+                {actualCanAdmin ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="topbar-account-item"
+                    onClick={() => { setViewAsWorker((v) => !v); setAccountMenuOpen(false); }}
+                  >
+                    {viewAsWorker ? '\ud83d\udc64 Restore admin view' : '\ud83d\udc77 View as worker'}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="topbar-account-item topbar-account-item-danger"
+                  onClick={() => { setAccountMenuOpen(false); signOut(); }}
+                >
+                  Sign out
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
       </header>
 

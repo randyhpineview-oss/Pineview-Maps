@@ -7,6 +7,11 @@
   --tab-height: 56px;
   --topbar-height: 48px;
   --panel-width: 380px;
+  /* Buffer beneath the bottom tabs so the system swipe-up gesture area
+     (iOS home indicator / Android gesture bar) doesn't sit on top of the
+     middle tab buttons. Uses the device safe-area inset when available
+     and falls back to 10px on devices that don't report one. */
+  --tab-safe-bottom: max(env(safe-area-inset-bottom), 10px);
 }
 
 * { box-sizing: border-box; margin: 0; }
@@ -20,7 +25,7 @@ button { cursor: pointer; }
 .app-shell {
   height: 100dvh;
   display: grid;
-  grid-template-rows: var(--topbar-height) 1fr var(--tab-height);
+  grid-template-rows: var(--topbar-height) 1fr calc(var(--tab-height) + var(--tab-safe-bottom));
 }
 
 /* ───── Top bar ───── */
@@ -56,6 +61,120 @@ button { cursor: pointer; }
 }
 .badge.online { color: #86efac; }
 .badge.offline { color: #fbbf24; }
+
+/* ───── Account menu (mobile-only avatar dropdown) ─────
+   Hidden on tablet/PC by default — the existing inline badges (name,
+   View as Worker, Sign Out) handle that screen size. On phones the
+   inline badges hide via `.topbar-account-inline-only` and this menu
+   takes over to keep the topbar on a single row. */
+.topbar-account-menu {
+  position: relative;
+  display: none;
+  flex-shrink: 0;
+}
+
+.topbar-account-trigger {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid rgba(143, 182, 255, 0.22);
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  position: relative;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  padding: 0;
+}
+
+.topbar-account-trigger:active {
+  transform: scale(0.96);
+}
+
+/* Orange dot in the corner of the avatar when "View as Worker" is on,
+   so admins always see at a glance which view they're in even before
+   opening the menu. Mirrors the orange badge color used inline. */
+.topbar-account-trigger-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #f59e0b;
+  border: 2px solid #0f172a;
+  pointer-events: none;
+}
+
+.topbar-account-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 200px;
+  background: rgba(15, 23, 42, 0.98);
+  border: 1px solid rgba(143, 182, 255, 0.18);
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(143, 182, 255, 0.05);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.topbar-account-name {
+  padding: 10px 12px 8px;
+  font-size: 0.82rem;
+  color: #e5eefb;
+  font-weight: 600;
+  border-bottom: 1px solid rgba(143, 182, 255, 0.10);
+  margin-bottom: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.topbar-account-name-sub {
+  font-size: 0.66rem;
+  color: #f59e0b;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.topbar-account-item {
+  background: transparent;
+  border: none;
+  color: #d7e4fa;
+  text-align: left;
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.topbar-account-item:hover,
+.topbar-account-item:active {
+  background: rgba(143, 182, 255, 0.10);
+}
+
+.topbar-account-item-danger {
+  color: #fca5a5;
+}
+
+.topbar-account-item-danger:hover,
+.topbar-account-item-danger:active {
+  background: rgba(239, 68, 68, 0.16);
+  color: #fee2e2;
+}
 
 .topbar select {
   background: rgba(15, 23, 42, 0.85);
@@ -417,7 +536,8 @@ button { cursor: pointer; }
 
 /* ───── Bottom tabs ───── */
 .bottom-tabs {
-  height: var(--tab-height);
+  height: calc(var(--tab-height) + var(--tab-safe-bottom));
+  padding-bottom: var(--tab-safe-bottom);
   display: flex;
   background: rgba(9, 17, 31, 0.96);
   border-top: 1px solid rgba(143, 182, 255, 0.10);
@@ -634,10 +754,22 @@ button.site-row { cursor: pointer; }
 
   .meta-grid { grid-template-columns: 1fr; }
 
-  .topbar { padding: 0 0.5rem; gap: 0.25rem; overflow: hidden; }
+  .topbar { padding: 0 0.5rem; gap: 0.25rem; overflow: visible; }
   .topbar-title { font-size: 0.82rem; flex-shrink: 0; }
-  .topbar-right { gap: 0.25rem; flex-shrink: 1; min-width: 0; overflow: hidden; flex-wrap: wrap; justify-content: flex-end; }
+  /* Single-row layout on mobile: identity badges collapse into the
+     avatar menu, so we no longer need flex-wrap. nowrap keeps the
+     remaining operational badges (Online, Refresh, Pending, Sync)
+     on one line. overflow: visible lets the avatar popover escape
+     the topbar's clip. */
+  .topbar-right { gap: 0.3rem; flex-shrink: 1; min-width: 0; flex-wrap: nowrap; justify-content: flex-end; overflow: visible; }
   .topbar-right .badge { font-size: 0.62rem; padding: 0.15rem 0.4rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
+
+  /* Hide the inline name / View-as-Worker / Sign-Out badges on mobile —
+     the avatar menu replaces them. */
+  .topbar-account-inline-only { display: none !important; }
+
+  /* Show the mobile avatar menu. Hidden on tablet/PC. */
+  .topbar-account-menu { display: block; }
 }
 
 /* Hide Google Maps attribution elements */
