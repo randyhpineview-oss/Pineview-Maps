@@ -161,6 +161,20 @@ export default function FormsPanel({
   visible,
   cachedRecents = [],
   uploadQueue = [],
+  // Id of the queue row that's currently uploading (or null/undefined
+  // when idle). Only this row renders the live progress bar; the rest
+  // stay in their static "Queued" state. Driven by App.jsx's
+  // processUploadQueue setting `activeUploadItemId` at the start of
+  // each iteration and clearing it in the finally block.
+  activeUploadItemId = null,
+  // 0..100 byte-progress for the active upload item. Capped at 95 on
+  // the App side during upload (since the server still has PDF/Dropbox
+  // work after the bytes land); jumps to 100 briefly between items.
+  uploadCurrentItemPercent = 0,
+  // Bumped by App.jsx when the header "Syncing X%" badge is tapped.
+  // An effect below watches this and switches to In Progress →
+  // Uploading so the worker lands on the details view.
+  uploadTabSignal = 0,
   clients = [],          // shared global client list from the map's pins
   areas = [],            // shared global area list from the map's pins
   onViewPdf,
@@ -218,6 +232,18 @@ export default function FormsPanel({
   // forcing everyone on the app to poll that fast.
   const [tmLocalTick, setTmLocalTick] = useState(0);
   const [drafts, setDrafts] = useState([]);
+
+  // Deep-link from the header "Syncing X%" badge: when App bumps
+  // `uploadTabSignal`, jump to In Progress → Uploading so the worker
+  // lands directly on the per-ticket progress view. Guarded on > 0
+  // so the initial render (signal=0) doesn't override the default
+  // sub-tab.
+  useEffect(() => {
+    if (uploadTabSignal > 0) {
+      setSubTab(SUB_IN_PROGRESS);
+      setIpTab(IP_UPLOADING);
+    }
+  }, [uploadTabSignal]);
 
   // Derived views over the unified cache.
   const openTickets = useMemo(
@@ -632,21 +658,88 @@ export default function FormsPanel({
                     item.targetType === 'tm_ticket' ? 'T&M Ticket'
                     : item.targetType === 'site' ? 'Site'
                     : 'Pipeline';
+                  // Only the row that App.jsx has marked active gets the
+                  // live byte-progress bar. Everything else in the queue
+                  // renders the static "Queued" state so the list still
+                  // reads cleanly when 3–5 items are stacked.
+                  const isActive = activeUploadItemId === item.id;
+                  const pct = isActive ? uploadCurrentItemPercent : 0;
                   return (
-                    <div key={item.id} className="site-row" style={{ padding: '10px', borderRadius: '6px', opacity: 0.85 }}>
+                    <div
+                      key={item.id}
+                      className="site-row"
+                      style={{
+                        padding: '10px',
+                        borderRadius: '6px',
+                        // Active row gets a stronger border + full opacity
+                        // so it visually separates from the queued rows
+                        // below it.
+                        opacity: isActive ? 1 : 0.85,
+                        border: isActive ? '1px solid #3b82f6' : undefined,
+                      }}
+                    >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>
                           <div className="small-text" style={{ fontWeight: 600 }}>
                             {ticketNumber} — {sprayDate}
                           </div>
                           <div className="small-text" style={{ color: '#9ca3af' }}>
-                            {typeLabel} • {item.status === 'uploading' ? 'Uploading...' : 'Queued'}
+                            {typeLabel} • {isActive ? `Uploading ${pct}%` : 'Queued'}
                           </div>
                         </div>
                         <span className="pending-badge" style={{ background: '#3b82f6', fontSize: '0.65rem' }}>
-                          {item.status === 'uploading' ? '⟳' : '⏳'}
+                          {isActive ? '⟳' : '⏳'}
                         </span>
                       </div>
+                      {/* Per-ticket progress bar. Lives inside the row
+                          (not the header) so the map stays clean on
+                          mobile. Only rendered for the active row;
+                          queued rows don't get a bar to keep the list
+                          visually quiet. 6 px high matches the compact
+                          "badge / strip" aesthetic used elsewhere in
+                          the app. */}
+                      {isActive ? (
+                        <div
+                          role="progressbar"
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          aria-valuenow={pct}
+                          aria-label={`Uploading ${ticketNumber}: ${pct}%`}
+                          style={{
+                            marginTop: '8px',
+                            height: '6px',
+                            background: '#1f2937',
+                            borderRadius: '3px',
+                            overflow: 'hidden',
+                            position: 'relative',
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: `${pct}%`,
+                              height: '100%',
+                              background: 'linear-gradient(to right, #2563eb, #3b82f6)',
+                              // Smooth fill between XHR progress events
+                              // (they fire in ~kB chunks, so a jump from
+                              // 30 → 45 without easing would look jerky).
+                              transition: 'width 0.3s ease',
+                            }}
+                          />
+                          {/* Animated diagonal stripe overlay — gives
+                              motion while we wait for the next
+                              progress event. Same pattern the header
+                              bar used before we moved it here. */}
+                          <div
+                            style={{
+                              position: 'absolute',
+                              inset: 0,
+                              background: 'repeating-linear-gradient(45deg, transparent 0, transparent 6px, rgba(255,255,255,0.15) 6px, rgba(255,255,255,0.15) 12px)',
+                              animation: 'upload-stripe 1.2s linear infinite',
+                              pointerEvents: 'none',
+                            }}
+                          />
+                        </div>
+                      ) : null}
                     </div>
                   );
                 })

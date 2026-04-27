@@ -179,6 +179,17 @@ export default function App() {
   // we cap the displayed value at 95% during upload and let the
   // jump to 100% happen when the API call actually returns.
   const [currentItemPercent, setCurrentItemPercent] = useState(0);
+  // Queue entry id (from offlineStore.uploadQueue) of the item that's
+  // currently being uploaded. Null between items / when idle. FormsPanel
+  // uses this to decide which row in its Uploading list should render
+  // the live byte-progress bar vs. the static "Queued" state.
+  const [activeUploadItemId, setActiveUploadItemId] = useState(null);
+  // Bump counter used as a one-shot signal to tell FormsPanel to jump
+  // to its In Progress → Uploading sub-tab. Triggered by the tiny
+  // "Syncing X%" badge in the header: tapping it takes the worker
+  // straight to the per-ticket progress view without forcing them to
+  // drill down manually.
+  const [uploadTabSignal, setUploadTabSignal] = useState(0);
   const uploadingRef = useRef(false);
   // Lease-sheet record preview state
   const [previewingRecord, setPreviewingRecord] = useState(null);
@@ -646,6 +657,10 @@ export default function App() {
           // bar visibly restarts "file 2/3 — 0% ..." rather than carrying
           // the previous file's 95% across the boundary.
           setCurrentItemPercent(0);
+          // Mark this queue entry as the active uploader so FormsPanel's
+          // Uploading tab can render a live progress bar on just this
+          // row (and leave the rest showing "Queued").
+          setActiveUploadItemId(item.id);
 
           if (item.targetType === 'site') {
             // Offline-queued sheets may not have a ticket / PDF yet —
@@ -751,6 +766,7 @@ export default function App() {
       setUploadTotal(0);
       setUploadCompleted(0);
       setCurrentItemPercent(0);
+      setActiveUploadItemId(null);
       await refreshUploadQueue();
     }
   }, [refreshUploadQueue, ensurePdfAndTicket]);
@@ -2712,99 +2728,36 @@ export default function App() {
             {isRefreshing ? '↻ Refreshing…' : '↻ Refresh'}
           </button>
           {(uploadQueueItems.length > 0 || isUploading) ? (
-            // Real upload progress bar — fills left-to-right with smooth
-            // CSS width transition as items finish, with a percentage
-            // readout in the center. Diagonal stripe overlay animates
-            // continuously while uploading so the bar never looks frozen
-            // between item completions (each item is atomic — backend
-            // PDF generation + Dropbox upload — so progress bumps in
-            // discrete steps; the stripe gives motion in between).
-            <div
-              role="progressbar"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={isUploading ? uploadProgress : 0}
-              aria-label={isUploading
-                ? `Uploading ${uploadProgress} percent, ${uploadCompleted} of ${uploadTotal} items`
-                : `${uploadQueueItems.length} items queued for upload`}
-              onClick={async () => {
-                const items = await getUploadQueue();
-                console.log('[UPLOAD_QUEUE] Clicked progress bar — queued items:', items);
-                alert(`${items.length} item(s) in queue. Check console for details or run window.clearQueue() to clear.`);
-              }}
+            // Compact "Syncing X%" / "Queued (N)" badge. Tapping it
+            // deep-links to FormsPanel's In Progress → Uploading tab
+            // where the worker can see per-ticket progress bars.
+            // Kept small because the header is tight on mobile — the
+            // detailed view belongs in the Uploading tab, not here.
+            <button
+              type="button"
+              className="badge"
               style={{
-                position: 'relative',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                height: '24px',
-                minWidth: '180px',
-                borderRadius: '12px',
-                overflow: 'hidden',
-                background: '#1f2937',
-                border: '1px solid #374151',
+                background: isUploading ? '#2563eb' : '#3b82f6',
+                color: 'white',
+                border: 'none',
                 cursor: 'pointer',
-                userSelect: 'none',
+                whiteSpace: 'nowrap',
               }}
+              onClick={() => {
+                // Jump to Forms tab and bump the signal so FormsPanel
+                // picks up a subTab/ipTab switch in its effect.
+                setActiveTab(TAB_FORMS);
+                setDetailOpen(false);
+                setUploadTabSignal((x) => x + 1);
+              }}
+              title={isUploading
+                ? `Uploading ${uploadProgress}% — tap for details`
+                : `${uploadQueueItems.length} queued — tap for details`}
             >
-              {/* Filled portion — width animates smoothly when progress jumps. */}
-              <div
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  bottom: 0,
-                  width: isUploading ? `${uploadProgress}%` : '100%',
-                  background: isUploading
-                    ? 'linear-gradient(to right, #2563eb, #3b82f6)'
-                    : '#3b82f6',
-                  transition: 'width 0.4s ease',
-                  pointerEvents: 'none',
-                }}
-              />
-              {/* Animated diagonal stripe — only while actively uploading
-                  so the queued (idle) state stays solid and clean. */}
-              {isUploading ? (
-                <div
-                  style={{
-                    position: 'absolute',
-                    inset: 0,
-                    background: 'repeating-linear-gradient(45deg, transparent 0, transparent 8px, rgba(255,255,255,0.18) 8px, rgba(255,255,255,0.18) 16px)',
-                    animation: 'upload-stripe 1.2s linear infinite',
-                    pointerEvents: 'none',
-                  }}
-                />
-              ) : null}
-              {/* Centered text overlay. Mix-blend ensures the text stays
-                  legible over both the filled and unfilled portions. */}
-              <span
-                style={{
-                  position: 'relative',
-                  zIndex: 1,
-                  color: 'white',
-                  fontSize: '0.72rem',
-                  fontWeight: 600,
-                  letterSpacing: '0.02em',
-                  whiteSpace: 'nowrap',
-                  padding: '0 12px',
-                  textShadow: '0 1px 2px rgba(0,0,0,0.4)',
-                }}
-              >
-                {isUploading
-                  ? (uploadTotal > 1
-                      // Multi-file batch — show overall % + which file
-                      // we're on + that file's live byte progress.
-                      ? `${uploadProgress}% • file ${Math.min(uploadTotal, uploadCompleted + 1)}/${uploadTotal} (${currentItemPercent}%)`
-                      // Single file — overall and per-file are the same
-                      // metric, so just show one number.
-                      : `Uploading ${currentItemPercent || uploadProgress}%`)
-                  : `Queued (${uploadQueueItems.length})`}
-              </span>
-              {/* Inject the stripe-shift keyframes once. Using a global
-                  <style> tag keeps this self-contained — no theme-css
-                  edits required. */}
-              <style>{`@keyframes upload-stripe { 0% { background-position: 0 0; } 100% { background-position: 22.6px 0; } }`}</style>
-            </div>
+              {isUploading
+                ? `Syncing ${uploadProgress}%`
+                : `Queued (${uploadQueueItems.length})`}
+            </button>
           ) : null}
           {queuedCount > 0 ? (
             <button 
@@ -3281,6 +3234,15 @@ export default function App() {
               visible={activeTab === TAB_FORMS}
               cachedRecents={cachedRecents}
               uploadQueue={uploadQueueItems}
+              // Per-ticket upload-progress info for the Uploading tab.
+              // `activeUploadItemId` tells the panel which row is live,
+              // `uploadCurrentItemPercent` is that row's byte progress.
+              // `uploadTabSignal` is a one-shot bump that tells the
+              // panel to jump to In Progress → Uploading (fired by the
+              // header "Syncing X%" badge).
+              activeUploadItemId={activeUploadItemId}
+              uploadCurrentItemPercent={currentItemPercent}
+              uploadTabSignal={uploadTabSignal}
               clients={clients}
               areas={areas}
               onViewPdf={(record) => setPreviewingRecord(record)}
