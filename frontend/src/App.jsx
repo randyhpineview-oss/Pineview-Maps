@@ -14,6 +14,7 @@ import FormsPanel from './components/FormsPanel';
 import TMTicketDetailSheet from './components/TMTicketDetailSheet';
 import SiteDetailSheet from './components/SiteDetailSheet';
 import { api } from './lib/api';
+import { requestWithUploadProgress } from './lib/xhrUpload';
 import { nearestFraction } from './lib/mapUtils';
 import { generateLeaseSheetPdf } from './lib/pdfGenerator';
 import { generateTMTicketPdf } from './lib/tmTicketPdfGenerator';
@@ -169,6 +170,15 @@ export default function App() {
   // committed server-side.
   const [uploadTotal, setUploadTotal] = useState(0);
   const [uploadCompleted, setUploadCompleted] = useState(0);
+  // Per-file (current item) upload-byte percentage 0..100. Driven by
+  // XHR `upload.onprogress` events on the active item — gives the
+  // worker live "20% → 40% → 60% → ..." feedback within a single
+  // record's upload, instead of jumping 0→100% atomically when the
+  // request resolves. Server-side processing time after the bytes
+  // land (PDF render + Dropbox push) is invisible to the client, so
+  // we cap the displayed value at 95% during upload and let the
+  // jump to 100% happen when the API call actually returns.
+  const [currentItemPercent, setCurrentItemPercent] = useState(0);
   const uploadingRef = useRef(false);
   // Lease-sheet record preview state
   const [previewingRecord, setPreviewingRecord] = useState(null);
@@ -617,12 +627,36 @@ export default function App() {
           // ticket. We detect the link and bump `tmRefreshToken` at the
           // end of the branch so the delta fetch happens immediately.
           const bumpsTm = !!item.payload?.time_materials_link;
+
+          // Per-file progress callback. Cap at 0.95 during the upload
+          // phase: once XHR fires `upload.onload` (fraction === 1) the
+          // bytes are sent, but the backend still has to render the PDF
+          // and push it to Dropbox — we have no client-side signal for
+          // that work, so 95% says "almost done" without lying. The
+          // jump to 100% happens via setUploadProgress below once the
+          // promise actually resolves.
+          const itemsBefore = completed;
+          const onItemBytes = (fraction) => {
+            const capped = Math.max(0, Math.min(0.95, fraction));
+            setCurrentItemPercent(Math.round(capped * 100));
+            const overall = ((itemsBefore + capped) / total) * 100;
+            setUploadProgress(Math.min(99, Math.round(overall)));
+          };
+          // Reset the per-file readout at the start of each item so the
+          // bar visibly restarts "file 2/3 — 0% ..." rather than carrying
+          // the previous file's 95% across the boundary.
+          setCurrentItemPercent(0);
+
           if (item.targetType === 'site') {
             // Offline-queued sheets may not have a ticket / PDF yet —
             // render and reserve at upload time so Dropbox gets a PDF
             // with the real ticket number printed on it.
             const patched = await ensurePdfAndTicket(item);
-            await api.createSiteSprayRecord(item.targetId, patched);
+            await requestWithUploadProgress(`/api/sites/${item.targetId}/spray`, {
+              method: 'POST',
+              body: patched,
+              onProgress: onItemBytes,
+            });
             // Refresh the site data in background (including pdf_url from Dropbox)
             try {
               const updated = await api.getSite(item.targetId);
@@ -633,7 +667,11 @@ export default function App() {
             if (bumpsTm) setTmRefreshToken((x) => x + 1);
           } else if (item.targetType === 'pipeline') {
             const patched = await ensurePdfAndTicket(item);
-            await api.createSprayRecord(item.targetId, patched);
+            await requestWithUploadProgress(`/api/pipelines/${item.targetId}/spray`, {
+              method: 'POST',
+              body: patched,
+              onProgress: onItemBytes,
+            });
             try {
               const updatedPipeline = await api.getPipeline(item.targetId);
               setPipelines((prev) => prev.map((p) => (p.id === updatedPipeline.id ? updatedPipeline : p)));
@@ -652,7 +690,11 @@ export default function App() {
             // an existing ticket number (from the record being edited),
             // so we don't need to call ensurePdfAndTicket — the form
             // already produced a fresh PDF when the worker hit Save.
-            await api.updateSiteSprayRecord(item.targetId, item.payload);
+            await requestWithUploadProgress(`/api/site-spray-records/${item.targetId}`, {
+              method: 'PATCH',
+              body: item.payload,
+              onProgress: onItemBytes,
+            });
             try {
               const siteId = item.payload?.site_id || 0;
               if (Number.isInteger(siteId) && siteId > 0) {
@@ -674,7 +716,11 @@ export default function App() {
             // updateTMTicket body (description_of_work, office_data,
             // status: 'submitted', pdf_base64, and — for office/admin —
             // po_approval_number and row_updates).
-            await api.updateTMTicket(item.targetId, item.payload);
+            await requestWithUploadProgress(`/api/time-materials/${item.targetId}`, {
+              method: 'PATCH',
+              body: item.payload,
+              onProgress: onItemBytes,
+            });
             // Nudge FormsPanel to immediately delta-sync its ticket cache.
             // Without this, the worker would see the just-submitted ticket
             // stuck in "Open Tickets" for up to 5 minutes until the next
@@ -688,6 +734,11 @@ export default function App() {
           completed++;
           setUploadCompleted(completed);
           setUploadProgress(Math.round((completed / total) * 100));
+          // Item finished — show 100% briefly on the per-file readout
+          // before the next iteration resets it back to 0%. Without this
+          // the bar would jump from 95% (during upload) straight to the
+          // next file's 0%, hiding the "this file is done" beat.
+          setCurrentItemPercent(100);
         } catch (err) {
           console.warn('[UPLOAD_QUEUE] Failed to upload item', item.id, '— will retry next cycle:', err?.message || err);
           // Leave it in queue for retry on next poll cycle
@@ -699,6 +750,7 @@ export default function App() {
       setUploadProgress(0);
       setUploadTotal(0);
       setUploadCompleted(0);
+      setCurrentItemPercent(0);
       await refreshUploadQueue();
     }
   }, [refreshUploadQueue, ensurePdfAndTicket]);
@@ -2739,7 +2791,13 @@ export default function App() {
                 }}
               >
                 {isUploading
-                  ? `Uploading ${uploadProgress}% (${uploadCompleted}/${uploadTotal})`
+                  ? (uploadTotal > 1
+                      // Multi-file batch — show overall % + which file
+                      // we're on + that file's live byte progress.
+                      ? `${uploadProgress}% • file ${Math.min(uploadTotal, uploadCompleted + 1)}/${uploadTotal} (${currentItemPercent}%)`
+                      // Single file — overall and per-file are the same
+                      // metric, so just show one number.
+                      : `Uploading ${currentItemPercent || uploadProgress}%`)
                   : `Queued (${uploadQueueItems.length})`}
               </span>
               {/* Inject the stripe-shift keyframes once. Using a global
