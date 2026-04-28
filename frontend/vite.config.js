@@ -1,14 +1,45 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+import { execSync } from 'node:child_process';
 
-// Build-time version metadata. Pulled from env vars set by the GitHub Actions
-// workflow (.github/workflows/deploy.yml): VITE_APP_VERSION is computed as
-// `1.0.<github.run_number>` so each push to main bumps the patch automatically;
-// VITE_APP_COMMIT is the short SHA. Both fall back to 'dev'/'local' when
-// running `npm run dev` locally so the app never sees `undefined`.
-const APP_VERSION = process.env.VITE_APP_VERSION || 'dev';
-const APP_COMMIT = process.env.VITE_APP_COMMIT || 'local';
+// ── Build-time version metadata ──────────────────────────────────────────────
+// We want a version label visible in the app (avatar popover) that auto-bumps
+// on every push to master without anyone editing a number. The site is
+// deployed by Vercel (not GitHub Pages), and Vercel exposes useful env vars
+// during builds, so we layer fallbacks:
+//
+//   1. Explicit override:        VITE_APP_VERSION / VITE_APP_COMMIT
+//      (used by .github/workflows/deploy.yml when/if Pages is the deploy
+//      target — set to `1.0.<github.run_number>` and the short SHA.)
+//   2. Vercel:                   VERCEL_GIT_COMMIT_SHA + a derived patch from
+//      the git commit count, so each push to master gets a unique number.
+//   3. Local git fallback:       same as Vercel but using local `git` calls.
+//   4. Hard fallback:            'dev' / 'local' so dev mode never crashes.
+//
+// `git rev-list --count HEAD` is a stable monotonic patch number across CIs,
+// independent of GitHub Actions' run_number (which Vercel obviously doesn't
+// have). Wrapped in try/catch so a shallow-clone or missing-git environment
+// degrades gracefully instead of failing the build.
+function tryGit(cmd) {
+  try {
+    return execSync(cmd, { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+  } catch {
+    return '';
+  }
+}
+
+const explicitVersion = process.env.VITE_APP_VERSION;
+const explicitCommit = process.env.VITE_APP_COMMIT;
+
+// Vercel sets VERCEL_GIT_COMMIT_SHA to the full SHA on every build.
+const vercelSha = process.env.VERCEL_GIT_COMMIT_SHA || '';
+
+const gitSha = explicitCommit || vercelSha || tryGit('git rev-parse HEAD');
+const gitCount = tryGit('git rev-list --count HEAD');
+
+const APP_VERSION = explicitVersion || (gitCount ? `1.0.${gitCount}` : 'dev');
+const APP_COMMIT = (gitSha || 'local').slice(0, 7);
 const APP_BUILD_TIME = new Date().toISOString();
 
 export default defineConfig({
