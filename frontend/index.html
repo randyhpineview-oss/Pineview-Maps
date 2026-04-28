@@ -16,32 +16,78 @@
     <title>Pineview Actual Data Collaboration</title>
     <!--
       Boot splash. Inlined so it paints on the first frame (before the
-      React bundle is parsed). This covers cold-loads on slow networks
-      and the initial wait while the Render free-tier backend wakes up.
-      `main.jsx` calls window.__pineviewHideSplash() after React mounts;
-      we fade for 300 ms and then remove the node so it never blocks
-      pointer events once the app is interactive.
+      React bundle is parsed). This covers cold-loads on slow networks,
+      the initial wait while the Render free-tier backend wakes up, and
+      — critically — the silent auto-reload that the service worker
+      triggers the first time a user opens the app after a new deploy.
+
+      Two layers of defense against intermediate-state flicker:
+
+      1. `#root` starts at `opacity: 0` and is only revealed when the
+         `.pv-ready` class is added (by window.__pineviewHideSplash or
+         the 15 s safety timer). This means *any* React renders during
+         the splash window — including a stale old bundle briefly
+         rendering the offline fallback before the SW auto-reloads —
+         paint completely invisibly. The user can never see them leak
+         out from behind the splash.
+
+      2. The splash contents (`.pv-splash-inner`) fade in over 0.5 s
+         from opacity 0 to 1. The splash *background* stays at opacity
+         1 throughout so there's no flash of white between the inline
+         HTML paint and this CSS applying. On dismiss, the splash fades
+         OUT over 0.6 s and `#root` fades IN over 0.35 s — they
+         crossfade, with the #root reveal completing slightly earlier
+         so no dark-background gap shows through the end of the fade.
     -->
     <style>
+      /* Defensive: kill any white flash before the rest of the CSS in
+         <style> below or the external stylesheet have applied. Matches
+         theme-color. */
+      html, body { background: #09111f; margin: 0; }
+
+      /* Hide the React tree until the splash dismissal reveals it. This
+         is the main-line defense against any intermediate-state flicker
+         (fallback card, "Loading map…" text, blank chrome, etc.)
+         becoming visible before the app is actually ready. */
+      #root {
+        opacity: 0;
+        transition: opacity 0.35s ease;
+      }
+      #root.pv-ready {
+        opacity: 1;
+      }
+
       #pv-splash {
         position: fixed;
         inset: 0;
         z-index: 9999;
         display: flex;
-        flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 1.25rem;
         background: radial-gradient(circle at 50% 35%, #0f1d36 0%, #09111f 70%);
         color: #e5eefb;
         font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         opacity: 1;
-        transition: opacity 0.3s ease;
+        transition: opacity 0.6s ease;
         -webkit-tap-highlight-color: transparent;
       }
       #pv-splash.pv-splash-hidden {
         opacity: 0;
         pointer-events: none;
+      }
+      /* Content wrapper: background of #pv-splash stays at opacity 1 to
+         prevent any flash, but the logo + title + spinner gracefully
+         fade in on top of it. */
+      .pv-splash-inner {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1.25rem;
+        opacity: 0;
+        animation: pv-splash-content-in 0.5s ease 0.08s forwards;
+      }
+      @keyframes pv-splash-content-in {
+        to { opacity: 1; }
       }
       #pv-splash .pv-splash-logo {
         width: 96px;
@@ -79,31 +125,51 @@
       @media (prefers-reduced-motion: reduce) {
         #pv-splash .pv-splash-logo { animation: none; }
         #pv-splash .pv-splash-spinner { animation-duration: 1.6s; }
+        .pv-splash-inner { animation: none; opacity: 1; }
+        #root { transition: none; }
       }
     </style>
   </head>
   <body>
     <div id="root"></div>
     <div id="pv-splash" role="status" aria-live="polite" aria-label="Loading Pineview">
-      <img class="pv-splash-logo" src="/icon-192.png" alt="" width="96" height="96" />
-      <div class="pv-splash-title">Pineview</div>
-      <div class="pv-splash-spinner" aria-hidden="true"></div>
-      <div class="pv-splash-sub">Loading…</div>
+      <div class="pv-splash-inner">
+        <img class="pv-splash-logo" src="/icon-192.png" alt="" width="96" height="96" />
+        <div class="pv-splash-title">Pineview</div>
+        <div class="pv-splash-spinner" aria-hidden="true"></div>
+        <div class="pv-splash-sub">Loading…</div>
+      </div>
     </div>
     <script>
+      // Reveals the React tree (applies opacity: 1 via the .pv-ready
+      // class). Must be called any time we dismiss the splash, otherwise
+      // #root stays invisible and the user sees just the splash bg.
+      function pvRevealRoot() {
+        var r = document.getElementById('root');
+        if (r) r.classList.add('pv-ready');
+      }
       // Safety net: if main.jsx fails to load (e.g. extreme cold start or
-      // network blip), hide the splash after 15 s so the user sees the
-      // underlying error / empty state instead of an indefinite spinner.
+      // network blip), hide the splash AND reveal #root after 15 s so the
+      // user sees the underlying error / empty state instead of an
+      // indefinite spinner (or, worse, an invisible #root + empty splash
+      // bg).
       window.__pineviewSplashFallbackTimer = setTimeout(function () {
         var el = document.getElementById('pv-splash');
         if (el) el.classList.add('pv-splash-hidden');
+        pvRevealRoot();
       }, 15000);
       window.__pineviewHideSplash = function () {
         clearTimeout(window.__pineviewSplashFallbackTimer);
+        // Reveal #root slightly before the splash starts fading so the
+        // two transitions crossfade smoothly (#root's 0.35 s fade-in
+        // completes well inside the splash's 0.6 s fade-out, preventing
+        // any gap where neither is fully opaque).
+        pvRevealRoot();
         var el = document.getElementById('pv-splash');
         if (!el) return;
         el.classList.add('pv-splash-hidden');
-        setTimeout(function () { el && el.parentNode && el.parentNode.removeChild(el); }, 350);
+        // 650 ms matches the 0.6 s opacity transition plus a small buffer.
+        setTimeout(function () { el && el.parentNode && el.parentNode.removeChild(el); }, 650);
       };
     </script>
     <script type="module" src="/src/main.jsx"></script>
