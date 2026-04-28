@@ -39,11 +39,32 @@
          crossfade, with the #root reveal completing slightly earlier
          so no dark-background gap shows through the end of the fade.
     -->
+    <script>
+      // Apply the saved per-device theme synchronously, BEFORE any CSS
+      // or React paints. Reading localStorage in main.jsx would still
+      // be early enough to beat the React tree, but the splash + the
+      // inline <style> below already paint by the time main.jsx parses,
+      // so a light-mode user would briefly see the dark splash bg flash
+      // on reload. Doing it here in the <head> lets the inline splash
+      // styles (which key off `:root[data-theme="light"]`) pick up the
+      // right values on the very first paint.
+      // Default is dark when no preference has been saved.
+      try {
+        var __pvTheme = localStorage.getItem('pv_theme');
+        if (__pvTheme !== 'light' && __pvTheme !== 'dark') __pvTheme = 'dark';
+        document.documentElement.setAttribute('data-theme', __pvTheme);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    </script>
     <style>
       /* Defensive: kill any white flash before the rest of the CSS in
          <style> below or the external stylesheet have applied. Matches
-         theme-color. */
+         theme-color. Light-mode equivalent matches the app shell so
+         reload doesn't flash a different background underneath. */
       html, body { background: #09111f; margin: 0; }
+      :root[data-theme="light"] html,
+      :root[data-theme="light"] body { background: #f1f5f9; }
 
       /* Hide the React tree until the splash dismissal reveals it. This
          is the main-line defense against any intermediate-state flicker
@@ -127,6 +148,29 @@
         #pv-splash .pv-splash-spinner { animation-duration: 1.6s; }
         .pv-splash-inner { animation: none; opacity: 1; }
         #root { transition: none; }
+      }
+
+      /* Light-mode splash: keeps the same Pineview logo + spinner but
+         on a soft slate background so reloads in light mode don't flash
+         the dark gradient before the app paints. The accent gradient
+         and brand color stay identical so the visual identity is the
+         same across themes. */
+      :root[data-theme="light"] #pv-splash {
+        background: radial-gradient(circle at 50% 35%, #ffffff 0%, #e2e8f0 70%);
+        color: #0f172a;
+      }
+      :root[data-theme="light"] #pv-splash .pv-splash-logo {
+        box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18), 0 0 0 1px rgba(15, 23, 42, 0.06);
+      }
+      :root[data-theme="light"] #pv-splash .pv-splash-title {
+        color: #0f172a;
+      }
+      :root[data-theme="light"] #pv-splash .pv-splash-sub {
+        color: #64748b;
+      }
+      :root[data-theme="light"] #pv-splash .pv-splash-spinner {
+        border-color: rgba(37, 99, 235, 0.18);
+        border-top-color: #2563eb;
       }
     </style>
   </head>

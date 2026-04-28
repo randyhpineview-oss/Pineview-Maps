@@ -63,6 +63,20 @@ button { cursor: pointer; }
 .badge.online { color: #86efac; }
 .badge.offline { color: #fbbf24; }
 
+/* Manual-refresh badge in the topbar. Idle = dark slate with blue
+   text; busy = a slightly lighter slate with muted gray text so the
+   user can tell at a glance the click was registered. Light-mode
+   overrides live in the light-theme block at the bottom of the file. */
+.topbar-refresh-badge {
+  background: #1f2937;
+  color: #60a5fa;
+  border: 1px solid #374151;
+}
+.topbar-refresh-badge[data-busy="1"] {
+  background: #374151;
+  color: #9ca3af;
+}
+
 /* ───── Account menu (avatar dropdown, all viewports) ─────
    The avatar trigger + popover is the single source of identity UI on
    every screen size. The inline name / View-as-Worker / Sign-Out badges
@@ -958,3 +972,310 @@ button[title="Open keyboard shortcuts"],
   0%   { background-position: 0 0; }
   100% { background-position: 16.97px 0; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Light theme — opt-in via `:root[data-theme="light"]`. Default is
+   dark (everything above this block). The toggle lives in the
+   account popover (top-bar avatar) and persists per-device via
+   localStorage `pv_theme`. The early bootstrap script in index.html
+   applies the saved theme before first paint so reloads don't flash.
+
+   Strategy: override only the shell-level surfaces, text, borders
+   and inputs. Brand-accent colors (blue gradient, online green,
+   offline amber, danger red, etc.) stay identical — they read fine
+   on both backgrounds and keep the visual identity consistent.
+
+   Components with deeply nested inline-styled dark surfaces (e.g.
+   T&M ticket detail tables, lease-sheet preview rows) intentionally
+   remain dark — those read like data cards on the light shell and
+   keep submitted-form fidelity matching the printed PDF output.
+   ═══════════════════════════════════════════════════════════════════ */
+:root[data-theme="light"] {
+  color: #0f172a;
+  background: #f1f5f9;
+}
+
+/* ── Top bar ───────────────────────────────────────────────────── */
+:root[data-theme="light"] .topbar {
+  background: rgba(255, 255, 255, 0.96);
+  border-bottom: 1px solid rgba(15, 23, 42, 0.10);
+  color: #0f172a;
+}
+
+:root[data-theme="light"] .topbar-title {
+  color: #0f172a;
+}
+
+:root[data-theme="light"] .badge {
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  background: rgba(255, 255, 255, 0.95);
+  color: #1e293b;
+}
+:root[data-theme="light"] .badge.online { color: #15803d; }
+:root[data-theme="light"] .badge.offline { color: #b45309; }
+
+/* Refresh badge: idle = soft slate surface with brand blue text; busy
+   = slightly darker slate with muted text. Border picks up the same
+   slate-200 line as other light-mode controls so it sits on the
+   topbar without feeling like a dark island. */
+:root[data-theme="light"] .topbar-refresh-badge {
+  background: #f1f5f9;
+  color: #2563eb;
+  border: 1px solid #cbd5e1;
+}
+:root[data-theme="light"] .topbar-refresh-badge[data-busy="1"] {
+  background: #e2e8f0;
+  color: #64748b;
+}
+
+/* ── Account avatar trigger + popover ───────────────────────────── */
+:root[data-theme="light"] .topbar-account-trigger {
+  border: 1px solid rgba(37, 99, 235, 0.32);
+  /* Brand gradient stays identical so the avatar looks the same on
+     both themes — only the ring color changes for contrast on white. */
+}
+
+/* The orange "viewing-as-worker" dot needs a visible border ring
+   that contrasts with the topbar background. White ring on light. */
+:root[data-theme="light"] .topbar-account-trigger-dot {
+  border-color: #ffffff;
+}
+
+:root[data-theme="light"] .topbar-account-popover {
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.18), 0 0 0 1px rgba(15, 23, 42, 0.04);
+}
+
+:root[data-theme="light"] .topbar-account-name {
+  color: #0f172a;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+:root[data-theme="light"] .topbar-account-name-sub {
+  color: #b45309;  /* amber-700 — better contrast on white than #f59e0b */
+}
+
+:root[data-theme="light"] .topbar-account-item {
+  color: #1e293b;
+}
+:root[data-theme="light"] .topbar-account-item:hover,
+:root[data-theme="light"] .topbar-account-item:active {
+  background: rgba(37, 99, 235, 0.10);
+}
+:root[data-theme="light"] .topbar-account-item-danger {
+  color: #b91c1c;
+}
+:root[data-theme="light"] .topbar-account-item-danger:hover,
+:root[data-theme="light"] .topbar-account-item-danger:active {
+  background: rgba(220, 38, 38, 0.10);
+  color: #991b1b;
+}
+
+/* The build-version line at the bottom of the popover uses an inline
+   `style` attr; raise specificity + !important so the muted slate
+   text reads on white instead of the original `#9ab1d6`. */
+:root[data-theme="light"] .topbar-account-popover [role="presentation"][title^="Build"] {
+  color: #475569 !important;
+  opacity: 0.85 !important;
+}
+
+/* ── Topbar select (admin / role pickers) ──────────────────────── */
+:root[data-theme="light"] .topbar select {
+  background: #ffffff;
+  color: #0f172a;
+  border: 1px solid rgba(15, 23, 42, 0.18);
+}
+
+/* ── Map fallback (offline) — already light, keep as-is ────────── */
+
+/* ── Floating controls on map ──────────────────────────────────── */
+:root[data-theme="light"] .float-btn {
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  background: rgba(255, 255, 255, 0.95);
+  color: #0f172a;
+}
+
+/* ── Filter overlay + layer panel ──────────────────────────────── */
+:root[data-theme="light"] .filter-overlay {
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  color: #0f172a;
+}
+
+:root[data-theme="light"] .filter-overlay input,
+:root[data-theme="light"] .filter-overlay select {
+  background: #ffffff;
+  color: #0f172a;
+  border: 1px solid rgba(15, 23, 42, 0.18);
+}
+
+/* Re-color the chevron arrow on selects so it shows up on light bg.
+   Encoded SVG with #475569 stroke (slate-600). */
+:root[data-theme="light"] .filter-overlay select,
+:root[data-theme="light"] .side-panel select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%23475569' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");
+}
+
+/* Native dropdown options look better with white bg on light theme.
+   (Only affects the native popup list — not Mac Safari which styles
+   from the OS.) */
+:root[data-theme="light"] .filter-overlay select option,
+:root[data-theme="light"] .side-panel select option {
+  background: #ffffff;
+  color: #0f172a;
+}
+
+:root[data-theme="light"] .layer-item {
+  color: #1e293b;
+}
+:root[data-theme="light"] .layer-item:active {
+  background: rgba(37, 99, 235, 0.12);
+}
+:root[data-theme="light"] .layer-item-check {
+  border: 2px solid rgba(15, 23, 42, 0.30);
+}
+/* Checked state stays green — same in both themes for consistency. */
+
+/* ── Side-panel select ──────────────────────────────────────────── */
+:root[data-theme="light"] .side-panel select {
+  background: #ffffff;
+  color: #0f172a;
+  border: 1px solid rgba(15, 23, 42, 0.18);
+}
+
+/* ── FAB menu ──────────────────────────────────────────────────── */
+:root[data-theme="light"] .fab.location-fab {
+  background: #ffffff;
+  color: #1f2937;
+  /* Add a subtle shadow on light so the white FAB doesn't blend
+     into a light map area. */
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.18);
+}
+:root[data-theme="light"] .fab.location-fab:hover {
+  background: #f1f5f9;
+}
+
+:root[data-theme="light"] .fab-menu {
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.18);
+}
+:root[data-theme="light"] .fab-menu button {
+  color: #0f172a;
+}
+:root[data-theme="light"] .fab-menu button:hover {
+  background: rgba(37, 99, 235, 0.10);
+}
+
+/* ── Place-pin banner ──────────────────────────────────────────── */
+:root[data-theme="light"] .place-banner {
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  color: #0f172a;
+}
+
+/* ── Add-pin popup form ────────────────────────────────────────── */
+:root[data-theme="light"] .add-pin-popup {
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  box-shadow: 0 8px 32px rgba(15, 23, 42, 0.18);
+  color: #0f172a;
+}
+:root[data-theme="light"] .add-pin-popup input {
+  background: #ffffff;
+  color: #0f172a;
+  border: 1px solid rgba(15, 23, 42, 0.18);
+}
+
+/* ── Side panel (right drawer / detail bottom sheet) ───────────── */
+:root[data-theme="light"] .side-panel {
+  background: rgba(255, 255, 255, 0.98);
+  border-left: 1px solid rgba(15, 23, 42, 0.10);
+  color: #0f172a;
+}
+
+:root[data-theme="light"] .side-panel-header {
+  border-bottom: 1px solid rgba(15, 23, 42, 0.10);
+}
+:root[data-theme="light"] .side-panel-header h2 {
+  color: #0f172a;
+}
+:root[data-theme="light"] .back-btn {
+  color: #1e293b;
+}
+
+/* On mobile, the detail sheet has a colored top border instead of left;
+   match it to the rest of the light-mode borders. */
+@media (max-width: 768px) {
+  :root[data-theme="light"] .side-panel.detail-priority {
+    border-top: 1px solid rgba(15, 23, 42, 0.12);
+    border-left: none;
+  }
+}
+
+/* ── Bottom tabs ───────────────────────────────────────────────── */
+:root[data-theme="light"] .bottom-tabs {
+  background: rgba(255, 255, 255, 0.98);
+  border-top: 1px solid rgba(15, 23, 42, 0.10);
+}
+:root[data-theme="light"] .tab-btn {
+  color: #64748b;
+}
+:root[data-theme="light"] .tab-btn.active {
+  color: #2563eb;
+}
+
+/* ── Shared panel + cards ──────────────────────────────────────── */
+:root[data-theme="light"] .panel {
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  color: #0f172a;
+}
+
+:root[data-theme="light"] .panel input,
+:root[data-theme="light"] .panel select,
+:root[data-theme="light"] .panel textarea,
+:root[data-theme="light"] .side-panel-body input,
+:root[data-theme="light"] .side-panel-body select,
+:root[data-theme="light"] .side-panel-body textarea {
+  background: #ffffff;
+  color: #0f172a;
+  border: 1px solid rgba(15, 23, 42, 0.18);
+}
+
+:root[data-theme="light"] .panel h2,
+:root[data-theme="light"] .panel h3 {
+  color: #0f172a;
+}
+
+:root[data-theme="light"] .site-row {
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  color: #0f172a;
+}
+
+:root[data-theme="light"] .meta-item {
+  background: #f8fafc;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+}
+:root[data-theme="light"] .meta-item strong {
+  color: #475569;
+}
+
+:root[data-theme="light"] .small-text {
+  color: #475569;
+}
+
+:root[data-theme="light"] .secondary-button {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+/* primary, danger, status buttons + pending badge keep their accents
+   — they have solid backgrounds with white/dark text already and read
+   fine on both themes. */
+
+/* ── Misc text contrast on light shell ─────────────────────────── */
+/* The build-version inline span in the topbar uses inline color
+   `#6b7280` already, which is gray-500 — fine on both themes. */
