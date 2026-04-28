@@ -84,28 +84,28 @@ export default function PdfPreviewOverlay({ record, onClose }) {
       {/* ── Toolbar ── */}
       <div style={{
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        padding: '10px 16px', background: 'var(--surface-elev)', borderBottom: '1px solid var(--border-card)',
+        padding: '10px 16px', background: '#1f2937', borderBottom: '1px solid #374151',
         gap: '8px', flexShrink: 0,
       }}>
-        <span style={{ color: 'var(--text-card)', fontWeight: 600, flex: 1, fontSize: '0.95rem' }}>
+        <span style={{ color: '#f9fafb', fontWeight: 600, flex: 1, fontSize: '0.95rem' }}>
           Lease Sheet {ticket ? `— ${ticket}` : ''}
         </span>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
           {pdfBytes ? (
             <button onClick={handlePrint}
-              style={{ background: 'none', border: 'none', color: 'var(--link-card)', fontSize: '0.85rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+              style={{ background: 'none', border: 'none', color: '#60a5fa', fontSize: '0.85rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
               Print
             </button>
           ) : null}
           {directUrl ? (
             <a href={directUrl} target="_blank" rel="noopener noreferrer"
-              style={{ color: 'var(--link-card)', fontSize: '0.85rem', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+              style={{ color: '#60a5fa', fontSize: '0.85rem', textDecoration: 'none', whiteSpace: 'nowrap' }}>
               Open PDF ↗
             </a>
           ) : null}
         </div>
         <button onClick={onClose}
-          style={{ background: 'none', border: 'none', color: 'var(--text-card-muted)', fontSize: '1.5rem', cursor: 'pointer' }}>
+          style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer' }}>
           ×
         </button>
       </div>
@@ -116,7 +116,7 @@ export default function PdfPreviewOverlay({ record, onClose }) {
           <div style={{ color: '#f87171' }}>{error}</div>
           {directUrl ? (
             <a href={directUrl} target="_blank" rel="noopener noreferrer"
-              style={{ color: 'var(--link-card)', fontSize: '0.9rem' }}>
+              style={{ color: '#60a5fa', fontSize: '0.9rem' }}>
               Open PDF in a new tab ↗
             </a>
           ) : null}
@@ -124,7 +124,7 @@ export default function PdfPreviewOverlay({ record, onClose }) {
       ) : pdfBytes ? (
         <PdfPreviewViewer pdfBytes={pdfBytes} />
       ) : loading ? (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-card-muted)' }}>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af' }}>
           Loading PDF…
         </div>
       ) : null}

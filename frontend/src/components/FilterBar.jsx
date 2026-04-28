@@ -68,7 +68,7 @@ export default function FilterBar({
             top: '100%',
             left: 0,
             right: 0,
-            background: 'var(--surface-emphasis)',
+            background: '#0f172a',
             border: '1px solid rgba(143,182,255,0.2)',
             borderRadius: '0 0 10px 10px',
             maxHeight: '200px',

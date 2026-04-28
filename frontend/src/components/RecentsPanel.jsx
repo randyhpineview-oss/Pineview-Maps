@@ -44,9 +44,9 @@ export default function RecentsPanel({
           width: '100%',
           padding: '8px 12px',
           borderRadius: '6px',
-          border: '1px solid var(--border-card)',
-          backgroundColor: 'var(--surface-card)',
-          color: 'var(--text-card)',
+          border: '1px solid #374151',
+          backgroundColor: '#111827',
+          color: '#f9fafb',
           marginBottom: '12px',
           boxSizing: 'border-box',
         }}
@@ -65,7 +65,7 @@ export default function RecentsPanel({
                   <div className="small-text" style={{ fontWeight: 600 }}>
                     {item.payload?.ticket_number || 'Pending'} — {item.payload?.spray_date || ''}
                   </div>
-                  <div className="small-text" style={{ color: 'var(--text-card-muted)' }}>
+                  <div className="small-text" style={{ color: '#9ca3af' }}>
                     {item.targetType === 'site' ? 'Site' : 'Pipeline'} • {item.status === 'uploading' ? 'Uploading...' : 'Queued'}
                   </div>
                 </div>
@@ -92,11 +92,11 @@ export default function RecentsPanel({
                   <div className="small-text" style={{ marginTop: '2px' }}>
                     {record.spray_date} • {record.sprayed_by_name || 'Unknown'}
                   </div>
-                  <div className="small-text" style={{ color: 'var(--text-card-muted)', marginTop: '2px' }}>
+                  <div className="small-text" style={{ color: '#9ca3af', marginTop: '2px' }}>
                     {record.site_lsd || ''} • {record.site_client || ''} • {record.site_area || ''}
                   </div>
                   {record.lease_sheet_data?.applicators?.length > 0 && (
-                    <div className="small-text" style={{ color: 'var(--text-card-muted)', marginTop: '2px' }}>
+                    <div className="small-text" style={{ color: '#9ca3af', marginTop: '2px' }}>
                       Applicators: {record.lease_sheet_data.applicators.join(', ')}
                     </div>
                   )}

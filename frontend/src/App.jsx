@@ -255,28 +255,6 @@ export default function App() {
     catch { /* ignore */ }
   }, [viewAsWorker]);
 
-  // ── Theme (dark / light) ─────────────────────────────────────────
-  // Per-device preference, default dark. The inline bootstrap script in
-  // index.html already set `<html data-theme>` before first paint
-  // (synchronously, from localStorage), so reloads don't flash. This
-  // hook just keeps the React state in sync with that attribute and
-  // re-applies the attribute whenever the user toggles the popover
-  // option. Same persistence pattern as `pv_view_as_worker` above so
-  // the rest of the codebase reads predictably.
-  const [theme, setTheme] = useState(() => {
-    try {
-      const t = localStorage.getItem('pv_theme');
-      return (t === 'light' || t === 'dark') ? t : 'dark';
-    } catch {
-      return 'dark';
-    }
-  });
-  useEffect(() => {
-    try { localStorage.setItem('pv_theme', theme); } catch { /* ignore */ }
-    if (typeof document !== 'undefined') {
-      document.documentElement.setAttribute('data-theme', theme);
-    }
-  }, [theme]);
   // ── Account menu (mobile-only avatar dropdown) ───────────────────────────
   // The topbar packs a lot into a small space on phones: Online/Offline,
   // Refresh, Pending alerts, Sync indicators, the user's name, View as
@@ -2773,16 +2751,14 @@ export default function App() {
           <span className={`badge ${isOnline ? 'online' : 'offline'}`}>{isOnline ? 'Online' : 'Offline'}</span>
           {/* Manual refresh: full resync on demand. The auto-poll now runs at
               2 min intervals to save egress, so this button is how users force
-              an immediate refresh when they expect a just-submitted change.
-              Theming is handled via the `.topbar-refresh-badge` CSS class
-              so the button picks up the correct surface/text/border colors
-              in dark and light modes — keeping it as inline hex would have
-              made it a dark island on the light topbar. */}
+              an immediate refresh when they expect a just-submitted change. */}
           <button
-            className="badge topbar-refresh-badge"
-            data-busy={isRefreshing ? '1' : '0'}
+            className="badge"
             style={{
+              background: isRefreshing ? '#374151' : '#1f2937',
+              color: isRefreshing ? '#9ca3af' : '#60a5fa',
               cursor: (isRefreshing || !isOnline) ? 'not-allowed' : 'pointer',
+              border: '1px solid #374151',
               padding: '2px 10px',
             }}
             onClick={handleManualRefresh}
@@ -2856,9 +2832,9 @@ export default function App() {
               onClick={() => setViewAsWorker((v) => !v)}
               style={{
                 cursor: 'pointer',
-                background: viewAsWorker ? '#f59e0b' : 'var(--surface-elev)',
-                color: viewAsWorker ? '#422006' : 'var(--link-card)',
-                border: '1px solid var(--border-card)',
+                background: viewAsWorker ? '#f59e0b' : '#1f2937',
+                color: viewAsWorker ? '#422006' : '#60a5fa',
+                border: '1px solid #374151',
                 padding: '2px 10px',
                 fontWeight: viewAsWorker ? 700 : 500,
               }}
@@ -2928,22 +2904,6 @@ export default function App() {
                     {viewAsWorker ? '\ud83d\udc64 Restore admin view' : '\ud83d\udc77 View as worker'}
                   </button>
                 ) : null}
-                {/* Light/dark theme toggle. Per-device preference, default
-                    dark, persisted in localStorage `pv_theme` (see
-                    useEffect above). Sits just above Sign Out so the
-                    common "where do I change appearance?" mental model
-                    matches the standard account-menu pattern. */}
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="topbar-account-item"
-                  onClick={() => setTheme((t) => (t === 'light' ? 'dark' : 'light'))}
-                  title={theme === 'light'
-                    ? 'Switch to dark mode (saved on this device)'
-                    : 'Switch to light mode (saved on this device)'}
-                >
-                  {theme === 'light' ? '\ud83c\udf19 Dark mode' : '\u2600\ufe0f Light mode'}
-                </button>
                 <button
                   type="button"
                   role="menuitem"
@@ -3089,7 +3049,7 @@ export default function App() {
             position: 'fixed',
             top: 0, left: 0, right: 0, bottom: 0,
             zIndex: 40,
-            background: 'var(--surface-deep)',
+            background: '#0b1220',
             display: 'flex',
             flexDirection: 'column',
           }}>

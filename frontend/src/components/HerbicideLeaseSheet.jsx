@@ -750,8 +750,8 @@ export default function HerbicideLeaseSheet({
   if (isPickingTM) {
     return (
       <div style={{
-        backgroundColor: 'var(--surface-elev)',
-        color: 'var(--text-card)',
+        backgroundColor: '#1f2937',
+        color: '#f9fafb',
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
@@ -762,9 +762,9 @@ export default function HerbicideLeaseSheet({
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
           <h2 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 600 }}>Link to Time & Materials Ticket</h2>
-          <button onClick={() => setIsPickingTM(false)} style={{ background: 'none', border: 'none', color: 'var(--text-card-muted)', fontSize: '1.5rem', cursor: 'pointer' }}>×</button>
+          <button onClick={() => setIsPickingTM(false)} style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer' }}>×</button>
         </div>
-        <p style={{ fontSize: '0.85rem', color: 'var(--text-card-muted)', margin: '0 0 14px 0' }}>
+        <p style={{ fontSize: '0.85rem', color: '#9ca3af', margin: '0 0 14px 0' }}>
           Today's open tickets for <strong>{form.customer || '—'}</strong> / <strong>{form.area || '—'}</strong>:
         </p>
 
@@ -775,8 +775,8 @@ export default function HerbicideLeaseSheet({
           // this loads — they don't have to wait for it.
           <div style={{
             fontSize: '0.85rem',
-            color: 'var(--text-card-muted)',
-            background: 'var(--surface-card)',
+            color: '#9ca3af',
+            background: '#111827',
             padding: '12px',
             borderRadius: '8px',
             marginBottom: '14px',
@@ -788,8 +788,8 @@ export default function HerbicideLeaseSheet({
               display: 'inline-block',
               width: '14px',
               height: '14px',
-              border: '2px solid var(--border-card)',
-              borderTopColor: 'var(--link-card)',
+              border: '2px solid #374151',
+              borderTopColor: '#60a5fa',
               borderRadius: '50%',
               animation: 'spin 0.8s linear infinite',
             }} />
@@ -805,11 +805,11 @@ export default function HerbicideLeaseSheet({
                   display: 'flex',
                   alignItems: 'flex-start',
                   gap: '10px',
-                  background: tmChoice?.ticket_id === t.id ? '#1e40af' : 'var(--surface-card)',
+                  background: tmChoice?.ticket_id === t.id ? '#1e40af' : '#111827',
                   padding: '12px',
                   borderRadius: '8px',
                   cursor: 'pointer',
-                  border: '1px solid var(--border-card)',
+                  border: '1px solid #374151',
                 }}
               >
                 <input
@@ -821,7 +821,7 @@ export default function HerbicideLeaseSheet({
                 />
                 <div style={{ flex: 1 }}>
                   <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{t.ticket_number}</div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-card-muted)', marginTop: '2px' }}>
+                  <div style={{ fontSize: '0.8rem', color: '#9ca3af', marginTop: '2px' }}>
                     {(t.rows?.length || 0)} row(s) • {t.created_by_name || '—'}
                   </div>
                   {t.description_of_work ? (
@@ -834,7 +834,7 @@ export default function HerbicideLeaseSheet({
             ))}
           </div>
         ) : (
-          <div style={{ fontSize: '0.85rem', color: 'var(--text-card-muted)', background: 'var(--surface-card)', padding: '12px', borderRadius: '8px', marginBottom: '14px' }}>
+          <div style={{ fontSize: '0.85rem', color: '#9ca3af', background: '#111827', padding: '12px', borderRadius: '8px', marginBottom: '14px' }}>
             No open T&M tickets match this client / area / date.
           </div>
         )}
@@ -844,11 +844,11 @@ export default function HerbicideLeaseSheet({
             display: 'flex',
             alignItems: 'flex-start',
             gap: '10px',
-            background: tmChoice?.create ? '#1e40af' : 'var(--surface-card)',
+            background: tmChoice?.create ? '#1e40af' : '#111827',
             padding: '12px',
             borderRadius: '8px',
             cursor: 'pointer',
-            border: '1px solid var(--border-card)',
+            border: '1px solid #374151',
             marginBottom: '14px',
           }}
         >
@@ -861,7 +861,7 @@ export default function HerbicideLeaseSheet({
           />
           <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>+ Start new T&M ticket</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-card-muted)', marginTop: '2px' }}>
+            <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '2px' }}>
               New ticket for {form.customer || '—'} / {form.area || '—'} / {form.date || '—'}
             </div>
           </div>
@@ -869,7 +869,7 @@ export default function HerbicideLeaseSheet({
 
         {tmChoice?.create ? (
           <div style={{ marginBottom: '14px' }}>
-            <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-card-muted)', marginBottom: '6px' }}>
+            <label style={{ display: 'block', fontSize: '0.85rem', color: '#9ca3af', marginBottom: '6px' }}>
               Description of Work <span style={{ color: '#f87171' }}>*</span>
             </label>
             <textarea
@@ -881,9 +881,9 @@ export default function HerbicideLeaseSheet({
                 width: '100%',
                 padding: '8px 12px',
                 borderRadius: '6px',
-                border: '1px solid var(--border-card)',
-                backgroundColor: 'var(--surface-card)',
-                color: 'var(--text-card)',
+                border: '1px solid #374151',
+                backgroundColor: '#111827',
+                color: '#f9fafb',
                 resize: 'vertical',
                 boxSizing: 'border-box',
               }}
@@ -908,7 +908,7 @@ export default function HerbicideLeaseSheet({
                 style={{
                   flex: 2,
                   padding: '12px',
-                  background: isDisabled ? 'var(--border-card)' : '#22c55e',
+                  background: isDisabled ? '#374151' : '#22c55e',
                   color: 'white',
                   border: 'none',
                   borderRadius: '8px',
@@ -927,8 +927,8 @@ export default function HerbicideLeaseSheet({
             style={{
               flex: 1,
               padding: '12px',
-              background: 'var(--border-card)',
-              color: 'var(--text-card)',
+              background: '#374151',
+              color: '#f9fafb',
               border: 'none',
               borderRadius: '8px',
               fontSize: '1rem',
@@ -972,12 +972,12 @@ export default function HerbicideLeaseSheet({
         width: '100%',
         boxSizing: 'border-box',
       }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', flexShrink: 0, background: 'var(--surface-elev)' }}>
-          <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-card)' }}>Preview{ticketNumber ? ` — ${ticketNumber}` : ''}</h2>
-          <button onClick={handlePrint} style={{ background: 'none', border: 'none', color: 'var(--link-card)', fontSize: '0.85rem', cursor: 'pointer' }}>Print</button>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', flexShrink: 0, background: '#1f2937' }}>
+          <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600, color: '#f9fafb' }}>Preview{ticketNumber ? ` — ${ticketNumber}` : ''}</h2>
+          <button onClick={handlePrint} style={{ background: 'none', border: 'none', color: '#60a5fa', fontSize: '0.85rem', cursor: 'pointer' }}>Print</button>
         </div>
         <PdfPreviewViewer pdfBase64={pdfBase64} />
-        <div style={{ display: 'flex', gap: '10px', padding: '12px 16px', flexShrink: 0, background: 'var(--surface-elev)' }}>
+        <div style={{ display: 'flex', gap: '10px', padding: '12px 16px', flexShrink: 0, background: '#1f2937' }}>
           <button
             onClick={handleContinueFromPreview}
             disabled={isSubmitting}
@@ -1002,8 +1002,8 @@ export default function HerbicideLeaseSheet({
             style={{
               flex: 1,
               padding: '12px',
-              backgroundColor: 'var(--border-card)',
-              color: 'var(--text-card)',
+              backgroundColor: '#374151',
+              color: '#f9fafb',
               border: 'none',
               borderRadius: '8px',
               fontSize: '1rem',
@@ -1020,8 +1020,8 @@ export default function HerbicideLeaseSheet({
   // ── Form ──
   return (
     <div className="lease-sheet" style={{
-      backgroundColor: 'var(--surface-elev)',
-      color: 'var(--text-card)',
+      backgroundColor: '#1f2937',
+      color: '#f9fafb',
       borderRadius: '16px 16px 0 0',
       maxHeight: '90vh',
       overflowY: 'auto',
@@ -1037,14 +1037,14 @@ export default function HerbicideLeaseSheet({
           <button onClick={onCancel} style={{
             background: 'none',
             border: 'none',
-            color: 'var(--text-card-muted)',
+            color: '#9ca3af',
             fontSize: '1.5rem',
             cursor: 'pointer',
           }}>×</button>
         </div>
         {ticketNumber && (
           <div style={{
-            backgroundColor: 'var(--surface-card)',
+            backgroundColor: '#111827',
             border: '1px solid #3b82f6',
             borderRadius: '6px',
             padding: '8px 12px',
@@ -1065,7 +1065,7 @@ export default function HerbicideLeaseSheet({
             {/* Auto-populated fields */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
               <div>
-                <label style={{ display: 'block', fontSize: '0.875rem', color: 'var(--text-card-muted)', marginBottom: '4px' }}>Time {!form.time && <span style={{ color: '#f87171' }}>*</span>}</label>
+                <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Time {!form.time && <span style={{ color: '#f87171' }}>*</span>}</label>
                 <input
                   type="text"
                   value={form.time}
@@ -1074,14 +1074,14 @@ export default function HerbicideLeaseSheet({
                     width: '100%',
                     padding: '8px 12px',
                     borderRadius: '6px',
-                    border: '1px solid var(--border-card)',
-                    backgroundColor: 'var(--surface-card)',
-                    color: 'var(--text-card)',
+                    border: '1px solid #374151',
+                    backgroundColor: '#111827',
+                    color: '#f9fafb',
                   }}
                 />
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.875rem', color: 'var(--text-card-muted)', marginBottom: '4px' }}>Date {!form.date && <span style={{ color: '#f87171' }}>*</span>}</label>
+                <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Date {!form.date && <span style={{ color: '#f87171' }}>*</span>}</label>
                 <input
                   type="date"
                   value={form.date}
@@ -1090,16 +1090,16 @@ export default function HerbicideLeaseSheet({
                     width: '100%',
                     padding: '8px 12px',
                     borderRadius: '6px',
-                    border: '1px solid var(--border-card)',
-                    backgroundColor: 'var(--surface-card)',
-                    color: 'var(--text-card)',
+                    border: '1px solid #374151',
+                    backgroundColor: '#111827',
+                    color: '#f9fafb',
                   }}
                 />
               </div>
             </div>
 
             <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', color: 'var(--text-card-muted)', marginBottom: '4px' }}>Customer {!(form.customer && String(form.customer).trim()) && <span style={{ color: '#f87171' }}>*</span>}</label>
+              <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Customer {!(form.customer && String(form.customer).trim()) && <span style={{ color: '#f87171' }}>*</span>}</label>
               <input
                 type="text"
                 value={form.customer}
@@ -1108,15 +1108,15 @@ export default function HerbicideLeaseSheet({
                   width: '100%',
                   padding: '8px 12px',
                   borderRadius: '6px',
-                  border: '1px solid var(--border-card)',
-                  backgroundColor: 'var(--surface-card)',
-                  color: 'var(--text-card)',
+                  border: '1px solid #374151',
+                  backgroundColor: '#111827',
+                  color: '#f9fafb',
                 }}
               />
             </div>
 
             <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', color: 'var(--text-card-muted)', marginBottom: '4px' }}>Area {!(form.area && String(form.area).trim()) && <span style={{ color: '#f87171' }}>*</span>}</label>
+              <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Area {!(form.area && String(form.area).trim()) && <span style={{ color: '#f87171' }}>*</span>}</label>
               <input
                 type="text"
                 value={form.area}
@@ -1125,15 +1125,15 @@ export default function HerbicideLeaseSheet({
                   width: '100%',
                   padding: '8px 12px',
                   borderRadius: '6px',
-                  border: '1px solid var(--border-card)',
-                  backgroundColor: 'var(--surface-card)',
-                  color: 'var(--text-card)',
+                  border: '1px solid #374151',
+                  backgroundColor: '#111827',
+                  color: '#f9fafb',
                 }}
               />
             </div>
 
             <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', color: 'var(--text-card-muted)', marginBottom: '4px' }}>LSD / Pipeline {!(form.lsdOrPipeline && String(form.lsdOrPipeline).trim()) && <span style={{ color: '#f87171' }}>*</span>}</label>
+              <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>LSD / Pipeline {!(form.lsdOrPipeline && String(form.lsdOrPipeline).trim()) && <span style={{ color: '#f87171' }}>*</span>}</label>
               <input
                 type="text"
                 value={form.lsdOrPipeline}
@@ -1142,16 +1142,16 @@ export default function HerbicideLeaseSheet({
                   width: '100%',
                   padding: '8px 12px',
                   borderRadius: '6px',
-                  border: '1px solid var(--border-card)',
-                  backgroundColor: 'var(--surface-card)',
-                  color: 'var(--text-card)',
+                  border: '1px solid #374151',
+                  backgroundColor: '#111827',
+                  color: '#f9fafb',
                 }}
               />
             </div>
 
             {/* Applicators */}
             <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', color: 'var(--text-card-muted)', marginBottom: '8px' }}>Applicators {!form.applicators?.length && <span style={{ color: '#f87171' }}>*</span>}</label>
+              <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '8px' }}>Applicators {!form.applicators?.length && <span style={{ color: '#f87171' }}>*</span>}</label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                 {applicators.map(app => (
                   <label key={app.id} style={{
@@ -1160,7 +1160,7 @@ export default function HerbicideLeaseSheet({
                     gap: '6px',
                     padding: '6px 12px',
                     borderRadius: '6px',
-                    backgroundColor: form.applicators.includes(app.name) ? '#3b82f6' : 'var(--border-card)',
+                    backgroundColor: form.applicators.includes(app.name) ? '#3b82f6' : '#374151',
                     cursor: 'pointer',
                     fontSize: '0.875rem',
                   }}>
@@ -1179,7 +1179,7 @@ export default function HerbicideLeaseSheet({
             {/* Site Type (single-select main type, required) + separate
                 Access Road / Pipeline toggles that can be layered on top. */}
             <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', color: 'var(--text-card-muted)', marginBottom: '8px' }}>Site Type {!mainSiteType && <span style={{ color: '#f87171' }}>*</span>}</label>
+              <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '8px' }}>Site Type {!mainSiteType && <span style={{ color: '#f87171' }}>*</span>}</label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                 {locationTypes
                   .filter(t => !t.is_access_road)
@@ -1190,7 +1190,7 @@ export default function HerbicideLeaseSheet({
                       gap: '6px',
                       padding: '6px 12px',
                       borderRadius: '6px',
-                      backgroundColor: mainSiteType === type.name ? '#3b82f6' : 'var(--border-card)',
+                      backgroundColor: mainSiteType === type.name ? '#3b82f6' : '#374151',
                       cursor: 'pointer',
                       fontSize: '0.875rem',
                     }}>
@@ -1215,7 +1215,7 @@ export default function HerbicideLeaseSheet({
             {/* Add-ons: Access Road + Pipeline (each its own T&M row) */}
             {locationTypes.some(t => t.is_access_road) ? (
               <div>
-                <label style={{ display: 'block', fontSize: '0.875rem', color: 'var(--text-card-muted)', marginBottom: '8px' }}>Add-ons</label>
+                <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '8px' }}>Add-ons</label>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                   {locationTypes
                     .filter(t => t.is_access_road)
@@ -1226,7 +1226,7 @@ export default function HerbicideLeaseSheet({
                         gap: '6px',
                         padding: '6px 12px',
                         borderRadius: '6px',
-                        backgroundColor: form.locationTypes.includes(type.name) ? '#3b82f6' : 'var(--border-card)',
+                        backgroundColor: form.locationTypes.includes(type.name) ? '#3b82f6' : '#374151',
                         cursor: 'pointer',
                         fontSize: '0.875rem',
                       }}>
@@ -1246,7 +1246,7 @@ export default function HerbicideLeaseSheet({
             {/* Weather */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
               <div>
-                <label style={{ display: 'block', fontSize: '0.875rem', color: 'var(--text-card-muted)', marginBottom: '4px' }}>Temperature (°C) {form.temperature === '' || form.temperature === null || form.temperature === undefined ? <span style={{ color: '#f87171' }}>*</span> : null}</label>
+                <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Temperature (°C) {form.temperature === '' || form.temperature === null || form.temperature === undefined ? <span style={{ color: '#f87171' }}>*</span> : null}</label>
                 <input
                   type="number"
                   value={form.temperature}
@@ -1255,14 +1255,14 @@ export default function HerbicideLeaseSheet({
                     width: '100%',
                     padding: '8px 12px',
                     borderRadius: '6px',
-                    border: '1px solid var(--border-card)',
-                    backgroundColor: 'var(--surface-card)',
-                    color: 'var(--text-card)',
+                    border: '1px solid #374151',
+                    backgroundColor: '#111827',
+                    color: '#f9fafb',
                   }}
                 />
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.875rem', color: 'var(--text-card-muted)', marginBottom: '4px' }}>Wind Speed (km/h) {form.windSpeed === '' || form.windSpeed === null || form.windSpeed === undefined ? <span style={{ color: '#f87171' }}>*</span> : null}</label>
+                <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Wind Speed (km/h) {form.windSpeed === '' || form.windSpeed === null || form.windSpeed === undefined ? <span style={{ color: '#f87171' }}>*</span> : null}</label>
                 <input
                   type="number"
                   value={form.windSpeed}
@@ -1271,9 +1271,9 @@ export default function HerbicideLeaseSheet({
                     width: '100%',
                     padding: '8px 12px',
                     borderRadius: '6px',
-                    border: '1px solid var(--border-card)',
-                    backgroundColor: 'var(--surface-card)',
-                    color: 'var(--text-card)',
+                    border: '1px solid #374151',
+                    backgroundColor: '#111827',
+                    color: '#f9fafb',
                   }}
                 />
               </div>
@@ -1281,7 +1281,7 @@ export default function HerbicideLeaseSheet({
 
             {/* Wind Direction */}
             <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', color: 'var(--text-card-muted)', marginBottom: '8px' }}>Wind Direction {!form.windDirection?.length && <span style={{ color: '#f87171' }}>*</span>}</label>
+              <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '8px' }}>Wind Direction {!form.windDirection?.length && <span style={{ color: '#f87171' }}>*</span>}</label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                 {['North', 'South', 'East', 'West', 'None'].map(dir => (
                   <label key={dir} style={{
@@ -1290,7 +1290,7 @@ export default function HerbicideLeaseSheet({
                     gap: '6px',
                     padding: '6px 12px',
                     borderRadius: '6px',
-                    backgroundColor: form.windDirection.includes(dir) ? '#3b82f6' : 'var(--border-card)',
+                    backgroundColor: form.windDirection.includes(dir) ? '#3b82f6' : '#374151',
                     cursor: 'pointer',
                     fontSize: '0.875rem',
                   }}>
@@ -1308,7 +1308,7 @@ export default function HerbicideLeaseSheet({
 
             {/* Spray Type */}
             <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', color: 'var(--text-card-muted)', marginBottom: '8px' }}>Spray Type {!form.sprayType?.length && <span style={{ color: '#f87171' }}>*</span>}</label>
+              <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '8px' }}>Spray Type {!form.sprayType?.length && <span style={{ color: '#f87171' }}>*</span>}</label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                 {['Blanket', 'Spot', 'Respray'].map(type => (
                   <label key={type} style={{
@@ -1317,7 +1317,7 @@ export default function HerbicideLeaseSheet({
                     gap: '6px',
                     padding: '6px 12px',
                     borderRadius: '6px',
-                    backgroundColor: form.sprayType.includes(type) ? '#3b82f6' : 'var(--border-card)',
+                    backgroundColor: form.sprayType.includes(type) ? '#3b82f6' : '#374151',
                     cursor: 'pointer',
                     fontSize: '0.875rem',
                   }}>
@@ -1335,7 +1335,7 @@ export default function HerbicideLeaseSheet({
 
             {/* Spray Method */}
             <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', color: 'var(--text-card-muted)', marginBottom: '8px' }}>Spray Method {!form.sprayMethod?.length && <span style={{ color: '#f87171' }}>*</span>}</label>
+              <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '8px' }}>Spray Method {!form.sprayMethod?.length && <span style={{ color: '#f87171' }}>*</span>}</label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                 {['Boomless', 'Covered Boom', 'Handwand', 'Backpack'].map(method => (
                   <label key={method} style={{
@@ -1344,7 +1344,7 @@ export default function HerbicideLeaseSheet({
                     gap: '6px',
                     padding: '6px 12px',
                     borderRadius: '6px',
-                    backgroundColor: form.sprayMethod.includes(method) ? '#3b82f6' : 'var(--border-card)',
+                    backgroundColor: form.sprayMethod.includes(method) ? '#3b82f6' : '#374151',
                     cursor: 'pointer',
                     fontSize: '0.875rem',
                   }}>
@@ -1362,7 +1362,7 @@ export default function HerbicideLeaseSheet({
 
             {/* Noxious Weeds */}
             <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', color: 'var(--text-card-muted)', marginBottom: '8px' }}>Noxious Weeds {(!form.noxiousWeedsSelected?.length || (form.noxiousWeedsSelected.some(w => String(w).toLowerCase() === 'other') && !form.customWeeds?.length)) && <span style={{ color: '#f87171' }}>*</span>}</label>
+              <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '8px' }}>Noxious Weeds {(!form.noxiousWeedsSelected?.length || (form.noxiousWeedsSelected.some(w => String(w).toLowerCase() === 'other') && !form.customWeeds?.length)) && <span style={{ color: '#f87171' }}>*</span>}</label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                 {noxiousWeeds.map(weed => (
                   <label key={weed.id} style={{
@@ -1371,7 +1371,7 @@ export default function HerbicideLeaseSheet({
                     gap: '6px',
                     padding: '6px 12px',
                     borderRadius: '6px',
-                    backgroundColor: form.noxiousWeedsSelected.includes(weed.name) ? '#3b82f6' : 'var(--border-card)',
+                    backgroundColor: form.noxiousWeedsSelected.includes(weed.name) ? '#3b82f6' : '#374151',
                     cursor: 'pointer',
                     fontSize: '0.875rem',
                   }}>
@@ -1402,7 +1402,7 @@ export default function HerbicideLeaseSheet({
 
               {/* Custom weeds input (shown only when "Other" is selected) */}
               {form.noxiousWeedsSelected.some(w => w.toLowerCase() === 'other') && (
-                <div style={{ marginTop: '10px', padding: '10px', background: 'var(--surface-card)', border: '1px solid var(--border-card)', borderRadius: '6px' }}>
+                <div style={{ marginTop: '10px', padding: '10px', background: '#111827', border: '1px solid #374151', borderRadius: '6px' }}>
                   <div style={{ display: 'flex', gap: '6px' }}>
                     <input
                       type="text"
@@ -1423,9 +1423,9 @@ export default function HerbicideLeaseSheet({
                         flex: 1,
                         padding: '8px 12px',
                         borderRadius: '6px',
-                        border: '1px solid var(--border-card)',
-                        backgroundColor: 'var(--surface-elev)',
-                        color: 'var(--text-card)',
+                        border: '1px solid #374151',
+                        backgroundColor: '#1f2937',
+                        color: '#f9fafb',
                         fontSize: '0.875rem',
                       }}
                     />
@@ -1482,7 +1482,7 @@ export default function HerbicideLeaseSheet({
 
             {/* Herbicides Used */}
             <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', color: 'var(--text-card-muted)', marginBottom: '8px' }}>Herbicides Used {!form.herbicidesUsed?.length && <span style={{ color: '#f87171' }}>*</span>}</label>
+              <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '8px' }}>Herbicides Used {!form.herbicidesUsed?.length && <span style={{ color: '#f87171' }}>*</span>}</label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                 {herbicides.map(herb => (
                   <label key={herb.id} style={{
@@ -1491,7 +1491,7 @@ export default function HerbicideLeaseSheet({
                     gap: '6px',
                     padding: '6px 12px',
                     borderRadius: '6px',
-                    backgroundColor: form.herbicidesUsed.includes(herb.name) ? '#3b82f6' : 'var(--border-card)',
+                    backgroundColor: form.herbicidesUsed.includes(herb.name) ? '#3b82f6' : '#374151',
                     cursor: 'pointer',
                     fontSize: '0.875rem',
                   }}>
@@ -1513,7 +1513,7 @@ export default function HerbicideLeaseSheet({
                 just confuse workers into thinking it's required. */}
             <div style={{ display: 'grid', gridTemplateColumns: hasPipeline ? '1fr 1fr' : '1fr', gap: '12px' }}>
               <div>
-                <label style={{ display: 'block', fontSize: '0.875rem', color: 'var(--text-card-muted)', marginBottom: '4px' }}>Total Liters {form.totalLiters === '' || form.totalLiters === null || form.totalLiters === undefined ? <span style={{ color: '#f87171' }}>*</span> : null}</label>
+                <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Total Liters {form.totalLiters === '' || form.totalLiters === null || form.totalLiters === undefined ? <span style={{ color: '#f87171' }}>*</span> : null}</label>
                 <input
                   type="number"
                   value={form.totalLiters}
@@ -1523,15 +1523,15 @@ export default function HerbicideLeaseSheet({
                     width: '100%',
                     padding: '8px 12px',
                     borderRadius: '6px',
-                    border: '1px solid var(--border-card)',
-                    backgroundColor: 'var(--surface-card)',
-                    color: 'var(--text-card)',
+                    border: '1px solid #374151',
+                    backgroundColor: '#111827',
+                    color: '#f9fafb',
                   }}
                 />
               </div>
               {hasPipeline && (
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.875rem', color: 'var(--text-card-muted)', marginBottom: '4px' }}>Total Distance (km) {form.totalDistanceSprayed === '' || form.totalDistanceSprayed === null || form.totalDistanceSprayed === undefined ? <span style={{ color: '#f87171' }}>*</span> : null}</label>
+                  <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Total Distance (km) {form.totalDistanceSprayed === '' || form.totalDistanceSprayed === null || form.totalDistanceSprayed === undefined ? <span style={{ color: '#f87171' }}>*</span> : null}</label>
                   <input
                     type="number"
                     value={form.totalDistanceSprayed}
@@ -1541,15 +1541,15 @@ export default function HerbicideLeaseSheet({
                       width: '100%',
                       padding: '8px 12px',
                       borderRadius: '6px',
-                      border: '1px solid var(--border-card)',
-                      backgroundColor: 'var(--surface-card)',
-                      color: 'var(--text-card)',
+                      border: '1px solid #374151',
+                      backgroundColor: '#111827',
+                      color: '#f9fafb',
                     }}
                   />
                 </div>
               )}
               <div style={{ gridColumn: '1 / -1' }}>
-                <label style={{ display: 'block', fontSize: '0.875rem', color: 'var(--text-card-muted)', marginBottom: '4px' }}>Area Treated (ha) {!form.areaTreated && <span style={{ color: '#f87171' }}>*</span>}</label>
+                <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Area Treated (ha) {!form.areaTreated && <span style={{ color: '#f87171' }}>*</span>}</label>
                 <input
                   type="text"
                   value={form.areaTreated}
@@ -1558,9 +1558,9 @@ export default function HerbicideLeaseSheet({
                     width: '100%',
                     padding: '8px 12px',
                     borderRadius: '6px',
-                    border: '1px solid var(--border-card)',
-                    backgroundColor: 'var(--surface-elev)',
-                    color: 'var(--text-card-muted)',
+                    border: '1px solid #374151',
+                    backgroundColor: '#1f2937',
+                    color: '#9ca3af',
                   }}
                 />
               </div>
@@ -1571,13 +1571,13 @@ export default function HerbicideLeaseSheet({
               <div style={{ 
                 padding: '16px', 
                 borderRadius: '8px', 
-                backgroundColor: 'var(--surface-card)',
-                border: '1px solid var(--border-card)',
+                backgroundColor: '#111827',
+                border: '1px solid #374151',
               }}>
-                <h3 style={{ margin: '0 0 12px 0', fontSize: '1rem', color: 'var(--text-card)' }}>Roadside Details</h3>
+                <h3 style={{ margin: '0 0 12px 0', fontSize: '1rem', color: '#f9fafb' }}>Roadside Details</h3>
                 
                 <div style={{ marginBottom: '12px' }}>
-                  <label style={{ display: 'block', fontSize: '0.875rem', color: 'var(--text-card-muted)', marginBottom: '4px' }}>Roadside km Sprayed {form.roadsideKm === '' || form.roadsideKm === null || form.roadsideKm === undefined ? <span style={{ color: '#f87171' }}>*</span> : null}</label>
+                  <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Roadside km Sprayed {form.roadsideKm === '' || form.roadsideKm === null || form.roadsideKm === undefined ? <span style={{ color: '#f87171' }}>*</span> : null}</label>
                   <input
                     type="number"
                     value={form.roadsideKm}
@@ -1586,15 +1586,15 @@ export default function HerbicideLeaseSheet({
                       width: '100%',
                       padding: '8px 12px',
                       borderRadius: '6px',
-                      border: '1px solid var(--border-card)',
-                      backgroundColor: 'var(--surface-card)',
-                      color: 'var(--text-card)',
+                      border: '1px solid #374151',
+                      backgroundColor: '#111827',
+                      color: '#f9fafb',
                     }}
                   />
                 </div>
 
                 <div style={{ marginBottom: '12px' }}>
-                  <label style={{ display: 'block', fontSize: '0.875rem', color: 'var(--text-card-muted)', marginBottom: '8px' }}>Roadside Herbicides Used {!form.roadsideHerbicides?.length && <span style={{ color: '#f87171' }}>*</span>}</label>
+                  <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '8px' }}>Roadside Herbicides Used {!form.roadsideHerbicides?.length && <span style={{ color: '#f87171' }}>*</span>}</label>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                     {herbicides.map(herb => (
                       <label key={herb.id} style={{
@@ -1603,7 +1603,7 @@ export default function HerbicideLeaseSheet({
                         gap: '6px',
                         padding: '6px 12px',
                         borderRadius: '6px',
-                        backgroundColor: form.roadsideHerbicides.includes(herb.name) ? '#3b82f6' : 'var(--border-card)',
+                        backgroundColor: form.roadsideHerbicides.includes(herb.name) ? '#3b82f6' : '#374151',
                         cursor: 'pointer',
                         fontSize: '0.875rem',
                       }}>
@@ -1621,7 +1621,7 @@ export default function HerbicideLeaseSheet({
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', color: 'var(--text-card-muted)', marginBottom: '4px' }}>Roadside Liters {form.roadsideLiters === '' || form.roadsideLiters === null || form.roadsideLiters === undefined ? <span style={{ color: '#f87171' }}>*</span> : null}</label>
+                    <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Roadside Liters {form.roadsideLiters === '' || form.roadsideLiters === null || form.roadsideLiters === undefined ? <span style={{ color: '#f87171' }}>*</span> : null}</label>
                     <input
                       type="number"
                       value={form.roadsideLiters}
@@ -1630,14 +1630,14 @@ export default function HerbicideLeaseSheet({
                         width: '100%',
                         padding: '8px 12px',
                         borderRadius: '6px',
-                        border: '1px solid var(--border-card)',
-                        backgroundColor: 'var(--surface-card)',
-                        color: 'var(--text-card)',
+                        border: '1px solid #374151',
+                        backgroundColor: '#111827',
+                        color: '#f9fafb',
                       }}
                     />
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', color: 'var(--text-card-muted)', marginBottom: '4px' }}>Roadside Area (ha) {!form.roadsideAreaTreated && <span style={{ color: '#f87171' }}>*</span>}</label>
+                    <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Roadside Area (ha) {!form.roadsideAreaTreated && <span style={{ color: '#f87171' }}>*</span>}</label>
                     <input
                       type="text"
                       value={form.roadsideAreaTreated}
@@ -1646,9 +1646,9 @@ export default function HerbicideLeaseSheet({
                         width: '100%',
                         padding: '8px 12px',
                         borderRadius: '6px',
-                        border: '1px solid var(--border-card)',
-                        backgroundColor: 'var(--surface-elev)',
-                        color: 'var(--text-card-muted)',
+                        border: '1px solid #374151',
+                        backgroundColor: '#1f2937',
+                        color: '#9ca3af',
                       }}
                     />
                   </div>
@@ -1658,7 +1658,7 @@ export default function HerbicideLeaseSheet({
 
             {/* Comments */}
             <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', color: 'var(--text-card-muted)', marginBottom: '4px' }}>Comments</label>
+              <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Comments</label>
               <textarea
                 value={form.comments}
                 onChange={e => setForm(prev => ({ ...prev, comments: e.target.value }))}
@@ -1667,9 +1667,9 @@ export default function HerbicideLeaseSheet({
                   width: '100%',
                   padding: '8px 12px',
                   borderRadius: '6px',
-                  border: '1px solid var(--border-card)',
-                  backgroundColor: 'var(--surface-card)',
-                  color: 'var(--text-card)',
+                  border: '1px solid #374151',
+                  backgroundColor: '#111827',
+                  color: '#f9fafb',
                   resize: 'vertical',
                 }}
               />
@@ -1677,11 +1677,11 @@ export default function HerbicideLeaseSheet({
 
             {/* Photos — max 2 */}
             <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', color: 'var(--text-card-muted)', marginBottom: '8px' }}>Photos (max 2)</label>
+              <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '8px' }}>Photos (max 2)</label>
               <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                 {/* Slot 1: LSD / Location ID */}
                 <div style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-card-muted)', marginBottom: '4px' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginBottom: '4px' }}>
                     LSD / Location ID {!photos[0] && <span style={{ color: '#f87171' }}>*</span>}
                   </div>
                   {photos[0] ? (
@@ -1692,14 +1692,14 @@ export default function HerbicideLeaseSheet({
                   ) : (
                     <>
                       <input type="file" accept="image/*" capture="environment" onChange={handlePhotoUpload} style={{ display: 'none' }} id="photo-lsd" />
-                      <label htmlFor="photo-lsd" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100px', height: '100px', backgroundColor: 'var(--border-card)', borderRadius: '6px', cursor: 'pointer', fontSize: '2rem', color: 'var(--surface-deep)' }}>+</label>
+                      <label htmlFor="photo-lsd" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100px', height: '100px', backgroundColor: '#374151', borderRadius: '6px', cursor: 'pointer', fontSize: '2rem', color: '#6b7280' }}>+</label>
                     </>
                   )}
                 </div>
                 {/* Slot 2: Site Photo */}
                 <div style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-card-muted)', marginBottom: '4px' }}>
-                    Site Photo {!photos[1] && <span style={{ color: '#ef4444' }}>*</span>}
+                  <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginBottom: '4px' }}>
+                    Site Photo {!photos[1] && <span style={{ color: '#f87171' }}>*</span>}
                   </div>
                   {photos[1] ? (
                     <div style={{ position: 'relative', display: 'inline-block' }}>
@@ -1709,7 +1709,7 @@ export default function HerbicideLeaseSheet({
                   ) : (
                     <>
                       <input type="file" accept="image/*" capture="environment" onChange={handlePhotoUpload} style={{ display: 'none' }} id="photo-site" />
-                      <label htmlFor="photo-site" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100px', height: '100px', backgroundColor: 'var(--border-card)', borderRadius: '6px', cursor: photos.length >= 2 ? 'not-allowed' : 'pointer', fontSize: '2rem', color: 'var(--surface-deep)' }}>+</label>
+                      <label htmlFor="photo-site" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100px', height: '100px', backgroundColor: '#374151', borderRadius: '6px', cursor: photos.length >= 2 ? 'not-allowed' : 'pointer', fontSize: '2rem', color: '#6b7280' }}>+</label>
                     </>
                   )}
                 </div>
@@ -1726,8 +1726,8 @@ export default function HerbicideLeaseSheet({
                   style={{
                     flex: 1,
                     padding: '12px',
-                    backgroundColor: requiredMissing.length > 0 ? 'var(--border-card)' : '#3b82f6',
-                    color: requiredMissing.length > 0 ? 'var(--text-card-muted)' : 'white',
+                    backgroundColor: requiredMissing.length > 0 ? '#374151' : '#3b82f6',
+                    color: requiredMissing.length > 0 ? '#9ca3af' : 'white',
                     border: 'none',
                     borderRadius: '8px',
                     fontSize: '1rem',
@@ -1742,8 +1742,8 @@ export default function HerbicideLeaseSheet({
                   style={{
                     flex: 1,
                     padding: '12px',
-                    backgroundColor: 'var(--border-card)',
-                    color: 'var(--text-card)',
+                    backgroundColor: '#374151',
+                    color: '#f9fafb',
                     border: 'none',
                     borderRadius: '8px',
                     fontSize: '1rem',
@@ -1760,8 +1760,8 @@ export default function HerbicideLeaseSheet({
                   style={{
                     padding: '10px',
                     backgroundColor: 'transparent',
-                    color: 'var(--text-card-muted)',
-                    border: '1px dashed var(--border-card)',
+                    color: '#9ca3af',
+                    border: '1px dashed #374151',
                     borderRadius: '8px',
                     fontSize: '0.9rem',
                     cursor: isSavingDraft ? 'not-allowed' : 'pointer',

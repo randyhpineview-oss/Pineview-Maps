@@ -44,14 +44,16 @@ jobs:
         
     - name: Build
       env:
-        # Manually pinned for this release (light/dark theme toggle).
-        # Revert to `1.1.${{ github.run_number }}` (or `1.0.${{ github.run_number }}`)
-        # to resume the previous auto-incrementing patch behaviour where
-        # every push to master bumps the patch number. The label is read
+        # Auto-incrementing version: every push to master bumps the patch
+        # number via github.run_number, and we surface the short SHA so a
+        # specific build can be traced back to its commit. Both are read
         # by frontend/vite.config.js -> frontend/src/version.js and shown
         # in the topbar / avatar menu so workers, office, and admins can
         # all confirm what version they have loaded.
-        VITE_APP_VERSION: 1.1.12
+        # Major.minor bumped to 1.1.x after the v1.1.11 / v1.1.12 releases
+        # (light/dark theme experiment, since reverted) so post-revert
+        # builds keep increasing instead of jumping back to v1.0.x.
+        VITE_APP_VERSION: 1.1.${{ github.run_number }}
         VITE_APP_COMMIT: ${{ github.sha }}
       run: |
         cd frontend

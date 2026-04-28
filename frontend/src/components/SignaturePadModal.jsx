@@ -164,11 +164,11 @@ export default function SignaturePadModal({
       flexDirection: 'column',
     }}>
       {/* Header */}
-      <div style={{ padding: '12px 16px', color: 'var(--text-card)', fontWeight: 600, fontSize: '1rem', background: 'var(--surface-elev)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ padding: '12px 16px', color: '#f9fafb', fontWeight: 600, fontSize: '1rem', background: '#1f2937', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span>Sign & Approve</span>
         <button
           onClick={onClose}
-          style={{ background: 'none', border: 'none', color: 'var(--text-card-muted)', fontSize: '1.5rem', cursor: 'pointer' }}
+          style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer' }}
         >
           ×
         </button>
@@ -196,8 +196,8 @@ export default function SignaturePadModal({
       {storageKey ? (
         <div style={{
           padding: '8px 16px',
-          background: 'var(--surface-elev)',
-          color: 'var(--text-card-muted)',
+          background: '#1f2937',
+          color: '#9ca3af',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
@@ -226,10 +226,10 @@ export default function SignaturePadModal({
       ) : null}
 
       {/* Footer buttons */}
-      <div style={{ padding: '12px 16px', display: 'flex', gap: '10px', background: 'var(--surface-elev)' }}>
+      <div style={{ padding: '12px 16px', display: 'flex', gap: '10px', background: '#1f2937' }}>
         <button
           onClick={handleClear}
-          style={{ flex: 1, padding: '12px', background: 'var(--border-card)', color: 'var(--text-card)', border: 'none', borderRadius: '8px', fontSize: '1rem', cursor: 'pointer' }}
+          style={{ flex: 1, padding: '12px', background: '#374151', color: '#f9fafb', border: 'none', borderRadius: '8px', fontSize: '1rem', cursor: 'pointer' }}
         >
           Clear
         </button>
@@ -239,7 +239,7 @@ export default function SignaturePadModal({
           style={{
             flex: 2,
             padding: '12px',
-            background: hasDrawn ? '#22c55e' : 'var(--border-card)',
+            background: hasDrawn ? '#22c55e' : '#374151',
             color: 'white',
             border: 'none',
             borderRadius: '8px',
