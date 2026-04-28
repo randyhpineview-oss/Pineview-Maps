@@ -19,6 +19,7 @@ import { nearestFraction } from './lib/mapUtils';
 import { generateLeaseSheetPdf } from './lib/pdfGenerator';
 import { generateTMTicketPdf } from './lib/tmTicketPdfGenerator';
 import { onAuthStateChange, signOut } from './lib/supabaseClient';
+import { APP_VERSION_LABEL } from './version';
 import {
   getAllLookups,
   getLastSyncAt,
@@ -2851,6 +2852,19 @@ export default function App() {
           >
             Sign Out
           </button>
+          {/* Tiny build-version badge — auto-bumped on every push to main
+              by .github/workflows/deploy.yml (VITE_APP_VERSION = 1.0.<run_number>).
+              Lets a worker / office / admin confirm what build they have
+              loaded without digging into devtools. Hidden on mobile via
+              `topbar-account-inline-only`; mobile users get the same string
+              inside the avatar popover below. */}
+          <span
+            className="badge topbar-account-inline-only"
+            title={`Build ${APP_VERSION_LABEL}`}
+            style={{ background: 'transparent', color: '#6b7280', fontSize: '0.7rem', padding: '2px 6px' }}
+          >
+            {APP_VERSION_LABEL}
+          </span>
 
           {/* Mobile-only avatar menu: collapses name + View as Worker +
               Sign Out into a single 28 px circle with the user's initial.
@@ -2897,6 +2911,13 @@ export default function App() {
                 >
                   Sign out
                 </button>
+                <div
+                  role="presentation"
+                  style={{ padding: '0.4rem 0.75rem 0.5rem', textAlign: 'center', opacity: 0.6, fontSize: '0.7rem', color: '#9ab1d6' }}
+                  title={`Build ${APP_VERSION_LABEL}`}
+                >
+                  {APP_VERSION_LABEL}
+                </div>
               </div>
             ) : null}
           </div>

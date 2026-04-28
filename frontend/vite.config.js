@@ -2,7 +2,21 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
+// Build-time version metadata. Pulled from env vars set by the GitHub Actions
+// workflow (.github/workflows/deploy.yml): VITE_APP_VERSION is computed as
+// `1.0.<github.run_number>` so each push to main bumps the patch automatically;
+// VITE_APP_COMMIT is the short SHA. Both fall back to 'dev'/'local' when
+// running `npm run dev` locally so the app never sees `undefined`.
+const APP_VERSION = process.env.VITE_APP_VERSION || 'dev';
+const APP_COMMIT = process.env.VITE_APP_COMMIT || 'local';
+const APP_BUILD_TIME = new Date().toISOString();
+
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(APP_VERSION),
+    __APP_COMMIT__: JSON.stringify(APP_COMMIT),
+    __APP_BUILD_TIME__: JSON.stringify(APP_BUILD_TIME),
+  },
   plugins: [
     react(),
     // ── App-shell caching service worker (Fix #3) ──

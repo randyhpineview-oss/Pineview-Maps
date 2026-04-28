@@ -43,8 +43,19 @@ jobs:
         echo "VITE_GOOGLE_MAPS_API_KEY=${{ secrets.VITE_GOOGLE_MAPS_API_KEY }}" >> .env
         
     - name: Build
+      env:
+        # Auto-incrementing version: every push to main bumps the patch
+        # number via github.run_number, and we surface the short SHA so a
+        # specific build can be traced back to its commit. Both are read
+        # by frontend/vite.config.js -> frontend/src/version.js and shown
+        # in the topbar / avatar menu so workers, office, and admins can
+        # all confirm what version they have loaded.
+        VITE_APP_VERSION: 1.0.${{ github.run_number }}
+        VITE_APP_COMMIT: ${{ github.sha }}
       run: |
         cd frontend
+        # Trim the commit to 7 chars for a compact display label.
+        export VITE_APP_COMMIT="${VITE_APP_COMMIT:0:7}"
         npm run build
         
     - name: Setup Pages

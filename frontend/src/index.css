@@ -63,16 +63,24 @@ button { cursor: pointer; }
 .badge.online { color: #86efac; }
 .badge.offline { color: #fbbf24; }
 
-/* ───── Account menu (mobile-only avatar dropdown) ─────
-   Hidden on tablet/PC by default — the existing inline badges (name,
-   View as Worker, Sign Out) handle that screen size. On phones the
-   inline badges hide via `.topbar-account-inline-only` and this menu
-   takes over to keep the topbar on a single row. */
+/* ───── Account menu (avatar dropdown, all viewports) ─────
+   The avatar trigger + popover is the single source of identity UI on
+   every screen size. The inline name / View-as-Worker / Sign-Out badges
+   are hidden everywhere via `.topbar-account-inline-only` below; the
+   popover holds those items plus the build-version line. Keeping one
+   layout across mobile/tablet/PC avoids the topbar getting crowded on
+   wide screens and matches what users already see on phones. */
 .topbar-account-menu {
   position: relative;
-  display: none;
+  display: block;
   flex-shrink: 0;
 }
+
+/* Inline identity badges are fully retired — always hidden, regardless
+   of viewport. Kept as a class (rather than deleting the markup) so the
+   JSX in App.jsx remains a no-op render path that's easy to revive if
+   we ever want to A/B the inline layout again. */
+.topbar-account-inline-only { display: none !important; }
 
 .topbar-account-trigger {
   width: 28px;
@@ -907,12 +915,9 @@ button.site-row { cursor: pointer; }
   .topbar-right { gap: 0.3rem; flex-shrink: 1; min-width: 0; flex-wrap: nowrap; justify-content: flex-end; overflow: visible; }
   .topbar-right .badge { font-size: 0.62rem; padding: 0.15rem 0.4rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
 
-  /* Hide the inline name / View-as-Worker / Sign-Out badges on mobile —
-     the avatar menu replaces them. */
-  .topbar-account-inline-only { display: none !important; }
-
-  /* Show the mobile avatar menu. Hidden on tablet/PC. */
-  .topbar-account-menu { display: block; }
+  /* Inline badges + avatar menu visibility are now handled at the base
+     scope (avatar always shown, inline always hidden); nothing extra
+     needed here for the mobile breakpoint. */
 }
 
 /* Hide Google Maps attribution elements */
