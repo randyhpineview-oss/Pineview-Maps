@@ -252,6 +252,27 @@ export default function MapView({
     return () => clearTimeout(t);
   }, [isOnline, loadError, isLoaded]);
 
+  // ── Boot splash hand-off ──────────────────────────────────────────────
+  // The HTML splash (#pv-splash, defined in index.html) is intentionally
+  // kept visible past React-mount. We dismiss it here, once MapView has
+  // reached a "terminal" render — either the real map is loaded, the
+  // Maps script errored, or we're about to show the friendly offline
+  // fallback card. Hiding earlier (on main.jsx mount) caused the user
+  // to see "Loading map…" / fallback-card intermediate states flashing
+  // between the fading splash and the first map paint. A 15 s safety
+  // timer in index.html still forces a dismiss if this effect never
+  // reaches a terminal state for some reason (e.g. a bug upstream).
+  useEffect(() => {
+    const reachedTerminalMapState =
+      isLoaded ||
+      Boolean(loadError) ||
+      (!isLoaded && !isOnline); // mirrors the fallback-card branch below
+    if (!reachedTerminalMapState) return;
+    if (typeof window !== 'undefined' && typeof window.__pineviewHideSplash === 'function') {
+      window.__pineviewHideSplash();
+    }
+  }, [isLoaded, loadError, isOnline]);
+
   const siteBoundsKey = useMemo(
     () => sites.map((s) => `${s.id ?? s.cacheId}:${s.latitude}:${s.longitude}`).join('|'),
     [sites]

@@ -30,15 +30,13 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   </React.StrictMode>
 );
 
-// Hide the inline boot splash (defined in index.html) once React has
-// committed and painted the first frame. Two nested rAFs guarantee the
-// browser has actually flushed the new DOM to the screen before we start
-// fading the splash, otherwise users would see a brief flash of empty
-// background between splash removal and the first React paint.
-if (typeof window !== 'undefined' && typeof window.__pineviewHideSplash === 'function') {
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      window.__pineviewHideSplash();
-    });
-  });
-}
+// Splash dismissal is now driven by MapView.jsx, which calls
+// `window.__pineviewHideSplash()` once the Maps API has reached a
+// terminal state (loaded, errored, or offline-fallback). Hiding on
+// React-mount was too early: the Maps script typically takes another
+// ~500 ms–2 s to finish, and the "Loading map…" / offline-fallback
+// intermediate states would flash between the fading splash and the
+// first map paint. Letting MapView own the hide keeps the Pineview
+// logo steady through the entire load. The 15 s safety-net timer in
+// index.html still guards against a wedged state where MapView never
+// reaches a terminal render.
