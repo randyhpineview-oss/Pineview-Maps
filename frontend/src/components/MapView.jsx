@@ -259,18 +259,42 @@ export default function MapView({
   // Maps script errored, or we're about to show the friendly offline
   // fallback card. Hiding earlier (on main.jsx mount) caused the user
   // to see "Loading map…" / fallback-card intermediate states flashing
-  // between the fading splash and the first map paint. A 15 s safety
-  // timer in index.html still forces a dismiss if this effect never
-  // reaches a terminal state for some reason (e.g. a bug upstream).
+  // between the fading splash and the first map paint.
+  //
+  // We also enforce a *minimum* splash-visible duration. On a warm
+  // service-worker cache with fast internet the map can be fully loaded
+  // in ~200 ms, which makes the splash vanish almost instantly and the
+  // transition feels abrupt / busy. Holding the splash for at least
+  // MIN_SPLASH_MS since page-load origin (performance.now() is zero at
+  // nav start) guarantees a steady Pineview-logo moment every time,
+  // regardless of connection speed. Anything else that would otherwise
+  // render during that window (intermediate "Loading map…" text, a
+  // brief offline-fallback flash if `isOnline` is momentarily false on
+  // cold start) paints silently behind the splash's z-index: 9999 and
+  // is never visible.
+  //
+  // The 15 s safety timer in index.html still forces a dismiss if this
+  // effect never reaches a terminal state for some reason.
+  const MIN_SPLASH_MS = 1500;
   useEffect(() => {
     const reachedTerminalMapState =
       isLoaded ||
       Boolean(loadError) ||
       (!isLoaded && !isOnline); // mirrors the fallback-card branch below
     if (!reachedTerminalMapState) return;
-    if (typeof window !== 'undefined' && typeof window.__pineviewHideSplash === 'function') {
-      window.__pineviewHideSplash();
+    const hide = () => {
+      if (typeof window !== 'undefined' && typeof window.__pineviewHideSplash === 'function') {
+        window.__pineviewHideSplash();
+      }
+    };
+    const elapsed = typeof performance !== 'undefined' ? performance.now() : MIN_SPLASH_MS;
+    const waitMs = Math.max(0, MIN_SPLASH_MS - elapsed);
+    if (waitMs === 0) {
+      hide();
+      return;
     }
+    const t = setTimeout(hide, waitMs);
+    return () => clearTimeout(t);
   }, [isLoaded, loadError, isOnline]);
 
   const siteBoundsKey = useMemo(
