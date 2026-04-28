@@ -258,7 +258,7 @@ export default function AdminPanel({
                         <div className="small-text">
                           Lease Sheet • {record.spray_date} • {record.sprayed_by_name || 'Unknown'}
                         </div>
-                        <div className="small-text" style={{ color: '#9ca3af' }}>
+                        <div className="small-text" style={{ color: 'var(--text-card-muted)' }}>
                           {record.site_lsd || record.site_client || record.site_area || ''}
                         </div>
                       </div>
@@ -286,7 +286,7 @@ export default function AdminPanel({
                         <div className="small-text">
                           T&M Ticket • {ticket.spray_date} • {ticket.client || 'No client'} / {ticket.area || 'No area'}
                         </div>
-                        <div className="small-text" style={{ color: '#9ca3af' }}>
+                        <div className="small-text" style={{ color: 'var(--text-card-muted)' }}>
                           {ticket.description_of_work || 'No description'}
                         </div>
                       </div>

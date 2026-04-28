@@ -7,6 +7,29 @@
   --tab-height: 56px;
   --topbar-height: 48px;
   --panel-width: 380px;
+
+  /* ── Theme tokens used by INLINE styles in JSX ──────────────────
+     Components like TMTicketDetailSheet / HerbicideLeaseSheet /
+     FormsPanel render their tables and modals with inline `style={{
+     background: '#111827' }}` etc. Hardcoded hex values can't respond
+     to a theme switch, so we expose the same values as CSS variables
+     here. JSX uses `style={{ background: 'var(--surface-card)' }}`,
+     dark theme keeps the original colors verbatim, and the
+     `[data-theme="light"]` override block at the bottom of the file
+     remaps them to a coherent light-mode palette so detail sheets
+     stop looking like dark cards on a light shell.
+
+     Naming reflects role, not color: bumping `--surface-card`
+     from white to gray-50 in a future tweak should not require
+     touching the JSX. */
+  --surface-deep: #0b1220;       /* deepest inset (input fields on cards) */
+  --surface-card: #111827;       /* normal card / panel surface */
+  --surface-elev: #1f2937;       /* slightly elevated (header strip, hover, selected) */
+  --surface-emphasis: #0f172a;   /* highlighted band (totals row, primary stat strip) */
+  --border-card: #374151;        /* hairline border around cards & inputs */
+  --text-card: #f9fafb;          /* primary text on a card surface */
+  --text-card-muted: #9ca3af;    /* secondary / hint text on a card surface */
+  --link-card: #60a5fa;          /* interactive blue text on a card surface */
   /* Small lift beneath the bottom tabs on phones so the middle tap
      targets aren't flush with the system swipe-up gesture area (iOS
      home indicator / Android gesture bar). Phones only — set to a
@@ -985,14 +1008,30 @@ button[title="Open keyboard shortcuts"],
    offline amber, danger red, etc.) stay identical — they read fine
    on both backgrounds and keep the visual identity consistent.
 
-   Components with deeply nested inline-styled dark surfaces (e.g.
-   T&M ticket detail tables, lease-sheet preview rows) intentionally
-   remain dark — those read like data cards on the light shell and
-   keep submitted-form fidelity matching the printed PDF output.
+   Components that previously rendered dark inline styles (T&M
+   ticket detail tables, lease-sheet preview rows, FormsPanel cards,
+   etc.) now consume the `--surface-*`, `--border-card`, `--text-card`
+   and `--link-card` tokens defined right inside this block, so they
+   theme automatically alongside the shell.
    ═══════════════════════════════════════════════════════════════════ */
 :root[data-theme="light"] {
   color: #0f172a;
   background: #f1f5f9;
+
+  /* Inline-style theme tokens (see top of file for purpose).
+     Light-mode palette inverts the dark hierarchy: pure white card
+     surfaces, slate-50 inputs, slate-100 elevated/hover state, and
+     slate-300 borders. Deeper-on-deeper in dark mode becomes
+     lighter-on-lighter in light mode. Text/link colors flip to dark
+     slate / brand blue for high contrast on white. */
+  --surface-deep: #f8fafc;       /* slate-50  — input field bg */
+  --surface-card: #ffffff;       /* pure white — card surface */
+  --surface-elev: #f1f5f9;       /* slate-100 — header strip / hover / selected */
+  --surface-emphasis: #e2e8f0;   /* slate-200 — totals row / highlight band */
+  --border-card: #cbd5e1;        /* slate-300 — control border */
+  --text-card: #0f172a;          /* slate-900 — primary text */
+  --text-card-muted: #64748b;    /* slate-500 — secondary text */
+  --link-card: #2563eb;          /* blue-600 — link / interactive blue */
 }
 
 /* ── Top bar ───────────────────────────────────────────────────── */

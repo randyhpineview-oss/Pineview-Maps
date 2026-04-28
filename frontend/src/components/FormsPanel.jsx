@@ -74,7 +74,7 @@ function renderLeaseRow(record, onViewPdf, onEditRecord, onDeleteRecord, canOffi
           <div className="small-text" style={{ marginTop: '2px' }}>
             {record.spray_date} • {record.sprayed_by_name || 'Unknown'}
           </div>
-          <div className="small-text" style={{ color: '#9ca3af', marginTop: '2px' }}>
+          <div className="small-text" style={{ color: 'var(--text-card-muted)', marginTop: '2px' }}>
             {record.site_lsd || ''} • {record.site_client || ''} • {record.site_area || ''}
           </div>
           <div className="small-text" style={{ color: '#6b7280', marginTop: '2px', fontSize: '0.75rem' }}>
@@ -135,7 +135,7 @@ function renderTmRow(t, onOpenTMTicket) {
           <div className="small-text" style={{ marginTop: '2px' }}>
             {t.spray_date} • {t.created_by_name || 'Unknown'}
           </div>
-          <div className="small-text" style={{ color: '#9ca3af', marginTop: '2px' }}>
+          <div className="small-text" style={{ color: 'var(--text-card-muted)', marginTop: '2px' }}>
             {t.client} / {t.area} • {(t.rows?.length || 0)} row(s)
           </div>
           <div className="small-text" style={{ color: '#6b7280', marginTop: '2px', fontSize: '0.75rem' }}>
@@ -516,9 +516,9 @@ export default function FormsPanel({
   const subBtn = (active) => ({
     flex: 1,
     padding: '10px',
-    backgroundColor: active ? '#3b82f6' : '#111827',
-    color: active ? 'white' : '#9ca3af',
-    border: '1px solid #374151',
+    backgroundColor: active ? '#3b82f6' : 'var(--surface-card)',
+    color: active ? 'white' : 'var(--text-card-muted)',
+    border: '1px solid var(--border-card)',
     borderRadius: '8px',
     fontSize: '0.85rem',
     fontWeight: 600,
@@ -529,8 +529,8 @@ export default function FormsPanel({
     flex: 1,
     padding: '8px',
     backgroundColor: active ? '#1e40af' : 'transparent',
-    color: active ? 'white' : '#9ca3af',
-    border: '1px solid #374151',
+    color: active ? 'white' : 'var(--text-card-muted)',
+    border: '1px solid var(--border-card)',
     borderRadius: '6px',
     fontSize: '0.8rem',
     fontWeight: 500,
@@ -556,8 +556,8 @@ export default function FormsPanel({
             onClick={() => onStartLeaseSheetFromDraft?.(null)}
             style={{
               padding: '14px',
-              background: '#111827',
-              border: '1px solid #374151',
+              background: 'var(--surface-card)',
+              border: '1px solid var(--border-card)',
               borderRadius: '8px',
               cursor: 'pointer',
               display: 'flex',
@@ -567,7 +567,7 @@ export default function FormsPanel({
           >
             <div>
               <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>🌿 Herbicide Lease Sheet</div>
-              <div className="small-text" style={{ color: '#9ca3af', marginTop: '2px' }}>
+              <div className="small-text" style={{ color: 'var(--text-card-muted)', marginTop: '2px' }}>
                 Select a site from the Map tab first, then tap "Mark as sprayed".
               </div>
             </div>
@@ -585,8 +585,8 @@ export default function FormsPanel({
             }}
             style={{
               padding: '14px',
-              background: '#111827',
-              border: '1px solid #374151',
+              background: 'var(--surface-card)',
+              border: '1px solid var(--border-card)',
               borderRadius: '8px',
               cursor: 'pointer',
               display: 'flex',
@@ -596,7 +596,7 @@ export default function FormsPanel({
           >
             <div>
               <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>🧾 Time and Materials Ticket</div>
-              <div className="small-text" style={{ color: '#9ca3af', marginTop: '2px' }}>
+              <div className="small-text" style={{ color: 'var(--text-card-muted)', marginTop: '2px' }}>
                 Start a new T&M ticket manually (or open one from In Progress).
               </div>
             </div>
@@ -609,8 +609,8 @@ export default function FormsPanel({
               key={label}
               style={{
                 padding: '14px',
-                background: '#0b1220',
-                border: '1px dashed #374151',
+                background: 'var(--surface-deep)',
+                border: '1px dashed var(--border-card)',
                 borderRadius: '8px',
                 opacity: 0.55,
               }}
@@ -643,7 +643,7 @@ export default function FormsPanel({
           {ipTab === IP_UPLOADING && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               {uploadQueue.length === 0 ? (
-                <div className="small-text" style={{ textAlign: 'center', padding: '20px', color: '#9ca3af' }}>
+                <div className="small-text" style={{ textAlign: 'center', padding: '20px', color: 'var(--text-card-muted)' }}>
                   Nothing in upload queue.
                 </div>
               ) : (
@@ -683,7 +683,7 @@ export default function FormsPanel({
                           <div className="small-text" style={{ fontWeight: 600 }}>
                             {ticketNumber} — {sprayDate}
                           </div>
-                          <div className="small-text" style={{ color: '#9ca3af' }}>
+                          <div className="small-text" style={{ color: 'var(--text-card-muted)' }}>
                             {typeLabel} • {isActive ? `Uploading ${pct}%` : 'Queued'}
                           </div>
                         </div>
@@ -708,7 +708,7 @@ export default function FormsPanel({
                           style={{
                             marginTop: '8px',
                             height: '6px',
-                            background: '#1f2937',
+                            background: 'var(--surface-elev)',
                             borderRadius: '3px',
                             overflow: 'hidden',
                             position: 'relative',
@@ -751,7 +751,7 @@ export default function FormsPanel({
           {ipTab === IP_OPEN && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               {sortedOpenTickets.length === 0 ? (
-                <div className="small-text" style={{ textAlign: 'center', padding: '20px', color: '#9ca3af' }}>
+                <div className="small-text" style={{ textAlign: 'center', padding: '20px', color: 'var(--text-card-muted)' }}>
                   No open T&M tickets.
                 </div>
               ) : (
@@ -765,18 +765,18 @@ export default function FormsPanel({
                       textAlign: 'left',
                       padding: '10px',
                       borderRadius: '6px',
-                      background: '#111827',
-                      border: '1px solid #374151',
+                      background: 'var(--surface-card)',
+                      border: '1px solid var(--border-card)',
                       cursor: 'pointer',
                     }}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div>
                         <div className="small-text" style={{ fontWeight: 700 }}>{t.ticket_number}</div>
-                        <div className="small-text" style={{ color: '#9ca3af' }}>
+                        <div className="small-text" style={{ color: 'var(--text-card-muted)' }}>
                           {t.client} / {t.area} • {t.spray_date}
                         </div>
-                        <div className="small-text" style={{ color: '#9ca3af' }}>
+                        <div className="small-text" style={{ color: 'var(--text-card-muted)' }}>
                           {(t.rows?.length || 0)} row(s) • {t.created_by_name || '—'}
                         </div>
                       </div>
@@ -789,7 +789,7 @@ export default function FormsPanel({
                 <button
                   type="button"
                   onClick={() => setOpenCount((c) => c + PAGE_SIZE)}
-                  style={{ padding: '8px', background: '#1f2937', border: '1px solid #374151', borderRadius: '6px', color: '#60a5fa', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', marginTop: '4px' }}
+                  style={{ padding: '8px', background: 'var(--surface-elev)', border: '1px solid var(--border-card)', borderRadius: '6px', color: 'var(--link-card)', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', marginTop: '4px' }}
                 >
                   Load more ({sortedOpenTickets.length - openCount} remaining)
                 </button>
@@ -801,7 +801,7 @@ export default function FormsPanel({
           {ipTab === IP_DRAFTS && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               {drafts.length === 0 ? (
-                <div className="small-text" style={{ textAlign: 'center', padding: '20px', color: '#9ca3af' }}>
+                <div className="small-text" style={{ textAlign: 'center', padding: '20px', color: 'var(--text-card-muted)' }}>
                   No drafts saved.
                 </div>
               ) : (
@@ -809,15 +809,15 @@ export default function FormsPanel({
                   <div
                     key={d.id}
                     className="site-row"
-                    style={{ padding: '10px', borderRadius: '6px', background: '#111827', border: '1px solid #374151', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                    style={{ padding: '10px', borderRadius: '6px', background: 'var(--surface-card)', border: '1px solid var(--border-card)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
                   >
                     <button
                       type="button"
                       onClick={() => onStartLeaseSheetFromDraft?.(d)}
-                      style={{ flex: 1, textAlign: 'left', background: 'transparent', border: 'none', color: '#f9fafb', cursor: 'pointer', padding: 0 }}
+                      style={{ flex: 1, textAlign: 'left', background: 'transparent', border: 'none', color: 'var(--text-card)', cursor: 'pointer', padding: 0 }}
                     >
                       <div className="small-text" style={{ fontWeight: 600 }}>{d.label || 'Untitled Draft'}</div>
-                      <div className="small-text" style={{ color: '#9ca3af', marginTop: '2px' }}>
+                      <div className="small-text" style={{ color: 'var(--text-card-muted)', marginTop: '2px' }}>
                         Updated {new Date(d.updatedAt || d.createdAt).toLocaleString()}
                       </div>
                     </button>
@@ -854,9 +854,9 @@ export default function FormsPanel({
               width: '100%',
               padding: '8px 12px',
               borderRadius: '6px',
-              border: '1px solid #374151',
-              backgroundColor: '#111827',
-              color: '#f9fafb',
+              border: '1px solid var(--border-card)',
+              backgroundColor: 'var(--surface-card)',
+              color: 'var(--text-card)',
               boxSizing: 'border-box',
             }}
           />
@@ -871,7 +871,7 @@ export default function FormsPanel({
           {recTab === REC_ALL && (
             <div className="list-grid">
               {filteredAll.length === 0 ? (
-                <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: '#9ca3af' }}>
+                <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: 'var(--text-card-muted)' }}>
                   Nothing here yet.
                 </div>
               ) : (
@@ -885,7 +885,7 @@ export default function FormsPanel({
                 <button
                   type="button"
                   onClick={() => setAllCount((c) => c + PAGE_SIZE)}
-                  style={{ padding: '8px', background: '#1f2937', border: '1px solid #374151', borderRadius: '6px', color: '#60a5fa', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', marginTop: '4px' }}
+                  style={{ padding: '8px', background: 'var(--surface-elev)', border: '1px solid var(--border-card)', borderRadius: '6px', color: 'var(--link-card)', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', marginTop: '4px' }}
                 >
                   Load more ({filteredAll.length - allCount} remaining)
                 </button>
@@ -896,7 +896,7 @@ export default function FormsPanel({
           {recTab === REC_LEASE && (
             <div className="list-grid">
               {filteredLease.length === 0 ? (
-                <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: '#9ca3af' }}>
+                <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: 'var(--text-card-muted)' }}>
                   No lease sheets.
                 </div>
               ) : (
@@ -906,7 +906,7 @@ export default function FormsPanel({
                 <button
                   type="button"
                   onClick={() => setLeaseCount((c) => c + PAGE_SIZE)}
-                  style={{ padding: '8px', background: '#1f2937', border: '1px solid #374151', borderRadius: '6px', color: '#60a5fa', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', marginTop: '4px' }}
+                  style={{ padding: '8px', background: 'var(--surface-elev)', border: '1px solid var(--border-card)', borderRadius: '6px', color: 'var(--link-card)', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', marginTop: '4px' }}
                 >
                   Load more ({filteredLease.length - leaseCount} remaining)
                 </button>
@@ -947,7 +947,7 @@ export default function FormsPanel({
               ) : null}
 
               {filteredTm.length === 0 ? (
-                <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: '#9ca3af' }}>
+                <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: 'var(--text-card-muted)' }}>
                   No T&M tickets.
                 </div>
               ) : (
@@ -957,7 +957,7 @@ export default function FormsPanel({
                 <button
                   type="button"
                   onClick={() => setTmCount((c) => c + PAGE_SIZE)}
-                  style={{ padding: '8px', background: '#1f2937', border: '1px solid #374151', borderRadius: '6px', color: '#60a5fa', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', marginTop: '4px' }}
+                  style={{ padding: '8px', background: 'var(--surface-elev)', border: '1px solid var(--border-card)', borderRadius: '6px', color: 'var(--link-card)', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', marginTop: '4px' }}
                 >
                   Load more ({filteredTm.length - tmCount} remaining)
                 </button>
@@ -984,8 +984,8 @@ export default function FormsPanel({
         >
           <div
             style={{
-              background: '#111827',
-              border: '1px solid #374151',
+              background: 'var(--surface-card)',
+              border: '1px solid var(--border-card)',
               borderRadius: '10px',
               width: '100%',
               maxWidth: '420px',
@@ -998,7 +998,7 @@ export default function FormsPanel({
             <h3 style={{ margin: 0, fontSize: '1.05rem' }}>New T&amp;M Ticket</h3>
 
             <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <span className="small-text" style={{ color: '#9ca3af' }}>Date</span>
+              <span className="small-text" style={{ color: 'var(--text-card-muted)' }}>Date</span>
               <input
                 type="date"
                 value={newTMDate}
@@ -1006,24 +1006,24 @@ export default function FormsPanel({
                 style={{
                   padding: '8px 10px',
                   borderRadius: '6px',
-                  border: '1px solid #374151',
-                  background: '#0b1220',
-                  color: '#f9fafb',
+                  border: '1px solid var(--border-card)',
+                  background: 'var(--surface-deep)',
+                  color: 'var(--text-card)',
                 }}
               />
             </label>
 
             <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <span className="small-text" style={{ color: '#9ca3af' }}>Client</span>
+              <span className="small-text" style={{ color: 'var(--text-card-muted)' }}>Client</span>
               <select
                 value={newTMClient}
                 onChange={(e) => setNewTMClient(e.target.value)}
                 style={{
                   padding: '8px 10px',
                   borderRadius: '6px',
-                  border: '1px solid #374151',
-                  background: '#0b1220',
-                  color: '#f9fafb',
+                  border: '1px solid var(--border-card)',
+                  background: 'var(--surface-deep)',
+                  color: 'var(--text-card)',
                 }}
               >
                 <option value="">-- Select client --</option>
@@ -1034,16 +1034,16 @@ export default function FormsPanel({
             </label>
 
             <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <span className="small-text" style={{ color: '#9ca3af' }}>Area</span>
+              <span className="small-text" style={{ color: 'var(--text-card-muted)' }}>Area</span>
               <select
                 value={newTMArea}
                 onChange={(e) => setNewTMArea(e.target.value)}
                 style={{
                   padding: '8px 10px',
                   borderRadius: '6px',
-                  border: '1px solid #374151',
-                  background: '#0b1220',
-                  color: '#f9fafb',
+                  border: '1px solid var(--border-card)',
+                  background: 'var(--surface-deep)',
+                  color: 'var(--text-card)',
                 }}
               >
                 <option value="">-- Select area --</option>
@@ -1054,7 +1054,7 @@ export default function FormsPanel({
             </label>
 
             <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <span className="small-text" style={{ color: '#9ca3af' }}>Description of Work (optional)</span>
+              <span className="small-text" style={{ color: 'var(--text-card-muted)' }}>Description of Work (optional)</span>
               <textarea
                 value={newTMDesc}
                 onChange={(e) => setNewTMDesc(e.target.value)}
@@ -1062,9 +1062,9 @@ export default function FormsPanel({
                 style={{
                   padding: '8px 10px',
                   borderRadius: '6px',
-                  border: '1px solid #374151',
-                  background: '#0b1220',
-                  color: '#f9fafb',
+                  border: '1px solid var(--border-card)',
+                  background: 'var(--surface-deep)',
+                  color: 'var(--text-card)',
                   resize: 'vertical',
                 }}
               />

@@ -558,7 +558,7 @@ export default function TMTicketDetailSheet({
 
   if (loading) {
     return (
-      <div style={{ padding: '20px', color: '#9ca3af', textAlign: 'center' }}>Loading ticket…</div>
+      <div style={{ padding: '20px', color: 'var(--text-card-muted)', textAlign: 'center' }}>Loading ticket…</div>
     );
   }
   if (error) {
@@ -591,11 +591,11 @@ export default function TMTicketDetailSheet({
 
     return (
       <div style={{ position: 'fixed', inset: 0, zIndex: 80, background: '#4b5563', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ padding: '10px 16px', background: '#1f2937', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ color: '#f9fafb', fontWeight: 600 }}>T&M Preview — {ticket.ticket_number}</span>
+        <div style={{ padding: '10px 16px', background: 'var(--surface-elev)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ color: 'var(--text-card)', fontWeight: 600 }}>T&M Preview — {ticket.ticket_number}</span>
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-            <button onClick={handlePrint} style={{ background: 'none', border: 'none', color: '#60a5fa', fontSize: '0.85rem', cursor: 'pointer' }}>Print</button>
-            <button onClick={() => setIsPreviewOpen(false)} style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer' }}>×</button>
+            <button onClick={handlePrint} style={{ background: 'none', border: 'none', color: 'var(--link-card)', fontSize: '0.85rem', cursor: 'pointer' }}>Print</button>
+            <button onClick={() => setIsPreviewOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--text-card-muted)', fontSize: '1.5rem', cursor: 'pointer' }}>×</button>
           </div>
         </div>
         <PdfPreviewViewer pdfBase64={previewBase64} />
@@ -604,27 +604,27 @@ export default function TMTicketDetailSheet({
   }
 
   return (
-    <div style={{ padding: '20px', color: '#f9fafb', overflowY: 'auto' }}>
+    <div style={{ padding: '20px', color: 'var(--text-card)', overflowY: 'auto' }}>
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
         <div>
           <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600 }}>T&M Ticket {ticket.ticket_number}</h2>
-          <div style={{ fontSize: '0.85rem', color: '#9ca3af', marginTop: '4px' }}>
+          <div style={{ fontSize: '0.85rem', color: 'var(--text-card-muted)', marginTop: '4px' }}>
             {ticket.client} / {ticket.area} / {ticket.spray_date}
           </div>
-          <div style={{ fontSize: '0.8rem', color: '#9ca3af', marginTop: '2px' }}>
+          <div style={{ fontSize: '0.8rem', color: 'var(--text-card-muted)', marginTop: '2px' }}>
             Created by: {ticket.created_by_name || '—'} • Status:{' '}
             <span style={{ color: ticket.status === 'approved' ? '#22c55e' : '#3b82f6' }}>
               {ticket.status === 'submitted' ? 'pending' : ticket.status}
             </span>
           </div>
         </div>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer' }}>×</button>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-card-muted)', fontSize: '1.5rem', cursor: 'pointer' }}>×</button>
       </div>
 
       {/* Description / PO# */}
       <div style={{ marginBottom: '12px' }}>
-        <label style={{ display: 'block', fontSize: '0.85rem', color: '#9ca3af', marginBottom: '4px' }}>Description of Work</label>
+        <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-card-muted)', marginBottom: '4px' }}>Description of Work</label>
         <textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
@@ -634,31 +634,31 @@ export default function TMTicketDetailSheet({
           readOnly={!canOfficeEdit && !canWorkerEdit}
           style={{
             width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '6px',
-            border: '1px solid #374151', backgroundColor: '#111827', color: '#f9fafb', resize: 'vertical',
+            border: '1px solid var(--border-card)', backgroundColor: 'var(--surface-card)', color: 'var(--text-card)', resize: 'vertical',
           }}
         />
       </div>
       {canOfficeEdit ? (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
           <div>
-            <label style={{ display: 'block', fontSize: '0.85rem', color: '#9ca3af', marginBottom: '4px' }}>Client</label>
+            <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-card-muted)', marginBottom: '4px' }}>Client</label>
             <input
               value={client}
               onChange={(e) => setClient(e.target.value)}
               style={{
                 width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '6px',
-                border: '1px solid #374151', backgroundColor: '#111827', color: '#f9fafb',
+                border: '1px solid var(--border-card)', backgroundColor: 'var(--surface-card)', color: 'var(--text-card)',
               }}
             />
           </div>
           <div>
-            <label style={{ display: 'block', fontSize: '0.85rem', color: '#9ca3af', marginBottom: '4px' }}>Area</label>
+            <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-card-muted)', marginBottom: '4px' }}>Area</label>
             <input
               value={area}
               onChange={(e) => setArea(e.target.value)}
               style={{
                 width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '6px',
-                border: '1px solid #374151', backgroundColor: '#111827', color: '#f9fafb',
+                border: '1px solid var(--border-card)', backgroundColor: 'var(--surface-card)', color: 'var(--text-card)',
               }}
             />
           </div>
@@ -666,13 +666,13 @@ export default function TMTicketDetailSheet({
       ) : null}
       {canOfficeEdit ? (
         <div style={{ marginBottom: '16px' }}>
-          <label style={{ display: 'block', fontSize: '0.85rem', color: '#9ca3af', marginBottom: '4px' }}>PO/Approval #</label>
+          <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-card-muted)', marginBottom: '4px' }}>PO/Approval #</label>
           <input
             value={poNumber}
             onChange={(e) => setPoNumber(e.target.value)}
             style={{
               width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '6px',
-              border: '1px solid #374151', backgroundColor: '#111827', color: '#f9fafb',
+              border: '1px solid var(--border-card)', backgroundColor: 'var(--surface-card)', color: 'var(--text-card)',
             }}
           />
         </div>
@@ -684,11 +684,11 @@ export default function TMTicketDetailSheet({
       <h3 style={{ fontSize: '1rem', margin: '14px 0 6px' }}>
         Sites Treated ({((ticket.rows || []).filter((r) => !rowsToDelete.includes(r.id)).length + newRows.length) || 0})
       </h3>
-      <div style={{ background: '#111827', borderRadius: '8px', overflow: 'hidden', border: '1px solid #374151' }}>
+      <div style={{ background: 'var(--surface-card)', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border-card)' }}>
         <div style={{
           display: 'grid',
           gridTemplateColumns: canOfficeEdit ? '1.4fr 0.9fr 1.2fr 0.8fr 0.8fr 1fr 0.25fr' : '1.4fr 0.9fr 1.2fr 0.8fr 0.8fr 1fr',
-          gap: '4px', padding: '8px', background: '#1f2937', fontSize: '0.75rem', fontWeight: 600, color: '#9ca3af',
+          gap: '4px', padding: '8px', background: 'var(--surface-elev)', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-card-muted)',
         }}>
           <span>Location</span>
           <span>Type</span>
@@ -699,7 +699,7 @@ export default function TMTicketDetailSheet({
           {canOfficeEdit ? <span></span> : null}
         </div>
         {(ticket.rows || []).length === 0 && newRows.length === 0 ? (
-          <div style={{ padding: '12px', color: '#9ca3af', fontSize: '0.85rem' }}>No rows yet.</div>
+          <div style={{ padding: '12px', color: 'var(--text-card-muted)', fontSize: '0.85rem' }}>No rows yet.</div>
         ) : null}
         {/* Existing rows */}
         {(ticket.rows || []).filter((r) => !rowsToDelete.includes(r.id)).map((r) => {
@@ -710,14 +710,14 @@ export default function TMTicketDetailSheet({
             <div key={r.id} style={{
               display: 'grid',
               gridTemplateColumns: canOfficeEdit ? '1.4fr 0.9fr 1.2fr 0.8fr 0.8fr 1fr 0.25fr' : '1.4fr 0.9fr 1.2fr 0.8fr 0.8fr 1fr',
-              gap: '4px', padding: '8px', borderTop: '1px solid #374151', fontSize: '0.8rem', alignItems: 'center',
+              gap: '4px', padding: '8px', borderTop: '1px solid var(--border-card)', fontSize: '0.8rem', alignItems: 'center',
             }}>
               {canOfficeEdit ? (
                 <input
                   value={rowEdit.location ?? (r.location ?? '')}
                   onChange={(e) => updateRowEdit(r.id, 'location', e.target.value)}
                   placeholder="—"
-                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid var(--border-card)', background: 'var(--surface-deep)', color: 'var(--text-card)', fontSize: '0.75rem' }}
                 />
               ) : <span>{r.location || '—'}</span>}
               {canOfficeEdit ? (
@@ -725,7 +725,7 @@ export default function TMTicketDetailSheet({
                   value={rowEdit.site_type ?? (r.site_type ?? '')}
                   onChange={(e) => updateRowEdit(r.id, 'site_type', e.target.value)}
                   placeholder="—"
-                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid var(--border-card)', background: 'var(--surface-deep)', color: 'var(--text-card)', fontSize: '0.75rem' }}
                 />
               ) : <span>{r.site_type || '—'}</span>}
               {canOfficeEdit ? (
@@ -733,7 +733,7 @@ export default function TMTicketDetailSheet({
                   value={rowEdit.herbicides ?? (r.herbicides ?? '')}
                   onChange={(e) => updateRowEdit(r.id, 'herbicides', e.target.value)}
                   placeholder="—"
-                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid var(--border-card)', background: 'var(--surface-deep)', color: 'var(--text-card)', fontSize: '0.75rem' }}
                 />
               ) : <span>{r.herbicides || '—'}</span>}
               {canOfficeEdit ? (
@@ -742,7 +742,7 @@ export default function TMTicketDetailSheet({
                   value={rowEdit.liters_used ?? (r.liters_used != null ? r.liters_used : '')}
                   onChange={(e) => updateRowEdit(r.id, 'liters_used', e.target.value)}
                   placeholder="—"
-                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid var(--border-card)', background: 'var(--surface-deep)', color: 'var(--text-card)', fontSize: '0.75rem' }}
                 />
               ) : <span>{r.liters_used != null && r.liters_used !== '' ? Number(r.liters_used).toFixed(2) : '—'}</span>}
               {canOfficeEdit ? (
@@ -751,7 +751,7 @@ export default function TMTicketDetailSheet({
                   value={rowEdit.area_ha ?? (r.area_ha != null ? r.area_ha : '')}
                   onChange={(e) => updateRowEdit(r.id, 'area_ha', e.target.value)}
                   placeholder={unit}
-                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid var(--border-card)', background: 'var(--surface-deep)', color: 'var(--text-card)', fontSize: '0.75rem' }}
                 />
               ) : <span>{r.area_ha != null && r.area_ha !== '' ? `${Number(r.area_ha).toFixed(2)} ${unit}` : '—'}</span>}
               {canOfficeEdit ? (
@@ -759,7 +759,7 @@ export default function TMTicketDetailSheet({
                   value={rowEdit.cost_code ?? (r.cost_code ?? '')}
                   onChange={(e) => updateRowEdit(r.id, 'cost_code', e.target.value)}
                   placeholder="—"
-                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid var(--border-card)', background: 'var(--surface-deep)', color: 'var(--text-card)', fontSize: '0.75rem' }}
                 />
               ) : <span>{r.cost_code || '—'}</span>}
               {canOfficeEdit ? (
@@ -783,45 +783,45 @@ export default function TMTicketDetailSheet({
           return (
             <div key={r.tempId} style={{
               display: 'grid', gridTemplateColumns: '1.4fr 0.9fr 1.2fr 0.8fr 0.8fr 1fr 0.25fr',
-              gap: '4px', padding: '8px', borderTop: '1px solid #374151', fontSize: '0.8rem', alignItems: 'center',
+              gap: '4px', padding: '8px', borderTop: '1px solid var(--border-card)', fontSize: '0.8rem', alignItems: 'center',
             }}>
               <input
                 value={r.location}
                 onChange={(e) => updateNewRow(r.tempId, 'location', e.target.value)}
                 placeholder="—"
-                style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+                style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid var(--border-card)', background: 'var(--surface-deep)', color: 'var(--text-card)', fontSize: '0.75rem' }}
               />
               <input
                 value={r.site_type}
                 onChange={(e) => updateNewRow(r.tempId, 'site_type', e.target.value)}
                 placeholder="—"
-                style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+                style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid var(--border-card)', background: 'var(--surface-deep)', color: 'var(--text-card)', fontSize: '0.75rem' }}
               />
               <input
                 value={r.herbicides}
                 onChange={(e) => updateNewRow(r.tempId, 'herbicides', e.target.value)}
                 placeholder="—"
-                style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+                style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid var(--border-card)', background: 'var(--surface-deep)', color: 'var(--text-card)', fontSize: '0.75rem' }}
               />
               <input
                 type="number" inputMode="decimal" step="0.01"
                 value={r.liters_used}
                 onChange={(e) => updateNewRow(r.tempId, 'liters_used', e.target.value)}
                 placeholder="—"
-                style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+                style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid var(--border-card)', background: 'var(--surface-deep)', color: 'var(--text-card)', fontSize: '0.75rem' }}
               />
               <input
                 type="number" inputMode="decimal" step="0.01"
                 value={r.area_ha}
                 onChange={(e) => updateNewRow(r.tempId, 'area_ha', e.target.value)}
                 placeholder={unit}
-                style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+                style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid var(--border-card)', background: 'var(--surface-deep)', color: 'var(--text-card)', fontSize: '0.75rem' }}
               />
               <input
                 value={r.cost_code}
                 onChange={(e) => updateNewRow(r.tempId, 'cost_code', e.target.value)}
                 placeholder="—"
-                style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+                style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid var(--border-card)', background: 'var(--surface-deep)', color: 'var(--text-card)', fontSize: '0.75rem' }}
               />
               <button
                 type="button"
@@ -838,17 +838,17 @@ export default function TMTicketDetailSheet({
 
         {/* Add Site Row — office/admin only */}
         {canOfficeEdit ? (
-          <div style={{ padding: '8px', borderTop: '1px solid #374151', background: '#0b1220' }}>
+          <div style={{ padding: '8px', borderTop: '1px solid var(--border-card)', background: 'var(--surface-deep)' }}>
             <button
               type="button"
               onClick={addSiteRow}
               style={{
                 width: '100%',
                 padding: '6px',
-                background: '#1f2937',
-                border: '1px dashed #374151',
+                background: 'var(--surface-elev)',
+                border: '1px dashed var(--border-card)',
                 borderRadius: '6px',
-                color: '#60a5fa',
+                color: 'var(--link-card)',
                 fontSize: '0.8rem',
                 fontWeight: 600,
                 cursor: 'pointer',
@@ -866,12 +866,12 @@ export default function TMTicketDetailSheet({
             derived quantity read-only.
           Office/Admin: full editability including labels, rates, add/remove lines. */}
       <h3 style={{ fontSize: '1rem', margin: '18px 0 6px' }}>Office Use ONLY</h3>
-      <div style={{ background: '#111827', borderRadius: '8px', border: '1px solid #374151', overflow: 'hidden' }}>
+      <div style={{ background: 'var(--surface-card)', borderRadius: '8px', border: '1px solid var(--border-card)', overflow: 'hidden' }}>
         {/* Header row */}
         <div style={{
           display: 'grid',
           gridTemplateColumns: canOfficeEdit ? '1.9fr 0.8fr 0.8fr 0.9fr 0.25fr' : '2.5fr 1fr',
-          gap: '4px', padding: '8px', background: '#1f2937', fontSize: '0.75rem', fontWeight: 600, color: '#9ca3af',
+          gap: '4px', padding: '8px', background: 'var(--surface-elev)', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-card-muted)',
         }}>
           <span>Line</span>
           <span>
@@ -915,7 +915,7 @@ export default function TMTicketDetailSheet({
             <div key={idx} style={{
               display: 'grid',
               gridTemplateColumns: canOfficeEdit ? '1.9fr 0.8fr 0.8fr 0.9fr 0.25fr' : '2.5fr 1fr',
-              gap: '4px', padding: '6px 8px', borderTop: '1px solid #374151', fontSize: '0.8rem', alignItems: 'center',
+              gap: '4px', padding: '6px 8px', borderTop: '1px solid var(--border-card)', fontSize: '0.8rem', alignItems: 'center',
             }}>
               {/* Label */}
               {labelEditable ? (
@@ -923,10 +923,10 @@ export default function TMTicketDetailSheet({
                   value={line.label}
                   onChange={(e) => updateLine(idx, 'label', e.target.value)}
                   placeholder="Line item"
-                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid var(--border-card)', background: 'var(--surface-deep)', color: 'var(--text-card)', fontSize: '0.75rem' }}
                 />
               ) : (
-                <span style={{ color: isAutoLine ? '#9ca3af' : '#f9fafb', fontStyle: isAutoLine ? 'italic' : 'normal' }}>
+                <span style={{ color: isAutoLine ? 'var(--text-card-muted)' : 'var(--text-card)', fontStyle: isAutoLine ? 'italic' : 'normal' }}>
                   {line.label || '—'}
                 </span>
               )}
@@ -945,8 +945,8 @@ export default function TMTicketDetailSheet({
                       // lines are never required so they never go red.
                       border: isQtyRequired(line) && !isQtyFilled(line)
                         ? '1px solid #f87171'
-                        : '1px solid #374151',
-                      background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem',
+                        : '1px solid var(--border-card)',
+                      background: 'var(--surface-deep)', color: 'var(--text-card)', fontSize: '0.75rem',
                     }}
                   />
                   {isQtyRequired(line) && !isQtyFilled(line) ? (
@@ -963,7 +963,7 @@ export default function TMTicketDetailSheet({
                   ) : null}
                 </div>
               ) : (
-                <span style={{ color: isAutoLine ? '#60a5fa' : '#9ca3af' }}>
+                <span style={{ color: isAutoLine ? 'var(--link-card)' : 'var(--text-card-muted)' }}>
                   {qty > 0 ? qty.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—'}
                 </span>
               )}
@@ -974,7 +974,7 @@ export default function TMTicketDetailSheet({
                   type="number" inputMode="decimal" step="0.01"
                   value={line.rate}
                   onChange={(e) => updateLine(idx, 'rate', e.target.value)}
-                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid var(--border-card)', background: 'var(--surface-deep)', color: 'var(--text-card)', fontSize: '0.75rem' }}
                 />
               ) : null}
 
@@ -1005,17 +1005,17 @@ export default function TMTicketDetailSheet({
 
         {/* Add Office Line — office/admin only */}
         {canOfficeEdit ? (
-          <div style={{ padding: '8px', borderTop: '1px solid #374151', background: '#0b1220' }}>
+          <div style={{ padding: '8px', borderTop: '1px solid var(--border-card)', background: 'var(--surface-deep)' }}>
             <button
               type="button"
               onClick={addOfficeLine}
               style={{
                 width: '100%',
                 padding: '6px',
-                background: '#1f2937',
-                border: '1px dashed #374151',
+                background: 'var(--surface-elev)',
+                border: '1px dashed var(--border-card)',
                 borderRadius: '6px',
-                color: '#60a5fa',
+                color: 'var(--link-card)',
                 fontSize: '0.8rem',
                 fontWeight: 600,
                 cursor: 'pointer',
@@ -1029,29 +1029,29 @@ export default function TMTicketDetailSheet({
         {/* Totals — office/admin only */}
         {canOfficeEdit ? (
           <>
-            <div style={{ display: 'grid', gridTemplateColumns: '1.9fr 0.8fr 0.8fr 0.9fr 0.25fr', gap: '4px', padding: '6px 8px', borderTop: '1px solid #374151', fontSize: '0.8rem', alignItems: 'center', background: '#0b1220' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1.9fr 0.8fr 0.8fr 0.9fr 0.25fr', gap: '4px', padding: '6px 8px', borderTop: '1px solid var(--border-card)', fontSize: '0.8rem', alignItems: 'center', background: 'var(--surface-deep)' }}>
               <span></span>
               <span></span>
-              <span style={{ fontWeight: 600, color: '#9ca3af' }}>Sub Total</span>
+              <span style={{ fontWeight: 600, color: 'var(--text-card-muted)' }}>Sub Total</span>
               <span style={{ textAlign: 'right', fontWeight: 600 }}>${totals.subTotal.toFixed(2)}</span>
               <span></span>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1.9fr 0.8fr 0.8fr 0.9fr 0.25fr', gap: '4px', padding: '6px 8px', borderTop: '1px solid #374151', fontSize: '0.8rem', alignItems: 'center', background: '#0b1220' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1.9fr 0.8fr 0.8fr 0.9fr 0.25fr', gap: '4px', padding: '6px 8px', borderTop: '1px solid var(--border-card)', fontSize: '0.8rem', alignItems: 'center', background: 'var(--surface-deep)' }}>
               <span></span>
               <span></span>
-              <span style={{ fontWeight: 600, color: '#9ca3af', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ fontWeight: 600, color: 'var(--text-card-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 GST
                 <input
                   type="number" inputMode="decimal" step="0.1"
                   value={gstPercent}
                   onChange={(e) => setGstPercent(Number(e.target.value) || 0)}
-                  style={{ width: '48px', padding: '2px 4px', borderRadius: '4px', border: '1px solid #374151', background: '#111827', color: '#f9fafb', fontSize: '0.75rem' }}
+                  style={{ width: '48px', padding: '2px 4px', borderRadius: '4px', border: '1px solid var(--border-card)', background: 'var(--surface-card)', color: 'var(--text-card)', fontSize: '0.75rem' }}
                 />%
               </span>
               <span style={{ textAlign: 'right', fontWeight: 600 }}>${totals.gst.toFixed(2)}</span>
               <span></span>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1.9fr 0.8fr 0.8fr 0.9fr 0.25fr', gap: '4px', padding: '8px', borderTop: '1px solid #374151', fontSize: '0.9rem', alignItems: 'center', background: '#0f172a', fontWeight: 700 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1.9fr 0.8fr 0.8fr 0.9fr 0.25fr', gap: '4px', padding: '8px', borderTop: '1px solid var(--border-card)', fontSize: '0.9rem', alignItems: 'center', background: 'var(--surface-emphasis)', fontWeight: 700 }}>
               <span></span>
               <span></span>
               <span>Total</span>
@@ -1086,7 +1086,7 @@ export default function TMTicketDetailSheet({
           <button
             onClick={handleSave}
             disabled={isSaving}
-            style={{ flex: 1, padding: '12px', background: isSaving ? '#374151' : '#22c55e', color: 'white', border: 'none', borderRadius: '8px', fontSize: '0.9rem', fontWeight: 600, cursor: isSaving ? 'not-allowed' : 'pointer', minWidth: '120px' }}
+            style={{ flex: 1, padding: '12px', background: isSaving ? 'var(--border-card)' : '#22c55e', color: 'white', border: 'none', borderRadius: '8px', fontSize: '0.9rem', fontWeight: 600, cursor: isSaving ? 'not-allowed' : 'pointer', minWidth: '120px' }}
           >
             {isSaving ? 'Saving…' : '💾 Save'}
           </button>
@@ -1105,7 +1105,7 @@ export default function TMTicketDetailSheet({
             title={hasMissingQty ? `Fill in: ${missingQtyLabels.join(', ')}` : 'Submit for office approval'}
             style={{
               flex: 1, padding: '12px',
-              background: (isSaving || hasMissingQty) ? '#374151' : '#0ea5e9',
+              background: (isSaving || hasMissingQty) ? 'var(--border-card)' : '#0ea5e9',
               color: 'white', border: 'none', borderRadius: '8px',
               fontSize: '0.9rem', fontWeight: 600,
               cursor: (isSaving || hasMissingQty) ? 'not-allowed' : 'pointer',
@@ -1119,7 +1119,7 @@ export default function TMTicketDetailSheet({
           <button
             onClick={handleApproveWithoutSignature}
             disabled={isSaving}
-            style={{ flex: 1, padding: '12px', background: isSaving ? '#374151' : '#f59e0b', color: 'white', border: 'none', borderRadius: '8px', fontSize: '0.9rem', fontWeight: 600, cursor: isSaving ? 'not-allowed' : 'pointer', minWidth: '120px' }}
+            style={{ flex: 1, padding: '12px', background: isSaving ? 'var(--border-card)' : '#f59e0b', color: 'white', border: 'none', borderRadius: '8px', fontSize: '0.9rem', fontWeight: 600, cursor: isSaving ? 'not-allowed' : 'pointer', minWidth: '120px' }}
           >
             ✓ Approve (no signature)
           </button>
@@ -1136,7 +1136,7 @@ export default function TMTicketDetailSheet({
           <button
             onClick={handleUnapprove}
             disabled={isSaving}
-            style={{ flex: 1, padding: '12px', background: isSaving ? '#374151' : '#f59e0b', color: 'white', border: 'none', borderRadius: '8px', fontSize: '0.9rem', fontWeight: 600, cursor: isSaving ? 'not-allowed' : 'pointer', minWidth: '120px' }}
+            style={{ flex: 1, padding: '12px', background: isSaving ? 'var(--border-card)' : '#f59e0b', color: 'white', border: 'none', borderRadius: '8px', fontSize: '0.9rem', fontWeight: 600, cursor: isSaving ? 'not-allowed' : 'pointer', minWidth: '120px' }}
           >
             ↩️ Unapprove
           </button>
@@ -1145,7 +1145,7 @@ export default function TMTicketDetailSheet({
           <button
             onClick={handleDelete}
             disabled={isSaving}
-            style={{ flex: 1, padding: '12px', background: isSaving ? '#374151' : '#dc2626', color: 'white', border: 'none', borderRadius: '8px', fontSize: '0.9rem', fontWeight: 600, cursor: isSaving ? 'not-allowed' : 'pointer', minWidth: '120px' }}
+            style={{ flex: 1, padding: '12px', background: isSaving ? 'var(--border-card)' : '#dc2626', color: 'white', border: 'none', borderRadius: '8px', fontSize: '0.9rem', fontWeight: 600, cursor: isSaving ? 'not-allowed' : 'pointer', minWidth: '120px' }}
           >
             🗑️ Delete Ticket
           </button>
@@ -1163,7 +1163,7 @@ export default function TMTicketDetailSheet({
           href={ticket.pdf_url.replace('www.dropbox.com', 'dl.dropboxusercontent.com').replace('&dl=0', '').replace('?dl=0', '?').replace(/[?&]$/, '')}
           target="_blank"
           rel="noopener noreferrer"
-          style={{ display: 'inline-block', marginTop: '12px', color: '#60a5fa', fontSize: '0.85rem' }}
+          style={{ display: 'inline-block', marginTop: '12px', color: 'var(--link-card)', fontSize: '0.85rem' }}
         >
           Open Dropbox PDF ↗
         </a>

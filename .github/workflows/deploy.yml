@@ -51,7 +51,7 @@ jobs:
         # by frontend/vite.config.js -> frontend/src/version.js and shown
         # in the topbar / avatar menu so workers, office, and admins can
         # all confirm what version they have loaded.
-        VITE_APP_VERSION: 1.1.11
+        VITE_APP_VERSION: 1.1.12
         VITE_APP_COMMIT: ${{ github.sha }}
       run: |
         cd frontend

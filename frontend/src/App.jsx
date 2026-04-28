@@ -2856,9 +2856,9 @@ export default function App() {
               onClick={() => setViewAsWorker((v) => !v)}
               style={{
                 cursor: 'pointer',
-                background: viewAsWorker ? '#f59e0b' : '#1f2937',
-                color: viewAsWorker ? '#422006' : '#60a5fa',
-                border: '1px solid #374151',
+                background: viewAsWorker ? '#f59e0b' : 'var(--surface-elev)',
+                color: viewAsWorker ? '#422006' : 'var(--link-card)',
+                border: '1px solid var(--border-card)',
                 padding: '2px 10px',
                 fontWeight: viewAsWorker ? 700 : 500,
               }}
@@ -3089,7 +3089,7 @@ export default function App() {
             position: 'fixed',
             top: 0, left: 0, right: 0, bottom: 0,
             zIndex: 40,
-            background: '#0b1220',
+            background: 'var(--surface-deep)',
             display: 'flex',
             flexDirection: 'column',
           }}>

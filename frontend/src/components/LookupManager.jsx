@@ -12,9 +12,9 @@ const inputStyle = {
   width: '100%',
   padding: '6px 10px',
   borderRadius: '6px',
-  border: '1px solid #374151',
-  backgroundColor: '#111827',
-  color: '#f9fafb',
+  border: '1px solid var(--border-card)',
+  backgroundColor: 'var(--surface-card)',
+  color: 'var(--text-card)',
   fontSize: '0.85rem',
 };
 
@@ -106,8 +106,8 @@ export default function LookupManager({ cachedLookups = {}, onLookupsChanged }) 
               padding: '6px 12px',
               borderRadius: '6px',
               border: 'none',
-              backgroundColor: tab === t.key ? '#3b82f6' : '#374151',
-              color: '#f9fafb',
+              backgroundColor: tab === t.key ? '#3b82f6' : 'var(--border-card)',
+              color: 'var(--text-card)',
               fontSize: '0.8rem',
               cursor: 'pointer',
               fontWeight: tab === t.key ? 700 : 400,
@@ -147,7 +147,7 @@ export default function LookupManager({ cachedLookups = {}, onLookupsChanged }) 
 
       {/* Items list */}
       {items.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '20px', color: '#9ca3af' }}>No items yet. Add one above.</div>
+        <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-card-muted)' }}>No items yet. Add one above.</div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
           {items.map(item => (
@@ -156,7 +156,7 @@ export default function LookupManager({ cachedLookups = {}, onLookupsChanged }) 
               justifyContent: 'space-between',
               alignItems: 'center',
               padding: '8px 10px',
-              backgroundColor: '#111827',
+              backgroundColor: 'var(--surface-card)',
               borderRadius: '6px',
               gap: '8px',
               flexWrap: 'wrap',
@@ -184,8 +184,8 @@ export default function LookupManager({ cachedLookups = {}, onLookupsChanged }) 
                 <>
                   <div style={{ flex: 1 }}>
                     <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{item.name}</span>
-                    {item.pcp_number && <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}> ({item.pcp_number})</span>}
-                    {item.license_number && <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}> ({item.license_number})</span>}
+                    {item.pcp_number && <span style={{ color: 'var(--text-card-muted)', fontSize: '0.8rem' }}> ({item.pcp_number})</span>}
+                    {item.license_number && <span style={{ color: 'var(--text-card-muted)', fontSize: '0.8rem' }}> ({item.license_number})</span>}
                     {item.is_access_road && <span style={{ color: '#f59e0b', fontSize: '0.75rem', marginLeft: '6px' }}>ROAD</span>}
                   </div>
                   <div style={{ display: 'flex', gap: '4px' }}>

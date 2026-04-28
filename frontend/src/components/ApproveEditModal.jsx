@@ -280,7 +280,7 @@ export default function ApproveEditModal({
       zIndex: 1000, padding: '1rem',
     }}>
       <div style={{
-        background: '#1f2937', color: '#f9fafb', borderRadius: 8,
+        background: 'var(--surface-elev)', color: 'var(--text-card)', borderRadius: 8,
         padding: '1.25rem', maxWidth: 640, width: '100%',
         maxHeight: '90vh', overflowY: 'auto',
         boxShadow: '0 10px 40px rgba(0,0,0,0.5)',
@@ -342,7 +342,7 @@ export default function ApproveEditModal({
                   return (
                     <div key={record.id} style={{
                       padding: '0.5rem', marginTop: '0.35rem',
-                      background: '#111827', borderRadius: 6,
+                      background: 'var(--surface-card)', borderRadius: 6,
                       fontSize: '0.8rem',
                     }}>
                       <div><strong>{record.ticket_number || '(no ticket #)'}</strong>
@@ -367,7 +367,7 @@ export default function ApproveEditModal({
             {conflicts ? (
               <div style={{
                 marginTop: '1rem', padding: '0.75rem',
-                background: '#111827', borderRadius: 6, border: '1px solid #fbbf24',
+                background: 'var(--surface-card)', borderRadius: 6, border: '1px solid #fbbf24',
               }}>
                 <div style={{ fontWeight: 600, color: '#fbbf24' }}>
                   Shared T&amp;M tickets need re-homing
@@ -386,7 +386,7 @@ export default function ApproveEditModal({
                   return (
                     <div key={c.spray_record_id} style={{
                       marginTop: '0.5rem', padding: '0.5rem',
-                      background: '#0b1220', borderRadius: 4,
+                      background: 'var(--surface-deep)', borderRadius: 4,
                     }}>
                       <div className="small-text">
                         Lease sheet {c.ticket_number || `#${c.spray_record_id}`}
