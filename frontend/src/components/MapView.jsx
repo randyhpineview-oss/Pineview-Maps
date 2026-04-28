@@ -159,6 +159,12 @@ export default function MapView({
   // Optional callback used by the cold-offline fallback to send the user
   // to the Sites tab when Google Maps JS can't load. Passed from App.jsx.
   onShowSitesTab,
+  // Which tab the user is currently on ('map' | 'sites' | 'forms' |
+  // 'admin'). Used by the auto-reload effect below to defer the page
+  // refresh while the user is on a non-map tab — otherwise an
+  // offline→online transition mid-form would wipe their lease sheet
+  // / T&M ticket draft.
+  activeTab = 'map',
 }) {
   const mapRef = useRef(null);
   const lastFittedBoundsKey = useRef('');
@@ -208,8 +214,19 @@ export default function MapView({
   // or two of "returning"). Any offline blip during the window re-runs
   // the effect and clears the timer below, so the reload only fires
   // after 4 s of *continuous* online.
+  //
+  // Critically, the reload is ALSO gated on `activeTab === 'map'`. If
+  // the worker tapped "Browse sites" out of the offline fallback and
+  // started filling a herbicide lease sheet on the Forms tab, the
+  // online transition sets `reloadPending` but does NOT fire the
+  // refresh — that would wipe their in-progress draft. The reload
+  // waits silently until they navigate back to the Map tab (form
+  // submitted, or just returning to look at pins), at which point the
+  // 4 s countdown starts. Switching back to a non-map tab during the
+  // countdown cancels the pending refresh.
   const wasInFallbackRef = useRef(false);
   const prevIsOnlineRef = useRef(isOnline);
+  const [reloadPending, setReloadPending] = useState(false);
   const [autoReloading, setAutoReloading] = useState(false);
 
   useEffect(() => {
@@ -218,13 +235,17 @@ export default function MapView({
     }
   }, [loadError, isLoaded, isOnline]);
 
+  // Detector: watches isOnline / loadError / isLoaded and flips
+  // `reloadPending` when a true offline → online transition happens
+  // while we're showing the fallback. Doesn't touch the timer or
+  // `activeTab` — that's the scheduler effect below.
   useEffect(() => {
     const wasOffline = prevIsOnlineRef.current === false;
     prevIsOnlineRef.current = isOnline;
 
     if (!isOnline) {
       // Going offline (or staying offline) cancels any pending reload.
-      setAutoReloading(false);
+      setReloadPending(false);
       return;
     }
     if (!wasInFallbackRef.current) return;
@@ -232,6 +253,7 @@ export default function MapView({
       // Already recovered without a reload (extremely rare given
       // useJsApiLoader's caching, but defensive).
       wasInFallbackRef.current = false;
+      setReloadPending(false);
       return;
     }
 
@@ -241,16 +263,42 @@ export default function MapView({
     // manually or tap "Browse sites".
     if (!wasOffline) return;
 
+    setReloadPending(true);
+  }, [isOnline, loadError, isLoaded]);
+
+  // Scheduler: only fires the actual page refresh when `reloadPending`
+  // AND the user is currently on the Map tab. Re-runs on activeTab
+  // changes, so a worker who finishes a form on the Forms tab and
+  // navigates back to the map sees the 4 s countdown then. The
+  // cleanup function clears the timer if either flag flips, so a
+  // mid-countdown tab change cancels the refresh.
+  useEffect(() => {
+    if (!reloadPending) {
+      setAutoReloading(false);
+      return;
+    }
+    if (activeTab !== 'map') {
+      // Pending but on Forms / Sites / Admin — defer silently. The
+      // fallback card isn't visible while the side panel is open
+      // anyway, so showing a "Reloading map…" banner here would just
+      // confuse the user.
+      setAutoReloading(false);
+      return;
+    }
+
     setAutoReloading(true);
     const t = setTimeout(() => {
       if (window.navigator.onLine) {
         window.location.reload();
       } else {
+        // Online flickered back off during the countdown — bail and
+        // let the detector effect re-arm us when the network settles.
         setAutoReloading(false);
+        setReloadPending(false);
       }
     }, 4000);
     return () => clearTimeout(t);
-  }, [isOnline, loadError, isLoaded]);
+  }, [reloadPending, activeTab]);
 
   // ── Boot splash hand-off ──────────────────────────────────────────────
   // The HTML splash (#pv-splash, defined in index.html) is intentionally
