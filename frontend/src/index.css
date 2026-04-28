@@ -307,6 +307,40 @@ button { cursor: pointer; }
   word-break: break-word;
 }
 
+/* Auto-reload banner shown after offline→online transition in the
+   fallback state. Replaces the cached-counts pill + Browse-sites CTA
+   while we wait ~1.2 s for the page to refresh, so the worker sees a
+   clear "the map is coming back" indicator instead of being surprised
+   by the reload. */
+.map-fallback-reload {
+  margin-top: 14px;
+  padding: 10px 14px;
+  background: #dbeafe;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  color: #1e40af;
+  font-size: 0.85rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.map-fallback-reload-spin {
+  display: inline-block;
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1;
+  animation: map-fallback-spin 0.9s linear infinite;
+}
+
+@keyframes map-fallback-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
 /* ───── Floating controls on map ───── */
 .map-float-tl {
   position: absolute;

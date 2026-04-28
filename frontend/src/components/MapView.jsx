@@ -184,6 +184,53 @@ export default function MapView({
     googleMapsApiKey: apiKey,
   });
 
+  // ── Auto-reload when network returns while we're in the fallback ──────
+  // `useJsApiLoader` caches the rejected Maps-script promise at module
+  // scope, so once it fails (cold-start with no network) it will NEVER
+  // retry — even after `online` fires. A React remount doesn't help; only
+  // a fresh page load does. The SW serves index.html + the JS bundle from
+  // cache, so the reload itself is fast and offline-safe.
+  //
+  // We only fire it when we know the worker actually saw the fallback
+  // (otherwise an online-toggle on a map that loaded fine would needlessly
+  // refresh the page mid-session). The 1.2 s delay gives the user a
+  // visible "reloading" banner instead of an abrupt refresh and lets the
+  // browser's `online` event settle (some fire it before the network is
+  // actually usable). Final navigator.onLine check before reload guards
+  // against a flaky online→offline→online flicker.
+  const wasInFallbackRef = useRef(false);
+  const [autoReloading, setAutoReloading] = useState(false);
+
+  useEffect(() => {
+    if (loadError || (!isLoaded && !isOnline)) {
+      wasInFallbackRef.current = true;
+    }
+  }, [loadError, isLoaded, isOnline]);
+
+  useEffect(() => {
+    if (!isOnline) {
+      // Going offline (or staying offline) cancels any pending reload.
+      setAutoReloading(false);
+      return;
+    }
+    if (!wasInFallbackRef.current) return;
+    if (!loadError && isLoaded) {
+      // Already recovered without a reload (extremely rare given
+      // useJsApiLoader's caching, but defensive).
+      wasInFallbackRef.current = false;
+      return;
+    }
+    setAutoReloading(true);
+    const t = setTimeout(() => {
+      if (window.navigator.onLine) {
+        window.location.reload();
+      } else {
+        setAutoReloading(false);
+      }
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [isOnline, loadError, isLoaded]);
+
   const siteBoundsKey = useMemo(
     () => sites.map((s) => `${s.id ?? s.cacheId}:${s.latitude}:${s.longitude}`).join('|'),
     [sites]
@@ -346,35 +393,56 @@ export default function MapView({
       <div className="map-fallback map-fallback-offline">
         <div className="map-fallback-card">
           <div className="map-fallback-icon" aria-hidden="true">📍</div>
-          <h3>{isOfflineCase ? 'Map unavailable offline' : "Map couldn't load"}</h3>
+          <h3>
+            {autoReloading
+              ? 'Network restored'
+              : isOfflineCase
+                ? 'Map unavailable offline'
+                : "Map couldn't load"}
+          </h3>
           <p>
-            {isOfflineCase
-              ? "You're offline, so Google Maps can't load — but your cached data is still here."
-              : 'Google Maps couldn\u2019t load. Your cached data is still available below.'}
+            {autoReloading
+              ? 'Reloading the map now…'
+              : isOfflineCase
+                ? "You're offline, so Google Maps can't load — but your cached data is still here."
+                : 'Google Maps couldn\u2019t load. Your cached data is still available below.'}
           </p>
-          {(sitesCount > 0 || pipelinesCount > 0) ? (
-            <p className="map-fallback-meta">
-              <strong>{sitesCount}</strong> {sitesCount === 1 ? 'site' : 'sites'}
-              {' and '}
-              <strong>{pipelinesCount}</strong> {pipelinesCount === 1 ? 'pipeline' : 'pipelines'}
-              {' cached locally.'}
-            </p>
-          ) : null}
-          {onShowSitesTab ? (
-            <button
-              type="button"
-              className="map-fallback-cta"
-              onClick={onShowSitesTab}
-            >
-              Browse sites
-            </button>
-          ) : null}
-          {/* Surface the technical error only when it's NOT a plain
-              offline case (no point telling someone with no signal that
-              their script tag failed — they already know). */}
-          {loadError && isOnline ? (
-            <p className="map-fallback-detail">{loadError.message}</p>
-          ) : null}
+          {/* While auto-reloading, replace the cached-counts pill + CTA
+              with a spinning indicator. The CTA would race the reload
+              and a tap mid-animation could route the user to Sites just
+              before the page refreshes — confusing. */}
+          {autoReloading ? (
+            <div className="map-fallback-reload" role="status" aria-live="polite">
+              <span className="map-fallback-reload-spin" aria-hidden="true">↻</span>
+              Reloading map…
+            </div>
+          ) : (
+            <>
+              {(sitesCount > 0 || pipelinesCount > 0) ? (
+                <p className="map-fallback-meta">
+                  <strong>{sitesCount}</strong> {sitesCount === 1 ? 'site' : 'sites'}
+                  {' and '}
+                  <strong>{pipelinesCount}</strong> {pipelinesCount === 1 ? 'pipeline' : 'pipelines'}
+                  {' cached locally.'}
+                </p>
+              ) : null}
+              {onShowSitesTab ? (
+                <button
+                  type="button"
+                  className="map-fallback-cta"
+                  onClick={onShowSitesTab}
+                >
+                  Browse sites
+                </button>
+              ) : null}
+              {/* Surface the technical error only when it's NOT a plain
+                  offline case (no point telling someone with no signal
+                  that their script tag failed — they already know). */}
+              {loadError && isOnline ? (
+                <p className="map-fallback-detail">{loadError.message}</p>
+              ) : null}
+            </>
+          )}
         </div>
       </div>
     );
