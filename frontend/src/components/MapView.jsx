@@ -191,14 +191,25 @@ export default function MapView({
   // a fresh page load does. The SW serves index.html + the JS bundle from
   // cache, so the reload itself is fast and offline-safe.
   //
-  // We only fire it when we know the worker actually saw the fallback
-  // (otherwise an online-toggle on a map that loaded fine would needlessly
-  // refresh the page mid-session). The 1.2 s delay gives the user a
-  // visible "reloading" banner instead of an abrupt refresh and lets the
-  // browser's `online` event settle (some fire it before the network is
-  // actually usable). Final navigator.onLine check before reload guards
-  // against a flaky online→offline→online flicker.
+  // We strictly gate the reload on a true offline → online TRANSITION
+  // (tracked via `prevIsOnlineRef`), not just "in fallback while online".
+  // On flaky connections like Starlink the OS often keeps reporting
+  // `navigator.onLine === true` while individual fetches (like the Maps
+  // script) still fail with packet loss. Firing on `loadError` alone
+  // produced an infinite splash → fallback → reload cycle: each reload
+  // re-failed the Maps fetch, set `loadError`, fired this effect again,
+  // and so on. Gating on a real online-event transition keeps the
+  // fallback card parked when the network is just lossy, while still
+  // auto-recovering when the worker genuinely goes offline → online.
+  //
+  // The 4 s settle window gives the browser's `online` event time to
+  // stabilise (some browsers fire it before the network is actually
+  // usable, and Starlink commonly drops back offline within a second
+  // or two of "returning"). Any offline blip during the window re-runs
+  // the effect and clears the timer below, so the reload only fires
+  // after 4 s of *continuous* online.
   const wasInFallbackRef = useRef(false);
+  const prevIsOnlineRef = useRef(isOnline);
   const [autoReloading, setAutoReloading] = useState(false);
 
   useEffect(() => {
@@ -208,6 +219,9 @@ export default function MapView({
   }, [loadError, isLoaded, isOnline]);
 
   useEffect(() => {
+    const wasOffline = prevIsOnlineRef.current === false;
+    prevIsOnlineRef.current = isOnline;
+
     if (!isOnline) {
       // Going offline (or staying offline) cancels any pending reload.
       setAutoReloading(false);
@@ -220,6 +234,13 @@ export default function MapView({
       wasInFallbackRef.current = false;
       return;
     }
+
+    // Strict offline → online transition gate. If we were already online
+    // when this effect ran (e.g. `loadError` flipped while the OS still
+    // reported a connection), do nothing — the worker can pull-to-refresh
+    // manually or tap "Browse sites".
+    if (!wasOffline) return;
+
     setAutoReloading(true);
     const t = setTimeout(() => {
       if (window.navigator.onLine) {
@@ -227,7 +248,7 @@ export default function MapView({
       } else {
         setAutoReloading(false);
       }
-    }, 1200);
+    }, 4000);
     return () => clearTimeout(t);
   }, [isOnline, loadError, isLoaded]);
 
