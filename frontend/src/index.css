@@ -7,12 +7,11 @@
   --tab-height: 56px;
   --topbar-height: 48px;
   --panel-width: 380px;
-  /* Buffer beneath the bottom tabs so the system swipe-up gesture area
-     (iOS home indicator / Android gesture bar) doesn't sit on top of the
-     middle tab buttons. Phones only — overridden in the phone-sized
-     media query below. iPad and desktop don't need it (no system
-     gesture overlap, and an unconditional 10px fallback just looks
-     like dead space at the bottom). */
+  /* Small lift beneath the bottom tabs on phones so the middle tap
+     targets aren't flush with the system swipe-up gesture area (iOS
+     home indicator / Android gesture bar). Phones only — set to a
+     fixed value in the @media (max-width: 600px) block below. iPad
+     and desktop stay at 0 (no system gesture overlap to worry about). */
   --tab-safe-bottom: 0px;
 }
 
@@ -814,13 +813,17 @@ button.site-row { cursor: pointer; }
   .meta-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
-/* Phone-sized devices only: lift the bottom tabs above the system
-   swipe-up gesture zone. 600px keeps this strictly phone-only —
-   the smallest iPad (mini, portrait) is 744px, so all iPads stay
-   on the desktop/tablet 0px default. */
+/* Phone-sized devices only: lift the bottom tabs slightly so the tap
+   targets aren't sitting directly on the bottom edge of the screen
+   (where the iOS home-indicator / Android gesture-bar swipe-up area
+   makes Sites/Forms easy to mis-hit). Fixed 10px keeps the lift small
+   and predictable across phones — using env(safe-area-inset-bottom)
+   here was way too tall on iPhone (~34-44px / "half an inch"). 600px
+   max-width keeps this strictly phone-only — the smallest iPad (mini,
+   portrait) is 744px, so all iPads stay on the desktop 0px default. */
 @media (max-width: 600px) {
   :root {
-    --tab-safe-bottom: max(env(safe-area-inset-bottom), 10px);
+    --tab-safe-bottom: 10px;
   }
 }
 
