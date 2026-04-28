@@ -17,5 +17,7 @@ export const APP_COMMIT =
 export const APP_BUILD_TIME =
   typeof __APP_BUILD_TIME__ !== 'undefined' ? __APP_BUILD_TIME__ : '';
 
-// Short, user-facing label. e.g. "v1.0.42 (a1b2c3d)".
-export const APP_VERSION_LABEL = `v${APP_VERSION}${APP_COMMIT && APP_COMMIT !== 'local' ? ` (${APP_COMMIT})` : ''}`;
+// Short, user-facing label. e.g. "v1.0.42".
+// The commit SHA is intentionally NOT in the label — it's noisy for end users.
+// Still exported as APP_COMMIT above for debugging / a tooltip if we want one.
+export const APP_VERSION_LABEL = `v${APP_VERSION}`;
