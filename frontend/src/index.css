@@ -737,6 +737,13 @@ button { cursor: pointer; }
   border: 1px solid rgba(143, 182, 255, 0.12);
   text-align: left;
   width: 100%;
+  /* Mobile WebKit / Chrome reset <button> text to ButtonText (≈ black) by
+     default, which made the LSD label inside <strong> render black on the
+     dark row background and effectively invisible. The earlier `button,
+     input, select, textarea { font: inherit; }` rule above only restores
+     the font — not color. Pin the row text to the dark-theme off-white
+     used by :root so LSD + the small-text meta line both stay legible. */
+  color: #e5eefb;
 }
 
 button.site-row { cursor: pointer; }
