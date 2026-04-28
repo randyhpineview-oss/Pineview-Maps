@@ -2924,6 +2924,7 @@ export default function App() {
             pipelines={visiblePipelines}
             selectedPipeline={selectedPipeline}
             onSelectPipeline={handleOpenPipelineDetail}
+            onShowSitesTab={() => { setActiveTab(TAB_SITES); setDetailOpen(false); }}
             isDrawingPipeline={isDrawingPipeline}
             drawingPoints={drawingPoints}
             onDrawingClick={handleDrawingClick}

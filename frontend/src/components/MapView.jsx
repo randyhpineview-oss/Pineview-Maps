@@ -156,6 +156,9 @@ export default function MapView({
   onSprayClick,
   highlightedSprayRecordId = null,
   onSprayRecordClick,
+  // Optional callback used by the cold-offline fallback to send the user
+  // to the Sites tab when Google Maps JS can't load. Passed from App.jsx.
+  onShowSitesTab,
 }) {
   const mapRef = useRef(null);
   const lastFittedBoundsKey = useRef('');
@@ -317,8 +320,64 @@ export default function MapView({
     );
   }
 
-  if (loadError) {
-    return <div className="map-fallback"><div><h3>Map failed to load</h3><p>{loadError.message}</p></div></div>;
+  // Cold-offline fallback. Three distinct states funnel into one friendly
+  // card so the worker never sees the raw "Google Maps JavaScript API
+  // could not load" error message:
+  //
+  //   1. `loadError` set + offline   → script fetch failed because no
+  //      network. The most common case (worker re-opens the PWA in the
+  //      field with cell service dead).
+  //   2. `loadError` set + online    → script blocked for some other
+  //      reason (ad-blocker, bad API key, transient CDN failure). We
+  //      still surface the underlying message so it's debuggable, just
+  //      inside the friendly shell.
+  //   3. `!isLoaded` + offline       → cold-start with no network. The
+  //      script tag is still pending but will never resolve. Showing
+  //      "Loading map…" forever is worse UX than just admitting we're
+  //      offline.
+  //
+  // Online + still loading (legit loading state) keeps the original
+  // "Loading map…" screen below.
+  if (loadError || (!isLoaded && !isOnline)) {
+    const sitesCount = sites?.length || 0;
+    const pipelinesCount = pipelines?.length || 0;
+    const isOfflineCase = !isOnline;
+    return (
+      <div className="map-fallback map-fallback-offline">
+        <div className="map-fallback-card">
+          <div className="map-fallback-icon" aria-hidden="true">📍</div>
+          <h3>{isOfflineCase ? 'Map unavailable offline' : "Map couldn't load"}</h3>
+          <p>
+            {isOfflineCase
+              ? "You're offline, so Google Maps can't load — but your cached data is still here."
+              : 'Google Maps couldn\u2019t load. Your cached data is still available below.'}
+          </p>
+          {(sitesCount > 0 || pipelinesCount > 0) ? (
+            <p className="map-fallback-meta">
+              <strong>{sitesCount}</strong> {sitesCount === 1 ? 'site' : 'sites'}
+              {' and '}
+              <strong>{pipelinesCount}</strong> {pipelinesCount === 1 ? 'pipeline' : 'pipelines'}
+              {' cached locally.'}
+            </p>
+          ) : null}
+          {onShowSitesTab ? (
+            <button
+              type="button"
+              className="map-fallback-cta"
+              onClick={onShowSitesTab}
+            >
+              Browse sites
+            </button>
+          ) : null}
+          {/* Surface the technical error only when it's NOT a plain
+              offline case (no point telling someone with no signal that
+              their script tag failed — they already know). */}
+          {loadError && isOnline ? (
+            <p className="map-fallback-detail">{loadError.message}</p>
+          ) : null}
+        </div>
+      </div>
+    );
   }
 
   if (!isLoaded) {

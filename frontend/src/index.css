@@ -214,6 +214,100 @@ button { cursor: pointer; }
   color: #c6d6f1;
 }
 
+/* ───── Offline / load-failed fallback (cold-start no-network) ─────
+   Light-themed card on a soft background so it reads as "intentionally
+   empty space" rather than "broken map". The worker still has full
+   access to cached data via the Sites tab — the CTA below sends them
+   straight there. */
+.map-fallback-offline {
+  background: linear-gradient(180deg, #eef2f8 0%, #e2e8f2 100%);
+  color: #1e293b;
+}
+
+.map-fallback-card {
+  width: min(360px, calc(100% - 2rem));
+  padding: 28px 22px 24px;
+  background: #ffffff;
+  border-radius: 18px;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 12px 28px rgba(15, 23, 42, 0.10);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.map-fallback-icon {
+  font-size: 2rem;
+  line-height: 1;
+  margin-bottom: 8px;
+  filter: grayscale(0.1);
+}
+
+.map-fallback-card h3 {
+  margin: 0 0 6px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.map-fallback-card p {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: #475569;
+}
+
+.map-fallback-meta {
+  margin-top: 10px !important;
+  padding: 8px 12px;
+  background: #f1f5f9;
+  border-radius: 10px;
+  font-size: 0.8rem !important;
+  color: #334155 !important;
+  width: 100%;
+}
+
+.map-fallback-meta strong {
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.map-fallback-cta {
+  margin-top: 16px;
+  background: #3b82f6;
+  color: #ffffff;
+  border: none;
+  padding: 11px 22px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: 0.01em;
+  transition: background 0.15s ease, transform 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  min-width: 160px;
+}
+
+.map-fallback-cta:hover {
+  background: #2563eb;
+}
+
+.map-fallback-cta:active {
+  background: #1d4ed8;
+  transform: translateY(1px);
+}
+
+.map-fallback-detail {
+  margin-top: 14px !important;
+  font-size: 0.7rem !important;
+  color: #94a3b8 !important;
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  word-break: break-word;
+}
+
 /* ───── Floating controls on map ───── */
 .map-float-tl {
   position: absolute;
