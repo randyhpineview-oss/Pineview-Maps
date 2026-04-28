@@ -11,12 +11,16 @@ import { execSync } from 'node:child_process';
 //
 //   1. Explicit override:        VITE_APP_VERSION / VITE_APP_COMMIT
 //      (used by .github/workflows/deploy.yml when/if Pages is the deploy
-//      target — set to `1.0.<github.run_number>` and the short SHA.)
+//      target, OR set manually in the Vercel dashboard to pin a specific
+//      label.)
 //   2. Vercel:                   VERCEL_GIT_COMMIT_SHA + a derived patch from
 //      the git commit count, so each push to master gets a unique number.
 //   3. Local git fallback:       same as Vercel but using local `git` calls.
 //   4. Hard fallback:            'dev' / 'local' so dev mode never crashes.
 //
+// Patch prefix is `1.1.x` (not `1.0.x`) so post-v1.1.12 builds keep climbing
+// even when run via the gitCount fallback — gitCount is currently in the
+// hundreds, so the label naturally lands far above any prior pinned release.
 // `git rev-list --count HEAD` is a stable monotonic patch number across CIs,
 // independent of GitHub Actions' run_number (which Vercel obviously doesn't
 // have). Wrapped in try/catch so a shallow-clone or missing-git environment
@@ -38,7 +42,7 @@ const vercelSha = process.env.VERCEL_GIT_COMMIT_SHA || '';
 const gitSha = explicitCommit || vercelSha || tryGit('git rev-parse HEAD');
 const gitCount = tryGit('git rev-list --count HEAD');
 
-const APP_VERSION = explicitVersion || (gitCount ? `1.0.${gitCount}` : 'dev');
+const APP_VERSION = explicitVersion || (gitCount ? `1.1.${gitCount}` : 'dev');
 const APP_COMMIT = (gitSha || 'local').slice(0, 7);
 const APP_BUILD_TIME = new Date().toISOString();
 
