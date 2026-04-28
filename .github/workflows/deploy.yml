@@ -44,16 +44,19 @@ jobs:
         
     - name: Build
       env:
-        # Auto-incrementing version: every push to master bumps the patch
-        # number via github.run_number, and we surface the short SHA so a
-        # specific build can be traced back to its commit. Both are read
-        # by frontend/vite.config.js -> frontend/src/version.js and shown
-        # in the topbar / avatar menu so workers, office, and admins can
-        # all confirm what version they have loaded.
-        # Major.minor bumped to 1.1.x after the v1.1.11 / v1.1.12 releases
-        # (light/dark theme experiment, since reverted) so post-revert
-        # builds keep increasing instead of jumping back to v1.0.x.
-        VITE_APP_VERSION: 1.1.${{ github.run_number }}
+        # Manually pinned for this release. Auto-bumping with
+        # `1.1.${{ github.run_number }}` would produce v1.1.10 here
+        # (run_number is currently below 13), which is a REGRESSION
+        # from the v1.1.12 build that already shipped — the popover
+        # would appear to go backwards in time on users' phones. To
+        # avoid that confusion we pin manually until we're past
+        # run_number 12, then we can switch back to auto-bumping
+        # `1.1.${{ github.run_number }}` and the patch number will
+        # naturally keep climbing. The label is read by
+        # frontend/vite.config.js -> frontend/src/version.js and shown
+        # in the topbar / avatar menu so workers, office, and admins
+        # can confirm what version they have loaded.
+        VITE_APP_VERSION: 1.1.13
         VITE_APP_COMMIT: ${{ github.sha }}
       run: |
         cd frontend
