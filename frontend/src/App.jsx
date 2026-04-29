@@ -157,6 +157,15 @@ export default function App() {
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [sites, setSites] = useState([]);
   const [pendingSites, setPendingSites] = useState([]);
+  // Lightweight count seeded from /api/sync-status (cheap ~100 B response)
+  // and persisted alongside the delta watermarks. The full pending list
+  // (`pendingSites`) is only fetched after roleCanAdmin + an online check,
+  // so on cold start the topbar's "Pending: N" badge used to flicker on
+  // empty for ~1 s while the network call resolved. Keeping a separate
+  // count lets the badge render the right number INSTANTLY from cache.
+  // Falls back to the array length when null (first run, never online).
+  const [pendingSitesCount, setPendingSitesCount] = useState(null);
+  const [pendingPipelinesCount, setPendingPipelinesCount] = useState(null);
   const [deletedSites, setDeletedSites] = useState([]);
   const [deletedLeaseSheets, setDeletedLeaseSheets] = useState([]);
   const [deletedTMTickets, setDeletedTMTickets] = useState([]);
@@ -967,10 +976,17 @@ export default function App() {
             sitesSinceRef.current = initial.sites_last_updated || null;
             pipelinesSinceRef.current = initial.pipelines_last_updated || null;
             recentsSinceRef.current = initial.spray_records_last_updated || null;
+            // Seed the count state right away so the topbar Pending badge
+            // renders correctly without waiting for the dedicated
+            // /api/pending-sites + /api/pending-pipelines fetches below.
+            if (initial.pending_sites_count != null) setPendingSitesCount(initial.pending_sites_count);
+            if (initial.pending_pipelines_count != null) setPendingPipelinesCount(initial.pending_pipelines_count);
             await setWatermarks({
               sites: sitesSinceRef.current,
               pipelines: pipelinesSinceRef.current,
               recents: recentsSinceRef.current,
+              pending_sites_count: initial.pending_sites_count ?? null,
+              pending_pipelines_count: initial.pending_pipelines_count ?? null,
             });
           } catch {
             // If sync-status fails, leave watermarks null — the poll loop
@@ -1049,7 +1065,15 @@ export default function App() {
           sites_last_updated: watermarks.sites,
           pipelines_last_updated: watermarks.pipelines,
           spray_records_last_updated: watermarks.recents,
+          pending_sites_count: watermarks.pending_sites_count ?? undefined,
+          pending_pipelines_count: watermarks.pending_pipelines_count ?? undefined,
         };
+        // Seed the topbar Pending badge from cache so admins see the right
+        // number the moment the app paints, instead of a 1-second flicker
+        // while /api/pending-sites is still in flight. The first delta
+        // poll will overwrite this with the live count.
+        if (watermarks.pending_sites_count != null) setPendingSitesCount(watermarks.pending_sites_count);
+        if (watermarks.pending_pipelines_count != null) setPendingPipelinesCount(watermarks.pending_pipelines_count);
 
         setIsLoading(false);
         setMessage('Loaded from cache');
@@ -1455,6 +1479,8 @@ export default function App() {
               sites: sitesSinceRef.current,
               pipelines: pipelinesSinceRef.current,
               recents: recentsSinceRef.current,
+              pending_sites_count: syncStatus.pending_sites_count ?? null,
+              pending_pipelines_count: syncStatus.pending_pipelines_count ?? null,
             });
           } catch { /* non-fatal */ }
         }
@@ -2620,7 +2646,15 @@ export default function App() {
         console.log('[PIN] Pin created successfully:', created);
         setSites((current) => [created, ...current]);
         await upsertSite(created);
-        await loadPendingSites();
+        // If the new pin is in pending_review, append it locally and bump
+        // the count instead of awaiting a full /api/pending-sites fetch
+        // (~200–600 ms on Wi-Fi). The poll loop will reconcile the server
+        // truth on its next tick, but the worker sees the pending count
+        // tick up immediately on submit.
+        if (created.approval_state === 'pending_review' && roleCanAdmin) {
+          setPendingSites((prev) => (prev.some((s) => s.id === created.id) ? prev : [created, ...prev]));
+          setPendingSitesCount((c) => (c == null ? 1 : c + 1));
+        }
         setMessage(created.approval_state === 'approved' ? 'Pin added.' : 'Pending pin submitted for review.');
         submittedSite = created;
       } else {
@@ -2855,14 +2889,49 @@ export default function App() {
     return true;
   }
 
-  async function runAdminAction(action, successMessage) {
+  // Wrapper used by every admin action button (approve, reject, restore,
+  // delete-permanent, bulk-reset, KML import, …). Previously this awaited
+  // `refreshAllData()` after every success, which on Wi-Fi added ~1–2 s of
+  // perceived latency between the click and the card disappearing — the
+  // single most-common "feels sluggish" complaint. Now:
+  //
+  //   1. Caller can pass an `optimistic` thunk that mutates local state
+  //      immediately (e.g. filter the approved row out of `pendingSites`)
+  //      so the UI reacts before the network roundtrip.
+  //   2. After the API call succeeds we kick off a CHEAP background refresh
+  //      (delta poll + targeted pending re-fetch) WITHOUT awaiting it, so
+  //      `setAdminBusy(false)` fires the moment the server confirms.
+  //   3. On failure we still do a full `refreshAllData()` to undo whatever
+  //      the optimistic mutation did and pick up the real server truth.
+  //
+  // Net: card vanishes in <50 ms instead of 1–2 s; egress drops because
+  // we no longer re-download 9 list endpoints after every click.
+  async function runAdminAction(action, successMessage, options = {}) {
+    const { optimistic } = options;
     setAdminBusy(true);
+    if (typeof optimistic === 'function') {
+      try { optimistic(); } catch { /* non-fatal */ }
+    }
     try {
       await action();
-      await refreshAllData();
       setMessage(successMessage);
-    } catch (error) { setMessage(error.message || 'Admin action failed.'); }
-    finally { setAdminBusy(false); }
+      // Background-only refresh: the user has already seen the optimistic
+      // change; this just catches up server-derived fields (e.g. server
+      // timestamps) and the deleted-* lists which the poll loop doesn't
+      // touch. No await on purpose.
+      void Promise.allSettled([
+        roleCanAdmin ? loadPendingSites() : Promise.resolve(),
+        roleCanAdmin ? loadPendingPipelines() : Promise.resolve(),
+        runPollTickRef.current ? runPollTickRef.current() : Promise.resolve(),
+      ]);
+    } catch (error) {
+      setMessage(error.message || 'Admin action failed.');
+      // Full refresh on failure so the optimistic change is rolled back
+      // to whatever the server actually says.
+      void refreshAllData();
+    } finally {
+      setAdminBusy(false);
+    }
   }
 
   async function handleBulkApprovePending() {
@@ -2933,14 +3002,22 @@ export default function App() {
   async function handleRestoreSite(siteId) {
     await runAdminAction(
       () => api.restoreSite(siteId),
-      'Pin restored successfully.'
+      'Pin restored successfully.',
+      {
+        // Yank the row out of Recent Deletes immediately so the admin
+        // sees the action take effect before the network roundtrip.
+        optimistic: () => setDeletedSites((prev) => prev.filter((s) => s.id !== siteId)),
+      }
     );
   }
 
   async function handleDeletePermanent(siteId) {
     await runAdminAction(
       () => api.deleteSitePermanent(siteId),
-      'Pin permanently deleted.'
+      'Pin permanently deleted.',
+      {
+        optimistic: () => setDeletedSites((prev) => prev.filter((s) => s.id !== siteId)),
+      }
     );
   }
 
@@ -2954,7 +3031,9 @@ export default function App() {
       }
       await loadDeletedLeaseSheets();
       await handleRequestSync();
-    }, 'Lease sheet restored successfully.');
+    }, 'Lease sheet restored successfully.', {
+      optimistic: () => setDeletedLeaseSheets((prev) => prev.filter((r) => r.id !== record.id)),
+    });
   }
 
   async function handleDeleteLeaseSheetPermanent(record) {
@@ -2966,21 +3045,27 @@ export default function App() {
         await api.deleteSprayRecordPermanent(record.id);
       }
       await loadDeletedLeaseSheets();
-    }, 'Lease sheet permanently deleted.');
+    }, 'Lease sheet permanently deleted.', {
+      optimistic: () => setDeletedLeaseSheets((prev) => prev.filter((r) => r.id !== record.id)),
+    });
   }
 
   async function handleRestoreTMTicket(ticketId) {
     await runAdminAction(async () => {
       await api.restoreTMTicket(ticketId);
       await loadDeletedTMTickets();
-    }, 'T&M ticket restored successfully.');
+    }, 'T&M ticket restored successfully.', {
+      optimistic: () => setDeletedTMTickets((prev) => prev.filter((t) => t.id !== ticketId)),
+    });
   }
 
   async function handleDeleteTMTicketPermanent(ticketId) {
     await runAdminAction(async () => {
       await api.deleteTMTicketPermanent(ticketId);
       await loadDeletedTMTickets();
-    }, 'T&M ticket permanently deleted.');
+    }, 'T&M ticket permanently deleted.', {
+      optimistic: () => setDeletedTMTickets((prev) => prev.filter((t) => t.id !== ticketId)),
+    });
   }
 
   // Empty the Recent Deletes recycle bin in one action. Mirrors the
@@ -3179,15 +3264,25 @@ export default function App() {
               {isSyncing ? 'Syncing...' : `Sync (${queuedCount})`}
             </button>
           ) : null}
-          {roleCanAdmin && (pendingSites.length + pendingPipelines.length) > 0 ? (
-            <span 
-              className="badge" 
-              style={{ background: '#f59e0b', color: '#422006', cursor: 'pointer' }}
-              onClick={() => { setDetailOpen(false); setActiveTab(TAB_ADMIN); }}
-            >
-              Pending: {pendingSites.length + pendingPipelines.length}
-            </span>
-          ) : null}
+          {roleCanAdmin && (() => {
+            // Prefer the cheap count from /api/sync-status (and persisted
+            // watermarks) over the array length, since it's available
+            // immediately on cold start while the full pending lists are
+            // still in flight. Falls through to the array length when the
+            // count hasn't been seeded yet (e.g. first ever load offline).
+            const sitesN = pendingSitesCount ?? pendingSites.length;
+            const pipesN = pendingPipelinesCount ?? pendingPipelines.length;
+            const total = sitesN + pipesN;
+            return total > 0 ? (
+              <span
+                className="badge"
+                style={{ background: '#f59e0b', color: '#422006', cursor: 'pointer' }}
+                onClick={() => { setDetailOpen(false); setActiveTab(TAB_ADMIN); }}
+              >
+                Pending: {total}
+              </span>
+            ) : null;
+          })()}
           {/* "View as Worker" toggle \u2014 only shown for users whose actual
               role is admin/office. Orange when active so the user can't
               forget they're in worker view and wonder where the admin
@@ -3895,14 +3990,38 @@ export default function App() {
               clients={clients}
               areas={areas}
               busy={adminBusy}
-              onApprove={(siteId, overrides) => runAdminAction(() => api.approveSite(siteId, { approval_state: 'approved', ...overrides }), 'Approved.')}
+              onApprove={(siteId, overrides) => runAdminAction(
+                () => api.approveSite(siteId, { approval_state: 'approved', ...overrides }),
+                'Approved.',
+                {
+                  optimistic: () => {
+                    setPendingSites((prev) => prev.filter((s) => s.id !== siteId));
+                    setPendingSitesCount((c) => (c == null ? null : Math.max(0, c - 1)));
+                  },
+                },
+              )}
               onReject={async (siteId) => {
                 setAdminBusy(true);
+                // Optimistic remove BEFORE the API call so the card vanishes
+                // immediately. We snapshot the row so we can restore it if
+                // the server returns the structured 409 (linked spray
+                // records) and refuses to reject.
+                const removed = pendingSites.find((s) => s.id === siteId) || null;
+                setPendingSites((prev) => prev.filter((s) => s.id !== siteId));
+                setPendingSitesCount((c) => (c == null ? null : Math.max(0, c - 1)));
                 try {
                   await api.approveSite(siteId, { approval_state: 'rejected' });
-                  await refreshAllData();
                   setMessage('Rejected.');
+                  // Background catch-up only — no awaiting refreshAllData.
+                  void Promise.allSettled([
+                    loadPendingSites(),
+                    runPollTickRef.current ? runPollTickRef.current() : Promise.resolve(),
+                  ]);
                 } catch (error) {
+                  // Roll back the optimistic remove on any failure so the
+                  // card reappears with its original data.
+                  if (removed) setPendingSites((prev) => (prev.some((s) => s.id === siteId) ? prev : [removed, ...prev]));
+                  setPendingSitesCount((c) => (c == null ? null : c + 1));
                   if (!explainRejectConflict(error, 'pin')) {
                     setMessage(error?.message || 'Reject failed.');
                   }
@@ -3921,15 +4040,35 @@ export default function App() {
               onSelectSite={(site) => { setZoomTarget({ ...site, _ts: Date.now() }); setActiveTab(TAB_MAP); setSelectedSite(site); setDetailOpen(true); }}
               currentUserEmail={user?.email}
               pendingPipelines={pendingPipelines}
-              onApprovePipeline={(pipelineId, payload) => runAdminAction(async () => { await api.approvePipeline(pipelineId, payload); await loadPipelines(); await loadPendingPipelines(); }, 'Pipeline approved.')}
+              onApprovePipeline={(pipelineId, payload) => runAdminAction(
+                async () => { await api.approvePipeline(pipelineId, payload); await loadPipelines(); },
+                'Pipeline approved.',
+                {
+                  optimistic: () => {
+                    setPendingPipelines((prev) => prev.filter((p) => p.id !== pipelineId));
+                    setPendingPipelinesCount((c) => (c == null ? null : Math.max(0, c - 1)));
+                  },
+                },
+              )}
               onRejectPipeline={async (pipelineId) => {
                 setAdminBusy(true);
+                // Same snapshot-then-remove pattern as the site reject branch:
+                // the card vanishes instantly and we put it back if the
+                // server returns a 409 / other failure.
+                const removed = pendingPipelines.find((p) => p.id === pipelineId) || null;
+                setPendingPipelines((prev) => prev.filter((p) => p.id !== pipelineId));
+                setPendingPipelinesCount((c) => (c == null ? null : Math.max(0, c - 1)));
                 try {
                   await api.approvePipeline(pipelineId, { approval_state: 'rejected' });
-                  await loadPipelines();
-                  await loadPendingPipelines();
                   setMessage('Pipeline rejected.');
+                  void Promise.allSettled([
+                    loadPipelines(),
+                    loadPendingPipelines(),
+                    runPollTickRef.current ? runPollTickRef.current() : Promise.resolve(),
+                  ]);
                 } catch (error) {
+                  if (removed) setPendingPipelines((prev) => (prev.some((p) => p.id === pipelineId) ? prev : [removed, ...prev]));
+                  setPendingPipelinesCount((c) => (c == null ? null : c + 1));
                   if (!explainRejectConflict(error, 'pipeline')) {
                     setMessage(error?.message || 'Reject failed.');
                   }
@@ -3941,8 +4080,16 @@ export default function App() {
               onBulkResetPipelines={(payload) => runAdminAction(async () => { await api.bulkResetPipelines(payload); await loadPipelines(); }, 'Pipelines reset to not sprayed.')}
               onSelectPipeline={(pipeline) => { handleOpenPipelineDetail(pipeline); setActiveTab(TAB_MAP); }}
               deletedPipelines={deletedPipelines}
-              onRestorePipeline={(pipelineId) => runAdminAction(async () => { await api.restorePipeline(pipelineId); await loadPipelines(); await loadDeletedPipelines(); }, 'Pipeline restored.')}
-              onDeletePipelinePermanent={(pipelineId) => runAdminAction(async () => { await api.deletePipelinePermanent(pipelineId); await loadDeletedPipelines(); }, 'Pipeline permanently deleted.')}
+              onRestorePipeline={(pipelineId) => runAdminAction(
+                async () => { await api.restorePipeline(pipelineId); await loadPipelines(); await loadDeletedPipelines(); },
+                'Pipeline restored.',
+                { optimistic: () => setDeletedPipelines((prev) => prev.filter((p) => p.id !== pipelineId)) },
+              )}
+              onDeletePipelinePermanent={(pipelineId) => runAdminAction(
+                async () => { await api.deletePipelinePermanent(pipelineId); await loadDeletedPipelines(); },
+                'Pipeline permanently deleted.',
+                { optimistic: () => setDeletedPipelines((prev) => prev.filter((p) => p.id !== pipelineId)) },
+              )}
               deletedLeaseSheets={deletedLeaseSheets}
               onRestoreLeaseSheet={handleRestoreLeaseSheet}
               onDeleteLeaseSheetPermanent={handleDeleteLeaseSheetPermanent}
