@@ -764,7 +764,17 @@ export default function App() {
           // jump to 100% happens via setUploadProgress below once the
           // promise actually resolves.
           const itemsBefore = completed;
+          // Throttle progress to ~10 Hz. XHR upload.onprogress fires every
+          // ~50 ms on Wi-Fi, which causes a React re-render storm in
+          // FormsPanel + interrupts the bar's CSS transition mid-ease,
+          // showing visible jitter on mobile. 100 ms cadence is plenty
+          // for a smooth-looking bar without thrashing the render loop.
+          let lastProgressTs = 0;
           const onItemBytes = (fraction) => {
+            const now = Date.now();
+            const isComplete = fraction >= 0.95;
+            if (!isComplete && now - lastProgressTs < 100) return;
+            lastProgressTs = now;
             const capped = Math.max(0, Math.min(0.95, fraction));
             setCurrentItemPercent(Math.round(capped * 100));
             const overall = ((itemsBefore + capped) / total) * 100;

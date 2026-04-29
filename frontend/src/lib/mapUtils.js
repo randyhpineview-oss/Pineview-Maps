@@ -51,7 +51,7 @@ function strokeWidth(isSelected) {
 
 function statusFill(status) {
   if (status === 'inspected') return '#22c55e';
-  if (status === 'in_progress') return '#f97316';
+  if (status === 'in_progress') return '#f59e0b';
   if (status === 'issue') return '#94a3b8';
   return '#ef4444';
 }

@@ -676,6 +676,20 @@ export default function FormsPanel({
                         // below it.
                         opacity: isActive ? 1 : 0.85,
                         border: isActive ? '1px solid #3b82f6' : undefined,
+                        // iOS Safari fix: when this row is the active one,
+                        // the stripe overlay below runs a 60 fps animation.
+                        // Without layer isolation, that animation forces the
+                        // ancestor side-panel (which has backdrop-filter +
+                        // transform) to re-rasterize every frame, producing
+                        // a visible "dance / scale" of the whole Forms panel
+                        // on mobile. Promoting this row to its own composite
+                        // layer + clipping paint to its box stops the
+                        // upstream invalidation.
+                        ...(isActive ? {
+                          transform: 'translateZ(0)',
+                          contain: 'paint',
+                          willChange: 'transform',
+                        } : null),
                       }}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -693,53 +707,60 @@ export default function FormsPanel({
                       </div>
                       {/* Per-ticket progress bar. Lives inside the row
                           (not the header) so the map stays clean on
-                          mobile. Only rendered for the active row;
-                          queued rows don't get a bar to keep the list
-                          visually quiet. 6 px high matches the compact
-                          "badge / strip" aesthetic used elsewhere in
-                          the app. */}
-                      {isActive ? (
-                        <div
-                          role="progressbar"
-                          aria-valuemin={0}
-                          aria-valuemax={100}
-                          aria-valuenow={pct}
-                          aria-label={`Uploading ${ticketNumber}: ${pct}%`}
-                          style={{
-                            marginTop: '8px',
-                            height: '6px',
-                            background: '#1f2937',
-                            borderRadius: '3px',
-                            overflow: 'hidden',
-                            position: 'relative',
-                          }}
-                        >
-                          <div
-                            style={{
-                              width: `${pct}%`,
-                              height: '100%',
-                              background: 'linear-gradient(to right, #2563eb, #3b82f6)',
-                              // Smooth fill between XHR progress events
-                              // (they fire in ~kB chunks, so a jump from
-                              // 30 → 45 without easing would look jerky).
-                              transition: 'width 0.3s ease',
-                            }}
-                          />
-                          {/* Animated diagonal stripe overlay — gives
-                              motion while we wait for the next
-                              progress event. Same pattern the header
-                              bar used before we moved it here. */}
-                          <div
-                            style={{
-                              position: 'absolute',
-                              inset: 0,
-                              background: 'repeating-linear-gradient(45deg, transparent 0, transparent 6px, rgba(255,255,255,0.15) 6px, rgba(255,255,255,0.15) 12px)',
-                              animation: 'upload-stripe 1.2s linear infinite',
-                              pointerEvents: 'none',
-                            }}
-                          />
-                        </div>
-                      ) : null}
+                          mobile. The slot (8 px gap + 6 px bar) is
+                          ALWAYS reserved — even on queued rows — so the
+                          list doesn't visually jump 14 px every time
+                          the next item in the queue becomes active.
+                          Queued rows get an empty placeholder; only the
+                          active row paints the bar + stripe overlay. */}
+                      <div
+                        {...(isActive ? {
+                          role: 'progressbar',
+                          'aria-valuemin': 0,
+                          'aria-valuemax': 100,
+                          'aria-valuenow': pct,
+                          'aria-label': `Uploading ${ticketNumber}: ${pct}%`,
+                        } : { 'aria-hidden': true })}
+                        style={{
+                          marginTop: '8px',
+                          height: '6px',
+                          background: isActive ? '#1f2937' : 'transparent',
+                          borderRadius: '3px',
+                          overflow: 'hidden',
+                          position: 'relative',
+                        }}
+                      >
+                        {isActive ? (
+                          <>
+                            <div
+                              style={{
+                                width: `${pct}%`,
+                                height: '100%',
+                                background: 'linear-gradient(to right, #2563eb, #3b82f6)',
+                                // Short linear transition smooths between
+                                // throttled progress updates (~10 Hz) without
+                                // fighting the next event the way 0.3s ease
+                                // did. Linear avoids the visible re-easing
+                                // jitter when XHR ticks arrive faster than
+                                // the easing curve completes.
+                                transition: 'width 0.15s linear',
+                              }}
+                            />
+                            {/* Animated diagonal stripe overlay — gives
+                                motion while we wait for the next
+                                progress event. */}
+                            <div
+                              style={{
+                                position: 'absolute',
+                                inset: 0,
+                                background: 'repeating-linear-gradient(45deg, transparent 0, transparent 6px, rgba(255,255,255,0.15) 6px, rgba(255,255,255,0.15) 12px)',
+                                animation: 'upload-stripe 1.2s linear infinite',
+                                pointerEvents: 'none',
+                              }}
+                            />
+                          </>
+                        ) : null}
+                      </div>
                     </div>
                   );
                 })
