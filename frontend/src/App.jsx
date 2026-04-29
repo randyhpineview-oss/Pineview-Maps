@@ -3071,16 +3071,14 @@ export default function App() {
                 border: 'none',
                 cursor: 'pointer',
                 whiteSpace: 'nowrap',
-                // Pin the badge to a fixed width so the label going
-                // "Syncing 5%" → "Syncing 55%" → "Syncing 95%" doesn't
-                // grow/shrink the button by a few pixels each percentage
-                // tick. Without this the adjacent "Pending: N" badge
-                // visibly shifts left/right with every progress update,
-                // which on mobile reads as the whole topbar dancing.
-                // tabular-nums pins each digit's advance width so even
-                // single-digit/multi-digit transitions stay rock-steady.
-                minWidth: '92px',
-                textAlign: 'center',
+                // tabular-nums forces every digit to the same advance
+                // width. Combined with the nbsp-padded percentage below
+                // ("Syncing  5%" vs "Syncing 95%" — both 11 chars) this
+                // keeps the badge a constant width across the whole
+                // 0–99 % range, so the adjacent "Pending: N" badge no
+                // longer shifts on every progress tick. No min-width
+                // is needed — that overshot and clipped Pending in
+                // 1.1.21.
                 fontVariantNumeric: 'tabular-nums',
               }}
               onClick={() => {
@@ -3095,7 +3093,11 @@ export default function App() {
                 : `${uploadQueueItems.length} queued — tap for details`}
             >
               {isUploading
-                ? `Syncing ${uploadProgress}%`
+                // Pad the percentage to 2 chars with a non-breaking
+                // space so "Syncing  5%" and "Syncing 95%" have the
+                // same character count. nbsp (\u00A0) doesn't collapse
+                // in HTML the way a regular space would.
+                ? `Syncing ${String(uploadProgress).padStart(2, '\u00A0')}%`
                 : `Queued (${uploadQueueItems.length})`}
             </button>
           ) : null}
