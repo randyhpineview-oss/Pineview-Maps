@@ -2983,6 +2983,60 @@ export default function App() {
     }, 'T&M ticket permanently deleted.');
   }
 
+  // Empty the Recent Deletes recycle bin in one action. Mirrors the
+  // `handleBulkApprovePending` / `handleBulkRejectPending` shape above so
+  // admins get the same "review-then-act-in-bulk" ergonomics in both
+  // sections. Iterates sequentially instead of Promise.all() so a mid-run
+  // failure on one item doesn't silently abort the rest, and so the
+  // backend isn't hit with a thundering herd of permanent-delete calls.
+  async function handleBulkDeleteAllPermanent() {
+    const total =
+      deletedSites.length +
+      deletedPipelines.length +
+      deletedLeaseSheets.length +
+      deletedTMTickets.length;
+    if (total === 0) return;
+    setAdminBusy(true);
+    setMessage(`Permanently deleting ${total} item${total === 1 ? '' : 's'}…`);
+    const failed = [];
+    try {
+      for (const site of deletedSites) {
+        try { await api.deleteSitePermanent(site.id); } catch (error) { failed.push(error); }
+      }
+      for (const pipeline of deletedPipelines) {
+        try { await api.deletePipelinePermanent(pipeline.id); } catch (error) { failed.push(error); }
+      }
+      for (const record of deletedLeaseSheets) {
+        try {
+          // Same site-vs-standalone split as the single-item handler
+          // (`handleDeleteLeaseSheetPermanent`) — spray records attached
+          // to a site use a different endpoint than standalone ones.
+          if (record.site_id != null) {
+            await api.deleteSiteSprayRecordPermanent(record.id);
+          } else {
+            await api.deleteSprayRecordPermanent(record.id);
+          }
+        } catch (error) { failed.push(error); }
+      }
+      for (const ticket of deletedTMTickets) {
+        try { await api.deleteTMTicketPermanent(ticket.id); } catch (error) { failed.push(error); }
+      }
+      // Refresh all four deleted-item lists so the UI reflects the purge.
+      // loadPendingSites doubles as loadDeletedSites (see its body) so we
+      // call it here to refresh both lists in one shot.
+      await loadPendingSites();
+      await loadDeletedPipelines();
+      await loadDeletedLeaseSheets();
+      await loadDeletedTMTickets();
+      const deleted = total - failed.length;
+      setMessage(failed.length > 0
+        ? `Permanently deleted ${deleted} of ${total}. ${failed.length} failed.`
+        : `Permanently deleted ${deleted} item${deleted === 1 ? '' : 's'}.`);
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
   if (isAuthLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 flex items-center justify-center">
@@ -3895,6 +3949,7 @@ export default function App() {
               deletedTMTickets={deletedTMTickets}
               onRestoreTMTicket={handleRestoreTMTicket}
               onDeleteTMTicketPermanent={handleDeleteTMTicketPermanent}
+              onBulkDeleteAllPermanent={handleBulkDeleteAllPermanent}
               cachedLookups={cachedLookups}
               onLookupsChanged={loadServerLookups}
               cachedUsers={cachedUsers}

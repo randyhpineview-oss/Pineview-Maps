@@ -99,6 +99,7 @@ export default function AdminPanel({
   deletedTMTickets = [],
   onRestoreTMTicket,
   onDeleteTMTicketPermanent,
+  onBulkDeleteAllPermanent,
   // Pre-loaded cached data from IndexedDB
   cachedLookups = { herbicides: [], applicators: [], weeds: [], locations: [] },
   onLookupsChanged,
@@ -152,6 +153,22 @@ export default function AdminPanel({
     const label = pendingApprovalCount === 1 ? 'pending approval' : 'pending approvals';
     if (!window.confirm(`Reject all ${pendingApprovalCount} ${label}? This cannot be undone for new field-added items.`)) return;
     await onBulkRejectPending?.();
+  }
+
+  // Total count across all four Recent-Deletes item types. Drives both
+  // the "Delete All Permanently" button's visibility and the numbers
+  // shown in the confirmation dialog + helper text.
+  const deletedCount =
+    deletedSites.length +
+    deletedPipelines.length +
+    deletedLeaseSheets.length +
+    deletedTMTickets.length;
+
+  async function handleBulkDeleteAllPermanent() {
+    if (deletedCount === 0) return;
+    const label = deletedCount === 1 ? 'item' : 'items';
+    if (!window.confirm(`Permanently delete all ${deletedCount} ${label} in Recent Deletes? This cannot be undone.`)) return;
+    await onBulkDeleteAllPermanent?.();
   }
 
   return (
@@ -231,14 +248,31 @@ export default function AdminPanel({
           </div>
         </CollapsibleSection>
 
-        <CollapsibleSection title="Recent Deletes" count={deletedSites.length + deletedPipelines.length + deletedLeaseSheets.length + deletedTMTickets.length} defaultOpen={false}>
+        <CollapsibleSection title="Recent Deletes" count={deletedCount} defaultOpen={false}>
           <div className="list-grid">
-            {deletedSites.length === 0 && deletedPipelines.length === 0 && deletedLeaseSheets.length === 0 && deletedTMTickets.length === 0 ? (
+            {deletedCount === 0 ? (
               <div className="site-row">
                 <div className="small-text">No deleted items.</div>
               </div>
             ) : (
               <>
+                {/* Bulk-actions card mirroring the Pending section's
+                    "Approve All / Reject All" row so admins can empty
+                    the recycle bin in one action when the list has
+                    accumulated obvious-to-purge items. */}
+                <div className="site-row">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div>
+                      <strong>Bulk actions</strong>
+                      <div className="small-text">{deletedCount} deleted item{deletedCount === 1 ? '' : 's'} can be permanently removed.</div>
+                    </div>
+                    <div className="button-row">
+                      <button className="danger-button" type="button" disabled={busy} onClick={handleBulkDeleteAllPermanent}>
+                        Delete All Permanently
+                      </button>
+                    </div>
+                  </div>
+                </div>
                 {deletedSites.map((site) => (
                   <div className="site-row" key={`site-${site.id}`}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>

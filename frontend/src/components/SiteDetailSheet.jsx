@@ -264,7 +264,20 @@ export default function SiteDetailSheet({
             <button
               className="primary-button"
               type="button"
-              onClick={() => window.location.assign(getDirectionsUrl(site))}
+              onClick={() => {
+                const url = getDirectionsUrl(site);
+                // On desktop (> 768 px viewport), open Google Maps in a
+                // new tab so the Pineview app state isn't replaced — the
+                // user returns to the same pin/filter view when they
+                // come back. On mobile keep same-tab navigation so iOS
+                // and Android can hand the URL off to the native Google
+                // Maps / Apple Maps app via the universal-link handler.
+                if (window.matchMedia('(min-width: 769px)').matches) {
+                  window.open(url, '_blank', 'noopener,noreferrer');
+                } else {
+                  window.location.assign(url);
+                }
+              }}
               style={{ padding: '6px 12px', fontSize: '0.85rem' }}
             >
               🧭 Directions
