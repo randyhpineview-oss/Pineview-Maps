@@ -1621,17 +1621,41 @@ export default function App() {
     return result.length > 0 ? result : areas;
   }, [sites, pipelines, areas, addPinForm.client]);
 
-  // Duplicate-LSD detector for the add-pin popup. Fires when the user
-  // types an LSD label that EXACTLY matches an existing site (case-
-  // insensitive, trimmed). We don't block submission — there are real
-  // cases where two pin types legitimately share a label — but we do
-  // surface a warning under the field so the worker can double-check
-  // before creating a duplicate pending row.
+  // Duplicate-LSD detector for the add-pin popup. We only flag a
+  // likely-duplicate when BOTH the LSD string and at least one of the
+  // context fields (client or area) that the worker has typed also
+  // match the candidate site — a bare LSD-string collision isn't
+  // enough, because the same short label (e.g. "Well 1", a section
+  // number like "16-24") is routinely reused across different clients
+  // and areas. The earlier version of this check warned on any
+  // LSD-only match, which produced the "I'm adding a brand-new pin
+  // under the same client + area and it thinks it's a duplicate" bug
+  // report when two unrelated sites happened to share a label.
+  //
+  // When the worker hasn't typed a client or area yet there's no
+  // reliable context to disambiguate with, so we stay quiet rather
+  // than fire a speculative warning. The suggestions dropdown itself
+  // already surfaces existing LSDs for free — so this banner is the
+  // belt-and-braces "hold on, this really looks like the same pin"
+  // signal, not a primary discovery mechanism.
   const duplicateLsdSite = useMemo(() => {
-    const typed = (addPinForm.lsd || '').trim().toLowerCase();
-    if (!typed) return null;
-    return sites.find((s) => (s.lsd || '').trim().toLowerCase() === typed) || null;
-  }, [sites, addPinForm.lsd]);
+    const typedLsd = (addPinForm.lsd || '').trim().toLowerCase();
+    if (!typedLsd) return null;
+    const typedClient = (addPinForm.client || '').trim().toLowerCase();
+    const typedArea = (addPinForm.area || '').trim().toLowerCase();
+    if (!typedClient && !typedArea) return null;
+    return sites.find((s) => {
+      if ((s.lsd || '').trim().toLowerCase() !== typedLsd) return false;
+      const sClient = (s.client || '').trim().toLowerCase();
+      const sArea = (s.area || '').trim().toLowerCase();
+      // When the worker HAS typed a client, require the candidate
+      // to share it (not just be blank) — otherwise we'd flag an
+      // unrelated site from a different client. Same for area.
+      if (typedClient && sClient !== typedClient) return false;
+      if (typedArea && sArea !== typedArea) return false;
+      return true;
+    }) || null;
+  }, [sites, addPinForm.lsd, addPinForm.client, addPinForm.area]);
 
   function handleOpenDetail(site, options = {}) {
     // Close pipeline detail if open
@@ -3389,14 +3413,20 @@ export default function App() {
                 }));
               }}
             />
-            {duplicateLsdSite ? (
-              <div className="dup-lsd-warning" role="alert">
-                ⚠ An LSD called "{duplicateLsdSite.lsd}" already exists
-                {duplicateLsdSite.client ? ` for ${duplicateLsdSite.client}` : ''}
-                {duplicateLsdSite.area ? ` (${duplicateLsdSite.area})` : ''}
-                . Double-check you're not adding a duplicate.
-              </div>
-            ) : null}
+            {(() => {
+              if (!duplicateLsdSite) return null;
+              // Build a compact "(client, area)" suffix, gracefully
+              // omitting whichever field the existing row is missing
+              // instead of rendering orphan parens / commas.
+              const parts = [duplicateLsdSite.client, duplicateLsdSite.area].filter(Boolean);
+              const context = parts.length > 0 ? ` (${parts.join(', ')})` : '';
+              return (
+                <div className="dup-lsd-warning" role="alert">
+                  ⚠ An existing LSD is already labeled "{duplicateLsdSite.lsd}"{context}.
+                  You can still submit if this is a separate pin.
+                </div>
+              );
+            })()}
             <AutocompleteInput
               value={addPinForm.client}
               onChange={(next) => setAddPinForm((c) => ({ ...c, client: next }))}

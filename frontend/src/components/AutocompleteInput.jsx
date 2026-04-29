@@ -25,7 +25,15 @@ export default function AutocompleteInput({
   inputStyle,
   autoFocus = false,
 }) {
-  const [focused, setFocused] = useState(false);
+  // `open` is the single source of truth for dropdown visibility.
+  // Opens on focus and on typing; closes on blur AND — importantly —
+  // as soon as the user taps a suggestion. The previous
+  // `focused`-only model kept the list visible after a selection,
+  // which in the tight Add-pin popup layout left the dropdown sitting
+  // on top of the Submit button and made it appear that submissions
+  // were blocked (bug report: "thinks the lsd already exists so not
+  // letting me add … dropdown is staying there").
+  const [open, setOpen] = useState(false);
   const inputRef = useRef(null);
   const query = (value || '').trim().toLowerCase();
 
@@ -49,18 +57,25 @@ export default function AutocompleteInput({
     return suggestions.filter(predicate).slice(0, maxSuggestions);
   }, [suggestions, query, maxSuggestions]);
 
-  const showDropdown = focused && filtered.length > 0;
+  const showDropdown = open && filtered.length > 0;
 
   return (
     <div style={{ position: 'relative' }}>
       <input
         ref={inputRef}
         value={value}
-        onChange={(event) => onChange(event.target.value)}
-        onFocus={() => setFocused(true)}
-        // Delay blur so a mousedown on a suggestion row fires before the
-        // dropdown unmounts. 150ms matches FilterBar's suggestion list.
-        onBlur={() => setTimeout(() => setFocused(false), 150)}
+        onChange={(event) => {
+          // Typing always re-opens the dropdown so the user keeps
+          // getting live suggestions even if they just selected one
+          // and then decided to amend the value.
+          setOpen(true);
+          onChange(event.target.value);
+        }}
+        onFocus={() => setOpen(true)}
+        // Delay the close slightly so a mousedown-driven suggestion
+        // select fires its handler before the list unmounts. 150ms
+        // matches FilterBar's suggestion list.
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
         placeholder={placeholder}
         style={inputStyle}
       />
@@ -75,16 +90,21 @@ export default function AutocompleteInput({
                 type="button"
                 role="option"
                 className="autocomplete-item"
-                // `onMouseDown` (not onClick) with preventDefault so the
-                // input's onBlur-delayed close doesn't race with the
-                // selection — this is the standard accessible pattern.
+                // `onMouseDown` (not onClick) with preventDefault so
+                // the native mousedown→focus-change doesn't swap focus
+                // to the <button> (which would immediately fire the
+                // input's onBlur before our state update landed).
                 onMouseDown={(event) => {
                   event.preventDefault();
+                  // Close the dropdown FIRST so it can't sit on top of
+                  // the Submit button / sibling fields after the
+                  // value is filled in. The .autocomplete-dropdown
+                  // has z-index 25 and overlays everything below the
+                  // input inside the popup, so a lingering list here
+                  // was physically blocking the Submit button.
+                  setOpen(false);
                   onChange(label);
                   if (onSelect) onSelect(item);
-                  // Keep focus on the input so the user can keep typing
-                  // (e.g. append a sub-label) without an extra tap.
-                  if (inputRef.current) inputRef.current.focus();
                 }}
               >
                 <strong className="autocomplete-item-label">{label}</strong>
