@@ -676,20 +676,6 @@ export default function FormsPanel({
                         // below it.
                         opacity: isActive ? 1 : 0.85,
                         border: isActive ? '1px solid #3b82f6' : undefined,
-                        // iOS Safari fix: when this row is the active one,
-                        // the stripe overlay below runs a 60 fps animation.
-                        // Without layer isolation, that animation forces the
-                        // ancestor side-panel (which has backdrop-filter +
-                        // transform) to re-rasterize every frame, producing
-                        // a visible "dance / scale" of the whole Forms panel
-                        // on mobile. Promoting this row to its own composite
-                        // layer + clipping paint to its box stops the
-                        // upstream invalidation.
-                        ...(isActive ? {
-                          transform: 'translateZ(0)',
-                          contain: 'paint',
-                          willChange: 'transform',
-                        } : null),
                       }}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -731,34 +717,24 @@ export default function FormsPanel({
                         }}
                       >
                         {isActive ? (
-                          <>
-                            <div
-                              style={{
-                                width: `${pct}%`,
-                                height: '100%',
-                                background: 'linear-gradient(to right, #2563eb, #3b82f6)',
-                                // Short linear transition smooths between
-                                // throttled progress updates (~10 Hz) without
-                                // fighting the next event the way 0.3s ease
-                                // did. Linear avoids the visible re-easing
-                                // jitter when XHR ticks arrive faster than
-                                // the easing curve completes.
-                                transition: 'width 0.15s linear',
-                              }}
-                            />
-                            {/* Animated diagonal stripe overlay — gives
-                                motion while we wait for the next
-                                progress event. */}
-                            <div
-                              style={{
-                                position: 'absolute',
-                                inset: 0,
-                                background: 'repeating-linear-gradient(45deg, transparent 0, transparent 6px, rgba(255,255,255,0.15) 6px, rgba(255,255,255,0.15) 12px)',
-                                animation: 'upload-stripe 1.2s linear infinite',
-                                pointerEvents: 'none',
-                              }}
-                            />
-                          </>
+                          <div
+                            style={{
+                              width: `${pct}%`,
+                              height: '100%',
+                              background: 'linear-gradient(to right, #2563eb, #3b82f6)',
+                              // Short linear transition smooths between
+                              // throttled progress updates (~10 Hz). The
+                              // diagonal-stripe overlay used to live on top
+                              // of this fill but caused iOS Safari to
+                              // re-rasterize the whole side-panel every
+                              // frame (the panel is semi-transparent and
+                              // sits on its own compositor layer), which
+                              // showed up as a visible "dance / zoom" of
+                              // the Forms screen on mobile. The bar fill
+                              // is enough feedback on its own.
+                              transition: 'width 0.15s linear',
+                            }}
+                          />
                         ) : null}
                       </div>
                     </div>

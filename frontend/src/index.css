@@ -1055,11 +1055,10 @@ button[title="Open keyboard shortcuts"],
   display: none !important;
 }
 
-/* Diagonal stripe animation for the per-ticket upload progress bars
-   in FormsPanel's Uploading tab. Shifts the 12 px stripe pattern by
-   one full cycle (~17 px in the 45° diagonal) every 1.2 s so the bar
-   shows continuous motion even between XHR upload-progress events. */
-@keyframes upload-stripe {
-  0%   { background-position: 0 0; }
-  100% { background-position: 16.97px 0; }
-}
+/* (Removed) `@keyframes upload-stripe` previously powered a 60 fps diagonal
+   stripe overlay on the per-ticket upload bars. It looked nice on desktop
+   but caused iOS Safari to re-rasterize the semi-transparent side-panel
+   every frame (the panel sits on its own compositor layer via
+   `transform: translateX`), which showed up as a visible "dance / zoom"
+   of the whole Forms screen on phones. The bar fill alone gives enough
+   feedback. */

@@ -3071,6 +3071,17 @@ export default function App() {
                 border: 'none',
                 cursor: 'pointer',
                 whiteSpace: 'nowrap',
+                // Pin the badge to a fixed width so the label going
+                // "Syncing 5%" → "Syncing 55%" → "Syncing 95%" doesn't
+                // grow/shrink the button by a few pixels each percentage
+                // tick. Without this the adjacent "Pending: N" badge
+                // visibly shifts left/right with every progress update,
+                // which on mobile reads as the whole topbar dancing.
+                // tabular-nums pins each digit's advance width so even
+                // single-digit/multi-digit transitions stay rock-steady.
+                minWidth: '92px',
+                textAlign: 'center',
+                fontVariantNumeric: 'tabular-nums',
               }}
               onClick={() => {
                 // Jump to Forms tab and bump the signal so FormsPanel
