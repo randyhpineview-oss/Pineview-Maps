@@ -2839,6 +2839,71 @@ export default function App() {
     finally { setAdminBusy(false); }
   }
 
+  async function handleBulkApprovePending() {
+    const items = [
+      ...pendingSites.map((site) => ({ kind: 'pin', id: site.id })),
+      ...pendingPipelines.map((pipeline) => ({ kind: 'pipeline', id: pipeline.id })),
+    ];
+    if (items.length === 0) return;
+    setAdminBusy(true);
+    setMessage(`Approving ${items.length} pending approval${items.length === 1 ? '' : 's'}…`);
+    const failed = [];
+    try {
+      for (const item of items) {
+        try {
+          if (item.kind === 'pin') {
+            await api.approveSite(item.id, { approval_state: 'approved' });
+          } else {
+            await api.approvePipeline(item.id, { approval_state: 'approved' });
+          }
+        } catch (error) {
+          failed.push(error);
+        }
+      }
+      await refreshAllData();
+      const approved = items.length - failed.length;
+      setMessage(failed.length > 0
+        ? `Approved ${approved} of ${items.length}. ${failed.length} failed.`
+        : `Approved ${approved} pending approval${approved === 1 ? '' : 's'}.`);
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
+  async function handleBulkRejectPending() {
+    const items = [
+      ...pendingSites.map((site) => ({ kind: 'pin', id: site.id })),
+      ...pendingPipelines.map((pipeline) => ({ kind: 'pipeline', id: pipeline.id })),
+    ];
+    if (items.length === 0) return;
+    setAdminBusy(true);
+    setMessage(`Rejecting ${items.length} pending approval${items.length === 1 ? '' : 's'}…`);
+    const failed = [];
+    try {
+      for (const item of items) {
+        try {
+          if (item.kind === 'pin') {
+            await api.approveSite(item.id, { approval_state: 'rejected' });
+          } else {
+            await api.approvePipeline(item.id, { approval_state: 'rejected' });
+          }
+        } catch (error) {
+          failed.push(error);
+        }
+      }
+      await refreshAllData();
+      const rejected = items.length - failed.length;
+      if (failed.length > 0) {
+        const blocked = failed.filter((error) => error?.detail?.reason === 'has_linked_spray_records').length;
+        setMessage(`Rejected ${rejected} of ${items.length}. ${failed.length} failed.${blocked > 0 ? ` ${blocked} blocked by linked lease sheets.` : ''}`);
+      } else {
+        setMessage(`Rejected ${rejected} pending approval${rejected === 1 ? '' : 's'}.`);
+      }
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
   async function handleRestoreSite(siteId) {
     await runAdminAction(
       () => api.restoreSite(siteId),
@@ -3737,6 +3802,8 @@ export default function App() {
               }}
               onApproveAndEdit={handleApproveAndEdit}
               onApprovePipelineAndEdit={handleApprovePipelineAndEdit}
+              onBulkApprovePending={handleBulkApprovePending}
+              onBulkRejectPending={handleBulkRejectPending}
               onBulkReset={(payload) => runAdminAction(() => api.bulkResetStatus(payload), 'Reset complete.')}
               onImport={(file) => runAdminAction(() => api.importKml(file), 'KML imported.')}
               onRestore={handleRestoreSite}

@@ -73,6 +73,8 @@ export default function AdminPanel({
   onApprove,
   onReject,
   onApproveAndEdit,
+  onBulkApprovePending,
+  onBulkRejectPending,
   onBulkReset,
   onImport,
   onRestore,
@@ -113,6 +115,7 @@ export default function AdminPanel({
   const [importingPipeline, setImportingPipeline] = useState(false);
 
   const canReset = useMemo(() => Boolean(resetClient || resetArea), [resetClient, resetArea]);
+  const pendingApprovalCount = pendingSites.length + pendingPipelines.length;
 
   if (!visible) {
     return null;
@@ -137,18 +140,48 @@ export default function AdminPanel({
     await onBulkReset({ client: resetClient || null, area: resetArea || null });
   }
 
+  async function handleBulkApprovePending() {
+    if (pendingApprovalCount === 0) return;
+    const label = pendingApprovalCount === 1 ? 'pending approval' : 'pending approvals';
+    if (!window.confirm(`Approve all ${pendingApprovalCount} ${label}?`)) return;
+    await onBulkApprovePending?.();
+  }
+
+  async function handleBulkRejectPending() {
+    if (pendingApprovalCount === 0) return;
+    const label = pendingApprovalCount === 1 ? 'pending approval' : 'pending approvals';
+    if (!window.confirm(`Reject all ${pendingApprovalCount} ${label}? This cannot be undone for new field-added items.`)) return;
+    await onBulkRejectPending?.();
+  }
+
   return (
     <div className="panel">
       <h2>Admin tools</h2>
       <div className="list-grid">
-        <CollapsibleSection title="Pending Approvals" count={pendingSites.length + pendingPipelines.length} defaultOpen={pendingSites.length + pendingPipelines.length > 0}>
+        <CollapsibleSection title="Pending Approvals" count={pendingApprovalCount} defaultOpen={pendingApprovalCount > 0}>
           <div className="list-grid">
-            {pendingSites.length === 0 && pendingPipelines.length === 0 ? (
+            {pendingApprovalCount === 0 ? (
               <div className="site-row">
                 <div className="small-text">No pending approvals right now.</div>
               </div>
             ) : (
               <>
+                <div className="site-row">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div>
+                      <strong>Bulk actions</strong>
+                      <div className="small-text">{pendingApprovalCount} pending item{pendingApprovalCount === 1 ? '' : 's'} ready for review.</div>
+                    </div>
+                    <div className="button-row">
+                      <button className="primary-button" type="button" disabled={busy} onClick={handleBulkApprovePending}>
+                        Approve All
+                      </button>
+                      <button className="danger-button" type="button" disabled={busy} onClick={handleBulkRejectPending}>
+                        Reject All
+                      </button>
+                    </div>
+                  </div>
+                </div>
                 {pendingSites.map((site) => (
                   <PendingSiteCard
                     key={`site-${site.id}`}
