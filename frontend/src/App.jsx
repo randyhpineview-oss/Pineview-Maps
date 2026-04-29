@@ -182,6 +182,7 @@ export default function App() {
   const [addPinType, setAddPinType] = useState(null);
   const [addPinLocation, setAddPinLocation] = useState(null);
   const [addPinForm, setAddPinForm] = useState({ lsd: '', client: '', area: '' });
+  const [selectedAddPinLsdSuggestion, setSelectedAddPinLsdSuggestion] = useState(null);
   const [editPickLocation, setEditPickLocation] = useState(null);
   const [isEditPickingMode, setIsEditPickingMode] = useState(false);
   const [previewSiteLocation, setPreviewSiteLocation] = useState(null);
@@ -1582,7 +1583,7 @@ export default function App() {
       if (s.client) subBits.push(s.client);
       if (s.area) subBits.push(s.area);
       if (s.pin_type && s.pin_type !== 'lsd') subBits.push(s.pin_type);
-      seen.set(key, { label, sub: subBits.join(' · ') });
+      seen.set(key, { label, sub: subBits.join(' · '), site: s });
     }
     return [...seen.values()].sort((a, b) => a.label.localeCompare(b.label));
   }, [sites]);
@@ -1621,41 +1622,23 @@ export default function App() {
     return result.length > 0 ? result : areas;
   }, [sites, pipelines, areas, addPinForm.client]);
 
-  // Duplicate-LSD detector for the add-pin popup. We only flag a
-  // likely-duplicate when BOTH the LSD string and at least one of the
-  // context fields (client or area) that the worker has typed also
-  // match the candidate site — a bare LSD-string collision isn't
-  // enough, because the same short label (e.g. "Well 1", a section
-  // number like "16-24") is routinely reused across different clients
-  // and areas. The earlier version of this check warned on any
-  // LSD-only match, which produced the "I'm adding a brand-new pin
-  // under the same client + area and it thinks it's a duplicate" bug
-  // report when two unrelated sites happened to share a label.
-  //
-  // When the worker hasn't typed a client or area yet there's no
-  // reliable context to disambiguate with, so we stay quiet rather
-  // than fire a speculative warning. The suggestions dropdown itself
-  // already surfaces existing LSDs for free — so this banner is the
-  // belt-and-braces "hold on, this really looks like the same pin"
-  // signal, not a primary discovery mechanism.
+  // Duplicate-LSD detector for the add-pin popup. Important UX rule:
+  // selecting an existing Client or Area must NEVER imply a duplicate
+  // pin — workers routinely add brand-new LSDs under existing jobs.
+  // Therefore the warning is tied only to an explicit selection from
+  // the LSD/site-label suggestion list. Free-typed values (even if
+  // they eventually match something) stay quiet; the suggestion list is
+  // the duplicate-discovery UI, and the warning is just the confirmation
+  // that "you picked an existing site label". This also prevents a
+  // newly-saved optimistic site from warning about itself while the
+  // popup is in the middle of closing.
   const duplicateLsdSite = useMemo(() => {
-    const typedLsd = (addPinForm.lsd || '').trim().toLowerCase();
-    if (!typedLsd) return null;
-    const typedClient = (addPinForm.client || '').trim().toLowerCase();
-    const typedArea = (addPinForm.area || '').trim().toLowerCase();
-    if (!typedClient && !typedArea) return null;
-    return sites.find((s) => {
-      if ((s.lsd || '').trim().toLowerCase() !== typedLsd) return false;
-      const sClient = (s.client || '').trim().toLowerCase();
-      const sArea = (s.area || '').trim().toLowerCase();
-      // When the worker HAS typed a client, require the candidate
-      // to share it (not just be blank) — otherwise we'd flag an
-      // unrelated site from a different client. Same for area.
-      if (typedClient && sClient !== typedClient) return false;
-      if (typedArea && sArea !== typedArea) return false;
-      return true;
-    }) || null;
-  }, [sites, addPinForm.lsd, addPinForm.client, addPinForm.area]);
+    if (!selectedAddPinLsdSuggestion?.site) return null;
+    const selectedLabel = (selectedAddPinLsdSuggestion.label || '').trim().toLowerCase();
+    const currentLabel = (addPinForm.lsd || '').trim().toLowerCase();
+    if (!selectedLabel || selectedLabel !== currentLabel) return null;
+    return selectedAddPinLsdSuggestion.site;
+  }, [selectedAddPinLsdSuggestion, addPinForm.lsd]);
 
   function handleOpenDetail(site, options = {}) {
     // Close pipeline detail if open
@@ -1945,12 +1928,14 @@ export default function App() {
     setAddPinType(pinType);
     setAddPinLocation(null);
     setAddPinForm({ lsd: '', client: '', area: '' });
+    setSelectedAddPinLsdSuggestion(null);
   }
 
   function handleCancelAdd() {
     setAddPinType(null);
     setAddPinLocation(null);
     setAddPinForm({ lsd: '', client: '', area: '' });
+    setSelectedAddPinLsdSuggestion(null);
   }
 
   // ── Pipeline handlers ──
@@ -3396,7 +3381,15 @@ export default function App() {
             <strong className="small-text">New {pinTypeLabel(addPinType)} pin</strong>
             <AutocompleteInput
               value={addPinForm.lsd}
-              onChange={(next) => setAddPinForm((c) => ({ ...c, lsd: next }))}
+              onChange={(next) => {
+                // Manual typing means this is not an explicit "use this
+                // existing LSD" choice anymore, so clear the advisory
+                // duplicate state. This is what prevents a brand-new LSD
+                // under an existing client/area from warning just because
+                // those context fields came from autocomplete.
+                setSelectedAddPinLsdSuggestion(null);
+                setAddPinForm((c) => ({ ...c, lsd: next }));
+              }}
               placeholder="LSD or site label"
               suggestions={lsdSuggestions}
               onSelect={(item) => {
@@ -3411,6 +3404,7 @@ export default function App() {
                   client: c.client || matchClient || '',
                   area: c.area || matchArea || '',
                 }));
+                setSelectedAddPinLsdSuggestion(item);
               }}
             />
             {(() => {
