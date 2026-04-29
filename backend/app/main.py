@@ -713,6 +713,17 @@ def _strip_photos_from_lease_data(data: dict | None) -> dict | None:
     return out
 
 
+def _site_status_from_spray_payload(payload: SiteSprayRecordCreate) -> SiteStatus:
+    if payload.is_avoided:
+        return SiteStatus.issue
+    nested_status = None
+    if isinstance(payload.lease_sheet_data, dict):
+        nested_status = payload.lease_sheet_data.get("site_status")
+    if payload.site_status == SiteStatus.in_progress or nested_status == SiteStatus.in_progress.value:
+        return SiteStatus.in_progress
+    return SiteStatus.inspected
+
+
 @app.get("/api/sites/{site_id}/spray", response_model=list[SiteSprayRecordSummary])
 def list_site_spray_records(
     site_id: int,
@@ -780,6 +791,11 @@ def create_site_spray_record(
             .first()
         )
         if existing is not None:
+            site_status = _site_status_from_spray_payload(payload)
+            if site_status == SiteStatus.in_progress and site.status == SiteStatus.inspected:
+                site.status = SiteStatus.in_progress
+                site.updated_at = datetime.utcnow()
+                db.commit()
             return SiteSprayRecordRead.model_validate(existing)
 
     user_id = None
@@ -854,9 +870,8 @@ def create_site_spray_record(
     )
     db.add(record)
     
-    site_status = SiteStatus.issue if payload.is_avoided else (
-        SiteStatus.in_progress if payload.site_status == SiteStatus.in_progress else SiteStatus.inspected
-    )
+    site_status = _site_status_from_spray_payload(payload)
+
     site.status = site_status
     if site_status in (SiteStatus.inspected, SiteStatus.in_progress):
         site.last_inspected_at = datetime.utcnow()

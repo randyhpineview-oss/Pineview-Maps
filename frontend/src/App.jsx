@@ -791,7 +791,13 @@ export default function App() {
             });
             // Refresh the site data in background (including pdf_url from Dropbox)
             try {
-              const updated = await api.getSite(item.targetId);
+              let updated = await api.getSite(item.targetId);
+              if (patched.site_status === 'in_progress' && updated.status !== 'in_progress') {
+                updated = await api.updateSiteStatus(item.targetId, {
+                  status: 'in_progress',
+                  note: patched.notes || '',
+                });
+              }
               setSites((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
               setSelectedSite((prev) => prev && prev.id === updated.id ? updated : prev);
               await upsertSite(updated);

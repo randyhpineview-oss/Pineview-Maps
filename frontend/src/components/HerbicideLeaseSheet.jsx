@@ -556,6 +556,7 @@ export default function HerbicideLeaseSheet({
       });
       
       const photoData = (await Promise.all(photoPromises)).filter(Boolean);
+      const intendedSiteStatus = site ? (requireComments ? 'in_progress' : 'inspected') : undefined;
 
       // ── Build the T&M link + tentative PDF so the backend can upload to Dropbox ──
       let tm_link = null;
@@ -663,12 +664,14 @@ export default function HerbicideLeaseSheet({
           // the T&M row's site_type column so the billing row matches the
           // lease-sheet PDF.
           mainSiteType: mainSiteType || null,
+          ...(intendedSiteStatus ? { site_status: intendedSiteStatus } : {}),
         },
         pdf_base64: finalPdfBase64,
         ticket_number: finalTicket || undefined,
         spray_date: form.date,
         notes: form.comments,
         is_avoided: false,
+        ...(intendedSiteStatus ? { site_status: intendedSiteStatus } : {}),
         time_materials_link: tm_link,
         client_submission_id: clientSubmissionId,
       };
