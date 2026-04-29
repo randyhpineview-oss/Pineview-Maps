@@ -3054,7 +3054,11 @@ export default function App() {
             disabled={isRefreshing || !isOnline}
             title={!isOnline ? 'Connect to the internet to refresh' : 'Refresh all data from server'}
           >
-            {isRefreshing ? '↻ Refreshing…' : '↻ Refresh'}
+            {isRefreshing ? (
+              <>↻<span className="topbar-label-desktop"> Refreshing…</span></>
+            ) : (
+              <>↻<span className="topbar-label-desktop"> Refresh</span></>
+            )}
           </button>
           {(uploadQueueItems.length > 0 || isUploading) ? (
             // Compact "Syncing X%" / "Queued (N)" badge. Tapping it
@@ -3092,13 +3096,22 @@ export default function App() {
                 ? `Uploading ${uploadProgress}% — tap for details`
                 : `${uploadQueueItems.length} queued — tap for details`}
             >
-              {isUploading
-                // Pad the percentage to 2 chars with a non-breaking
-                // space so "Syncing  5%" and "Syncing 95%" have the
-                // same character count. nbsp (\u00A0) doesn't collapse
-                // in HTML the way a regular space would.
-                ? `Syncing ${String(uploadProgress).padStart(2, '\u00A0')}%`
-                : `Queued (${uploadQueueItems.length})`}
+              {isUploading ? (
+                // Desktop keeps the full "Syncing X%" label; mobile drops
+                // the word and uses a ⟳ icon prefix instead so the
+                // badge stack fits the phone topbar without clipping the
+                // adjacent "Pending: N". The percentage itself is padded
+                // to 2 chars with a non-breaking space (\u00A0 doesn't
+                // collapse in HTML) so combined with tabular-nums the
+                // badge stays a constant width across 0–99 %.
+                <>
+                  <span className="topbar-label-desktop">Syncing </span>
+                  <span className="topbar-label-mobile">⟳ </span>
+                  {String(uploadProgress).padStart(2, '\u00A0')}%
+                </>
+              ) : (
+                `Queued (${uploadQueueItems.length})`
+              )}
             </button>
           ) : null}
           {queuedCount > 0 ? (

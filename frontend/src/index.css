@@ -82,6 +82,18 @@ button { cursor: pointer; }
    we ever want to A/B the inline layout again. */
 .topbar-account-inline-only { display: none !important; }
 
+/* Inline labels that swap between desktop and mobile. Used in the
+   topbar Refresh button ("↻ Refresh" → "↻") and the "Syncing X%"
+   upload badge ("Syncing 95%" → "⟳ 95%") so phones get a compact
+   icon-only / number-only version while desktop keeps the full word
+   for clarity. Without this, all four upload-time badges (Online +
+   Refresh + Syncing X% + Pending: N) plus title and avatar exceed
+   the ~275 px available on a phone topbar and the rightmost item
+   gets clipped, which reads to the user as "the screen is zoomed
+   in". */
+.topbar-label-desktop { display: inline; }
+.topbar-label-mobile  { display: none; }
+
 .topbar-account-trigger {
   width: 28px;
   height: 28px;
@@ -1023,6 +1035,13 @@ button.site-row { cursor: pointer; }
   /* Inline badges + avatar menu visibility are now handled at the base
      scope (avatar always shown, inline always hidden); nothing extra
      needed here for the mobile breakpoint. */
+
+  /* Compact topbar labels: hide the desktop word ("Refresh", "Syncing")
+     and reveal the mobile-only icon prefix ("⟳") so the upload-time
+     badge stack fits within the phone viewport. See the base-scope
+     definitions above for the full rationale. */
+  .topbar-label-desktop { display: none; }
+  .topbar-label-mobile  { display: inline; }
 }
 
 /* Hide Google Maps attribution elements */
