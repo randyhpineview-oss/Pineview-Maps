@@ -82,6 +82,57 @@ function matchSiteIdentity(site, selectedSite) {
   return String(site.id ?? site.cacheId) === String(selectedSite.id ?? selectedSite.cacheId);
 }
 
+// Mirrors the `visibleSites` filter predicate below so we can detect, right
+// after a worker submits a new pin, whether the current map filter / layer
+// settings would quietly hide it. A user who had e.g. `approval_state =
+// "approved"` set and then added a pin (which is always created as
+// pending_review) would otherwise see no pin on the map — the symptom
+// behind the "shows in pending but not on the map, had to refresh" bug
+// report. Returns an array of `{ kind, key, label }` entries describing
+// every filter/layer that's currently hiding the site, so the caller can
+// both tell the user what's going on AND clear the offending settings in
+// one shot. Empty array = pin is visible, nothing to do.
+const FILTER_LABELS = {
+  client: 'client',
+  area: 'area',
+  status: 'status',
+  approval_state: 'approval',
+  search: 'search',
+};
+const LAYER_LABELS = {
+  lsd: 'LSD',
+  water: 'Water',
+  quad_access: 'Quad Access',
+  reclaimed: 'Reclaimed',
+};
+function getFiltersHidingSite(site, filters, layers) {
+  const hiding = [];
+  const isWater = site.pin_type === 'water';
+  if (site.pin_type && layers && layers[site.pin_type] === false) {
+    hiding.push({ kind: 'layer', key: site.pin_type, label: `${LAYER_LABELS[site.pin_type] || site.pin_type} layer` });
+  }
+  if (filters.client && site.client !== filters.client && !isWater) {
+    hiding.push({ kind: 'filter', key: 'client', label: `${FILTER_LABELS.client} filter` });
+  }
+  if (filters.area && site.area !== filters.area && !isWater) {
+    hiding.push({ kind: 'filter', key: 'area', label: `${FILTER_LABELS.area} filter` });
+  }
+  if (filters.status && site.status !== filters.status && !isWater) {
+    hiding.push({ kind: 'filter', key: 'status', label: `${FILTER_LABELS.status} filter` });
+  }
+  if (filters.approval_state && site.approval_state !== filters.approval_state) {
+    hiding.push({ kind: 'filter', key: 'approval_state', label: `${FILTER_LABELS.approval_state} filter` });
+  }
+  const normalizedSearch = (filters.search || '').trim().toLowerCase();
+  if (normalizedSearch) {
+    const haystack = [site.lsd, site.client, site.area, site.notes].filter(Boolean).join(' ').toLowerCase();
+    if (!haystack.includes(normalizedSearch)) {
+      hiding.push({ kind: 'filter', key: 'search', label: `${FILTER_LABELS.search} box` });
+    }
+  }
+  return hiding;
+}
+
 export default function App() {
   // Service-worker lifecycle is now owned by vite-plugin-pwa (see
   // vite.config.js Fix #3). The previous "unregister every SW on load"
@@ -219,6 +270,29 @@ export default function App() {
   const smoothedLocationRef = useRef(null);
   const lastLocationUpdateRef = useRef(0);
   const isEditPickingModeRef = useRef(false);
+
+  // Transient banner shown at the top of the map right after a pin is
+  // submitted. Primary job: surface the "your new pending pin was about
+  // to be hidden by a filter you had set" case that previously silently
+  // swallowed the pin and forced a full-page refresh to recover. The
+  // banner auto-dismisses after 6 s; the timer ref survives re-renders
+  // so a second submission cleanly replaces the first without leaking
+  // a stale timeout. Shape: `{ message: string } | null`.
+  const [pinSubmitBanner, setPinSubmitBanner] = useState(null);
+  const pinSubmitBannerTimerRef = useRef(null);
+  const showPinSubmitBanner = useCallback((message) => {
+    if (pinSubmitBannerTimerRef.current) {
+      clearTimeout(pinSubmitBannerTimerRef.current);
+    }
+    setPinSubmitBanner({ message });
+    pinSubmitBannerTimerRef.current = setTimeout(() => {
+      setPinSubmitBanner(null);
+      pinSubmitBannerTimerRef.current = null;
+    }, 6000);
+  }, []);
+  useEffect(() => () => {
+    if (pinSubmitBannerTimerRef.current) clearTimeout(pinSubmitBannerTimerRef.current);
+  }, []);
 
   // Actual role from the Supabase session. Never changed by the view
   // toggle \u2014 used for identity, backend auth, and deciding whether the
@@ -2439,6 +2513,7 @@ export default function App() {
     };
     try {
       console.log('[PIN] Creating pin:', payload);
+      let submittedSite = null;
       if (window.navigator.onLine) {
         const created = await api.createSite(payload);
         console.log('[PIN] Pin created successfully:', created);
@@ -2446,6 +2521,7 @@ export default function App() {
         await upsertSite(created);
         await loadPendingSites();
         setMessage(created.approval_state === 'approved' ? 'Pin added.' : 'Pending pin submitted for review.');
+        submittedSite = created;
       } else {
         const tempId = `temp-${crypto.randomUUID()}`;
         const optimisticSite = {
@@ -2472,7 +2548,54 @@ export default function App() {
         setSites((current) => [optimisticSite, ...current]);
         await refreshQueueCount();
         setMessage('Offline: pin queued for sync.');
+        submittedSite = optimisticSite;
       }
+
+      // Detect whether the user's current filter / layer settings would
+      // silently hide this fresh pin, which was the root cause of the
+      // "shows up in pending but not on the map" glitch. If so, clear
+      // the offending knobs in-place so the worker actually sees the
+      // exclamation they just placed, and surface a toast-style banner
+      // naming what was cleared. `canManagePins` pins are auto-approved
+      // so the approval filter is the most common offender; tight
+      // client/area filters can bite too on admin sessions that stayed
+      // filtered to one job site.
+      if (submittedSite) {
+        const hidingEntries = getFiltersHidingSite(submittedSite, filters, layers);
+        if (hidingEntries.length > 0) {
+          const hasFilterHit = hidingEntries.some((h) => h.kind === 'filter');
+          const hasLayerHit = hidingEntries.some((h) => h.kind === 'layer');
+          if (hasFilterHit) {
+            setFilters((prev) => {
+              const next = { ...prev };
+              for (const h of hidingEntries) {
+                if (h.kind === 'filter') next[h.key] = '';
+              }
+              return next;
+            });
+          }
+          if (hasLayerHit) {
+            setLayers((prev) => {
+              const next = { ...prev };
+              for (const h of hidingEntries) {
+                if (h.kind === 'layer') next[h.key] = true;
+              }
+              return next;
+            });
+          }
+          const labels = hidingEntries.map((h) => h.label);
+          const joined = labels.length === 1
+            ? labels[0]
+            : labels.length === 2
+              ? `${labels[0]} and ${labels[1]}`
+              : `${labels.slice(0, -1).join(', ')}, and ${labels[labels.length - 1]}`;
+          showPinSubmitBanner(`Pin added — cleared ${joined} so you can see it on the map.`);
+        } else {
+          const label = submittedSite.approval_state === 'approved' ? 'Pin added.' : 'Pending pin submitted — look for the ! marker.';
+          showPinSubmitBanner(label);
+        }
+      }
+
       setSubmittingPin(false);
       handleCancelAdd();
     } catch (error) {
@@ -3069,6 +3192,25 @@ export default function App() {
           <div className="place-banner">
             {`Tap map to place ${pinTypeLabel(addPinType)} pin`}
             <button className="cancel-btn" type="button" onClick={handleCancelAdd}>Cancel</button>
+          </div>
+        ) : null}
+
+        {/* Post-submit confirmation / "we cleared a filter" banner.
+            Only renders when no other top banner (place-pin / drawing /
+            spray) is active, otherwise two banners would stack and fight
+            for the top 12 px of the map. `pinSubmitBanner` auto-clears
+            after 6 s via `showPinSubmitBanner` above. */}
+        {pinSubmitBanner && !isPlacingPin && !isDrawingPipeline && !isSprayMarking ? (
+          <div className="place-banner post-submit-banner" role="status" aria-live="polite">
+            <span>{pinSubmitBanner.message}</span>
+            <button
+              className="cancel-btn"
+              type="button"
+              onClick={() => setPinSubmitBanner(null)}
+              aria-label="Dismiss"
+            >
+              ✕
+            </button>
           </div>
         ) : null}
 

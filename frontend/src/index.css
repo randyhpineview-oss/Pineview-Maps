@@ -575,6 +575,26 @@ button { cursor: pointer; }
   font-weight: 600;
 }
 
+/* Post-submit pin confirmation banner. Reuses `.place-banner` positioning
+   and sizing, but recoloured amber so it visually matches the pending-pin
+   exclamation marker and never gets confused with the red "cancel" state
+   of the place-pin banner. Max width keeps long "cleared X, Y, and Z
+   filters…" messages from stretching edge-to-edge on desktop. */
+.post-submit-banner {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  color: #fde68a;
+  max-width: min(520px, calc(100vw - 32px));
+  text-align: left;
+}
+
+.post-submit-banner .cancel-btn {
+  background: rgba(245, 158, 11, 0.22);
+  color: #fde68a;
+  font-size: 0.85rem;
+  padding: 0.15rem 0.5rem;
+}
+
 /* ───── Add-pin popup form (on map) ───── */
 .add-pin-popup {
   position: absolute;
