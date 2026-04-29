@@ -625,6 +625,79 @@ button { cursor: pointer; }
   gap: 0.5rem;
 }
 
+/* ───── Autocomplete dropdown (Add-pin popup typeahead) ─────
+   Shared by the LSD / client / area inputs inside `.add-pin-popup` so
+   the worker can pick from values that already exist in the project
+   (same spelling, faster entry, duplicate avoidance). Positioned below
+   the input via `top: 100%`; z-index is above the sibling inputs in
+   the same popup so an open dropdown visually occludes them rather
+   than rendering behind. `max-height` keeps long client lists from
+   pushing the whole popup off-screen. */
+.autocomplete-dropdown {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 25;
+  background: rgba(9, 17, 31, 0.98);
+  border: 1px solid rgba(143, 182, 255, 0.22);
+  border-radius: 10px;
+  max-height: 180px;
+  overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(10px);
+}
+
+.autocomplete-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(143, 182, 255, 0.08);
+  color: #e5eefb;
+  padding: 0.45rem 0.6rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+  line-height: 1.25;
+}
+
+.autocomplete-item:last-child {
+  border-bottom: none;
+}
+
+.autocomplete-item:hover,
+.autocomplete-item:focus {
+  background: rgba(143, 182, 255, 0.1);
+  outline: none;
+}
+
+.autocomplete-item-label {
+  color: #f5f8ff;
+  font-weight: 600;
+}
+
+.autocomplete-item-sub {
+  color: #9ab1d6;
+  font-weight: 400;
+  margin-left: 0.4rem;
+  font-size: 0.74rem;
+}
+
+/* Duplicate-LSD warning shown under the LSD field when the typed label
+   exactly matches an existing site. Amber to match the pending-pin
+   exclamation so workers recognise "hold on, check this" at a glance. */
+.dup-lsd-warning {
+  color: #fde68a;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 8px;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.74rem;
+  line-height: 1.3;
+  margin-top: -0.1rem;
+}
+
 /* ───── Side panel (overlay on right) ───── */
 .side-panel {
   position: absolute;

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import AdminPanel from './components/AdminPanel';
 import ApproveEditModal from './components/ApproveEditModal';
+import AutocompleteInput from './components/AutocompleteInput';
 import FilterBar from './components/FilterBar';
 import HerbicideLeaseSheet from './components/HerbicideLeaseSheet';
 import InstallAppPrompt from './components/InstallAppPrompt';
@@ -1559,6 +1560,33 @@ export default function App() {
     ].filter(Boolean))].sort((a, b) => a.localeCompare(b)),
     [sites, pipelines]
   );
+  // LSD-label suggestions shown under the "LSD or site label" input in the
+  // add-pin popup. Sorted by label for predictable scanning — workers
+  // usually know roughly what LSD they expect ("16-..."), so alphabetical
+  // beats "most recent" here. The `sub` line surfaces client · area ·
+  // pin-type so two sites that share an LSD string (e.g. a pipeline pull
+  // and a valve across the quarter) are still distinguishable. Pending &
+  // approved sites are both included so a worker editing their own
+  // pending submission can still see the previous spelling.
+  const lsdSuggestions = useMemo(() => {
+    const seen = new Map();
+    for (const s of sites) {
+      const label = (s.lsd || '').trim();
+      if (!label) continue;
+      // Keep the first occurrence per (label + client + area) combo — a
+      // Map keyed on that tuple prevents duplicates when the same LSD
+      // row was fetched twice (e.g. during a delta-sync merge).
+      const key = `${label.toLowerCase()}|${(s.client || '').toLowerCase()}|${(s.area || '').toLowerCase()}`;
+      if (seen.has(key)) continue;
+      const subBits = [];
+      if (s.client) subBits.push(s.client);
+      if (s.area) subBits.push(s.area);
+      if (s.pin_type && s.pin_type !== 'lsd') subBits.push(s.pin_type);
+      seen.set(key, { label, sub: subBits.join(' · ') });
+    }
+    return [...seen.values()].sort((a, b) => a.label.localeCompare(b.label));
+  }, [sites]);
+
   const areas = useMemo(
     () => [...new Set([
       ...sites.map((site) => site.area),
@@ -1566,6 +1594,44 @@ export default function App() {
     ].filter(Boolean))].sort((a, b) => a.localeCompare(b)),
     [sites, pipelines]
   );
+
+  // Area suggestions shown in the add-pin popup's Area field. If the
+  // user already picked a client (or typed one that matches an existing
+  // client exactly), narrow the list to areas that appear alongside that
+  // client. Otherwise fall back to the full area list so typing Area
+  // first still gives useful suggestions. This mirrors FilterBar's
+  // client-scoped area behaviour — keeps the two in sync.
+  const areasForAddPinClient = useMemo(() => {
+    const client = (addPinForm.client || '').trim().toLowerCase();
+    if (!client) return areas;
+    const scoped = new Set(
+      sites
+        .filter((s) => s.client && s.client.toLowerCase() === client)
+        .map((s) => s.area)
+        .filter(Boolean)
+    );
+    // Also pull from pipelines so a client's pipeline-only areas show up.
+    for (const p of pipelines) {
+      if (p.client && p.client.toLowerCase() === client && p.area) scoped.add(p.area);
+    }
+    const result = [...scoped].sort((a, b) => a.localeCompare(b));
+    // If the scoped list is empty (e.g. a brand-new client being typed
+    // for the first time) fall back to the full list so we still offer
+    // something useful instead of an invisible dropdown.
+    return result.length > 0 ? result : areas;
+  }, [sites, pipelines, areas, addPinForm.client]);
+
+  // Duplicate-LSD detector for the add-pin popup. Fires when the user
+  // types an LSD label that EXACTLY matches an existing site (case-
+  // insensitive, trimmed). We don't block submission — there are real
+  // cases where two pin types legitimately share a label — but we do
+  // surface a warning under the field so the worker can double-check
+  // before creating a duplicate pending row.
+  const duplicateLsdSite = useMemo(() => {
+    const typed = (addPinForm.lsd || '').trim().toLowerCase();
+    if (!typed) return null;
+    return sites.find((s) => (s.lsd || '').trim().toLowerCase() === typed) || null;
+  }, [sites, addPinForm.lsd]);
 
   function handleOpenDetail(site, options = {}) {
     // Close pipeline detail if open
@@ -3293,13 +3359,56 @@ export default function App() {
           </div>
         ) : null}
 
-        {/* Add-pin popup form */}
+        {/* Add-pin popup form.
+            All three fields use `AutocompleteInput` so existing values
+            (LSDs, clients, areas) surface as the user types — same
+            spelling, faster entry, and a duplicate-LSD warning below
+            the label field so a worker can spot a pre-existing site
+            before committing a pending pin. Typing a new value is still
+            fully allowed (selection is optional) — the autocomplete is
+            a suggestion layer, not a validator. */}
         {showAddPopup ? (
           <div className="add-pin-popup" style={{ bottom: 80, left: '50%', transform: 'translateX(-50%)' }}>
             <strong className="small-text">New {pinTypeLabel(addPinType)} pin</strong>
-            <input value={addPinForm.lsd} onChange={(e) => setAddPinForm((c) => ({ ...c, lsd: e.target.value }))} placeholder="LSD or site label" />
-            <input value={addPinForm.client} onChange={(e) => setAddPinForm((c) => ({ ...c, client: e.target.value }))} placeholder="Client" />
-            <input value={addPinForm.area} onChange={(e) => setAddPinForm((c) => ({ ...c, area: e.target.value }))} placeholder="Area" />
+            <AutocompleteInput
+              value={addPinForm.lsd}
+              onChange={(next) => setAddPinForm((c) => ({ ...c, lsd: next }))}
+              placeholder="LSD or site label"
+              suggestions={lsdSuggestions}
+              onSelect={(item) => {
+                // When the worker picks an existing LSD, prefill the
+                // client and area from that match (only if those fields
+                // are still blank — don't stomp values they already
+                // typed). Saves a couple of taps in the common "I'm
+                // adding a second pin for the same site" flow.
+                const [matchClient, matchArea] = (item.sub || '').split(' · ');
+                setAddPinForm((c) => ({
+                  ...c,
+                  client: c.client || matchClient || '',
+                  area: c.area || matchArea || '',
+                }));
+              }}
+            />
+            {duplicateLsdSite ? (
+              <div className="dup-lsd-warning" role="alert">
+                ⚠ An LSD called "{duplicateLsdSite.lsd}" already exists
+                {duplicateLsdSite.client ? ` for ${duplicateLsdSite.client}` : ''}
+                {duplicateLsdSite.area ? ` (${duplicateLsdSite.area})` : ''}
+                . Double-check you're not adding a duplicate.
+              </div>
+            ) : null}
+            <AutocompleteInput
+              value={addPinForm.client}
+              onChange={(next) => setAddPinForm((c) => ({ ...c, client: next }))}
+              placeholder="Client"
+              suggestions={clients}
+            />
+            <AutocompleteInput
+              value={addPinForm.area}
+              onChange={(next) => setAddPinForm((c) => ({ ...c, area: next }))}
+              placeholder="Area"
+              suggestions={areasForAddPinClient}
+            />
             <div className="button-row">
               <button className="primary-button" type="button" disabled={submittingPin} onClick={handleSubmitNewPin}>
                 {submittingPin ? 'Saving…' : 'Submit'}
