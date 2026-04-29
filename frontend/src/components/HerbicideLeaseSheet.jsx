@@ -25,6 +25,8 @@ export default function HerbicideLeaseSheet({
   initialDistanceMeters = null,
   draft = null,                 // optional draft to resume from
   onDraftSaved,                 // callback when "Save Draft" pressed successfully
+  requireComments = false,
+  commentsLabel = 'Comments',
 }) {
   const isEditMode = !!editingRecord;
   const initializedRef = useRef(false);
@@ -127,7 +129,7 @@ export default function HerbicideLeaseSheet({
 
   // List of required fields that are currently empty. Used both to disable the
   // Preview button and to surface a specific error message when the worker
-  // taps it anyway. Comments is intentionally NOT required.
+  // taps it anyway.
   const requiredMissing = useMemo(() => {
     const missing = [];
     const isBlank = (v) => v === '' || v === null || v === undefined;
@@ -158,9 +160,10 @@ export default function HerbicideLeaseSheet({
       if (!form.roadsideHerbicides?.length) missing.push('Roadside Herbicides Used');
       if (isBlank(form.roadsideLiters)) missing.push('Roadside Liters');
     }
+    if (requireComments && !String(form.comments || '').trim()) missing.push('Comments');
     if (photos.length < 2) missing.push('Photos (both slots)');
     return missing;
-  }, [form, hasPipeline, hasAccessRoad, mainSiteType, photos]);
+  }, [form, hasPipeline, hasAccessRoad, mainSiteType, photos, requireComments]);
 
   // Auto-populate from site, pipeline, draft, or editing record (run once)
   useEffect(() => {
@@ -725,6 +728,7 @@ export default function HerbicideLeaseSheet({
         id: draftId || undefined,
         site_id: site?.id || null,
         pipeline_id: pipeline?.id || null,
+        site_status: requireComments ? 'in_progress' : 'inspected',
         form,
         photos: serializablePhotos,
         ticketNumber,
@@ -1658,7 +1662,9 @@ export default function HerbicideLeaseSheet({
 
             {/* Comments */}
             <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Comments</label>
+              <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>
+                {commentsLabel} {requireComments && !String(form.comments || '').trim() ? <span style={{ color: '#f87171' }}>*</span> : null}
+              </label>
               <textarea
                 value={form.comments}
                 onChange={e => setForm(prev => ({ ...prev, comments: e.target.value }))}

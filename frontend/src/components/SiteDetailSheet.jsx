@@ -288,10 +288,20 @@ export default function SiteDetailSheet({
                 disabled={statusSaving}
                 onClick={() => {
                   // Trigger lease sheet via parent
-                  onStartInspection?.(site);
+                  onStartInspection?.(site, 'inspected');
                 }}
               >
                 Mark Inspected
+              </button>
+              <button
+                className="status-button orange"
+                type="button"
+                disabled={statusSaving}
+                onClick={() => {
+                  onStartInspection?.(site, 'in_progress');
+                }}
+              >
+                Inspected Not Complete
               </button>
               <button
                 className="status-button red"

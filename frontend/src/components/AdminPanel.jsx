@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 
-import { pinTypeLabel } from '../lib/mapUtils';
+import { pinTypeLabel, statusLabel } from '../lib/mapUtils';
 import UserManagementPanel from './UserManagementPanel';
 import LookupManager from './LookupManager';
 
@@ -14,7 +14,7 @@ function PendingSiteCard({ site, busy, onApprove, onReject, onApproveAndEdit, on
         <div>
           <strong>{site.lsd || 'Unnamed pin'}</strong>
           <div className="small-text">{pinTypeLabel(site.pin_type)} • {site.client || 'No client'} • {site.area || 'No area'}</div>
-          <div className="small-text">Status: {site.status === 'inspected' ? 'Inspected' : 'Not inspected'}</div>
+          <div className="small-text">Status: {statusLabel(site.status)}</div>
         </div>
         <span className="pending-badge">Pending</span>
       </div>

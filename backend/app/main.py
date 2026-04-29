@@ -145,6 +145,12 @@ def _migrate_add_columns() -> None:
     
     is_sqlite = str(engine.url).startswith("sqlite")
     with engine.begin() as conn:
+        if not is_sqlite:
+            try:
+                conn.execute(text("ALTER TYPE sitestatus ADD VALUE IF NOT EXISTS 'in_progress'"))
+            except Exception as e:
+                print(f"Warning: sitestatus enum migration failed: {e}")
+
         # Sites migrations
         if insp.has_table("sites"):
             existing_sites = {col["name"] for col in insp.get_columns("sites")}
@@ -624,7 +630,7 @@ def create_site(
         source="field_added",
         approval_state=ApprovalState.pending_review,
         status=payload.status,
-        last_inspected_at=created_at if payload.status == SiteStatus.inspected else None,
+        last_inspected_at=created_at if payload.status in (SiteStatus.inspected, SiteStatus.in_progress) else None,
         raw_attributes=raw_attrs,
     )
     
@@ -848,9 +854,20 @@ def create_site_spray_record(
     )
     db.add(record)
     
-    # Auto-update site status if marking as sprayed or issue
-    site.status = SiteStatus.issue if payload.is_avoided else SiteStatus.inspected
+    site_status = SiteStatus.issue if payload.is_avoided else (
+        SiteStatus.in_progress if payload.site_status == SiteStatus.in_progress else SiteStatus.inspected
+    )
+    site.status = site_status
+    if site_status in (SiteStatus.inspected, SiteStatus.in_progress):
+        site.last_inspected_at = datetime.utcnow()
+        if user_id:
+            site.last_inspected_by_user_id = user_id
+        if current_user.email:
+            site.last_inspected_by_email = current_user.email
+        if user_name:
+            site.last_inspected_by_name = user_name
     site.updated_at = datetime.utcnow()
+
     db.flush()
     # Ensure site relationship is populated for row derivation
     record.site = site
@@ -1285,8 +1302,9 @@ def update_site_status(
     site = get_site_or_404(db, site_id)
     site.status = payload.status
     site.updated_at = datetime.utcnow()
-    if payload.status == SiteStatus.inspected:
+    if payload.status in (SiteStatus.inspected, SiteStatus.in_progress):
         site.last_inspected_at = datetime.utcnow()
+
         # Store user ID, email, and name who inspected
         print(f"[DEBUG] Storing inspection data - User ID: {current_user.id}, Email: {current_user.email}, Name: {current_user.name}")
         if current_user.id and current_user.id > 0:

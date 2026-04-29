@@ -26,6 +26,7 @@ class RoleEnum(str, enum.Enum):
 
 class SiteStatus(str, enum.Enum):
     not_inspected = "not_inspected"
+    in_progress = "in_progress"
     inspected = "inspected"
     issue = "issue"
 

@@ -67,6 +67,7 @@ class SiteSprayRecordCreate(BaseModel):
     spray_date: date
     notes: str | None = None
     is_avoided: bool = False
+    site_status: SiteStatus | None = None
     lease_sheet_data: dict | None = None
     pdf_base64: str | None = None
     ticket_number: str | None = None

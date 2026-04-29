@@ -2,6 +2,9 @@ export function statusLabel(status) {
   if (status === 'inspected') {
     return 'Inspected';
   }
+  if (status === 'in_progress') {
+    return 'In progress';
+  }
   if (status === 'issue') {
     return 'Issue';
   }
@@ -46,6 +49,13 @@ function strokeWidth(isSelected) {
   return isSelected ? 4 : 2;
 }
 
+function statusFill(status) {
+  if (status === 'inspected') return '#22c55e';
+  if (status === 'in_progress') return '#f97316';
+  if (status === 'issue') return '#94a3b8';
+  return '#ef4444';
+}
+
 function pendingSvg() {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
     <circle cx="16" cy="16" r="14" fill="#f59e0b" stroke="#422006" stroke-width="2"/>
@@ -54,7 +64,7 @@ function pendingSvg() {
 }
 
 function lsdSvg(site, isSelected) {
-  const fill = site.status === 'inspected' ? '#22c55e' : site.status === 'issue' ? '#94a3b8' : '#ef4444';
+  const fill = statusFill(site.status);
   const s = stroke(isSelected);
   const sw = strokeWidth(isSelected);
   return `<svg xmlns="http://www.w3.org/2000/svg" width="42" height="52" viewBox="0 0 42 52">
@@ -103,7 +113,7 @@ function atvSvg(isSelected) {
 }
 
 function treeSvg(site, isSelected) {
-  const fill = site.status === 'inspected' ? '#22c55e' : site.status === 'issue' ? '#94a3b8' : '#ef4444';
+  const fill = statusFill(site.status);
   const s = stroke(isSelected);
   const sw = strokeWidth(isSelected);
   return `<svg xmlns="http://www.w3.org/2000/svg" width="38" height="50" viewBox="0 0 38 50">

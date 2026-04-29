@@ -872,6 +872,11 @@ button.site-row { cursor: pointer; }
   color: #86efac;
 }
 
+.status-button.orange {
+  background: rgba(249, 115, 22, 0.18);
+  color: #fdba74;
+}
+
 .status-button.red {
   background: rgba(239, 68, 68, 0.18);
   color: #fca5a5;

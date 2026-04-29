@@ -173,6 +173,7 @@ export default function FilterBar({
       <select value={filters.status} onChange={(event) => onChange('status', event.target.value)}>
         <option value="">All statuses</option>
         <option value="inspected">Inspected</option>
+        <option value="in_progress">In progress</option>
         <option value="not_inspected">Not inspected</option>
         <option value="issue">Issue with Site</option>
       </select>

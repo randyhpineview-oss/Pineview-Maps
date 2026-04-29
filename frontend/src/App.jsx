@@ -213,6 +213,7 @@ export default function App() {
   // Lease sheet inspection state
   const [inspectionSite, setInspectionSite] = useState(null);
   const [inspectionPipeline, setInspectionPipeline] = useState(null);
+  const [inspectionSiteStatus, setInspectionSiteStatus] = useState('inspected');
   // Upload queue state
   const [uploadQueueItems, setUploadQueueItems] = useState([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -2239,7 +2240,7 @@ export default function App() {
   }
 
   // Lease sheet inspection handlers
-  function handleStartInspection(siteOrPipeline) {
+  function handleStartInspection(siteOrPipeline, siteStatus = 'inspected') {
     // Close any open panels
     setDetailOpen(false);
     setPipelineDetailOpen(false);
@@ -2249,8 +2250,10 @@ export default function App() {
       setInspectionSite(siteOrPipeline);
       setInspectionPipeline(null);
       setPendingPipelineSegment(null);
+      setInspectionSiteStatus(siteStatus === 'in_progress' ? 'in_progress' : 'inspected');
     } else {
       // Pipelines must start with segment selection workflow first
+      setInspectionSiteStatus('inspected');
       handleStartSprayMarking(siteOrPipeline);
     }
   }
@@ -2282,10 +2285,14 @@ export default function App() {
 
   async function handleLeaseSheetSubmit(payload) {
     if (inspectionSite) {
+      const sitePayload = {
+        ...payload,
+        site_status: inspectionSiteStatus === 'in_progress' ? 'in_progress' : 'inspected',
+      };
       await queueUpload({
         targetType: 'site',
         targetId: inspectionSite.id,
-        payload,
+        payload: sitePayload,
       });
       await refreshUploadQueue();
     } else if (inspectionPipeline && pendingPipelineSegment) {
@@ -2304,9 +2311,10 @@ export default function App() {
     }
 
     if (inspectionSite) {
+      const nextStatus = payload.is_avoided ? 'issue' : (inspectionSiteStatus === 'in_progress' ? 'in_progress' : 'inspected');
       const optimistic = {
         ...inspectionSite,
-        status: payload.is_avoided ? 'issue' : 'inspected',
+        status: nextStatus,
         last_inspected_at: new Date().toISOString(),
       };
       setSites((prev) => prev.map((s) => (s.id === optimistic.id ? optimistic : s)));
@@ -2318,6 +2326,7 @@ export default function App() {
     // Clear inspection state — user returns to map immediately
     setInspectionSite(null);
     setInspectionPipeline(null);
+    setInspectionSiteStatus('inspected');
     setPendingPipelineSegment(null);
     // Clear any draft-resume state and bump refresh token so drafts list re-reads IDB
     setResumingDraft(null);
@@ -2394,6 +2403,7 @@ export default function App() {
     }
     setInspectionSite(null);
     setInspectionPipeline(null);
+    setInspectionSiteStatus('inspected');
     setPendingPipelineSegment(null);
   }
 
@@ -2755,7 +2765,7 @@ export default function App() {
     if (!Number.isInteger(site.id)) { setMessage('Sync this pin first.'); return; }
     setStatusSaving(true);
     // Optimistic update: change color instantly on the device
-    const optimistic = { ...site, status, updated_at: new Date().toISOString(), ...(status === 'inspected' ? { last_inspected_at: new Date().toISOString() } : {}) };
+    const optimistic = { ...site, status, updated_at: new Date().toISOString(), ...(status === 'inspected' || status === 'in_progress' ? { last_inspected_at: new Date().toISOString() } : {}) };
     setSites((current) => current.map((item) => (matchSiteIdentity(item, site) ? optimistic : item)));
     setSelectedSite(optimistic);
     try {
@@ -2766,7 +2776,7 @@ export default function App() {
         setSelectedSite(updated);
         setMessage('Status updated.');
       } else {
-        const optimisticSite = { ...site, status, last_inspected_at: status === 'inspected' ? new Date().toISOString() : null, updated_at: new Date().toISOString() };
+        const optimisticSite = { ...site, status, last_inspected_at: status === 'inspected' || status === 'in_progress' ? new Date().toISOString() : null, updated_at: new Date().toISOString() };
         await queueAction({ type: 'update_status', payload: { siteId: site.id, body: { status, note } } });
         await upsertSite(optimisticSite);
         setSites((current) => current.map((item) => (matchSiteIdentity(item, site) ? optimisticSite : item)));
@@ -3264,6 +3274,8 @@ export default function App() {
               pipeline={inspectionPipeline}
               initialDistanceMeters={pendingPipelineSegment?.distance_meters ?? null}
               isOpen={true}
+              requireComments={!!inspectionSite && inspectionSiteStatus === 'in_progress'}
+              commentsLabel={inspectionSiteStatus === 'in_progress' ? 'Comments / what was completed' : 'Comments'}
               onSubmit={handleLeaseSheetSubmit}
               onCancel={() => { handleLeaseSheetCancel(); setResumingDraft(null); }}
               cachedLookups={cachedLookups}
@@ -3729,8 +3741,10 @@ export default function App() {
                     } else {
                       setInspectionSite({ id: draft.site_id });
                     }
+                    setInspectionSiteStatus(draft.site_status === 'in_progress' ? 'in_progress' : 'inspected');
                   } else {
                     setInspectionSite(null);
+                    setInspectionSiteStatus('inspected');
                   }
                 } else {
                   setMessage('Select a site from the Map tab first, then tap "Mark as sprayed".');
