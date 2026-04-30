@@ -179,6 +179,51 @@ export default function App() {
   // own SW.
   const wasOnline = useRef(window.navigator.onLine);
   const lastSyncStatusRef = useRef(null);
+
+  // ── Service-worker update detection ─────────────────────────────────────
+  // vite-plugin-pwa registers the SW via its auto-injected registerSW shim.
+  // When a new SW has installed and is waiting, we surface an "Update Now"
+  // button in the account popover. Clicking it posts skipWaiting to the
+  // waiting worker then clears all caches and reloads so users always get
+  // the freshest build without having to close every tab.
+  const [swUpdateAvailable, setSwUpdateAvailable] = useState(false);
+  const swWaitingRef = useRef(null);
+
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    const checkForWaiting = (reg) => {
+      if (reg.waiting) {
+        swWaitingRef.current = reg.waiting;
+        setSwUpdateAvailable(true);
+      }
+    };
+    navigator.serviceWorker.getRegistration().then((reg) => {
+      if (!reg) return;
+      checkForWaiting(reg);
+      reg.addEventListener('updatefound', () => {
+        const newWorker = reg.installing;
+        if (!newWorker) return;
+        newWorker.addEventListener('statechange', () => {
+          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+            swWaitingRef.current = newWorker;
+            setSwUpdateAvailable(true);
+          }
+        });
+      });
+    }).catch(() => undefined);
+  }, []);
+
+  const handleAppUpdate = useCallback(async () => {
+    setAccountMenuOpen(false);
+    if (swWaitingRef.current) {
+      swWaitingRef.current.postMessage({ type: 'SKIP_WAITING' });
+    }
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    } catch { /* ignore */ }
+    window.location.reload();
+  }, []);
   // Delta-sync watermarks: the `server_time` returned by the last successful
   // /api/*/delta call, to be passed back as `?since=` on the next poll. Null
   // means "no baseline yet — fall back to full fetch on the first call".
@@ -3986,6 +4031,29 @@ export default function App() {
                 >
                   {APP_VERSION_LABEL}
                 </div>
+                {swUpdateAvailable ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={handleAppUpdate}
+                    style={{
+                      display: 'block',
+                      width: 'calc(100% - 1.5rem)',
+                      margin: '0 0.75rem 0.5rem',
+                      padding: '0.45rem 0.75rem',
+                      background: '#2563eb',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '6px',
+                      fontSize: '0.78rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      textAlign: 'center',
+                    }}
+                  >
+                    ↑ Update Now
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </div>

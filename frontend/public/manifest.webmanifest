@@ -1,6 +1,6 @@
 {
   "name": "Pineview Maps",
-  "short_name": "Pineview",
+  "short_name": "Pineview Maps",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0b1220",
