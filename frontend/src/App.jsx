@@ -1707,13 +1707,26 @@ export default function App() {
       const isHardDelete = payload.eventType === 'DELETE';
       const isSoftDeleted = !isHardDelete && row.deleted_at != null;
       const approval = row.approval_state;
+      // Treat 'rejected' as "hidden from the map" — matches the backend's
+      // list endpoint which already filters rejected rows out of
+      // /api/sites. Before, realtime would upsert a rejected row back into
+      // `sites` with approval_state='rejected' but NO map logic handles
+      // that state, so the orange `!` marker stayed visible until a full
+      // refresh. Dropping the row from `sites` on reject makes the
+      // pending marker disappear instantly on the rejecter's device and
+      // across every other device listening to realtime.
+      const isHidden = isHardDelete || isSoftDeleted || approval === 'rejected';
 
       // Main map list
       setSites((prev) => {
-        if (isHardDelete || isSoftDeleted) return removeById(prev, row.id);
+        if (isHidden) return removeById(prev, row.id);
         return upsertById(prev, row);
       });
       if (isHardDelete) {
+        void removeSite({ id: row.id });
+      } else if (approval === 'rejected') {
+        // Keep IndexedDB in sync — rejected rows get purged locally so a
+        // cold start doesn't re-hydrate the orange marker from cache.
         void removeSite({ id: row.id });
       } else {
         void upsertSite(row);
@@ -1740,7 +1753,7 @@ export default function App() {
 
       // Currently-viewed detail sheet
       if (selectedSiteRef.current && selectedSiteRef.current.id === row.id) {
-        if (isHardDelete) {
+        if (isHardDelete || approval === 'rejected' || isSoftDeleted) {
           setDetailOpen(false);
           setSelectedSite(null);
         } else {
@@ -1757,12 +1770,16 @@ export default function App() {
       const isHardDelete = payload.eventType === 'DELETE';
       const isSoftDeleted = !isHardDelete && row.deleted_at != null;
       const approval = row.approval_state;
+      // Same "rejected == hidden" treatment as onSites — the rendered
+      // Polyline doesn't have a dedicated rejected style, so dropping the
+      // row is the simplest way to make reject feel instant.
+      const isHidden = isHardDelete || isSoftDeleted || approval === 'rejected';
 
       setPipelines((prev) => {
-        if (isHardDelete || isSoftDeleted) return removeById(prev, row.id);
+        if (isHidden) return removeById(prev, row.id);
         return upsertById(prev, row);
       });
-      if (isHardDelete) {
+      if (isHardDelete || approval === 'rejected') {
         void removePipeline(row.id);
       } else {
         void upsertPipeline(row);
@@ -3115,8 +3132,14 @@ export default function App() {
         // truth on its next tick, but the worker sees the pending count
         // tick up immediately on submit.
         if (created.approval_state === 'pending_review' && roleCanAdmin) {
+          // Append to pendingSites; the derivation effect that locks
+          // pendingSitesCount = pendingSites.length will set the topbar
+          // badge. Do NOT also bump the count explicitly — if the Supabase
+          // Realtime INSERT for this pin beat the HTTP response (common on
+          // slow cellular), the realtime handler already added the row and
+          // the derivation effect already set the count. A manual +1 on
+          // top of that was the source of "Pending: 2 when I only added 1".
           setPendingSites((prev) => (prev.some((s) => s.id === created.id) ? prev : [created, ...prev]));
-          setPendingSitesCount((c) => (c == null ? 1 : c + 1));
         }
         setMessage(created.approval_state === 'approved' ? 'Pin added.' : 'Pending pin submitted for review.');
         submittedSite = created;
@@ -4502,21 +4525,28 @@ export default function App() {
                 () => api.approveSite(siteId, { approval_state: 'approved', ...overrides }),
                 'Approved.',
                 {
+                  // Remove from pendingSites only — the derivation effect
+                  // above keeps pendingSitesCount in sync with the array
+                  // length. Manually decrementing was the old pattern and
+                  // is now redundant AND racy: a realtime UPDATE arriving
+                  // concurrently could already have removed the row, so
+                  // a manual -1 on top would over-decrement.
                   optimistic: () => {
                     setPendingSites((prev) => prev.filter((s) => s.id !== siteId));
-                    setPendingSitesCount((c) => (c == null ? null : Math.max(0, c - 1)));
                   },
                 },
               )}
               onReject={async (siteId) => {
                 setAdminBusy(true);
                 // Optimistic remove BEFORE the API call so the card vanishes
-                // immediately. We snapshot the row so we can restore it if
-                // the server returns the structured 409 (linked spray
-                // records) and refuses to reject.
-                const removed = pendingSites.find((s) => s.id === siteId) || null;
+                // immediately AND the orange "!" marker on the map is
+                // dropped in the same React tick. Snapshot both rows so we
+                // can put them back if the server refuses the reject (e.g.
+                // structured 409 for linked spray records).
+                const removedPending = pendingSites.find((s) => s.id === siteId) || null;
+                const removedFromSites = sites.find((s) => s.id === siteId) || null;
                 setPendingSites((prev) => prev.filter((s) => s.id !== siteId));
-                setPendingSitesCount((c) => (c == null ? null : Math.max(0, c - 1)));
+                setSites((prev) => prev.filter((s) => s.id !== siteId));
                 try {
                   await api.approveSite(siteId, { approval_state: 'rejected' });
                   setMessage('Rejected.');
@@ -4526,10 +4556,14 @@ export default function App() {
                     runPollTickRef.current ? runPollTickRef.current() : Promise.resolve(),
                   ]);
                 } catch (error) {
-                  // Roll back the optimistic remove on any failure so the
-                  // card reappears with its original data.
-                  if (removed) setPendingSites((prev) => (prev.some((s) => s.id === siteId) ? prev : [removed, ...prev]));
-                  setPendingSitesCount((c) => (c == null ? null : c + 1));
+                  // Roll back both optimistic removes so the card and the
+                  // map marker both come back with their original data.
+                  if (removedPending) {
+                    setPendingSites((prev) => (prev.some((s) => s.id === siteId) ? prev : [removedPending, ...prev]));
+                  }
+                  if (removedFromSites) {
+                    setSites((prev) => (prev.some((s) => s.id === siteId) ? prev : [removedFromSites, ...prev]));
+                  }
                   if (!explainRejectConflict(error, 'pin')) {
                     setMessage(error?.message || 'Reject failed.');
                   }
@@ -4560,20 +4594,21 @@ export default function App() {
                 async () => { await api.approvePipeline(pipelineId, payload); await loadPipelines(); },
                 'Pipeline approved.',
                 {
+                  // Array-only mutation; derivation effect handles the count.
                   optimistic: () => {
                     setPendingPipelines((prev) => prev.filter((p) => p.id !== pipelineId));
-                    setPendingPipelinesCount((c) => (c == null ? null : Math.max(0, c - 1)));
                   },
                 },
               )}
               onRejectPipeline={async (pipelineId) => {
                 setAdminBusy(true);
-                // Same snapshot-then-remove pattern as the site reject branch:
-                // the card vanishes instantly and we put it back if the
-                // server returns a 409 / other failure.
-                const removed = pendingPipelines.find((p) => p.id === pipelineId) || null;
+                // Same snapshot-then-remove pattern as the site reject
+                // branch: card + polyline vanish instantly and we put them
+                // back if the server refuses.
+                const removedPending = pendingPipelines.find((p) => p.id === pipelineId) || null;
+                const removedFromPipelines = pipelines.find((p) => p.id === pipelineId) || null;
                 setPendingPipelines((prev) => prev.filter((p) => p.id !== pipelineId));
-                setPendingPipelinesCount((c) => (c == null ? null : Math.max(0, c - 1)));
+                setPipelines((prev) => prev.filter((p) => p.id !== pipelineId));
                 try {
                   await api.approvePipeline(pipelineId, { approval_state: 'rejected' });
                   setMessage('Pipeline rejected.');
@@ -4583,8 +4618,12 @@ export default function App() {
                     runPollTickRef.current ? runPollTickRef.current() : Promise.resolve(),
                   ]);
                 } catch (error) {
-                  if (removed) setPendingPipelines((prev) => (prev.some((p) => p.id === pipelineId) ? prev : [removed, ...prev]));
-                  setPendingPipelinesCount((c) => (c == null ? null : c + 1));
+                  if (removedPending) {
+                    setPendingPipelines((prev) => (prev.some((p) => p.id === pipelineId) ? prev : [removedPending, ...prev]));
+                  }
+                  if (removedFromPipelines) {
+                    setPipelines((prev) => (prev.some((p) => p.id === pipelineId) ? prev : [removedFromPipelines, ...prev]));
+                  }
                   if (!explainRejectConflict(error, 'pipeline')) {
                     setMessage(error?.message || 'Reject failed.');
                   }
