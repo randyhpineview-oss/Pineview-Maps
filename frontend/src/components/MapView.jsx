@@ -170,6 +170,7 @@ export default function MapView({
   const mapRef = useRef(null);
   const lastFittedBoundsKey = useRef('');
   const hasInitiallyFitted = useRef(false);
+  const markerInstancesRef = useRef(new Map());
   const [popupSite, setPopupSite] = useState(null);
   const [popupPipeline, setPopupPipeline] = useState(null);
   const lastZoomTarget = useRef(null);
@@ -357,6 +358,19 @@ export default function MapView({
     const stillVisible = sites.some((site) => String(site.id ?? site.cacheId) === key);
     if (!stillVisible) setPopupSite(null);
   }, [popupSite, sites]);
+
+  useEffect(() => {
+    if (!isLoaded) return;
+    const currentKeys = new Set(
+      sites.map((s) => `${markerRevision}-${s.id || s.cacheId}-${s.approval_state || ''}`)
+    );
+    for (const [k, m] of Array.from(markerInstancesRef.current.entries())) {
+      if (!currentKeys.has(k)) {
+        try { m.setMap(null); } catch { /* ignore */ }
+        markerInstancesRef.current.delete(k);
+      }
+    }
+  }, [sites, markerRevision, isLoaded]);
 
   const userLocationIcon = useMemo(() => {
     if (!isLoaded || !userLocation) return null;
@@ -789,17 +803,22 @@ export default function MapView({
           />
         </OverlayView>
 
-        {sites.map((site) => (
-          <Marker
-            key={`${markerRevision}-${site.id || site.cacheId}-${site.approval_state || ''}`}
-            position={{ lat: site.latitude, lng: site.longitude }}
-            icon={buildMarkerIcon(site,
-              (popupSite && String(popupSite.id ?? popupSite.cacheId) === String(site.id ?? site.cacheId)) ||
-              (selectedSite && String(selectedSite.id ?? selectedSite.cacheId) === String(site.id ?? site.cacheId))
-            )}
-            onClick={() => { setPopupSite(site); setPopupPipeline(null); }}
-          />
-        ))}
+        {sites.map((site) => {
+          const mKey = `${markerRevision}-${site.id || site.cacheId}-${site.approval_state || ''}`;
+          return (
+            <Marker
+              key={mKey}
+              position={{ lat: site.latitude, lng: site.longitude }}
+              icon={buildMarkerIcon(site,
+                (popupSite && String(popupSite.id ?? popupSite.cacheId) === String(site.id ?? site.cacheId)) ||
+                (selectedSite && String(selectedSite.id ?? selectedSite.cacheId) === String(site.id ?? site.cacheId))
+              )}
+              onLoad={(m) => { markerInstancesRef.current.set(mKey, m); }}
+              onUnmount={(m) => { try { m.setMap(null); } catch { /* ignore */ } markerInstancesRef.current.delete(mKey); }}
+              onClick={() => { setPopupSite(site); setPopupPipeline(null); }}
+            />
+          );
+        })}
 
         {/* Pipeline polylines */}
         {pipelines.map((pipeline) => {

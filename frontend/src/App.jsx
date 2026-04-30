@@ -4609,14 +4609,17 @@ export default function App() {
                 () => api.approveSite(siteId, { approval_state: 'approved', ...overrides }),
                 'Approved.',
                 {
-                  // Remove from pendingSites only — the derivation effect
-                  // above keeps pendingSitesCount in sync with the array
-                  // length. Manually decrementing was the old pattern and
-                  // is now redundant AND racy: a realtime UPDATE arriving
-                  // concurrently could already have removed the row, so
-                  // a manual -1 on top would over-decrement.
+                  // Remove from pendingSites and update approval_state in sites
+                  // so the "!" marker changes to a normal pin immediately without
+                  // waiting for the realtime event to arrive.
                   optimistic: () => {
-                    setPendingSites((prev) => prev.filter((s) => s.id !== siteId));
+                    setPendingSites((prev) => removeSitesByIdentity(prev, siteId));
+                    setSites((prev) => prev.map((s) =>
+                      matchSiteIdentity(s, siteId)
+                        ? { ...s, approval_state: 'approved', ...overrides }
+                        : s
+                    ));
+                    setMarkerRevision((x) => x + 1);
                   },
                 },
               )}
