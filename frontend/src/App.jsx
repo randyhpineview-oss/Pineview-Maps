@@ -1698,7 +1698,21 @@ export default function App() {
     if (!supabase || !user || !window.navigator.onLine) return;
 
     // ── helpers used by every handler ────────────────────────────────────
-    const rowOf = (payload) => (payload.eventType === 'DELETE' ? payload.old : payload.new);
+    const rowOf = (payload) => {
+      const row = payload.eventType === 'DELETE' ? payload.old : payload.new;
+      // Supabase Realtime (via wal2json) can deliver integer column
+      // values as strings, e.g. id: "123" instead of id: 123. The
+      // rest of the app (API responses, IndexedDB cache, optimistic
+      // mutations) uses numeric ids, so a string here would create a
+      // ghost duplicate in every `setSites` Map/findIndex keyed by
+      // `row.id` — the root cause of the "reject leaves orange ! on
+      // the map" bug.  Coerce once, at the gate.
+      if (row && row.id != null && typeof row.id === 'string') {
+        const n = Number(row.id);
+        if (!Number.isNaN(n)) row.id = n;
+      }
+      return row;
+    };
     const merge = (existing, incoming) => (existing ? { ...existing, ...incoming } : incoming);
     const upsertById = (arr, row) => {
       const idx = arr.findIndex((x) => x.id === row.id);
@@ -2006,6 +2020,13 @@ export default function App() {
   const visibleSites = useMemo(() => {
     const normalizedSearch = filters.search.trim().toLowerCase();
     return sites.filter((site) => {
+      // Hard guard: rejected or soft-deleted pins must NEVER render a
+      // map marker, regardless of how they ended up in `sites` (stale
+      // cache, delta race, realtime upsert before the isHidden check
+      // ran, …).  This is the last line of defence — even if every
+      // other cleanup path misses the row, the marker won't appear.
+      if (site.approval_state === 'rejected') return false;
+      if (site.deleted_at) return false;
       const isWater = site.pin_type === 'water';
       // Layer visibility check
       if (site.pin_type && !layers[site.pin_type]) return false;
@@ -2024,6 +2045,7 @@ export default function App() {
     const normalizedSearch = filters.search.trim().toLowerCase();
     return pipelines.filter((p) => {
       if (p.deleted_at) return false;
+      if (p.approval_state === 'rejected') return false;
       if (filters.client && p.client !== filters.client) return false;
       if (filters.area && p.area !== filters.area) return false;
       if (filters.approval_state && p.approval_state !== filters.approval_state) return false;
@@ -4571,9 +4593,16 @@ export default function App() {
                 const removedFromSites = sites.find((s) => s.id === siteId) || null;
                 setPendingSites((prev) => prev.filter((s) => s.id !== siteId));
                 setSites((prev) => prev.filter((s) => s.id !== siteId));
+                // Also purge from IndexedDB so a cold-start can't resurrect it.
+                void removeSite({ id: siteId });
                 try {
                   await api.approveSite(siteId, { approval_state: 'rejected' });
                   setMessage('Rejected.');
+                  // Belt-and-suspenders: force another removal pass in case
+                  // a concurrent delta/realtime upserted the row back while
+                  // the API call was in flight.
+                  setSites((prev) => prev.filter((s) => s.id !== siteId));
+                  void removeSite({ id: siteId });
                   // Background catch-up only — no awaiting refreshAllData.
                   void Promise.allSettled([
                     loadPendingSites(),
