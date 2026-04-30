@@ -1365,6 +1365,7 @@ export default function App() {
         const idsRemoved = Array.isArray(delta?.ids_removed) ? delta.ids_removed : [];
 
         if (items.length > 0 || idsRemoved.length > 0) {
+          console.log('[DELTA-DBG] sites delta: items=', items.length, 'removed=', idsRemoved.length, items.map((i) => ({ id: i.id, approval_state: i.approval_state })));
           // Merge into React state (upsert by id, drop removed). Spread-merge
           // preserves heavy fields (spray_records, updates, ...) that the
           // slim delta schema doesn't ship.
@@ -1744,6 +1745,7 @@ export default function App() {
     const onSites = (payload) => {
       const row = rowOf(payload);
       if (!row || row.id == null) return;
+      console.log('[RT-DBG] onSites event:', payload.eventType, 'id:', row.id, 'approval_state:', row.approval_state, 'pin_type:', row.pin_type);
 
       const isHardDelete = payload.eventType === 'DELETE';
       const isSoftDeleted = !isHardDelete && row.deleted_at != null;
@@ -4618,12 +4620,22 @@ export default function App() {
                   // mirrors how handleDeleteSite works (filter removes the
                   // site, marker unmounts cleanly).
                   optimistic: () => {
-                    setPendingSites((prev) => removeSitesByIdentity(prev, siteId));
+                    console.log('[APPROVE-DBG] optimistic fired for siteId=', siteId, 'type=', typeof siteId);
+                    setPendingSites((prev) => {
+                      console.log('[APPROVE-DBG] pendingSites before:', prev.length);
+                      const next = removeSitesByIdentity(prev, siteId);
+                      console.log('[APPROVE-DBG] pendingSites after:', next.length);
+                      return next;
+                    });
                     setSites((prev) => {
                       const match = prev.find((s) => matchSiteIdentity(s, siteId));
+                      console.log('[APPROVE-DBG] sites count:', prev.length, 'match found:', !!match, match ? { id: match.id, approval_state: match.approval_state, pin_type: match.pin_type } : null);
                       const without = removeSitesByIdentity(prev, siteId);
+                      console.log('[APPROVE-DBG] sites after remove:', without.length);
                       if (!match) return without;
-                      return [...without, { ...match, approval_state: 'approved', ...overrides }];
+                      const updated = { ...match, approval_state: 'approved', ...overrides };
+                      console.log('[APPROVE-DBG] reinserting with:', { id: updated.id, approval_state: updated.approval_state, pin_type: updated.pin_type });
+                      return [...without, updated];
                     });
                   },
                 },

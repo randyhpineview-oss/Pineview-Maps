@@ -1,7 +1,7 @@
 {
   "build": {
     "env": {
-      "VITE_APP_VERSION": "1.1.36"
+      "VITE_APP_VERSION": "1.1.37-dbg"
     }
   },
   "headers": [

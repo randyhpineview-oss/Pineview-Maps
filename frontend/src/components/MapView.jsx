@@ -803,6 +803,7 @@ export default function MapView({
           />
         </OverlayView>
 
+        {(() => { const pending = sites.filter((s) => s.approval_state === 'pending_review'); if (pending.length) console.log('[MAP-DBG] rendering', sites.length, 'markers,', pending.length, 'pending:', pending.map((s) => ({ id: s.id, cacheId: s.cacheId, approval_state: s.approval_state }))); return null; })()}
         {sites.map((site) => {
           const mKey = `${markerRevision}-${site.id || site.cacheId}`;
           return (
