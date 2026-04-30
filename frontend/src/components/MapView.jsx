@@ -362,7 +362,7 @@ export default function MapView({
   useEffect(() => {
     if (!isLoaded) return;
     const currentKeys = new Set(
-      sites.map((s) => `${markerRevision}-${s.id || s.cacheId}-${s.approval_state || ''}`)
+      sites.map((s) => `${markerRevision}-${s.id || s.cacheId}`)
     );
     for (const [k, m] of Array.from(markerInstancesRef.current.entries())) {
       if (!currentKeys.has(k)) {
@@ -804,7 +804,7 @@ export default function MapView({
         </OverlayView>
 
         {sites.map((site) => {
-          const mKey = `${markerRevision}-${site.id || site.cacheId}-${site.approval_state || ''}`;
+          const mKey = `${markerRevision}-${site.id || site.cacheId}`;
           return (
             <Marker
               key={mKey}
