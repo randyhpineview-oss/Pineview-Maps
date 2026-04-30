@@ -359,18 +359,37 @@ export default function MapView({
     if (!stillVisible) setPopupSite(null);
   }, [popupSite, sites]);
 
+  // Imperative marker sync: handles two cases that @react-google-maps/api's
+  // React-level prop updates miss on some platforms (especially mobile Safari):
+  //   1. Stale markers whose site was removed → setMap(null)
+  //   2. Existing markers whose icon changed (e.g. pending→approved) → setIcon()
   useEffect(() => {
     if (!isLoaded) return;
     const currentKeys = new Set(
       sites.map((s) => `${markerRevision}-${s.id || s.cacheId}`)
     );
+    // Remove markers for sites that no longer exist
     for (const [k, m] of Array.from(markerInstancesRef.current.entries())) {
       if (!currentKeys.has(k)) {
         try { m.setMap(null); } catch { /* ignore */ }
         markerInstancesRef.current.delete(k);
       }
     }
-  }, [sites, markerRevision, isLoaded]);
+    // Imperatively update icons on surviving markers so mobile Safari
+    // (where the React <Marker> prop update is silently dropped) still
+    // reflects the correct icon for the current approval_state / selection.
+    for (const site of sites) {
+      const mKey = `${markerRevision}-${site.id || site.cacheId}`;
+      const m = markerInstancesRef.current.get(mKey);
+      if (!m) continue;
+      try {
+        const isSelected =
+          (popupSite && String(popupSite.id ?? popupSite.cacheId) === String(site.id ?? site.cacheId)) ||
+          (selectedSite && String(selectedSite.id ?? selectedSite.cacheId) === String(site.id ?? site.cacheId));
+        m.setIcon(buildMarkerIcon(site, isSelected));
+      } catch { /* ignore */ }
+    }
+  }, [sites, markerRevision, isLoaded, popupSite, selectedSite]);
 
   const userLocationIcon = useMemo(() => {
     if (!isLoaded || !userLocation) return null;
