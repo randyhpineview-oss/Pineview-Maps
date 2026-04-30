@@ -2,6 +2,8 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 import { execSync } from 'node:child_process';
+import { readFileSync, existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 // ── Build-time version metadata ──────────────────────────────────────────────
 // We want a version label visible in the app (avatar popover) that auto-bumps
@@ -33,21 +35,25 @@ function tryGit(cmd) {
   }
 }
 
+// Try .version.json first (written by scripts/set-version.mjs at build time).
+// This is the only path that reliably works on Vercel (shallow clones break
+// git rev-list, env vars from buildCommand shell don't propagate, etc.).
+// Vite runs vite.config.js with the frontend dir as cwd, so a relative path
+// resolves correctly both locally (npm run build inside frontend/) and on
+// Vercel (root directory set to frontend/ in project settings).
+const versionFile = resolve(process.cwd(), '.version.json');
+let fromFile = null;
+if (existsSync(versionFile)) {
+  try { fromFile = JSON.parse(readFileSync(versionFile, 'utf8')); } catch { /* ignore */ }
+}
+
 const explicitVersion = process.env.VITE_APP_VERSION;
 const explicitCommit = process.env.VITE_APP_COMMIT;
-
-// Vercel sets VERCEL_GIT_COMMIT_SHA to the full SHA on every build.
 const vercelSha = process.env.VERCEL_GIT_COMMIT_SHA || '';
 
 const gitSha = explicitCommit || vercelSha || tryGit('git rev-parse HEAD');
-
-// Vercel uses shallow clones (--depth=1) so `git rev-list --count HEAD`
-// returns 1. We unshallow first via the build command in vercel.json,
-// but if that ever fails, fall back to a date-based patch number so the
-// version label is always unique and monotonically increasing.
 let gitCount = tryGit('git rev-list --count HEAD');
 if (!gitCount || gitCount === '1') {
-  // Compact YYDDD + HH fallback (year + day-of-year + UTC hour).
   const now = new Date();
   const start = new Date(now.getFullYear(), 0, 0);
   const dayOfYear = Math.floor((now - start) / 86400000);
@@ -56,11 +62,11 @@ if (!gitCount || gitCount === '1') {
   gitCount = `${yy}${String(dayOfYear).padStart(3, '0')}${hh}`;
 }
 
-const APP_VERSION = explicitVersion || `1.1.${gitCount}`;
-const APP_COMMIT = (gitSha || 'local').slice(0, 7);
-const APP_BUILD_TIME = new Date().toISOString();
+const APP_VERSION = (fromFile && fromFile.version) || explicitVersion || `1.1.${gitCount}`;
+const APP_COMMIT = (fromFile && fromFile.commit) || (gitSha || 'local').slice(0, 7);
+const APP_BUILD_TIME = (fromFile && fromFile.buildTime) || new Date().toISOString();
 
-console.log(`[vite.config] APP_VERSION=${APP_VERSION} APP_COMMIT=${APP_COMMIT}`);
+console.log(`[vite.config] APP_VERSION=${APP_VERSION} APP_COMMIT=${APP_COMMIT} (source=${fromFile ? 'file' : 'fallback'})`);
 
 export default defineConfig({
   define: {

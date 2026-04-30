@@ -1,5 +1,5 @@
 {
-  "buildCommand": "cd .. && git fetch --unshallow 2>/dev/null; export VITE_APP_VERSION=1.1.$(git rev-list --count HEAD) && cd frontend && npm run build",
+  "buildCommand": "node ../scripts/set-version.mjs && npm run build",
   "headers": [
     {
       "source": "/index.html",

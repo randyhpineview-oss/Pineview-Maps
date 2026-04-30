@@ -6,6 +6,7 @@ backend/app/__pycache__/
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/.version.json
 .env
 .DS_Store
 Thumbs.db
