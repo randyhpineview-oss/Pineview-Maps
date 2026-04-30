@@ -4619,7 +4619,6 @@ export default function App() {
                         ? { ...s, approval_state: 'approved', ...overrides }
                         : s
                     ));
-                    setMarkerRevision((x) => x + 1);
                   },
                 },
               )}
@@ -4636,7 +4635,6 @@ export default function App() {
                 setSites((prev) => removeSitesByIdentity(prev, siteId));
                 setSelectedSite((prev) => (matchSiteIdentity(prev, siteId) ? null : prev));
                 setDetailOpen((open) => (matchSiteIdentity(selectedSiteRef.current, siteId) ? false : open));
-                setMarkerRevision((x) => x + 1);
                 // Also purge from IndexedDB so a cold-start can't resurrect it.
                 void removeSite({ id: siteId });
                 try {
@@ -4646,7 +4644,6 @@ export default function App() {
                   // a concurrent delta/realtime upserted the row back while
                   // the API call was in flight.
                   setSites((prev) => removeSitesByIdentity(prev, siteId));
-                  setMarkerRevision((x) => x + 1);
                   void removeSite({ id: siteId });
                   // Background catch-up only — no awaiting refreshAllData.
                   void Promise.allSettled([
