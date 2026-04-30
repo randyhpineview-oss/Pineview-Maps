@@ -19,7 +19,7 @@ import { requestWithUploadProgress } from './lib/xhrUpload';
 import { nearestFraction } from './lib/mapUtils';
 import { generateLeaseSheetPdf } from './lib/pdfGenerator';
 import { generateTMTicketPdf } from './lib/tmTicketPdfGenerator';
-import { onAuthStateChange, signOut } from './lib/supabaseClient';
+import { onAuthStateChange, signOut, supabase } from './lib/supabaseClient';
 import { APP_VERSION_LABEL } from './version';
 import {
   getAllLookups,
@@ -1207,6 +1207,12 @@ export default function App() {
   // handler reuse the same delta-poll logic without duplicating it or pulling
   // the full site/pipeline lists on every wifi-to-cell handoff in the field.
   const runPollTickRef = useRef(null);
+  // Mirrors of selectedSite / selectedPipeline so the long-lived Realtime
+  // subscription useEffect can react to events on the currently-open pin
+  // without re-subscribing every time the user opens or closes a different
+  // one. Updated by tiny mirror effects below.
+  const selectedSiteRef = useRef(null);
+  const selectedPipelineRef = useRef(null);
 
   // Stable callback children can invoke to force an immediate delta sync
   // (sync-status check + any dependent deltas). Used by FormsPanel when
@@ -1538,6 +1544,338 @@ export default function App() {
       runPollTickRef.current = null;
     };
   }, [isOnline, serverFilters, roleCanAdmin, selectedSite, processUploadQueue]);
+
+  // ── Mirror selectedSite / selectedPipeline into refs ────────────────────
+  // The Realtime subscription useEffect below opens a single long-lived
+  // WebSocket. Its handlers need to read "is the user currently looking at
+  // this site?" so they can refresh the open detail sheet on the fly. Using
+  // selectedSite directly would make the subscription a dependency of the
+  // effect → the channel would tear down and re-open every time the user
+  // taps a different pin, which is both wasteful AND drops events for the
+  // ~100 ms reconnection window. Refs sidestep that entirely.
+  useEffect(() => { selectedSiteRef.current = selectedSite; }, [selectedSite]);
+  useEffect(() => { selectedPipelineRef.current = selectedPipeline; }, [selectedPipeline]);
+
+  // ── Supabase Realtime: live row-level push from Postgres ───────────────
+  //
+  // Replaces the old "poll /api/sync-status every 5 minutes and re-fetch
+  // delta endpoints on change" loop as the *primary* freshness path. The
+  // poll useEffect above is still alive — it acts as a safety net when the
+  // WebSocket is silently broken (corporate proxy strips upgrade headers,
+  // server-side disconnect we miss, etc.) and as the catch-up mechanism
+  // for resources Realtime doesn't (and can't) deliver in real time, like
+  // T&M ticket aggregates that compose multiple tables.
+  //
+  // Architecture:
+  //
+  //   1. ONE Supabase channel subscribes to postgres_changes for all 12
+  //      tables the frontend cares about (see database/enable_realtime.sql
+  //      for the matching server-side configuration).
+  //   2. Each table has a small handler that merges the event into local
+  //      React state + IndexedDB. Handlers use functional setState so they
+  //      don't need any of the Site/Pipeline arrays in the effect's deps —
+  //      the channel stays mounted across all UI changes.
+  //   3. On initial connect AND on every reconnect, we fire one cheap
+  //      delta-poll-tick so any events that fired while the socket was
+  //      down get picked up via the existing /api/*/delta endpoints.
+  //
+  // Soft-delete handling: every soft-deletable table in this app sets a
+  // `deleted_at` timestamp instead of issuing a DDL DELETE, so almost all
+  // "delete" events arrive as UPDATEs with `deleted_at != null`. The
+  // handlers route those into the corresponding `deletedX` admin array and
+  // remove the row from the visible list. Hard DELETEs are still handled
+  // for completeness but should be very rare in normal operation.
+  useEffect(() => {
+    if (!supabase || !user || !window.navigator.onLine) return;
+
+    // ── helpers used by every handler ────────────────────────────────────
+    const rowOf = (payload) => (payload.eventType === 'DELETE' ? payload.old : payload.new);
+    const merge = (existing, incoming) => (existing ? { ...existing, ...incoming } : incoming);
+    const upsertById = (arr, row) => {
+      const idx = arr.findIndex((x) => x.id === row.id);
+      if (idx === -1) return [row, ...arr];
+      const next = arr.slice();
+      next[idx] = merge(next[idx], row);
+      return next;
+    };
+    const removeById = (arr, id) => arr.filter((x) => x.id !== id);
+
+    // ── sites: pins (LSD / water / quad / pipeline access / reclaimed) ──
+    const onSites = (payload) => {
+      const row = rowOf(payload);
+      if (!row || row.id == null) return;
+
+      const isHardDelete = payload.eventType === 'DELETE';
+      const isSoftDeleted = !isHardDelete && row.deleted_at != null;
+      const approval = row.approval_state;
+
+      // Main map list
+      setSites((prev) => {
+        if (isHardDelete || isSoftDeleted) return removeById(prev, row.id);
+        return upsertById(prev, row);
+      });
+      if (isHardDelete) {
+        void removeSite({ id: row.id });
+      } else {
+        void upsertSite(row);
+      }
+
+      // Admin pending list
+      if (roleCanAdmin) {
+        setPendingSites((prev) => {
+          const exists = prev.some((s) => s.id === row.id);
+          const shouldBeIn = !isHardDelete && !isSoftDeleted && approval === 'pending_review';
+          if (shouldBeIn && !exists) return [row, ...prev];
+          if (!shouldBeIn && exists) return removeById(prev, row.id);
+          if (shouldBeIn && exists) return prev.map((s) => (s.id === row.id ? merge(s, row) : s));
+          return prev;
+        });
+        // Admin recent-deletes list
+        setDeletedSites((prev) => {
+          const exists = prev.some((s) => s.id === row.id);
+          if (isSoftDeleted && !exists) return [row, ...prev];
+          if ((isHardDelete || !isSoftDeleted) && exists) return removeById(prev, row.id);
+          return prev;
+        });
+      }
+
+      // Currently-viewed detail sheet
+      if (selectedSiteRef.current && selectedSiteRef.current.id === row.id) {
+        if (isHardDelete) {
+          setDetailOpen(false);
+          setSelectedSite(null);
+        } else {
+          setSelectedSite((prev) => (prev ? merge(prev, row) : prev));
+        }
+      }
+    };
+
+    // ── pipelines ────────────────────────────────────────────────────────
+    const onPipelines = (payload) => {
+      const row = rowOf(payload);
+      if (!row || row.id == null) return;
+
+      const isHardDelete = payload.eventType === 'DELETE';
+      const isSoftDeleted = !isHardDelete && row.deleted_at != null;
+      const approval = row.approval_state;
+
+      setPipelines((prev) => {
+        if (isHardDelete || isSoftDeleted) return removeById(prev, row.id);
+        return upsertById(prev, row);
+      });
+      if (isHardDelete) {
+        void removePipeline(row.id);
+      } else {
+        void upsertPipeline(row);
+      }
+
+      if (roleCanAdmin) {
+        setPendingPipelines((prev) => {
+          const exists = prev.some((p) => p.id === row.id);
+          const shouldBeIn = !isHardDelete && !isSoftDeleted && approval === 'pending_review';
+          if (shouldBeIn && !exists) return [row, ...prev];
+          if (!shouldBeIn && exists) return removeById(prev, row.id);
+          if (shouldBeIn && exists) return prev.map((p) => (p.id === row.id ? merge(p, row) : p));
+          return prev;
+        });
+        setDeletedPipelines((prev) => {
+          const exists = prev.some((p) => p.id === row.id);
+          if (isSoftDeleted && !exists) return [row, ...prev];
+          if ((isHardDelete || !isSoftDeleted) && exists) return removeById(prev, row.id);
+          return prev;
+        });
+      }
+
+      if (selectedPipelineRef.current && selectedPipelineRef.current.id === row.id) {
+        if (isHardDelete) {
+          setPipelineDetailOpen(false);
+          setSelectedPipeline(null);
+        } else {
+          setSelectedPipeline((prev) => (prev ? merge(prev, row) : prev));
+        }
+      }
+    };
+
+    // ── spray_records: pipeline lease sheets (drives Recents feed) ──────
+    const onSprayRecords = (payload) => {
+      const row = rowOf(payload);
+      if (!row || row.id == null) return;
+      const isHardDelete = payload.eventType === 'DELETE';
+      const isSoftDeleted = !isHardDelete && row.deleted_at != null;
+
+      setCachedRecents((prev) => {
+        if (isHardDelete || isSoftDeleted) return removeById(prev, row.id);
+        // Sort by created_at desc, dedup
+        const next = upsertById(prev, row);
+        return next.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+      });
+      if (isHardDelete || isSoftDeleted) {
+        try { void removeRecentById(row.id); } catch { /* ignore */ }
+      } else {
+        void upsertRecent(row);
+      }
+
+      // T&M aggregates can change when a spray record's status moves;
+      // bump the token so the FormsPanel refreshes if it's open.
+      setTmRefreshToken((x) => x + 1);
+    };
+
+    // ── site_spray_records: site lease sheets (also feed Recents) ───────
+    const onSiteSprayRecords = (payload) => {
+      const row = rowOf(payload);
+      if (!row || row.id == null) return;
+      const isHardDelete = payload.eventType === 'DELETE';
+      const isSoftDeleted = !isHardDelete && row.deleted_at != null;
+
+      setCachedRecents((prev) => {
+        if (isHardDelete || isSoftDeleted) return removeById(prev, row.id);
+        const next = upsertById(prev, row);
+        return next.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+      });
+      if (isHardDelete || isSoftDeleted) {
+        try { void removeRecentById(row.id); } catch { /* ignore */ }
+      } else {
+        void upsertRecent(row);
+      }
+
+      // If the user is viewing the site this lease sheet belongs to, refresh
+      // its embedded `spray_records` list so the new row shows up live.
+      const sel = selectedSiteRef.current;
+      if (sel && Number.isInteger(sel.id) && sel.id === row.site_id) {
+        setSelectedSite((prev) => {
+          if (!prev) return prev;
+          const records = Array.isArray(prev.spray_records) ? prev.spray_records.slice() : [];
+          if (isHardDelete || isSoftDeleted) {
+            return { ...prev, spray_records: records.filter((r) => r.id !== row.id) };
+          }
+          const idx = records.findIndex((r) => r.id === row.id);
+          if (idx === -1) records.unshift(row);
+          else records[idx] = merge(records[idx], row);
+          return { ...prev, spray_records: records };
+        });
+      }
+
+      setTmRefreshToken((x) => x + 1);
+    };
+
+    // ── site_updates: status-history rows on a pin ──────────────────────
+    const onSiteUpdates = (payload) => {
+      const row = rowOf(payload);
+      if (!row || row.id == null) return;
+
+      const sel = selectedSiteRef.current;
+      if (!sel || !Number.isInteger(sel.id) || sel.id !== row.site_id) return;
+
+      // Refresh the embedded `updates` list on the open site sheet.
+      setSelectedSite((prev) => {
+        if (!prev) return prev;
+        const updates = Array.isArray(prev.updates) ? prev.updates.slice() : [];
+        if (payload.eventType === 'DELETE') {
+          return { ...prev, updates: updates.filter((u) => u.id !== row.id) };
+        }
+        const idx = updates.findIndex((u) => u.id === row.id);
+        if (idx === -1) updates.unshift(row);
+        else updates[idx] = merge(updates[idx], row);
+        return { ...prev, updates };
+      });
+    };
+
+    // ── time_materials_tickets / time_materials_rows ────────────────────
+    // The FormsPanel re-fetches its Open / Submitted lists when the token
+    // bumps. That's cheaper than maintaining a denormalised TM cache here,
+    // since tickets aggregate across multiple tables.
+    const onTMTickets = () => setTmRefreshToken((x) => x + 1);
+    const onTMRows = () => setTmRefreshToken((x) => x + 1);
+
+    // ── users: roster, role changes, deletions ──────────────────────────
+    const onUsers = (payload) => {
+      const row = rowOf(payload);
+      if (!row || row.id == null) return;
+      setCachedUsers((prev) => {
+        let next;
+        if (payload.eventType === 'DELETE') next = removeById(prev, row.id);
+        else next = upsertById(prev, row);
+        // Persist asynchronously (replace is idempotent)
+        void replaceUsers(next);
+        return next;
+      });
+    };
+
+    // ── lookup tables (herbicides / applicators / weeds / locations) ─────
+    // The frontend keeps lookups in `cachedLookups` keyed by short names
+    // (`herbicides`, `applicators`, `weeds`, `locations`) while IndexedDB
+    // stores them by the same keys. Soft-delete on these is `is_active =
+    // FALSE`, not `deleted_at`, so the predicate is different.
+    const applyLookupChange = (stateKey, payload) => {
+      const row = rowOf(payload);
+      if (!row || row.id == null) return;
+      const isHardDelete = payload.eventType === 'DELETE';
+      const isSoftDeleted = !isHardDelete && row.is_active === false;
+
+      setCachedLookups((prev) => {
+        const arr = prev[stateKey] || [];
+        let next;
+        if (isHardDelete || isSoftDeleted) {
+          next = removeById(arr, row.id);
+        } else {
+          const idx = arr.findIndex((x) => x.id === row.id);
+          if (idx === -1) {
+            next = [...arr, row].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+          } else {
+            const cloned = arr.slice();
+            cloned[idx] = merge(cloned[idx], row);
+            next = cloned;
+          }
+        }
+        // Fire-and-forget IndexedDB persist so the next cold start has the
+        // up-to-date table without needing a /api/lookups/* fetch.
+        void replaceLookups(stateKey, next);
+        return { ...prev, [stateKey]: next };
+      });
+    };
+    const onHerbicides = (p) => applyLookupChange('herbicides', p);
+    const onApplicators = (p) => applyLookupChange('applicators', p);
+    const onWeeds = (p) => applyLookupChange('weeds', p);
+    const onLocationTypes = (p) => applyLookupChange('locations', p);
+
+    // ── Subscribe ────────────────────────────────────────────────────────
+    const channel = supabase
+      .channel('pineview-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sites' }, onSites)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pipelines' }, onPipelines)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'spray_records' }, onSprayRecords)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'site_spray_records' }, onSiteSprayRecords)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'site_updates' }, onSiteUpdates)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'time_materials_tickets' }, onTMTickets)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'time_materials_rows' }, onTMRows)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, onUsers)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'herbicides' }, onHerbicides)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'applicators' }, onApplicators)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'noxious_weeds' }, onWeeds)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'location_types' }, onLocationTypes)
+      .subscribe((status) => {
+        // Status values per @supabase/supabase-js: 'SUBSCRIBED' on initial
+        // connect AND after a successful reconnect; 'CHANNEL_ERROR',
+        // 'TIMED_OUT', 'CLOSED' otherwise. Catch-up only on a successful
+        // (re)connect — the SDK auto-retries failures with backoff.
+        if (status === 'SUBSCRIBED') {
+          console.log('[REALTIME] Subscribed to all tables');
+          // Fire one cheap delta tick to pick up any rows that changed
+          // while we were disconnected.
+          try { runPollTickRef.current?.(); } catch { /* ignore */ }
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          console.warn('[REALTIME] Channel status:', status);
+        }
+      });
+
+    return () => {
+      try { supabase.removeChannel(channel); } catch { /* ignore */ }
+    };
+  // user.id is the only auth-bound dep — recreate the channel only when
+  // the logged-in user changes (login/logout). roleCanAdmin gates the
+  // admin-only state writes inside handlers but reading the latest value
+  // via closure is fine because we re-create on user change anyway.
+  }, [user?.id, roleCanAdmin, isOnline]);
 
   const visibleSites = useMemo(() => {
     const normalizedSearch = filters.search.trim().toLowerCase();
