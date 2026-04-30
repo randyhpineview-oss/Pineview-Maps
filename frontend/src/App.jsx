@@ -1524,14 +1524,24 @@ export default function App() {
           } catch { /* non-fatal */ }
         }
 
-        if (syncStatus.pending_sites_count !== undefined) setPendingSitesCount(syncStatus.pending_sites_count);
-        if (syncStatus.pending_pipelines_count !== undefined) setPendingPipelinesCount(syncStatus.pending_pipelines_count);
-
-        // Only re-fetch the pending lists when the counts actually moved
-        // since the last tick. Before, we'd re-download the full pending
-        // list every 2 minutes as long as ANY rows were pending, which
-        // dominated the egress of any admin session. `prevPending*` was
-        // snapshot above before `lastSyncStatusRef.current = syncStatus`.
+        // ── Pending list refresh ────────────────────────────────────────
+        // We deliberately do NOT mirror syncStatus.pending_*_count straight
+        // into pendingSitesCount / pendingPipelinesCount any more. That
+        // used to fight the derivation effect that locks
+        // pendingSitesCount = pendingSites.length: a stale sync-status
+        // (replica lag, an in-flight DELETE that hadn't committed when
+        // /api/sync-status read the row, or just the gap between an
+        // optimistic local remove and the server roundtrip) would
+        // resurrect the old count, leaving the topbar badge claiming
+        // "Pending: 1" while the AdminPanel list was correctly empty —
+        // the "ghost pending after delete" bug.
+        //
+        // The derivation effect is now the single source of truth for the
+        // count. When the server-side count diverges from the local list
+        // (another admin approved/rejected on a different device, a
+        // worker added a pin while we were offline, …), the re-fetch
+        // below pulls the authoritative list and the derivation effect
+        // re-syncs the badge in the same React tick.
         if (roleCanAdmin) {
           const sitesPendingChanged = syncStatus.pending_sites_count !== prevPendingSites;
           const pipelinesPendingChanged = syncStatus.pending_pipelines_count !== prevPendingPipelines;
@@ -3493,6 +3503,20 @@ export default function App() {
     if (items.length === 0) return;
     setAdminBusy(true);
     setMessage(`Rejecting ${items.length} pending approval${items.length === 1 ? '' : 's'}…`);
+
+    // Optimistic remove from the live map arrays so the orange "!" markers
+    // disappear in the same React tick as the click. refreshAllData() at
+    // the bottom will reconcile any rejection that the server refused
+    // (e.g. linked-lease-sheet 409s) by re-fetching the authoritative
+    // sites list — rejected rows stay filtered out of /api/sites and
+    // pinned rows that came back will reappear.
+    const pinIds = new Set(items.filter((i) => i.kind === 'pin').map((i) => i.id));
+    const pipelineIds = new Set(items.filter((i) => i.kind === 'pipeline').map((i) => i.id));
+    if (pinIds.size > 0) setSites((prev) => prev.filter((s) => !pinIds.has(s.id)));
+    if (pipelineIds.size > 0) setPipelines((prev) => prev.filter((p) => !pipelineIds.has(p.id)));
+    setPendingSites((prev) => prev.filter((s) => !pinIds.has(s.id)));
+    setPendingPipelines((prev) => prev.filter((p) => !pipelineIds.has(p.id)));
+
     const failed = [];
     try {
       for (const item of items) {
