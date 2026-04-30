@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     supabase_db_url: str = ""  # PostgreSQL connection string from Supabase
     
     # API Configuration - explicitly allow Vercel frontend and localhost for development
-    allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173,https://pineview-maps.vercel.app,https://pineview-maps.onrender.com"
+    allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173,https://pineview-maps.vercel.app,https://pineviewmaps.com,https://www.pineviewmaps.com,https://pineview-maps.onrender.com"
 
     # Email configuration for password reset codes
     smtp_host: str = "smtp.gmail.com"
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     smtp_from_email: str = ""  # Usually same as smtp_user
     
     # Frontend URL for password reset (used in email templates if needed)
-    frontend_url: str = "http://localhost:5173"
+    frontend_url: str = "https://pineviewmaps.com"
 
     # Shared secret embedded in the QR-code worker signup URL.
     # Leave empty to disable self-signup entirely (backend returns 403).
