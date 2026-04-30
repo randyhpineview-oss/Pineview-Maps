@@ -40,11 +40,27 @@ const explicitCommit = process.env.VITE_APP_COMMIT;
 const vercelSha = process.env.VERCEL_GIT_COMMIT_SHA || '';
 
 const gitSha = explicitCommit || vercelSha || tryGit('git rev-parse HEAD');
-const gitCount = tryGit('git rev-list --count HEAD');
 
-const APP_VERSION = explicitVersion || (gitCount ? `1.1.${gitCount}` : 'dev');
+// Vercel uses shallow clones (--depth=1) so `git rev-list --count HEAD`
+// returns 1. We unshallow first via the build command in vercel.json,
+// but if that ever fails, fall back to a date-based patch number so the
+// version label is always unique and monotonically increasing.
+let gitCount = tryGit('git rev-list --count HEAD');
+if (!gitCount || gitCount === '1') {
+  // Compact YYDDD + HH fallback (year + day-of-year + UTC hour).
+  const now = new Date();
+  const start = new Date(now.getFullYear(), 0, 0);
+  const dayOfYear = Math.floor((now - start) / 86400000);
+  const yy = String(now.getFullYear()).slice(-2);
+  const hh = String(now.getUTCHours()).padStart(2, '0');
+  gitCount = `${yy}${String(dayOfYear).padStart(3, '0')}${hh}`;
+}
+
+const APP_VERSION = explicitVersion || `1.1.${gitCount}`;
 const APP_COMMIT = (gitSha || 'local').slice(0, 7);
 const APP_BUILD_TIME = new Date().toISOString();
+
+console.log(`[vite.config] APP_VERSION=${APP_VERSION} APP_COMMIT=${APP_COMMIT}`);
 
 export default defineConfig({
   define: {
