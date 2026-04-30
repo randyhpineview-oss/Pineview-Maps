@@ -1458,11 +1458,40 @@ def update_site_approval(
                     ],
                 },
             )
-        # Pending field-added pin with no linked sheets → hard delete
-        # (existing behaviour).
+        # Pending field-added pin with no linked sheets → soft delete.
+        # We used to `db.delete(site)` here, but a hard-delete leaves no
+        # trail in the `/api/sites/delta` watermark stream:
+        #   • the row is gone, so it can't appear in `items`
+        #     (filtered by `deleted_at.is_(None) AND approval_state !=
+        #     rejected`), and
+        #   • it can't appear in `ids_removed` either, because that
+        #     query also requires `updated_at > since` on the (now
+        #     non-existent) row.
+        # Plus `sites_last_updated = max(updated_at)` doesn't bump on a
+        # hard-delete, so `sitesChanged` is false on the next poll tick
+        # and `syncSitesIncrementally` doesn't even run. The net effect
+        # was that any client without Supabase Realtime enabled (or any
+        # second admin device that wasn't the one doing the reject) kept
+        # the orange "!" marker on the map until the next cold start
+        # forced a /api/sites re-fetch — the "reject leaves the
+        # exclamation mark on the map" bug report.
+        #
+        # Soft-deleting (approval_state=rejected + deleted_at=now) puts
+        # the pin into BOTH /api/sites/delta's `ids_removed` channel AND
+        # the realtime UPDATE stream, so every client converges within
+        # one poll tick (or instantly if realtime is on). The pin also
+        # shows up in Recent Deletes for audit, which admins can
+        # permanently purge from there.
         if site.source == "field_added" and site.approval_state == ApprovalState.pending_review:
-            db.delete(site)
+            site.approval_state = ApprovalState.rejected
+            site.deleted_at = datetime.utcnow()
+            site.updated_at = datetime.utcnow()
+            if current_user.id:
+                local_user = db.query(User).filter(User.id == current_user.id).first()
+                if local_user:
+                    site.deleted_by_user_id = current_user.id
             db.commit()
+            db.refresh(site)
             return SiteRead.model_validate(site)
         # Otherwise this is an "abandon pending changes" revert for a
         # pin that was already approved before.
