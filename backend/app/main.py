@@ -560,6 +560,8 @@ def get_site(
     current_user: User = Depends(get_current_user),
 ) -> SiteRead:
     site = get_site_or_404(db, site_id)
+    if site.deleted_at is not None or site.approval_state == ApprovalState.rejected:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Site not found")
     return SiteRead.model_validate(site)
 
 

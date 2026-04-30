@@ -92,11 +92,29 @@ function demoSession(role) {
   };
 }
 
-function matchSiteIdentity(site, selectedSite) {
-  if (!selectedSite) {
-    return false;
+function siteIdentityKey(value) {
+  if (value == null) return '';
+  if (typeof value === 'object') {
+    const raw = value.id ?? value.cacheId ?? value.tempId;
+    return raw == null ? '' : String(raw);
   }
-  return String(site.id ?? site.cacheId) === String(selectedSite.id ?? selectedSite.cacheId);
+  return String(value);
+}
+
+function matchSiteIdentity(site, selectedSite) {
+  const left = siteIdentityKey(site);
+  const right = siteIdentityKey(selectedSite);
+  return Boolean(left && right && left === right);
+}
+
+function removeSitesByIdentity(sites, target) {
+  const key = siteIdentityKey(target);
+  if (!key) return sites;
+  return sites.filter((site) => siteIdentityKey(site) !== key);
+}
+
+function isHiddenSite(site) {
+  return site?.approval_state === 'rejected' || Boolean(site?.deleted_at);
 }
 
 // Mirrors the `visibleSites` filter predicate below so we can detect, right
@@ -479,9 +497,9 @@ export default function App() {
     // omits those keys, and Object spread keeps existing values whenever the
     // incoming payload doesn't override them.
     setSites((prev) => {
-      const byId = new Map(prev.map((s) => [s.id, s]));
+      const byId = new Map(prev.map((s) => [siteIdentityKey(s), s]));
       return sitesPayload.map((item) => {
-        const existing = byId.get(item.id);
+        const existing = byId.get(siteIdentityKey(item));
         return existing ? { ...existing, ...item } : item;
       });
     });
@@ -1320,19 +1338,20 @@ export default function App() {
       // preserved across delta ticks. Keys omitted by the incoming payload
       // simply keep their existing value.
       const mergeSite = (existing, incoming) => (existing ? { ...existing, ...incoming } : incoming);
+      const mergeFullSiteList = (prev, full) => {
+        const byId = new Map(prev.map((s) => [siteIdentityKey(s), s]));
+        return full.map((item) => mergeSite(byId.get(siteIdentityKey(item)), item));
+      };
 
       // No watermark yet → do a full fetch, which also seeds the watermark
       // for future delta calls.
       if (!sitesSinceRef.current) {
         try {
           const full = await api.listSites(serverFilters);
-          setSites((prev) => {
-            const byId = new Map(prev.map((s) => [s.id, s]));
-            return full.map((item) => mergeSite(byId.get(item.id), item));
-          });
+          setSites((prev) => mergeFullSiteList(prev, full));
           await replaceSites(full);
           if (selectedSite && Number.isInteger(selectedSite.id)) {
-            const updated = full.find((s) => s.id === selectedSite.id);
+            const updated = full.find((s) => matchSiteIdentity(s, selectedSite));
             if (updated) setSelectedSite((prev) => mergeSite(prev, updated));
           }
           sitesSinceRef.current = syncStatus.sites_last_updated || new Date().toISOString();
@@ -1350,15 +1369,15 @@ export default function App() {
           // preserves heavy fields (spray_records, updates, ...) that the
           // slim delta schema doesn't ship.
           setSites((prev) => {
-            const byId = new Map(prev.map((s) => [s.id, s]));
-            for (const item of items) byId.set(item.id, mergeSite(byId.get(item.id), item));
-            for (const id of idsRemoved) byId.delete(id);
+            const byId = new Map(prev.map((s) => [siteIdentityKey(s), s]));
+            for (const item of items) byId.set(siteIdentityKey(item), mergeSite(byId.get(siteIdentityKey(item)), item));
+            for (const id of idsRemoved) byId.delete(siteIdentityKey(id));
             return Array.from(byId.values());
           });
 
           // Keep the currently-viewed site in sync when the delta includes it.
           if (selectedSite && Number.isInteger(selectedSite.id)) {
-            const hit = items.find((s) => s.id === selectedSite.id);
+            const hit = items.find((s) => matchSiteIdentity(s, selectedSite));
             if (hit) setSelectedSite((prev) => mergeSite(prev, hit));
           }
 
@@ -1374,13 +1393,10 @@ export default function App() {
         // Delta failed — fall back to a full fetch and re-seed the watermark.
         try {
           const full = await api.listSites(serverFilters);
-          setSites((prev) => {
-            const byId = new Map(prev.map((s) => [s.id, s]));
-            return full.map((item) => mergeSite(byId.get(item.id), item));
-          });
+          setSites((prev) => mergeFullSiteList(prev, full));
           await replaceSites(full);
           if (selectedSite && Number.isInteger(selectedSite.id)) {
-            const updated = full.find((s) => s.id === selectedSite.id);
+            const updated = full.find((s) => matchSiteIdentity(s, selectedSite));
             if (updated) setSelectedSite((prev) => mergeSite(prev, updated));
           }
           sitesSinceRef.current = syncStatus.sites_last_updated || new Date().toISOString();
@@ -1716,13 +1732,13 @@ export default function App() {
     };
     const merge = (existing, incoming) => (existing ? { ...existing, ...incoming } : incoming);
     const upsertById = (arr, row) => {
-      const idx = arr.findIndex((x) => x.id === row.id);
+      const idx = arr.findIndex((x) => matchSiteIdentity(x, row));
       if (idx === -1) return [row, ...arr];
       const next = arr.slice();
       next[idx] = merge(next[idx], row);
       return next;
     };
-    const removeById = (arr, id) => arr.filter((x) => x.id !== id);
+    const removeById = (arr, id) => removeSitesByIdentity(arr, id);
 
     // ── sites: pins (LSD / water / quad / pipeline access / reclaimed) ──
     const onSites = (payload) => {
@@ -1760,16 +1776,16 @@ export default function App() {
       // Admin pending list
       if (roleCanAdmin) {
         setPendingSites((prev) => {
-          const exists = prev.some((s) => s.id === row.id);
+          const exists = prev.some((s) => matchSiteIdentity(s, row));
           const shouldBeIn = !isHardDelete && !isSoftDeleted && approval === 'pending_review';
           if (shouldBeIn && !exists) return [row, ...prev];
           if (!shouldBeIn && exists) return removeById(prev, row.id);
-          if (shouldBeIn && exists) return prev.map((s) => (s.id === row.id ? merge(s, row) : s));
+          if (shouldBeIn && exists) return prev.map((s) => (matchSiteIdentity(s, row) ? merge(s, row) : s));
           return prev;
         });
         // Admin recent-deletes list
         setDeletedSites((prev) => {
-          const exists = prev.some((s) => s.id === row.id);
+          const exists = prev.some((s) => matchSiteIdentity(s, row));
           if (isSoftDeleted && !exists) return [row, ...prev];
           if ((isHardDelete || !isSoftDeleted) && exists) return removeById(prev, row.id);
           return prev;
@@ -1777,8 +1793,8 @@ export default function App() {
       }
 
       // Currently-viewed detail sheet
-      if (selectedSiteRef.current && selectedSiteRef.current.id === row.id) {
-        if (isHardDelete || approval === 'rejected' || isSoftDeleted) {
+      if (selectedSiteRef.current && matchSiteIdentity(selectedSiteRef.current, row)) {
+        if (isHidden) {
           setDetailOpen(false);
           setSelectedSite(null);
         } else {
@@ -2026,8 +2042,7 @@ export default function App() {
       // cache, delta race, realtime upsert before the isHidden check
       // ran, …).  This is the last line of defence — even if every
       // other cleanup path misses the row, the marker won't appear.
-      if (site.approval_state === 'rejected') return false;
-      if (site.deleted_at) return false;
+      if (isHiddenSite(site)) return false;
       const isWater = site.pin_type === 'water';
       // Layer visibility check
       if (site.pin_type && !layers[site.pin_type]) return false;
@@ -2071,14 +2086,14 @@ export default function App() {
       };
       
       // Filter out the original site and add the preview
-      baseSites = baseSites.filter(s => (s.id ?? s.cacheId) !== (selectedSite.id ?? selectedSite.cacheId));
+      baseSites = baseSites.filter((s) => !matchSiteIdentity(s, selectedSite));
       baseSites = [...baseSites, previewSite];
     }
     
     // Always overlay water pins if their layer is on, even when other filters are active
     if (layers.water) {
-      const visibleIds = new Set(baseSites.map((s) => s.id ?? s.cacheId));
-      const waterOverlay = sites.filter((s) => s.pin_type === 'water' && !visibleIds.has(s.id ?? s.cacheId));
+      const visibleIds = new Set(baseSites.map((s) => siteIdentityKey(s)));
+      const waterOverlay = sites.filter((s) => s.pin_type === 'water' && !isHiddenSite(s) && !visibleIds.has(siteIdentityKey(s)));
       if (waterOverlay.length) return [...baseSites, ...waterOverlay];
     }
     return baseSites;
@@ -2178,6 +2193,13 @@ export default function App() {
       setPipelineSprayRecords([]);
       setHighlightedSprayRecordId(null);
     }
+    if (isHiddenSite(site)) {
+      setSites((prev) => removeSitesByIdentity(prev, site));
+      setSelectedSite(null);
+      setDetailOpen(false);
+      void removeSite(site);
+      return;
+    }
     setSelectedSite(site);
     setDetailOpen(true);
     // Only trigger zoomToSite on phones, or on PC/iPad if coming from sites list (just center, no zoom)
@@ -2193,11 +2215,25 @@ export default function App() {
     if (Number.isInteger(site.id) && window.navigator.onLine) {
       api.getSite(site.id).then((full) => {
         if (!full) return;
-        setSelectedSite((prev) => (prev && prev.id === full.id ? { ...prev, ...full } : prev));
+        if (isHiddenSite(full)) {
+          setSites((prev) => removeSitesByIdentity(prev, full));
+          setSelectedSite((prev) => (matchSiteIdentity(prev, full) ? null : prev));
+          setDetailOpen(false);
+          void removeSite(full);
+          return;
+        }
+        setSelectedSite((prev) => (matchSiteIdentity(prev, full) ? { ...prev, ...full } : prev));
         // Also fold the heavy fields into the cached list so re-opening the
         // same site (or a sibling delta tick) doesn't wipe them.
-        setSites((prev) => prev.map((s) => (s.id === full.id ? { ...s, ...full } : s)));
-      }).catch(() => { /* non-fatal — cached data is fine */ });
+        setSites((prev) => prev.map((s) => (matchSiteIdentity(s, full) ? { ...s, ...full } : s)));
+      }).catch((error) => {
+        if (error?.status === 404 || error?.status === 410) {
+          setSites((prev) => removeSitesByIdentity(prev, site));
+          setSelectedSite((prev) => (matchSiteIdentity(prev, site) ? null : prev));
+          setDetailOpen(false);
+          void removeSite(site);
+        }
+      });
     }
   }
 
@@ -4591,10 +4627,12 @@ export default function App() {
                 // dropped in the same React tick. Snapshot both rows so we
                 // can put them back if the server refuses the reject (e.g.
                 // structured 409 for linked spray records).
-                const removedPending = pendingSites.find((s) => s.id === siteId) || null;
-                const removedFromSites = sites.find((s) => s.id === siteId) || null;
-                setPendingSites((prev) => prev.filter((s) => s.id !== siteId));
-                setSites((prev) => prev.filter((s) => s.id !== siteId));
+                const removedPending = pendingSites.find((s) => matchSiteIdentity(s, siteId)) || null;
+                const removedFromSites = sites.find((s) => matchSiteIdentity(s, siteId)) || null;
+                setPendingSites((prev) => removeSitesByIdentity(prev, siteId));
+                setSites((prev) => removeSitesByIdentity(prev, siteId));
+                setSelectedSite((prev) => (matchSiteIdentity(prev, siteId) ? null : prev));
+                setDetailOpen((open) => (matchSiteIdentity(selectedSiteRef.current, siteId) ? false : open));
                 setMarkerRevision((x) => x + 1);
                 // Also purge from IndexedDB so a cold-start can't resurrect it.
                 void removeSite({ id: siteId });
@@ -4604,7 +4642,7 @@ export default function App() {
                   // Belt-and-suspenders: force another removal pass in case
                   // a concurrent delta/realtime upserted the row back while
                   // the API call was in flight.
-                  setSites((prev) => prev.filter((s) => s.id !== siteId));
+                  setSites((prev) => removeSitesByIdentity(prev, siteId));
                   setMarkerRevision((x) => x + 1);
                   void removeSite({ id: siteId });
                   // Background catch-up only — no awaiting refreshAllData.
@@ -4616,10 +4654,10 @@ export default function App() {
                   // Roll back both optimistic removes so the card and the
                   // map marker both come back with their original data.
                   if (removedPending) {
-                    setPendingSites((prev) => (prev.some((s) => s.id === siteId) ? prev : [removedPending, ...prev]));
+                    setPendingSites((prev) => (prev.some((s) => matchSiteIdentity(s, siteId)) ? prev : [removedPending, ...prev]));
                   }
                   if (removedFromSites) {
-                    setSites((prev) => (prev.some((s) => s.id === siteId) ? prev : [removedFromSites, ...prev]));
+                    setSites((prev) => (prev.some((s) => matchSiteIdentity(s, siteId)) ? prev : [removedFromSites, ...prev]));
                   }
                   if (!explainRejectConflict(error, 'pin')) {
                     setMessage(error?.message || 'Reject failed.');

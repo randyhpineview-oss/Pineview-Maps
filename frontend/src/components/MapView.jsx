@@ -351,6 +351,13 @@ export default function MapView({
     [sites]
   );
 
+  useEffect(() => {
+    if (!popupSite) return;
+    const key = String(popupSite.id ?? popupSite.cacheId);
+    const stillVisible = sites.some((site) => String(site.id ?? site.cacheId) === key);
+    if (!stillVisible) setPopupSite(null);
+  }, [popupSite, sites]);
+
   const userLocationIcon = useMemo(() => {
     if (!isLoaded || !userLocation) return null;
     return {
