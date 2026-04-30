@@ -4609,16 +4609,22 @@ export default function App() {
                 () => api.approveSite(siteId, { approval_state: 'approved', ...overrides }),
                 'Approved.',
                 {
-                  // Remove from pendingSites and update approval_state in sites
-                  // so the "!" marker changes to a normal pin immediately without
-                  // waiting for the realtime event to arrive.
+                  // Remove-then-reinsert instead of .map() because
+                  // @react-google-maps/api's Marker component caches the
+                  // initial `icon` prop and ignores subsequent updates.
+                  // Removing the site forces the old "!" Marker to unmount;
+                  // reinserting with approval_state='approved' mounts a
+                  // fresh Marker with the correct pin-type icon. This
+                  // mirrors how handleDeleteSite works (filter removes the
+                  // site, marker unmounts cleanly).
                   optimistic: () => {
                     setPendingSites((prev) => removeSitesByIdentity(prev, siteId));
-                    setSites((prev) => prev.map((s) =>
-                      matchSiteIdentity(s, siteId)
-                        ? { ...s, approval_state: 'approved', ...overrides }
-                        : s
-                    ));
+                    setSites((prev) => {
+                      const match = prev.find((s) => matchSiteIdentity(s, siteId));
+                      const without = removeSitesByIdentity(prev, siteId);
+                      if (!match) return without;
+                      return [...without, { ...match, approval_state: 'approved', ...overrides }];
+                    });
                   },
                 },
               )}
