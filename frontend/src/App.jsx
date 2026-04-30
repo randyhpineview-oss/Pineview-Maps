@@ -186,6 +186,7 @@ export default function App() {
   const [deletedLeaseSheets, setDeletedLeaseSheets] = useState([]);
   const [deletedTMTickets, setDeletedTMTickets] = useState([]);
   const [selectedSite, setSelectedSite] = useState(null);
+  const [markerRevision, setMarkerRevision] = useState(0);
   const [message, setMessage] = useState('Loading project data...');
   const [isOnline, setIsOnline] = useState(window.navigator.onLine);
   const [isLoading, setIsLoading] = useState(true);
@@ -3962,6 +3963,7 @@ export default function App() {
             apiKey={GOOGLE_MAPS_API_KEY}
             isOnline={isOnline}
             sites={mapSites}
+            markerRevision={markerRevision}
             selectedSite={selectedSite}
             onSelectSite={handleOpenDetail}
             isPickingLocation={isPlacingPin || isPickingLocationForEdit}
@@ -4593,6 +4595,7 @@ export default function App() {
                 const removedFromSites = sites.find((s) => s.id === siteId) || null;
                 setPendingSites((prev) => prev.filter((s) => s.id !== siteId));
                 setSites((prev) => prev.filter((s) => s.id !== siteId));
+                setMarkerRevision((x) => x + 1);
                 // Also purge from IndexedDB so a cold-start can't resurrect it.
                 void removeSite({ id: siteId });
                 try {
@@ -4602,6 +4605,7 @@ export default function App() {
                   // a concurrent delta/realtime upserted the row back while
                   // the API call was in flight.
                   setSites((prev) => prev.filter((s) => s.id !== siteId));
+                  setMarkerRevision((x) => x + 1);
                   void removeSite({ id: siteId });
                   // Background catch-up only — no awaiting refreshAllData.
                   void Promise.allSettled([

@@ -128,6 +128,7 @@ function SprayPreviewLine({ pipeline, startPoint, endPoint }) {
 
 export default function MapView({
   sites,
+  markerRevision = 0,
   selectedSite,
   onSelectSite,
   onOpenDetail,
@@ -783,7 +784,7 @@ export default function MapView({
 
         {sites.map((site) => (
           <Marker
-            key={`${site.id || site.cacheId}-${site.approval_state || ''}`}
+            key={`${markerRevision}-${site.id || site.cacheId}-${site.approval_state || ''}`}
             position={{ lat: site.latitude, lng: site.longitude }}
             icon={buildMarkerIcon(site,
               (popupSite && String(popupSite.id ?? popupSite.cacheId) === String(site.id ?? site.cacheId)) ||
