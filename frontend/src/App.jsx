@@ -1,18 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import AdminPanel from './components/AdminPanel';
-import ApproveEditModal from './components/ApproveEditModal';
 import AutocompleteInput from './components/AutocompleteInput';
 import FilterBar from './components/FilterBar';
-import HerbicideLeaseSheet from './components/HerbicideLeaseSheet';
 import InstallAppPrompt from './components/InstallAppPrompt';
 import LoginPage from './components/LoginPage';
 import MapView from './components/MapView';
 import SignupPage from './components/SignupPage';
 import PipelineDetailSheet from './components/PipelineDetailSheet';
-import PdfPreviewOverlay from './components/PdfPreviewOverlay';
-import FormsPanel from './components/FormsPanel';
-import TMTicketDetailSheet from './components/TMTicketDetailSheet';
 import SiteDetailSheet from './components/SiteDetailSheet';
 import { api } from './lib/api';
 import { requestWithUploadProgress } from './lib/xhrUpload';
@@ -53,6 +47,28 @@ import {
   upsertSite,
 } from './lib/offlineStore';
 import { formatDate, pinTypeLabel, statusLabel } from './lib/mapUtils';
+
+// ── Code-splitting: heavy / route-gated components load in their own chunks ─
+//
+// Cold-start path is Map tab + SiteDetailSheet + auth screens, so those stay
+// eager. The rest are loaded on demand the first time the user opens the
+// relevant tab or modal, then pre-warmed during idle time (see preload
+// effect below) so second-visit transitions don't flicker.
+//
+// Each lazy()-wrapped import becomes its own Rollup chunk at build time,
+// shaving roughly a third of the gzipped main bundle on cold start:
+//   • AdminPanel        — admin tab (recent deletes, lookup tables)
+//   • ApproveEditModal  — admin review flow
+//   • HerbicideLeaseSheet — inspection modal (jspdf + qrcode + html2canvas)
+//   • FormsPanel        — forms tab (recents + drafts + queue)
+//   • PdfPreviewOverlay — PDF viewer (pdfjs-dist worker)
+//   • TMTicketDetailSheet — T&M ticket drawer
+const AdminPanel = lazy(() => import('./components/AdminPanel'));
+const ApproveEditModal = lazy(() => import('./components/ApproveEditModal'));
+const HerbicideLeaseSheet = lazy(() => import('./components/HerbicideLeaseSheet'));
+const FormsPanel = lazy(() => import('./components/FormsPanel'));
+const PdfPreviewOverlay = lazy(() => import('./components/PdfPreviewOverlay'));
+const TMTicketDetailSheet = lazy(() => import('./components/TMTicketDetailSheet'));
 
 const DEFAULT_FILTERS = { search: '', client: '', area: '', status: '', approval_state: '' };
 const DEFAULT_LAYERS = { lsd: true, water: true, quad_access: true, reclaimed: true, pipelines: true };
@@ -425,11 +441,16 @@ export default function App() {
     if (!roleCanAdmin || !window.navigator.onLine) {
       setPendingSites([]);
       setDeletedSites([]);
+      // Deliberately don't flip the loaded ref when we're offline or
+      // non-admin — we want the topbar badge to keep the last known
+      // count from /api/sync-status until we've actually seen a fresh
+      // list, otherwise a cached count of 3 would flash to 0.
       return;
     }
     try {
       const pending = await api.listPendingSites();
       setPendingSites(pending);
+      pendingSitesLoadedRef.current = true;
     } catch {
       setPendingSites([]);
     }
@@ -572,6 +593,7 @@ export default function App() {
     try {
       const pending = await api.listPendingPipelines();
       setPendingPipelines(pending);
+      pendingPipelinesLoadedRef.current = true;
     } catch {
       setPendingPipelines([]);
     }
@@ -1213,6 +1235,17 @@ export default function App() {
   // one. Updated by tiny mirror effects below.
   const selectedSiteRef = useRef(null);
   const selectedPipelineRef = useRef(null);
+  // Flips to true the first time loadPendingSites() / loadPendingPipelines()
+  // comes back from the server with an authoritative list. From that moment
+  // on the derivation effect below keeps `pendingSitesCount` locked to
+  // `pendingSites.length`, so any local mutation (realtime push, admin
+  // delete from the site sheet, approve / reject, restore, …) updates the
+  // topbar "Pending: N" badge in the same React tick as the card vanishes.
+  // Until loaded we leave the count alone so the cached seed value from
+  // /api/sync-status renders instantly on cold start (vs flickering to 0
+  // while the list fetch is in flight).
+  const pendingSitesLoadedRef = useRef(false);
+  const pendingPipelinesLoadedRef = useRef(false);
 
   // Stable callback children can invoke to force an immediate delta sync
   // (sync-status check + any dependent deltas). Used by FormsPanel when
@@ -1555,6 +1588,72 @@ export default function App() {
   // ~100 ms reconnection window. Refs sidestep that entirely.
   useEffect(() => { selectedSiteRef.current = selectedSite; }, [selectedSite]);
   useEffect(() => { selectedPipelineRef.current = selectedPipeline; }, [selectedPipeline]);
+
+  // ── Keep the topbar "Pending: N" badges locked to the live list length ──
+  // Before this effect, only the admin action button handlers (approve,
+  // reject, bulk-approve, pin-submit) decremented/incremented
+  // pendingSitesCount explicitly. That left several routes that could
+  // drain the pending list without touching the count — the most visible
+  // being:
+  //
+  //   • Admin opens a pending pin in the detail sheet → clicks Delete.
+  //     handleDeleteSite removed the row from `sites` and kicked off a
+  //     background re-fetch of pendingSites, but the topbar badge still
+  //     showed the old number until the next 5-min /api/sync-status poll.
+  //
+  //   • A Supabase Realtime DELETE / UPDATE event arrived for a row that
+  //     was in pendingSites — the onSites handler removed it from the
+  //     array, but pendingSitesCount was never adjusted, so the badge
+  //     drifted out of sync across devices.
+  //
+  // Now that the load*Pending* callbacks set a "loaded" ref on first
+  // successful online fetch, we can derive the count directly from the
+  // array length. The ref gate is what prevents the cached seed count
+  // from /api/sync-status getting clobbered by an initial length-zero
+  // array on cold start.
+  useEffect(() => {
+    if (pendingSitesLoadedRef.current) {
+      setPendingSitesCount(pendingSites.length);
+    }
+  }, [pendingSites]);
+  useEffect(() => {
+    if (pendingPipelinesLoadedRef.current) {
+      setPendingPipelinesCount(pendingPipelines.length);
+    }
+  }, [pendingPipelines]);
+
+  // ── Preload lazy chunks during browser idle time ────────────────────────
+  // The code-split at the top of this file cuts ~500 kB off the initial
+  // main bundle so the map + auth can paint fast, but the first time a
+  // user taps a different tab or opens an inspection sheet we'd pay a
+  // 50–200 ms chunk download over 4G. Kicking off the imports during the
+  // post-auth idle window (via requestIdleCallback, or a setTimeout
+  // fallback on Safari) warms the browser's JS cache + the service
+  // worker's precache so those interactions feel instant on second touch.
+  // We don't await any of them — a failed preload just means the chunk
+  // downloads on demand like it used to.
+  useEffect(() => {
+    if (!user) return;
+    const preload = () => {
+      void import('./components/FormsPanel');
+      void import('./components/HerbicideLeaseSheet');
+      void import('./components/PdfPreviewOverlay');
+      void import('./components/TMTicketDetailSheet');
+      if (roleCanAdmin) {
+        void import('./components/AdminPanel');
+        void import('./components/ApproveEditModal');
+      }
+    };
+    const ric = window.requestIdleCallback;
+    if (typeof ric === 'function') {
+      const handle = ric(preload, { timeout: 3000 });
+      return () => {
+        if (typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(handle);
+      };
+    }
+    const timer = window.setTimeout(preload, 1500);
+    return () => window.clearTimeout(timer);
+  }, [user, roleCanAdmin]);
 
   // ── Supabase Realtime: live row-level push from Postgres ───────────────
   //
@@ -2567,14 +2666,40 @@ export default function App() {
     if (!window.navigator.onLine) { setMessage('Online required.'); return false; }
     if (!window.confirm(`Delete pipeline "${pipeline.name || 'Unnamed'}"? It will be moved to Recent Deletes.`)) return false;
     setAdminBusy(true);
+
+    // Snapshot for rollback on API failure.
+    const wasPending = pipeline.approval_state === 'pending_review';
+    const removedFromPipelines = pipelines.find((p) => p.id === pipeline.id) || null;
+
+    // Optimistic remove from the map, admin pending list, and close the
+    // detail sheet. The derivation effect keeps the "Pending: N" badge
+    // in sync with the live pendingPipelines length.
+    setPipelines((prev) => prev.filter((p) => p.id !== pipeline.id));
+    if (wasPending) setPendingPipelines((prev) => prev.filter((p) => p.id !== pipeline.id));
+    handleClosePipelineDetail();
+
     try {
       await api.deletePipeline(pipeline.id);
-      setPipelines((prev) => prev.filter((p) => p.id !== pipeline.id));
-      handleClosePipelineDetail();
       setMessage('Pipeline moved to Recent Deletes.');
-      loadDeletedPipelines();
+      // Background catch-up only.
+      void Promise.allSettled([
+        loadDeletedPipelines(),
+        loadPendingPipelines(),
+        runPollTickRef.current ? runPollTickRef.current() : Promise.resolve(),
+      ]);
       return true;
     } catch (error) {
+      // Roll back the optimistic removes so the pipeline reappears.
+      if (removedFromPipelines) {
+        setPipelines((prev) => (
+          prev.some((p) => p.id === pipeline.id) ? prev : [removedFromPipelines, ...prev]
+        ));
+      }
+      if (wasPending) {
+        setPendingPipelines((prev) => (
+          prev.some((p) => p.id === pipeline.id) ? prev : [pipeline, ...prev]
+        ));
+      }
       setMessage(error.message || 'Delete failed.');
       return false;
     } finally {
@@ -3117,17 +3242,43 @@ export default function App() {
     if (!Number.isInteger(site.id)) { setMessage('Sync this pin first.'); return false; }
     if (!window.navigator.onLine) { setMessage('Online required.'); return false; }
     setAdminBusy(true);
+
+    // Snapshot for rollback on API failure.
+    const wasPending = site.approval_state === 'pending_review';
+    const removedFromSites = sites.find((item) => matchSiteIdentity(item, site)) || null;
+
+    // Optimistic removal — pin disappears from the map, the admin pending
+    // list, and the detail sheet closes INSTANTLY. The derivation effect
+    // above picks up the pendingSites shrink and decrements the topbar
+    // "Pending: N" badge in the same React tick.
+    setSites((prev) => prev.filter((item) => !matchSiteIdentity(item, site)));
+    if (wasPending) setPendingSites((prev) => prev.filter((s) => s.id !== site.id));
+    setSelectedSite(null);
+    setDetailOpen(false);
+
     try {
       await api.deleteSite(site.id);
-      const next = sites.filter((item) => !matchSiteIdentity(item, site));
-      setSites(next);
       await removeSite(site);
-      setSelectedSite(null);
-      setDetailOpen(false);
-      await loadPendingSites();
       setMessage('Pin deleted.');
+      // Background catch-up — don't block the UI. Refreshes deletedSites
+      // so the "Recent Deletes" admin list gets the soft-deleted row, and
+      // re-hydrates pendingSites from the server in case the delete moved
+      // other state (e.g. unlinked lease sheets).
+      void Promise.allSettled([
+        loadPendingSites(),
+        runPollTickRef.current ? runPollTickRef.current() : Promise.resolve(),
+      ]);
       return true;
     } catch (error) {
+      // Roll back optimistic state so the user doesn't lose the pin silently.
+      if (removedFromSites) {
+        setSites((prev) => (
+          prev.some((s) => matchSiteIdentity(s, site)) ? prev : [removedFromSites, ...prev]
+        ));
+      }
+      if (wasPending) {
+        setPendingSites((prev) => (prev.some((s) => s.id === site.id) ? prev : [site, ...prev]));
+      }
       setMessage(error.message || 'Delete failed.');
       return false;
     } finally { setAdminBusy(false); }
@@ -3245,10 +3396,18 @@ export default function App() {
   // Net: card vanishes in <50 ms instead of 1–2 s; egress drops because
   // we no longer re-download 9 list endpoints after every click.
   async function runAdminAction(action, successMessage, options = {}) {
-    const { optimistic } = options;
+    const { optimistic, pendingMessage } = options;
     setAdminBusy(true);
     if (typeof optimistic === 'function') {
       try { optimistic(); } catch { /* non-fatal */ }
+    } else if (pendingMessage) {
+      // Non-optimistic admin actions (bulk-reset, KML import, restore,
+      // delete-permanent on items that don't have a local snapshot yet)
+      // have no instant UI change the user can react to. Show the
+      // caller-supplied "Working…" message up-front so the click feels
+      // acknowledged instead of dead until the server ack arrives —
+      // which for KML imports can be 5–20 s on a large file.
+      setMessage(pendingMessage);
     }
     try {
       await action();
@@ -3798,19 +3957,21 @@ export default function App() {
             flexDirection: 'column',
             justifyContent: 'flex-end',
           }}>
-            <HerbicideLeaseSheet
-              site={inspectionSite}
-              pipeline={inspectionPipeline}
-              initialDistanceMeters={pendingPipelineSegment?.distance_meters ?? null}
-              isOpen={true}
-              requireComments={!!inspectionSite && inspectionSiteStatus === 'in_progress'}
-              commentsLabel={inspectionSiteStatus === 'in_progress' ? 'Comments / what was completed' : 'Comments'}
-              onSubmit={handleLeaseSheetSubmit}
-              onCancel={() => { handleLeaseSheetCancel(); setResumingDraft(null); }}
-              cachedLookups={cachedLookups}
-              draft={resumingDraft}
-              onDraftSaved={() => { setDraftsRefreshToken((x) => x + 1); }}
-            />
+            <Suspense fallback={null}>
+              <HerbicideLeaseSheet
+                site={inspectionSite}
+                pipeline={inspectionPipeline}
+                initialDistanceMeters={pendingPipelineSegment?.distance_meters ?? null}
+                isOpen={true}
+                requireComments={!!inspectionSite && inspectionSiteStatus === 'in_progress'}
+                commentsLabel={inspectionSiteStatus === 'in_progress' ? 'Comments / what was completed' : 'Comments'}
+                onSubmit={handleLeaseSheetSubmit}
+                onCancel={() => { handleLeaseSheetCancel(); setResumingDraft(null); }}
+                cachedLookups={cachedLookups}
+                draft={resumingDraft}
+                onDraftSaved={() => { setDraftsRefreshToken((x) => x + 1); }}
+              />
+            </Suspense>
           </div>
         )}
 
@@ -3828,23 +3989,27 @@ export default function App() {
             flexDirection: 'column',
             justifyContent: 'flex-end',
           }}>
-            <HerbicideLeaseSheet
-              site={{ id: editingSprayRecord.site_id, client: editingSprayRecord.site_client, area: editingSprayRecord.site_area, lsd: editingSprayRecord.site_lsd }}
-              isOpen={true}
-              editingRecord={editingSprayRecord}
-              onSubmit={handleEditSpraySubmit}
-              onCancel={() => setEditingSprayRecord(null)}
-              cachedLookups={cachedLookups}
-            />
+            <Suspense fallback={null}>
+              <HerbicideLeaseSheet
+                site={{ id: editingSprayRecord.site_id, client: editingSprayRecord.site_client, area: editingSprayRecord.site_area, lsd: editingSprayRecord.site_lsd }}
+                isOpen={true}
+                editingRecord={editingSprayRecord}
+                onSubmit={handleEditSpraySubmit}
+                onCancel={() => setEditingSprayRecord(null)}
+                cachedLookups={cachedLookups}
+              />
+            </Suspense>
           </div>
         )}
 
         {/* ── Lease Sheet Preview overlay ── */}
         {previewingRecord && (
-          <PdfPreviewOverlay
-            record={previewingRecord}
-            onClose={() => setPreviewingRecord(null)}
-          />
+          <Suspense fallback={null}>
+            <PdfPreviewOverlay
+              record={previewingRecord}
+              onClose={() => setPreviewingRecord(null)}
+            />
+          </Suspense>
         )}
 
         {/* ── T&M Ticket Detail overlay ── */}
@@ -3857,14 +4022,16 @@ export default function App() {
             display: 'flex',
             flexDirection: 'column',
           }}>
-            <TMTicketDetailSheet
-              ticketId={activeTMTicketId}
-              roleCanAdmin={roleCanAdmin}
-              roleCanOffice={roleCanAdmin}
-              currentUserEmail={user?.email}
-              onClose={() => setActiveTMTicketId(null)}
-              onQueueSubmit={handleQueueTMSubmit}
-            />
+            <Suspense fallback={null}>
+              <TMTicketDetailSheet
+                ticketId={activeTMTicketId}
+                roleCanAdmin={roleCanAdmin}
+                roleCanOffice={roleCanAdmin}
+                currentUserEmail={user?.email}
+                onClose={() => setActiveTMTicketId(null)}
+                onQueueSubmit={handleQueueTMSubmit}
+              />
+            </Suspense>
           </div>
         )}
 
@@ -4224,6 +4391,7 @@ export default function App() {
             <h2>Forms</h2>
           </div>
           <div className="side-panel-body">
+            <Suspense fallback={<div className="small-text" style={{ padding: '1rem' }}>Loading…</div>}>
             <FormsPanel
               visible={activeTab === TAB_FORMS}
               cachedRecents={cachedRecents}
@@ -4302,6 +4470,7 @@ export default function App() {
               viewAsWorker={viewAsWorker}
               currentUserName={currentUserName}
             />
+            </Suspense>
           </div>
         </div>
 
@@ -4321,6 +4490,7 @@ export default function App() {
             <h2>Admin</h2>
           </div>
           <div className="side-panel-body">
+            <Suspense fallback={<div className="small-text" style={{ padding: '1rem' }}>Loading admin tools…</div>}>
             <AdminPanel
               visible={true}
               pendingSites={pendingSites}
@@ -4371,8 +4541,16 @@ export default function App() {
               onApprovePipelineAndEdit={handleApprovePipelineAndEdit}
               onBulkApprovePending={handleBulkApprovePending}
               onBulkRejectPending={handleBulkRejectPending}
-              onBulkReset={(payload) => runAdminAction(() => api.bulkResetStatus(payload), 'Reset complete.')}
-              onImport={(file) => runAdminAction(() => api.importKml(file), 'KML imported.')}
+              onBulkReset={(payload) => runAdminAction(
+                () => api.bulkResetStatus(payload),
+                'Reset complete.',
+                { pendingMessage: 'Resetting statuses…' },
+              )}
+              onImport={(file) => runAdminAction(
+                () => api.importKml(file),
+                'KML imported.',
+                { pendingMessage: 'Importing KML… this can take 10–20 s on large files.' },
+              )}
               onRestore={handleRestoreSite}
               onDeletePermanent={handleDeletePermanent}
               onSelectSite={(site) => { setZoomTarget({ ...site, _ts: Date.now() }); setActiveTab(TAB_MAP); setSelectedSite(site); setDetailOpen(true); }}
@@ -4414,8 +4592,16 @@ export default function App() {
                   setAdminBusy(false);
                 }
               }}
-              onImportPipelineKml={(file) => runAdminAction(async () => { await api.importPipelineKml(file); await loadPipelines(); }, 'Pipeline KML imported.')}
-              onBulkResetPipelines={(payload) => runAdminAction(async () => { await api.bulkResetPipelines(payload); await loadPipelines(); }, 'Pipelines reset to not sprayed.')}
+              onImportPipelineKml={(file) => runAdminAction(
+                async () => { await api.importPipelineKml(file); await loadPipelines(); },
+                'Pipeline KML imported.',
+                { pendingMessage: 'Importing pipeline KML… this can take 10–20 s on large files.' },
+              )}
+              onBulkResetPipelines={(payload) => runAdminAction(
+                async () => { await api.bulkResetPipelines(payload); await loadPipelines(); },
+                'Pipelines reset to not sprayed.',
+                { pendingMessage: 'Resetting pipelines…' },
+              )}
               onSelectPipeline={(pipeline) => { handleOpenPipelineDetail(pipeline); setActiveTab(TAB_MAP); }}
               deletedPipelines={deletedPipelines}
               onRestorePipeline={(pipelineId) => runAdminAction(
@@ -4440,24 +4626,27 @@ export default function App() {
               cachedUsers={cachedUsers}
               onUsersChanged={loadServerUsers}
             />
+            </Suspense>
           </div>
         </div>
       </main>
 
       {/* ── Approve & Edit review modal (admin) ── */}
       {approveEditTarget ? (
-        <ApproveEditModal
-          kind={approveEditTarget.kind}
-          target={approveEditTarget.target}
-          onClose={() => setApproveEditTarget(null)}
-          onSubmitted={async () => {
-            await refreshAllData();
-            if (approveEditTarget.kind === 'pipeline') {
-              await loadPendingPipelines();
-            }
-            setMessage('Approved.');
-          }}
-        />
+        <Suspense fallback={null}>
+          <ApproveEditModal
+            kind={approveEditTarget.kind}
+            target={approveEditTarget.target}
+            onClose={() => setApproveEditTarget(null)}
+            onSubmitted={async () => {
+              await refreshAllData();
+              if (approveEditTarget.kind === 'pipeline') {
+                await loadPendingPipelines();
+              }
+              setMessage('Approved.');
+            }}
+          />
+        </Suspense>
       ) : null}
 
       {/* ── Bottom tabs ── */}
