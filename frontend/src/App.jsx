@@ -69,6 +69,12 @@ const HerbicideLeaseSheet = lazy(() => import('./components/HerbicideLeaseSheet'
 const FormsPanel = lazy(() => import('./components/FormsPanel'));
 const PdfPreviewOverlay = lazy(() => import('./components/PdfPreviewOverlay'));
 const TMTicketDetailSheet = lazy(() => import('./components/TMTicketDetailSheet'));
+// Reports dashboard is admin/office-only and intentionally opened very
+// rarely (weekly/yearly). Unlike the components above, it is NOT included
+// in the idle-time preload block — we only fetch its chunk on demand when
+// the user taps "Open Reports" so worker sessions never pay for it, and
+// even an admin who never runs a report never downloads it.
+const ReportsDashboard = lazy(() => import('./components/ReportsDashboard'));
 
 const DEFAULT_FILTERS = { search: '', client: '', area: '', status: '', approval_state: '' };
 const DEFAULT_LAYERS = { lsd: true, water: true, quad_access: true, reclaimed: true, pipelines: true };
@@ -345,6 +351,13 @@ export default function App() {
   const [resumingDraft, setResumingDraft] = useState(null);
   // Token used to force FormsPanel to refresh drafts list
   const [draftsRefreshToken, setDraftsRefreshToken] = useState(0);
+  // Reports dashboard overlay. Only mounted when true — the lazy chunk
+  // loads on first open and stays in memory for the session, but the
+  // component itself does NO background work (no polls, no realtime, no
+  // auto-fetch on mount). All network activity is driven by explicit
+  // button clicks, so having it open vs closed has zero egress cost until
+  // the user clicks Generate/Download.
+  const [showReportsDashboard, setShowReportsDashboard] = useState(false);
   // Token bumped by the poll loop whenever sync-status reports
   // `tm_tickets_last_updated` has moved. FormsPanel listens to it and
   // re-fetches its Open / Recently Submitted T&M lists so users see
@@ -4833,11 +4846,29 @@ export default function App() {
               onLookupsChanged={loadServerLookups}
               cachedUsers={cachedUsers}
               onUsersChanged={loadServerUsers}
+              // Only wired for admin/office sessions. Worker sessions
+              // don't render AdminPanel at all, but guarding here too
+              // makes the intent explicit and keeps the button from
+              // appearing if an admin flips on "View as Worker".
+              onOpenReports={roleCanAdmin ? () => setShowReportsDashboard(true) : undefined}
             />
             </Suspense>
           </div>
         </div>
       </main>
+
+      {/* ── Reports dashboard (admin/office full-page overlay) ──
+          Only mounted when the user has explicitly opened it via the
+          button in AdminPanel. Guarded by roleCanAdmin so the overlay
+          can't stick around if the role downgrades (view-as-worker). */}
+      {showReportsDashboard && roleCanAdmin ? (
+        <Suspense fallback={null}>
+          <ReportsDashboard
+            onClose={() => setShowReportsDashboard(false)}
+            cachedLookups={cachedLookups}
+          />
+        </Suspense>
+      ) : null}
 
       {/* ── Approve & Edit review modal (admin) ── */}
       {approveEditTarget ? (

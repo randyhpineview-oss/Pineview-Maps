@@ -475,4 +475,99 @@ export const api = {
   getSignupInviteUrl() {
     return request('/api/admin/signup-invite-url');
   },
+
+  // ── Reports dashboard (admin/office only) ──
+  // These endpoints are ONLY hit when the reports overlay is open and the
+  // user explicitly clicks Generate/Download. Zero background traffic —
+  // worker sessions never touch them, so there's no egress impact on the
+  // rest of the app.
+  getReportFilterOptions() {
+    return request('/api/admin/reports/spray-records/filter-options');
+  },
+  getReportPreview(params) {
+    const sp = _buildReportParams(params);
+    // Longer timeout than the default 20s — a large unfiltered preview
+    // against the full spray-record history can take a few seconds on a
+    // cold DB connection. Still small (<2 MB), so a 60s ceiling is plenty.
+    return request(`/api/admin/reports/spray-records/preview?${sp.toString()}`, { timeoutMs: 60_000 });
+  },
+  /**
+   * Download a CSV report. Uses `fetch` directly (not `request`) because we
+   * need a binary stream to land in a Blob rather than JSON parsing. Returns
+   * a Promise that resolves once the download has been triggered. Pass an
+   * AbortSignal to let the UI cancel a long-running download.
+   */
+  async downloadReportCsv(params, { signal, filename } = {}) {
+    const sp = _buildReportParams(params);
+    const url = `${API_BASE_URL}/api/admin/reports/spray-records/export.csv?${sp.toString()}`;
+
+    const headers = {};
+    if (USE_SUPABASE_AUTH) {
+      const token = localStorage.getItem('supabase-access-token');
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+    } else {
+      headers['X-Demo-User'] = 'admin';
+    }
+
+    const resp = await fetch(url, { headers, signal });
+    if (!resp.ok) {
+      let detail = resp.statusText || 'Download failed';
+      try { detail = (await resp.json()).detail || detail; } catch { /* keep default */ }
+      const err = new Error(`${resp.status}: ${detail}`);
+      err.status = resp.status;
+      throw err;
+    }
+    // Honor the server's Content-Disposition filename when present.
+    const cd = resp.headers.get('content-disposition') || '';
+    const match = cd.match(/filename="?([^";]+)"?/i);
+    const suggestedName = match ? match[1] : (filename || 'pineview-spray-report.csv');
+
+    const blob = await resp.blob();
+    // Trigger a browser download via a synthetic <a download>. Revokes the
+    // object URL on the next tick so we don't leak memory across exports.
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objectUrl;
+    a.download = suggestedName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    return { filename: suggestedName, size: blob.size };
+  },
 };
+
+// Build a URLSearchParams from the report params object, skipping
+// undefined/null/'' values so the server sees a clean query string and can
+// rely on its own default-values for anything the client didn't send.
+function _buildReportParams(params = {}) {
+  const sp = new URLSearchParams();
+  const add = (k, v) => {
+    if (v === undefined || v === null || v === '') return;
+    if (Array.isArray(v)) {
+      if (v.length === 0) return;
+      sp.set(k, v.join(','));
+      return;
+    }
+    if (typeof v === 'boolean') {
+      sp.set(k, v ? 'true' : 'false');
+      return;
+    }
+    sp.set(k, String(v));
+  };
+  add('start_date', params.startDate);
+  add('end_date', params.endDate);
+  add('customer', params.customer);
+  add('area', params.area);
+  add('applicator', params.applicator);
+  add('herbicide', params.herbicide);
+  add('include_avoided', params.includeAvoided);
+  add('split_roadside', params.splitRoadside);
+  add('include_totals', params.includeTotals);
+  add('columns', params.columns);
+  add('herbicides_format', params.herbicidesFormat);
+  add('area_units', params.areaUnits);
+  add('date_format', params.dateFormat);
+  add('weeds_format', params.weedsFormat);
+  return sp;
+}

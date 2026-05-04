@@ -16,6 +16,7 @@ from app.signup import router as signup_router
 from app.user_management import router as user_management_router
 from app.pipeline_routes import router as pipeline_router
 from app.lookup_routes import router as lookup_router
+from app.reports_routes import router as reports_router
 from app.pipeline_models import Pipeline, SprayRecord  # noqa: F401 — ensure tables are registered
 from app.models import (
     ApprovalState,
@@ -84,6 +85,7 @@ app.include_router(signup_router)
 app.include_router(pipeline_router)
 app.include_router(lookup_router)
 app.include_router(time_materials_router)
+app.include_router(reports_router)
 
 
 # Global exception handler to ensure CORS headers on errors
