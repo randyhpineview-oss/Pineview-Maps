@@ -28,6 +28,7 @@ export default function HerbicideLeaseSheet({
   requireComments = false,
   commentsLabel = 'Comments',
   limitedRequiredFields = false,
+  initialComments = '',
 }) {
   const isEditMode = !!editingRecord;
   const initializedRef = useRef(false);
@@ -293,6 +294,7 @@ export default function HerbicideLeaseSheet({
         customer: site.client || '',
         area: site.area || '',
         lsdOrPipeline: site.lsd || '',
+        comments: initialComments || prev.comments,
       }));
     } else if (pipeline) {
       setForm(prev => ({
@@ -302,6 +304,7 @@ export default function HerbicideLeaseSheet({
         customer: pipeline.client || '',
         area: pipeline.area || '',
         lsdOrPipeline: pipeline.name || '',
+        comments: initialComments || prev.comments,
         // initialDistanceMeters is sourced from the KML segment picker in
         // meters; the lease sheet / T&M workflow now uses km for pipelines
         // so convert on the way in (3 decimals keeps the fidelity of the

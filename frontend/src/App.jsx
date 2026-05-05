@@ -309,6 +309,7 @@ export default function App() {
   const [inspectionSite, setInspectionSite] = useState(null);
   const [inspectionPipeline, setInspectionPipeline] = useState(null);
   const [inspectionSiteStatus, setInspectionSiteStatus] = useState('inspected');
+  const [inspectionReason, setInspectionReason] = useState('');
   // Upload queue state
   const [uploadQueueItems, setUploadQueueItems] = useState([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -2907,10 +2908,11 @@ export default function App() {
     }
   }
 
-  function handleStartIssueNotInspected(siteOrPipeline) {
+  function handleStartIssueNotInspected(siteOrPipeline, reason = '') {
     setDetailOpen(false);
     setPipelineDetailOpen(false);
     setInspectionSiteStatus('issue_not_inspected');
+    setInspectionReason(reason || '');
     if (siteOrPipeline?.lsd !== undefined) {
       setInspectionSite(siteOrPipeline);
       setInspectionPipeline(null);
@@ -2921,12 +2923,27 @@ export default function App() {
     }
   }
 
-  async function handleMarkPipelineNotInspectedDirect(pipeline) {
+  async function handleMarkPipelineNotInspectedDirect(pipeline, reason = '') {
+    // Create an is_avoided spray record covering the full pipeline so the
+    // reason is visible in Spray History, then force status override since
+    // _update_pipeline_spray_status() will have set it to 'not_sprayed'.
     try {
+      await api.createSprayRecord(pipeline.id, {
+        start_fraction: 0,
+        end_fraction: 1,
+        spray_date: new Date().toISOString().split('T')[0],
+        notes: reason || '',
+        is_avoided: true,
+      });
       const updated = await api.updatePipelineStatus(pipeline.id, { status: 'issue_not_inspected' });
       setPipelines((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
       setSelectedPipeline((prev) => prev && prev.id === updated.id ? updated : prev);
-      setMessage('Pipeline marked as not inspected.');
+      // Refresh spray records list for the detail panel
+      try {
+        const refreshed = await api.getPipeline(pipeline.id);
+        setPipelineSprayRecords(refreshed.spray_records || []);
+      } catch { /* ignore */ }
+      setMessage('Pipeline marked as issue (not inspected).');
     } catch (err) {
       setMessage(err.message || 'Status update failed.');
     }
@@ -3011,6 +3028,7 @@ export default function App() {
     setInspectionSite(null);
     setInspectionPipeline(null);
     setInspectionSiteStatus('inspected');
+    setInspectionReason('');
     setPendingPipelineSegment(null);
     // Clear any draft-resume state and bump refresh token so drafts list re-reads IDB
     setResumingDraft(null);
@@ -3088,6 +3106,7 @@ export default function App() {
     setInspectionSite(null);
     setInspectionPipeline(null);
     setInspectionSiteStatus('inspected');
+    setInspectionReason('');
     setPendingPipelineSegment(null);
   }
 
@@ -4189,6 +4208,7 @@ export default function App() {
                 requireComments={!!inspectionSite && inspectionSiteStatus === 'in_progress'}
                 commentsLabel={inspectionSiteStatus === 'in_progress' ? 'Comments / what was completed' : 'Comments'}
                 limitedRequiredFields={inspectionSiteStatus === 'issue_not_inspected'}
+                initialComments={inspectionReason}
                 onSubmit={handleLeaseSheetSubmit}
                 onCancel={() => { handleLeaseSheetCancel(); setResumingDraft(null); }}
                 cachedLookups={cachedLookups}

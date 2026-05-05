@@ -26,10 +26,12 @@ export default function PipelineDetailSheet({
   const [isEditing, setIsEditing] = useState(false);
   const [editState, setEditState] = useState(() => buildEditState(pipeline));
   const [showNotInspectedPrompt, setShowNotInspectedPrompt] = useState(false);
+  const [issueReason, setIssueReason] = useState('');
 
   useEffect(() => {
     setIsEditing(false);
     setShowNotInspectedPrompt(false);
+    setIssueReason('');
     setEditState(buildEditState(pipeline));
   }, [pipeline?.id]);
 
@@ -149,16 +151,26 @@ export default function PipelineDetailSheet({
               type="button"
               disabled={adminBusy}
               style={{ fontSize: '0.78rem', padding: '4px 10px' }}
-              onClick={() => { setShowNotInspectedPrompt(false); onMarkIssueNotInspected?.(pipeline); }}
+              onClick={() => {
+                const reason = issueReason;
+                setShowNotInspectedPrompt(false);
+                setIssueReason('');
+                onMarkIssueNotInspected?.(pipeline, reason);
+              }}
             >
               Yes — Fill Sheet
             </button>
             <button
-              className="status-button red"
+              className="secondary-button"
               type="button"
               disabled={adminBusy}
-              style={{ fontSize: '0.78rem', padding: '4px 10px' }}
-              onClick={() => { setShowNotInspectedPrompt(false); onMarkNotInspectedDirect?.(pipeline); }}
+              style={{ fontSize: '0.78rem', padding: '4px 10px', background: '#64748b' }}
+              onClick={() => {
+                const reason = issueReason;
+                setShowNotInspectedPrompt(false);
+                setIssueReason('');
+                onMarkNotInspectedDirect?.(pipeline, reason);
+              }}
             >
               Skip
             </button>
@@ -166,7 +178,7 @@ export default function PipelineDetailSheet({
               className="secondary-button"
               type="button"
               style={{ fontSize: '0.78rem', padding: '4px 8px' }}
-              onClick={() => setShowNotInspectedPrompt(false)}
+              onClick={() => { setShowNotInspectedPrompt(false); setIssueReason(''); }}
             >
               Cancel
             </button>
@@ -178,7 +190,17 @@ export default function PipelineDetailSheet({
               type="button"
               disabled={adminBusy || pipeline.approval_state === 'pending_review'}
               style={{ flex: 1, background: '#64748b' }}
-              onClick={() => setShowNotInspectedPrompt(true)}
+              onClick={() => {
+                const reason = window.prompt('Why is there an issue with this pipeline? (This will be saved on the spray record so the next person can see why.)');
+                if (reason === null) return;
+                const trimmed = String(reason).trim();
+                if (!trimmed) {
+                  alert('A reason is required.');
+                  return;
+                }
+                setIssueReason(trimmed);
+                setShowNotInspectedPrompt(true);
+              }}
             >
               ⚠ Issue with Pipeline
             </button>

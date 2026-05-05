@@ -43,11 +43,13 @@ export default function SiteDetailSheet({
   const [quickFields, setQuickFields] = useState({ gate_code: '', phone_number: '', notes: '' });
   const [quickSaving, setQuickSaving] = useState(false);
   const [showIssuePrompt, setShowIssuePrompt] = useState(false);
+  const [issueReason, setIssueReason] = useState('');
 
   useEffect(() => {
     setIsEditing(false);
     setQuickEditing(false);
     setShowIssuePrompt(false);
+    setIssueReason('');
     setEditState(buildEditState(site));
     setQuickFields({
       gate_code: site?.gate_code || '',
@@ -357,7 +359,12 @@ export default function SiteDetailSheet({
                       type="button"
                       disabled={statusSaving}
                       style={{ fontSize: '0.78rem', padding: '4px 10px' }}
-                      onClick={() => { setShowIssuePrompt(false); onStartIssueNotInspected?.(site); }}
+                      onClick={() => {
+                        const reason = issueReason;
+                        setShowIssuePrompt(false);
+                        setIssueReason('');
+                        onStartIssueNotInspected?.(site, reason);
+                      }}
                     >
                       Yes — Fill Sheet
                     </button>
@@ -367,12 +374,11 @@ export default function SiteDetailSheet({
                       disabled={statusSaving}
                       style={{ fontSize: '0.78rem', padding: '4px 10px', background: '#64748b' }}
                       onClick={() => {
+                        const reason = issueReason;
                         setShowIssuePrompt(false);
-                        const note = window.prompt('Why is there an issue with this site?');
-                        if (note !== null) {
-                          onStatusChange(site, 'issue', '');
-                          onCreateSprayRecord(site, { spray_date: new Date().toISOString().split('T')[0], notes: note, is_avoided: true });
-                        }
+                        setIssueReason('');
+                        onStatusChange(site, 'issue', '');
+                        onCreateSprayRecord(site, { spray_date: new Date().toISOString().split('T')[0], notes: reason, is_avoided: true });
                       }}
                     >
                       Skip
@@ -381,7 +387,7 @@ export default function SiteDetailSheet({
                       className="secondary-button"
                       type="button"
                       style={{ fontSize: '0.78rem', padding: '4px 8px' }}
-                      onClick={() => setShowIssuePrompt(false)}
+                      onClick={() => { setShowIssuePrompt(false); setIssueReason(''); }}
                     >
                       Cancel
                     </button>
@@ -391,7 +397,17 @@ export default function SiteDetailSheet({
                     className="secondary-button"
                     type="button"
                     disabled={statusSaving}
-                    onClick={() => setShowIssuePrompt(true)}
+                    onClick={() => {
+                      const reason = window.prompt('Why is there an issue with this site? (This will be saved on the spray record so the next person can see why.)');
+                      if (reason === null) return;
+                      const trimmed = String(reason).trim();
+                      if (!trimmed) {
+                        alert('A reason is required.');
+                        return;
+                      }
+                      setIssueReason(trimmed);
+                      setShowIssuePrompt(true);
+                    }}
                     style={{ background: '#64748b' }}
                   >
                     ⚠ Issue with Site
