@@ -29,6 +29,7 @@ class SiteStatus(str, enum.Enum):
     in_progress = "in_progress"
     inspected = "inspected"
     issue = "issue"
+    issue_not_inspected = "issue_not_inspected"
 
 
 class ApprovalState(str, enum.Enum):

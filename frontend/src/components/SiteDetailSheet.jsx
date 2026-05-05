@@ -33,6 +33,7 @@ export default function SiteDetailSheet({
   onCreateSprayRecord,
   onDeleteSprayRecord,
   onStartInspection,
+  onStartIssueNotInspected,
   onViewPdf,
   onEditRecord,
 }) {
@@ -41,10 +42,12 @@ export default function SiteDetailSheet({
   const [quickEditing, setQuickEditing] = useState(false);
   const [quickFields, setQuickFields] = useState({ gate_code: '', phone_number: '', notes: '' });
   const [quickSaving, setQuickSaving] = useState(false);
+  const [showNotInspectedPrompt, setShowNotInspectedPrompt] = useState(false);
 
   useEffect(() => {
     setIsEditing(false);
     setQuickEditing(false);
+    setShowNotInspectedPrompt(false);
     setEditState(buildEditState(site));
     setQuickFields({
       gate_code: site?.gate_code || '',
@@ -316,14 +319,46 @@ export default function SiteDetailSheet({
               >
                 Inspected Not Complete
               </button>
-              <button
-                className="status-button red"
-                type="button"
-                disabled={statusSaving}
-                onClick={() => onStatusChange(site, 'not_inspected', '')}
-              >
-                Mark Not inspected
-              </button>
+              {showNotInspectedPrompt ? (
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.78rem', color: '#9ca3af', whiteSpace: 'nowrap' }}>Fill lease sheet?</span>
+                  <button
+                    className="status-button green"
+                    type="button"
+                    disabled={statusSaving}
+                    style={{ fontSize: '0.78rem', padding: '4px 10px' }}
+                    onClick={() => { setShowNotInspectedPrompt(false); onStartIssueNotInspected?.(site); }}
+                  >
+                    Yes — Fill Sheet
+                  </button>
+                  <button
+                    className="status-button red"
+                    type="button"
+                    disabled={statusSaving}
+                    style={{ fontSize: '0.78rem', padding: '4px 10px' }}
+                    onClick={() => { setShowNotInspectedPrompt(false); onStatusChange(site, 'issue_not_inspected', ''); }}
+                  >
+                    Skip
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    style={{ fontSize: '0.78rem', padding: '4px 8px' }}
+                    onClick={() => setShowNotInspectedPrompt(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  className="status-button red"
+                  type="button"
+                  disabled={statusSaving}
+                  onClick={() => setShowNotInspectedPrompt(true)}
+                >
+                  Mark Not Inspected
+                </button>
+              )}
             </div>
           ) : null}
           {(site.pin_type === 'lsd' || site.pin_type === 'reclaimed') && onRequestTypeChange ? (

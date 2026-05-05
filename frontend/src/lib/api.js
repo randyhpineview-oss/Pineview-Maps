@@ -216,6 +216,9 @@ export const api = {
   updatePipeline(pipelineId, payload) {
     return request(`/api/pipelines/${pipelineId}`, { method: 'PATCH', body: payload });
   },
+  updatePipelineStatus(pipelineId, payload) {
+    return request(`/api/pipelines/${pipelineId}/status`, { method: 'PATCH', body: payload });
+  },
   deletePipeline(pipelineId) {
     return request(`/api/pipelines/${pipelineId}`, { method: 'DELETE' });
   },

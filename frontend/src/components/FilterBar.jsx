@@ -176,6 +176,7 @@ export default function FilterBar({
         <option value="in_progress">In progress</option>
         <option value="not_inspected">Not inspected</option>
         <option value="issue">Issue with Site</option>
+        <option value="issue_not_inspected">Issue (Not Inspected)</option>
       </select>
       <select value={filters.approval_state} onChange={(event) => onChange('approval_state', event.target.value)}>
         <option value="">All approvals</option>

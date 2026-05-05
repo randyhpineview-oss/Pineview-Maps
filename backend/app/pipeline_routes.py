@@ -20,6 +20,7 @@ from app.pipeline_schemas import (
     PipelineListRead,
     PipelineRead,
     PipelinesDeltaResponse,
+    PipelineStatusUpdate,
     PipelineUpdate,
     SprayRecordCreate,
     SprayRecordRead,
@@ -224,6 +225,32 @@ def update_pipeline(
         pipeline.client = payload.client
     if payload.area is not None:
         pipeline.area = payload.area
+    pipeline.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(pipeline)
+    return PipelineListRead.model_validate(pipeline)
+
+
+@router.patch("/pipelines/{pipeline_id}/status", response_model=PipelineListRead)
+def update_pipeline_status(
+    pipeline_id: int,
+    payload: PipelineStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Directly set a pipeline's status without triggering spray-record recalculation.
+
+    Used by the 'Mark Not Inspected' (issue_not_inspected) flow so the status
+    is recorded even when no spray record is being created.
+    """
+    allowed = {"not_sprayed", "sprayed", "issue_not_inspected"}
+    if payload.status not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"status must be one of: {', '.join(sorted(allowed))}",
+        )
+    pipeline = _get_pipeline_or_404(db, pipeline_id)
+    pipeline.status = payload.status
     pipeline.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(pipeline)

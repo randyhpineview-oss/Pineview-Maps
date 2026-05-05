@@ -2907,6 +2907,31 @@ export default function App() {
     }
   }
 
+  function handleStartIssueNotInspected(siteOrPipeline) {
+    setDetailOpen(false);
+    setPipelineDetailOpen(false);
+    setInspectionSiteStatus('issue_not_inspected');
+    if (siteOrPipeline?.lsd !== undefined) {
+      setInspectionSite(siteOrPipeline);
+      setInspectionPipeline(null);
+      setPendingPipelineSegment(null);
+    } else {
+      setInspectionSite(null);
+      handleStartSprayMarking(siteOrPipeline);
+    }
+  }
+
+  async function handleMarkPipelineNotInspectedDirect(pipeline) {
+    try {
+      const updated = await api.updatePipelineStatus(pipeline.id, { status: 'issue_not_inspected' });
+      setPipelines((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+      setSelectedPipeline((prev) => prev && prev.id === updated.id ? updated : prev);
+      setMessage('Pipeline marked as not inspected.');
+    } catch (err) {
+      setMessage(err.message || 'Status update failed.');
+    }
+  }
+
   // Worker (and admin/office-impersonating-worker) "Mark as pending" on a
   // T&M ticket. The sheet builds the full updateTMTicket payload (including
   // pdf_base64 from regenerateCurrentPdf) and hands it here; we queue it
@@ -2936,7 +2961,11 @@ export default function App() {
     if (inspectionSite) {
       const sitePayload = {
         ...payload,
-        site_status: inspectionSiteStatus === 'in_progress' ? 'in_progress' : 'inspected',
+        site_status: inspectionSiteStatus === 'in_progress'
+          ? 'in_progress'
+          : inspectionSiteStatus === 'issue_not_inspected'
+            ? 'issue_not_inspected'
+            : 'inspected',
       };
       await queueUpload({
         targetType: 'site',
@@ -2960,7 +2989,13 @@ export default function App() {
     }
 
     if (inspectionSite) {
-      const nextStatus = payload.is_avoided ? 'issue' : (inspectionSiteStatus === 'in_progress' ? 'in_progress' : 'inspected');
+      const nextStatus = payload.is_avoided
+        ? 'issue'
+        : inspectionSiteStatus === 'in_progress'
+          ? 'in_progress'
+          : inspectionSiteStatus === 'issue_not_inspected'
+            ? 'issue_not_inspected'
+            : 'inspected';
       const optimistic = {
         ...inspectionSite,
         status: nextStatus,
@@ -4153,6 +4188,7 @@ export default function App() {
                 isOpen={true}
                 requireComments={!!inspectionSite && inspectionSiteStatus === 'in_progress'}
                 commentsLabel={inspectionSiteStatus === 'in_progress' ? 'Comments / what was completed' : 'Comments'}
+                limitedRequiredFields={inspectionSiteStatus === 'issue_not_inspected'}
                 onSubmit={handleLeaseSheetSubmit}
                 onCancel={() => { handleLeaseSheetCancel(); setResumingDraft(null); }}
                 cachedLookups={cachedLookups}
@@ -4469,6 +4505,7 @@ export default function App() {
                 onCreateSprayRecord={handleCreateSiteSprayRecord}
                 onDeleteSprayRecord={handleDeleteSiteSprayRecord}
                 onStartInspection={handleStartInspection}
+                onStartIssueNotInspected={handleStartIssueNotInspected}
                 onViewPdf={(record) => {
                   setPreviewingRecord(record);
                 }}
@@ -4506,6 +4543,8 @@ export default function App() {
                 onSavePipeline={handleUpdatePipeline}
                 onDeletePipeline={handleDeletePipeline}
                 onMarkInspection={handleStartSprayMarking}
+                onMarkIssueNotInspected={handleStartIssueNotInspected}
+                onMarkNotInspectedDirect={handleMarkPipelineNotInspectedDirect}
                 adminBusy={adminBusy}
                 sprayRecords={pipelineSprayRecords}
                 onDeleteSprayRecord={handleDeleteSprayRecord}
@@ -4626,7 +4665,13 @@ export default function App() {
                     } else {
                       setInspectionSite({ id: draft.site_id });
                     }
-                    setInspectionSiteStatus(draft.site_status === 'in_progress' ? 'in_progress' : 'inspected');
+                    setInspectionSiteStatus(
+                      draft.site_status === 'in_progress'
+                        ? 'in_progress'
+                        : draft.site_status === 'issue_not_inspected'
+                          ? 'issue_not_inspected'
+                          : 'inspected'
+                    );
                   } else {
                     setInspectionSite(null);
                     setInspectionSiteStatus('inspected');

@@ -8,6 +8,9 @@ export function statusLabel(status) {
   if (status === 'issue') {
     return 'Issue';
   }
+  if (status === 'issue_not_inspected') {
+    return 'Issue (Not Inspected)';
+  }
   return 'Not inspected';
 }
 
@@ -53,6 +56,7 @@ function statusFill(status) {
   if (status === 'inspected') return '#22c55e';
   if (status === 'in_progress') return '#f59e0b';
   if (status === 'issue') return '#94a3b8';
+  if (status === 'issue_not_inspected') return '#94a3b8';
   return '#ef4444';
 }
 

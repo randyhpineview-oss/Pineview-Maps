@@ -150,6 +150,7 @@ def _migrate_add_columns() -> None:
         if not is_sqlite:
             try:
                 conn.execute(text("ALTER TYPE sitestatus ADD VALUE IF NOT EXISTS 'in_progress'"))
+                conn.execute(text("ALTER TYPE sitestatus ADD VALUE IF NOT EXISTS 'issue_not_inspected'"))
             except Exception as e:
                 print(f"Warning: sitestatus enum migration failed: {e}")
 
@@ -723,6 +724,8 @@ def _site_status_from_spray_payload(payload: SiteSprayRecordCreate) -> SiteStatu
     nested_status = None
     if isinstance(payload.lease_sheet_data, dict):
         nested_status = payload.lease_sheet_data.get("site_status")
+    if payload.site_status == SiteStatus.issue_not_inspected or nested_status == SiteStatus.issue_not_inspected.value:
+        return SiteStatus.issue_not_inspected
     if payload.site_status == SiteStatus.in_progress or nested_status == SiteStatus.in_progress.value:
         return SiteStatus.in_progress
     return SiteStatus.inspected

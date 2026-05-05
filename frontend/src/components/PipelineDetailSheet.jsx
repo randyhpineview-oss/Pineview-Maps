@@ -14,6 +14,8 @@ export default function PipelineDetailSheet({
   onSavePipeline,
   onDeletePipeline,
   onMarkInspection,
+  onMarkIssueNotInspected,
+  onMarkNotInspectedDirect,
   adminBusy = false,
   sprayRecords = [],
   onDeleteSprayRecord,
@@ -23,9 +25,11 @@ export default function PipelineDetailSheet({
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editState, setEditState] = useState(() => buildEditState(pipeline));
+  const [showNotInspectedPrompt, setShowNotInspectedPrompt] = useState(false);
 
   useEffect(() => {
     setIsEditing(false);
+    setShowNotInspectedPrompt(false);
     setEditState(buildEditState(pipeline));
   }, [pipeline?.id]);
 
@@ -137,6 +141,49 @@ export default function PipelineDetailSheet({
             Mark Inspection
           </button>
         </div>
+        {showNotInspectedPrompt ? (
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.5rem' }}>
+            <span style={{ fontSize: '0.78rem', color: '#9ca3af', whiteSpace: 'nowrap' }}>Fill lease sheet?</span>
+            <button
+              className="status-button green"
+              type="button"
+              disabled={adminBusy}
+              style={{ fontSize: '0.78rem', padding: '4px 10px' }}
+              onClick={() => { setShowNotInspectedPrompt(false); onMarkIssueNotInspected?.(pipeline); }}
+            >
+              Yes — Fill Sheet
+            </button>
+            <button
+              className="status-button red"
+              type="button"
+              disabled={adminBusy}
+              style={{ fontSize: '0.78rem', padding: '4px 10px' }}
+              onClick={() => { setShowNotInspectedPrompt(false); onMarkNotInspectedDirect?.(pipeline); }}
+            >
+              Skip
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              style={{ fontSize: '0.78rem', padding: '4px 8px' }}
+              onClick={() => setShowNotInspectedPrompt(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <div className="button-row" style={{ marginBottom: '0.5rem' }}>
+            <button
+              className="status-button red"
+              type="button"
+              disabled={adminBusy || pipeline.approval_state === 'pending_review'}
+              style={{ flex: 1 }}
+              onClick={() => setShowNotInspectedPrompt(true)}
+            >
+              Mark Not Inspected
+            </button>
+          </div>
+        )}
 
         {canManage && !isEditing && (
           <div className="button-row">

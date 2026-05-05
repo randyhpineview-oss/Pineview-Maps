@@ -175,6 +175,11 @@ class PipelineUpdate(BaseModel):
     area: str | None = None
 
 
+class PipelineStatusUpdate(BaseModel):
+    status: str
+    note: str | None = None
+
+
 class PipelineApprovalUpdate(BaseModel):
     approval_state: str
     name: str | None = None

@@ -27,6 +27,7 @@ export default function HerbicideLeaseSheet({
   onDraftSaved,                 // callback when "Save Draft" pressed successfully
   requireComments = false,
   commentsLabel = 'Comments',
+  limitedRequiredFields = false,
 }) {
   const isEditMode = !!editingRecord;
   const initializedRef = useRef(false);
@@ -133,6 +134,11 @@ export default function HerbicideLeaseSheet({
   const requiredMissing = useMemo(() => {
     const missing = [];
     const isBlank = (v) => v === '' || v === null || v === undefined;
+    if (limitedRequiredFields) {
+      if (!form.applicators?.length) missing.push('Applicators');
+      if (!String(form.comments || '').trim()) missing.push('Comments');
+      return missing;
+    }
     if (isBlank(form.time)) missing.push('Time');
     if (isBlank(form.date)) missing.push('Date');
     if (!form.customer || !String(form.customer).trim()) missing.push('Customer');
@@ -163,7 +169,7 @@ export default function HerbicideLeaseSheet({
     if (requireComments && !String(form.comments || '').trim()) missing.push('Comments');
     if (photos.length < 2) missing.push('Photos (both slots)');
     return missing;
-  }, [form, hasPipeline, hasAccessRoad, mainSiteType, photos, requireComments]);
+  }, [form, hasPipeline, hasAccessRoad, mainSiteType, photos, requireComments, limitedRequiredFields]);
 
   // Auto-populate from site, pipeline, draft, or editing record (run once)
   useEffect(() => {
@@ -556,7 +562,9 @@ export default function HerbicideLeaseSheet({
       });
       
       const photoData = (await Promise.all(photoPromises)).filter(Boolean);
-      const intendedSiteStatus = site ? (requireComments ? 'in_progress' : 'inspected') : undefined;
+      const intendedSiteStatus = site
+        ? (limitedRequiredFields ? 'issue_not_inspected' : (requireComments ? 'in_progress' : 'inspected'))
+        : undefined;
 
       // ── Build the T&M link + tentative PDF so the backend can upload to Dropbox ──
       let tm_link = null;
@@ -731,7 +739,7 @@ export default function HerbicideLeaseSheet({
         id: draftId || undefined,
         site_id: site?.id || null,
         pipeline_id: pipeline?.id || null,
-        site_status: requireComments ? 'in_progress' : 'inspected',
+        site_status: limitedRequiredFields ? 'issue_not_inspected' : (requireComments ? 'in_progress' : 'inspected'),
         form,
         photos: serializablePhotos,
         ticketNumber,
@@ -1666,7 +1674,7 @@ export default function HerbicideLeaseSheet({
             {/* Comments */}
             <div>
               <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>
-                {commentsLabel} {requireComments && !String(form.comments || '').trim() ? <span style={{ color: '#f87171' }}>*</span> : null}
+                {commentsLabel} {(requireComments || limitedRequiredFields) && !String(form.comments || '').trim() ? <span style={{ color: '#f87171' }}>*</span> : null}
               </label>
               <textarea
                 value={form.comments}
