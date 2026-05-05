@@ -174,13 +174,13 @@ export default function PipelineDetailSheet({
         ) : (
           <div className="button-row" style={{ marginBottom: '0.5rem' }}>
             <button
-              className="status-button red"
+              className="secondary-button"
               type="button"
               disabled={adminBusy || pipeline.approval_state === 'pending_review'}
-              style={{ flex: 1 }}
+              style={{ flex: 1, background: '#64748b' }}
               onClick={() => setShowNotInspectedPrompt(true)}
             >
-              Mark Not Inspected
+              ⚠ Issue with Pipeline
             </button>
           </div>
         )}

@@ -42,12 +42,12 @@ export default function SiteDetailSheet({
   const [quickEditing, setQuickEditing] = useState(false);
   const [quickFields, setQuickFields] = useState({ gate_code: '', phone_number: '', notes: '' });
   const [quickSaving, setQuickSaving] = useState(false);
-  const [showNotInspectedPrompt, setShowNotInspectedPrompt] = useState(false);
+  const [showIssuePrompt, setShowIssuePrompt] = useState(false);
 
   useEffect(() => {
     setIsEditing(false);
     setQuickEditing(false);
-    setShowNotInspectedPrompt(false);
+    setShowIssuePrompt(false);
     setEditState(buildEditState(site));
     setQuickFields({
       gate_code: site?.gate_code || '',
@@ -319,46 +319,14 @@ export default function SiteDetailSheet({
               >
                 Inspected Not Complete
               </button>
-              {showNotInspectedPrompt ? (
-                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.78rem', color: '#9ca3af', whiteSpace: 'nowrap' }}>Fill lease sheet?</span>
-                  <button
-                    className="status-button green"
-                    type="button"
-                    disabled={statusSaving}
-                    style={{ fontSize: '0.78rem', padding: '4px 10px' }}
-                    onClick={() => { setShowNotInspectedPrompt(false); onStartIssueNotInspected?.(site); }}
-                  >
-                    Yes — Fill Sheet
-                  </button>
-                  <button
-                    className="status-button red"
-                    type="button"
-                    disabled={statusSaving}
-                    style={{ fontSize: '0.78rem', padding: '4px 10px' }}
-                    onClick={() => { setShowNotInspectedPrompt(false); onStatusChange(site, 'issue_not_inspected', ''); }}
-                  >
-                    Skip
-                  </button>
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    style={{ fontSize: '0.78rem', padding: '4px 8px' }}
-                    onClick={() => setShowNotInspectedPrompt(false)}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              ) : (
-                <button
-                  className="status-button red"
-                  type="button"
-                  disabled={statusSaving}
-                  onClick={() => setShowNotInspectedPrompt(true)}
-                >
-                  Mark Not Inspected
-                </button>
-              )}
+              <button
+                className="status-button red"
+                type="button"
+                disabled={statusSaving}
+                onClick={() => onStatusChange(site, 'not_inspected', '')}
+              >
+                Mark Not inspected
+              </button>
             </div>
           ) : null}
           {(site.pin_type === 'lsd' || site.pin_type === 'reclaimed') && onRequestTypeChange ? (
@@ -381,21 +349,54 @@ export default function SiteDetailSheet({
                     : 'Mark as Reclaimed'}
               </button>
               {!isInfoOnlyPin(site.pin_type) && onCreateSprayRecord ? (
-                <button
-                  className="secondary-button"
-                  type="button"
-                  disabled={statusSaving}
-                  onClick={() => {
-                    const note = window.prompt('Why is there an issue with this site?');
-                    if (note !== null) {
-                      onStatusChange(site, 'issue', '');
-                      onCreateSprayRecord(site, { spray_date: new Date().toISOString().split('T')[0], notes: note, is_avoided: true });
-                    }
-                  }}
-                  style={{ background: '#64748b' }}
-                >
-                  ⚠ Issue with Site
-                </button>
+                showIssuePrompt ? (
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.78rem', color: '#9ca3af', whiteSpace: 'nowrap' }}>Fill lease sheet?</span>
+                    <button
+                      className="status-button green"
+                      type="button"
+                      disabled={statusSaving}
+                      style={{ fontSize: '0.78rem', padding: '4px 10px' }}
+                      onClick={() => { setShowIssuePrompt(false); onStartIssueNotInspected?.(site); }}
+                    >
+                      Yes — Fill Sheet
+                    </button>
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={statusSaving}
+                      style={{ fontSize: '0.78rem', padding: '4px 10px', background: '#64748b' }}
+                      onClick={() => {
+                        setShowIssuePrompt(false);
+                        const note = window.prompt('Why is there an issue with this site?');
+                        if (note !== null) {
+                          onStatusChange(site, 'issue', '');
+                          onCreateSprayRecord(site, { spray_date: new Date().toISOString().split('T')[0], notes: note, is_avoided: true });
+                        }
+                      }}
+                    >
+                      Skip
+                    </button>
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      style={{ fontSize: '0.78rem', padding: '4px 8px' }}
+                      onClick={() => setShowIssuePrompt(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={statusSaving}
+                    onClick={() => setShowIssuePrompt(true)}
+                    style={{ background: '#64748b' }}
+                  >
+                    ⚠ Issue with Site
+                  </button>
+                )
               ) : null}
             </div>
           ) : null}
