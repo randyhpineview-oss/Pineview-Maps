@@ -83,7 +83,7 @@ class Site(Base):
         index=True,
     )
     gate_code: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    phone_number: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    phone_number: Mapped[str | None] = mapped_column(String(255), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     source: Mapped[str] = mapped_column(String(64), nullable=False, default="field_added")
     source_name: Mapped[str | None] = mapped_column(String(255), nullable=True)

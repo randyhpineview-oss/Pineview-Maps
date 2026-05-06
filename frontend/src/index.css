@@ -910,6 +910,7 @@ button.site-row { cursor: pointer; }
   padding: 0.65rem;
   border-radius: 12px;
   background: rgba(9, 17, 31, 0.72);
+  white-space: pre-line;
 }
 
 .meta-item strong {
