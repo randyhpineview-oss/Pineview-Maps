@@ -4,7 +4,7 @@ from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Uploa
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from sqlalchemy import and_, inspect, or_, text
+from sqlalchemy import and_, func, inspect, or_, text
 from sqlalchemy.orm import Session, defer, joinedload
 
 from app.auth import get_current_user, require_roles, seed_demo_users
@@ -40,6 +40,7 @@ from app.time_materials_routes import (
 from app.schemas import (
     BulkResetRequest,
     BulkResetResponse,
+    ExternalLeaseSheetCreate,
     KmlImportResponse,
     RecentSubmissionRead,
     RecentSubmissionsDeltaResponse,
@@ -164,6 +165,12 @@ def _migrate_add_columns() -> None:
                     conn.execute(text("ALTER TABLE sites ADD COLUMN deleted_by_user_id INTEGER"))
                 else:
                     conn.execute(text("ALTER TABLE sites ADD COLUMN deleted_by_user_id INTEGER REFERENCES users(id)"))
+            if "is_hidden" not in existing_sites:
+                if is_sqlite:
+                    conn.execute(text("ALTER TABLE sites ADD COLUMN is_hidden BOOLEAN NOT NULL DEFAULT 0"))
+                else:
+                    conn.execute(text("ALTER TABLE sites ADD COLUMN is_hidden BOOLEAN NOT NULL DEFAULT false"))
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS idx_sites_is_hidden ON sites(is_hidden)"))
                     
         # Pipelines migrations
         if insp.has_table("pipelines"):
@@ -395,7 +402,8 @@ def sync_status(
     if current_user.role in (RoleEnum.admin, RoleEnum.office):
         pending_sites_count = db.query(Site).filter(
             Site.approval_state == ApprovalState.pending_review,
-            Site.deleted_at.is_(None)
+            Site.deleted_at.is_(None),
+            Site.is_hidden.is_(False),
         ).count()
         # Import pipeline model for count
         from app.pipeline_models import Pipeline as PipelineModel
@@ -467,7 +475,7 @@ def list_sites(
     """
     query = (
         db.query(Site)
-        .filter(Site.deleted_at.is_(None))
+        .filter(Site.deleted_at.is_(None), Site.is_hidden.is_(False))
         .order_by(Site.updated_at.desc())
     )
 
@@ -529,6 +537,7 @@ def sites_delta(
             Site.updated_at > since,
             Site.deleted_at.is_(None),
             Site.approval_state != ApprovalState.rejected,
+            Site.is_hidden.is_(False),
         )
     )
     sites = items_q.all()
@@ -908,6 +917,170 @@ def create_site_spray_record(
         if ticket is not None:
             append_row_for_spray_record(db, ticket, record)
             # Upload new/updated T&M PDF if provided
+            if tm_link.tm_pdf_base64:
+                from app.time_materials_routes import _upload_tm_pdf
+                new_url = _upload_tm_pdf(ticket, tm_link.tm_pdf_base64)
+                if new_url:
+                    ticket.pdf_url = new_url
+
+    db.commit()
+    db.refresh(record)
+    return SiteSprayRecordRead.model_validate(record)
+
+
+@app.post("/api/external-lease-sheet", response_model=SiteSprayRecordRead)
+def create_external_lease_sheet(
+    payload: ExternalLeaseSheetCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a standalone lease sheet for a location not on the map."""
+    import base64
+    from app.dropbox_integration import upload_pdf_to_dropbox, upload_photo_to_dropbox, build_pdf_path, build_photo_path
+
+    # ── Safety net: reject if matching non-hidden site exists ──
+    lsd_value = (payload.lease_sheet_data or {}).get("lsdOrPipeline", "").strip()
+    if lsd_value:
+        client_value = (payload.lease_sheet_data or {}).get("customer", "").strip()
+        area_value = (payload.lease_sheet_data or {}).get("area", "").strip()
+        existing_site = (
+            db.query(Site)
+            .filter(
+                Site.is_hidden.is_(False),
+                Site.deleted_at.is_(None),
+                Site.approval_state != ApprovalState.rejected,
+                func.lower(Site.lsd) == lsd_value.lower(),
+            )
+        )
+        if client_value:
+            existing_site = existing_site.filter(func.lower(Site.client) == client_value.lower())
+        if area_value:
+            existing_site = existing_site.filter(func.lower(Site.area) == area_value.lower())
+        existing_site = existing_site.first()
+        if existing_site is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"message": "A site with this location already exists on the map.", "site_id": existing_site.id},
+            )
+
+    # ── Idempotency check ──
+    if payload.client_submission_id:
+        existing = (
+            db.query(SiteSprayRecord)
+            .filter(
+                SiteSprayRecord.client_submission_id == payload.client_submission_id,
+                SiteSprayRecord.deleted_at.is_(None),
+            )
+            .first()
+        )
+        if existing is not None:
+            return SiteSprayRecordRead.model_validate(existing)
+
+    user_id = None
+    if current_user.id:
+        local_user = db.query(User).filter(User.id == current_user.id).first()
+        if local_user:
+            user_id = current_user.id
+
+    user_name = getattr(current_user, 'name', None) or (current_user.email.split('@')[0].title() if current_user.email else None)
+
+    # ── Create hidden placeholder site ──
+    lat = payload.latitude if payload.latitude is not None else 0.0
+    lng = payload.longitude if payload.longitude is not None else 0.0
+    site = Site(
+        pin_type=PinType.lsd,
+        lsd=lsd_value or None,
+        client=(payload.lease_sheet_data or {}).get("customer") or None,
+        area=(payload.lease_sheet_data or {}).get("area") or None,
+        latitude=lat,
+        longitude=lng,
+        status=SiteStatus.inspected,
+        approval_state=ApprovalState.approved,
+        source="external_form",
+        is_hidden=True,
+        created_by_user_id=user_id,
+        last_inspected_at=datetime.utcnow(),
+        last_inspected_by_user_id=user_id,
+        last_inspected_by_email=current_user.email if current_user.email else None,
+        last_inspected_by_name=user_name,
+    )
+    db.add(site)
+    db.flush()
+
+    # ── Ticket number ──
+    ticket_number = None
+    if not payload.is_avoided:
+        ticket_number = payload.ticket_number
+        if not ticket_number:
+            result = db.execute(text("SELECT nextval('herb_lease_seq')"))
+            seq_value = result.scalar()
+            ticket_number = f"HL{seq_value:06d}"
+
+    # ── Dropbox uploads ──
+    pdf_url = None
+    photo_urls = []
+
+    if payload.lease_sheet_data:
+        lease_sheet_data = payload.lease_sheet_data.copy()
+        lease_sheet_data['ticket_number'] = ticket_number
+
+        if payload.pdf_base64:
+            try:
+                pdf_content = base64.b64decode(payload.pdf_base64)
+                pdf_path = build_pdf_path(
+                    date_str=str(payload.spray_date),
+                    client=lease_sheet_data.get('customer', ''),
+                    area=lease_sheet_data.get('area', ''),
+                    ticket=ticket_number,
+                    lsd_or_pipeline=lease_sheet_data.get('lsdOrPipeline', ''),
+                )
+                pdf_url = upload_pdf_to_dropbox(pdf_content, pdf_path)
+            except Exception as e:
+                print(f"Error uploading PDF: {e}")
+
+        if lease_sheet_data.get('photos'):
+            for i, photo_data in enumerate(lease_sheet_data.get('photos', [])):
+                try:
+                    photo_content = base64.b64decode(photo_data.get('data', ''))
+                    photo_path = build_photo_path(ticket_number, i + 1)
+                    photo_url = upload_photo_to_dropbox(photo_content, photo_path)
+                    if photo_url:
+                        photo_urls.append(photo_url)
+                except Exception as e:
+                    print(f"Error uploading photo {i+1}: {e}")
+
+    persisted_lease_data = _strip_photos_from_lease_data(payload.lease_sheet_data)
+
+    record = SiteSprayRecord(
+        site_id=site.id,
+        spray_date=payload.spray_date,
+        sprayed_by_user_id=user_id,
+        sprayed_by_name=user_name,
+        notes=payload.notes,
+        is_avoided=payload.is_avoided,
+        ticket_number=ticket_number,
+        lease_sheet_data=persisted_lease_data,
+        pdf_url=pdf_url,
+        photo_urls=photo_urls if photo_urls else None,
+        client_submission_id=payload.client_submission_id,
+    )
+    db.add(record)
+    db.flush()
+    record.site = site
+
+    # ── T&M linking ──
+    tm_link = getattr(payload, "time_materials_link", None)
+    if tm_link and not payload.is_avoided:
+        ticket = find_or_create_ticket_for_link(
+            db=db,
+            record=record,
+            link_ticket_id=tm_link.ticket_id,
+            link_create=tm_link.create,
+            description_of_work=tm_link.description_of_work,
+            current_user=current_user,
+        )
+        if ticket is not None:
+            append_row_for_spray_record(db, ticket, record)
             if tm_link.tm_pdf_base64:
                 from app.time_materials_routes import _upload_tm_pdf
                 new_url = _upload_tm_pdf(ticket, tm_link.tm_pdf_base64)

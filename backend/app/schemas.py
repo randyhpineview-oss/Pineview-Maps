@@ -89,6 +89,20 @@ class SiteSprayRecordUpdate(BaseModel):
     tm_pdf_base64: str | None = None  # regenerated T&M PDF after edit propagation
 
 
+class ExternalLeaseSheetCreate(BaseModel):
+    """Standalone lease sheet for a location not on the map."""
+    spray_date: date
+    notes: str | None = None
+    is_avoided: bool = False
+    lease_sheet_data: dict | None = None
+    pdf_base64: str | None = None
+    ticket_number: str | None = None
+    time_materials_link: TimeMaterialsLink | None = None
+    client_submission_id: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+
+
 class RecentSubmissionRead(BaseModel):
     """Lightweight recent-submission row — NO lease_sheet_data.
 

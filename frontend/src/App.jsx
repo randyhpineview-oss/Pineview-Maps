@@ -350,6 +350,10 @@ export default function App() {
   const [activeTMTicketId, setActiveTMTicketId] = useState(null);
   // Lease sheet draft being resumed
   const [resumingDraft, setResumingDraft] = useState(null);
+  // Standalone lease sheet (external, not tied to a map site)
+  const [standaloneLeaseSheet, setStandaloneLeaseSheet] = useState(false);
+  const [isStandaloneMapPicking, setIsStandaloneMapPicking] = useState(false);
+  const [standalonePickedLocation, setStandalonePickedLocation] = useState(null);
   // Token used to force FormsPanel to refresh drafts list
   const [draftsRefreshToken, setDraftsRefreshToken] = useState(0);
   // Reports dashboard overlay. Only mounted when true — the lazy chunk
@@ -985,6 +989,28 @@ export default function App() {
             // AND Recently Submitted because the local status is stale.
             // Bumping the token causes an instant `/api/time-materials/delta`
             // call which overwrites the cached row with status='submitted'.
+            setTmRefreshToken((x) => x + 1);
+          } else if (item.targetType === 'external') {
+            // Standalone external lease sheet — backend creates the hidden
+            // placeholder site and spray record. 409 means a matching site
+            // already exists; surface to the user so they can pick from map.
+            const patched = await ensurePdfAndTicket(item);
+            try {
+              await requestWithUploadProgress(`/api/external-lease-sheet`, {
+                method: 'POST',
+                body: patched,
+                onProgress: onItemBytes,
+              });
+            } catch (err) {
+              if (err?.status === 409) {
+                const detail = err?.detail || {};
+                alert(`This location already exists on the map (site #${detail.site_id || '?'}). Please select it from the Map tab.`);
+                // Remove from queue — the worker must re-submit against the existing site.
+                await removeUploadEntry(item.id);
+                continue;
+              }
+              throw err;
+            }
             setTmRefreshToken((x) => x + 1);
           }
           await removeUploadEntry(item.id);
@@ -3110,6 +3136,81 @@ export default function App() {
     setPendingPipelineSegment(null);
   }
 
+  function handleStartStandaloneLeaseSheet() {
+    setStandaloneLeaseSheet(true);
+    setInspectionSite(null);
+    setInspectionPipeline(null);
+    setInspectionSiteStatus('inspected');
+    setInspectionReason('');
+    setPendingPipelineSegment(null);
+    setStandalonePickedLocation(null);
+    setIsStandaloneMapPicking(false);
+  }
+
+  function handleStandaloneLeaseSheetCancel() {
+    setStandaloneLeaseSheet(false);
+    setIsStandaloneMapPicking(false);
+    setStandalonePickedLocation(null);
+  }
+
+  function handleRedirectToSite(site) {
+    setStandaloneLeaseSheet(false);
+    setIsStandaloneMapPicking(false);
+    setStandalonePickedLocation(null);
+    setInspectionSite(site);
+    setInspectionSiteStatus('inspected');
+    setActiveTab(TAB_MAP);
+  }
+
+  async function handleExternalLeaseSheetSubmit(payload) {
+    await queueUpload({
+      targetType: 'external',
+      targetId: null,
+      payload,
+      spray_date: payload?.spray_date || null,
+      form_type: 'external_lease_sheet',
+    });
+    await refreshUploadQueue();
+    setStandaloneLeaseSheet(false);
+    setIsStandaloneMapPicking(false);
+    setStandalonePickedLocation(null);
+    setMessage('External lease sheet queued for upload.');
+    processUploadQueue();
+  }
+
+  function handleRequestStandaloneMapPick() {
+    setIsStandaloneMapPicking(true);
+    setStandalonePickedLocation(null);
+  }
+
+  function handleCancelStandaloneMapPick() {
+    setIsStandaloneMapPicking(false);
+    setStandalonePickedLocation(null);
+  }
+
+  function renderStandaloneLeaseSheet() {
+    return (
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 30, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+        <Suspense fallback={null}>
+          <HerbicideLeaseSheet
+            standalone={true}
+            isOpen={true}
+            onSubmit={handleExternalLeaseSheetSubmit}
+            onCancel={handleStandaloneLeaseSheetCancel}
+            cachedLookups={cachedLookups}
+            clients={clients}
+            areas={areas}
+            lsdSuggestions={lsdSuggestions}
+            onRedirectToSite={handleRedirectToSite}
+            onRequestMapPick={handleRequestStandaloneMapPick}
+            onCancelMapPick={handleCancelStandaloneMapPick}
+            pickedLocation={standalonePickedLocation}
+          />
+        </Suspense>
+      </div>
+    );
+  }
+
   function handleCancelEditMapPick() {
     setIsEditPickingMode(false);
     isEditPickingModeRef.current = false;
@@ -3122,6 +3223,9 @@ export default function App() {
       setAddPinLocation(location);
     } else if (isEditPickingModeRef.current) {
       setEditPickLocation(location);
+    } else if (isStandaloneMapPicking) {
+      setStandalonePickedLocation(location);
+      setIsStandaloneMapPicking(false);
     }
   }
 
@@ -4137,7 +4241,7 @@ export default function App() {
             markerRevision={markerRevision}
             selectedSite={selectedSite}
             onSelectSite={handleOpenDetail}
-            isPickingLocation={isPlacingPin || isPickingLocationForEdit}
+            isPickingLocation={isPlacingPin || isPickingLocationForEdit || isStandaloneMapPicking}
             pickedLocation={addPinLocation}
             onPickLocation={handleMapLocationPick}
             onOpenDetail={handleOpenDetail}
@@ -4218,6 +4322,8 @@ export default function App() {
             </Suspense>
           </div>
         )}
+
+        {standaloneLeaseSheet && renderStandaloneLeaseSheet()}
 
         {/* ── Edit Lease Sheet overlay ── */}
         {editingSprayRecord && (
@@ -4672,6 +4778,7 @@ export default function App() {
                   setMessage('Failed to delete lease sheet: ' + (e.message || 'unknown'));
                 }
               }}
+              onStartStandaloneLeaseSheet={handleStartStandaloneLeaseSheet}
               onStartLeaseSheetFromDraft={(draft) => {
                 // Tapping a draft (or "New lease sheet") opens the lease sheet overlay.
                 // When draft is null, the user needs to pick a site from the Map tab first.

@@ -4,6 +4,7 @@ import { generateTMTicketPdf } from '../lib/tmTicketPdfGenerator';
 import { api } from '../lib/api';
 import { saveLeaseSheetDraft, deleteLeaseSheetDraft } from '../lib/offlineStore';
 import PdfPreviewViewer from './PdfPreviewViewer';
+import AutocompleteInput from './AutocompleteInput';
 
 function get12hTime() {
   const now = new Date();
@@ -29,6 +30,14 @@ export default function HerbicideLeaseSheet({
   commentsLabel = 'Comments',
   limitedRequiredFields = false,
   initialComments = '',
+  standalone = false,
+  clients = [],
+  areas = [],
+  lsdSuggestions = [],
+  onRedirectToSite = null,
+  onRequestMapPick = null,
+  onCancelMapPick = null,
+  pickedLocation = null,
 }) {
   const isEditMode = !!editingRecord;
   const initializedRef = useRef(false);
@@ -55,6 +64,10 @@ export default function HerbicideLeaseSheet({
   const [isSavingDraft, setIsSavingDraft] = useState(false);
   // Local-only input for typing custom (Other) weeds. Not persisted.
   const [customWeedInput, setCustomWeedInput] = useState('');
+  // GPS state for standalone mode
+  const [gpsLat, setGpsLat] = useState('');
+  const [gpsLng, setGpsLng] = useState('');
+  const [gpsStatus, setGpsStatus] = useState('');
 
   // Form state
   const [form, setForm] = useState({
@@ -352,6 +365,38 @@ export default function HerbicideLeaseSheet({
       setForm(prev => ({ ...prev, roadsideAreaTreated: '' }));
     }
   }, [form.roadsideLiters]);
+
+  // Sync pickedLocation from map pick into GPS fields
+  useEffect(() => {
+    if (pickedLocation && pickedLocation.latitude != null && pickedLocation.longitude != null) {
+      setGpsLat(pickedLocation.latitude.toFixed(6));
+      setGpsLng(pickedLocation.longitude.toFixed(6));
+      setGpsStatus('Map location applied.');
+    }
+  }, [pickedLocation]);
+
+  function useCurrentLocation() {
+    if (!navigator.geolocation) {
+      setGpsStatus('Geolocation not available.');
+      return;
+    }
+    setGpsStatus('Getting location...');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setGpsLat(pos.coords.latitude.toFixed(6));
+        setGpsLng(pos.coords.longitude.toFixed(6));
+        setGpsStatus('Current GPS location applied.');
+      },
+      () => setGpsStatus('Location access failed. Enter manually.'),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  }
+
+  function clearLocation() {
+    setGpsLat('');
+    setGpsLng('');
+    setGpsStatus('');
+  }
 
   const handleCheckboxGroup = (field, value) => {
     setForm(prev => {
@@ -685,6 +730,10 @@ export default function HerbicideLeaseSheet({
         ...(intendedSiteStatus ? { site_status: intendedSiteStatus } : {}),
         time_materials_link: tm_link,
         client_submission_id: clientSubmissionId,
+        ...(standalone ? {
+          latitude: gpsLat ? parseFloat(gpsLat) : null,
+          longitude: gpsLng ? parseFloat(gpsLng) : null,
+        } : {}),
       };
 
       // For edit mode, regenerate the linked T&M PDF as well
@@ -1118,54 +1167,128 @@ export default function HerbicideLeaseSheet({
 
             <div>
               <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Customer {!(form.customer && String(form.customer).trim()) && <span style={{ color: '#f87171' }}>*</span>}</label>
-              <input
-                type="text"
-                value={form.customer}
-                onChange={e => setForm(prev => ({ ...prev, customer: e.target.value }))}
-                style={{
-                  width: '100%',
-                  padding: '8px 12px',
-                  borderRadius: '6px',
-                  border: '1px solid #374151',
-                  backgroundColor: '#111827',
-                  color: '#f9fafb',
-                }}
-              />
+              {standalone ? (
+                <AutocompleteInput
+                  value={form.customer}
+                  onChange={(next) => setForm(prev => ({ ...prev, customer: next }))}
+                  placeholder="Customer"
+                  suggestions={clients}
+                  inputStyle={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #374151', backgroundColor: '#111827', color: '#f9fafb' }}
+                />
+              ) : (
+                <input
+                  type="text"
+                  value={form.customer}
+                  onChange={e => setForm(prev => ({ ...prev, customer: e.target.value }))}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid #374151',
+                    backgroundColor: '#111827',
+                    color: '#f9fafb',
+                  }}
+                />
+              )}
             </div>
 
             <div>
               <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Area {!(form.area && String(form.area).trim()) && <span style={{ color: '#f87171' }}>*</span>}</label>
-              <input
-                type="text"
-                value={form.area}
-                onChange={e => setForm(prev => ({ ...prev, area: e.target.value }))}
-                style={{
-                  width: '100%',
-                  padding: '8px 12px',
-                  borderRadius: '6px',
-                  border: '1px solid #374151',
-                  backgroundColor: '#111827',
-                  color: '#f9fafb',
-                }}
-              />
+              {standalone ? (
+                <AutocompleteInput
+                  value={form.area}
+                  onChange={(next) => setForm(prev => ({ ...prev, area: next }))}
+                  placeholder="Area"
+                  suggestions={areas}
+                  inputStyle={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #374151', backgroundColor: '#111827', color: '#f9fafb' }}
+                />
+              ) : (
+                <input
+                  type="text"
+                  value={form.area}
+                  onChange={e => setForm(prev => ({ ...prev, area: e.target.value }))}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid #374151',
+                    backgroundColor: '#111827',
+                    color: '#f9fafb',
+                  }}
+                />
+              )}
             </div>
 
             <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>LSD / Pipeline {!(form.lsdOrPipeline && String(form.lsdOrPipeline).trim()) && <span style={{ color: '#f87171' }}>*</span>}</label>
-              <input
-                type="text"
-                value={form.lsdOrPipeline}
-                onChange={e => setForm(prev => ({ ...prev, lsdOrPipeline: e.target.value }))}
-                style={{
-                  width: '100%',
-                  padding: '8px 12px',
-                  borderRadius: '6px',
-                  border: '1px solid #374151',
-                  backgroundColor: '#111827',
-                  color: '#f9fafb',
-                }}
-              />
+              <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>{standalone ? 'Location (e.g. Km 4, Hwy 43 North)' : 'LSD / Pipeline'} {!(form.lsdOrPipeline && String(form.lsdOrPipeline).trim()) && <span style={{ color: '#f87171' }}>*</span>}</label>
+              {standalone ? (
+                <AutocompleteInput
+                  value={form.lsdOrPipeline}
+                  onChange={(next) => setForm(prev => ({ ...prev, lsdOrPipeline: next }))}
+                  placeholder="Location description"
+                  suggestions={lsdSuggestions}
+                  onSelect={(item) => {
+                    if (item.site && onRedirectToSite) {
+                      onRedirectToSite(item.site);
+                      return;
+                    }
+                    setForm(prev => ({ ...prev, lsdOrPipeline: item.label }));
+                    if (item.sub) {
+                      const parts = item.sub.split(' · ');
+                      setForm(prev => ({
+                        ...prev,
+                        customer: prev.customer || parts[0] || '',
+                        area: prev.area || parts[1] || '',
+                      }));
+                    }
+                  }}
+                  inputStyle={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #374151', backgroundColor: '#111827', color: '#f9fafb' }}
+                />
+              ) : (
+                <input
+                  type="text"
+                  value={form.lsdOrPipeline}
+                  onChange={e => setForm(prev => ({ ...prev, lsdOrPipeline: e.target.value }))}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid #374151',
+                    backgroundColor: '#111827',
+                    color: '#f9fafb',
+                  }}
+                />
+              )}
             </div>
+
+            {/* Optional GPS location (standalone mode only) */}
+            {standalone && (
+              <div style={{ marginTop: '4px' }}>
+                <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>GPS Location (optional)</label>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                  <button className="secondary-button" type="button" onClick={useCurrentLocation} style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
+                    Use Current Location
+                  </button>
+                  <button className="secondary-button" type="button" onClick={() => onRequestMapPick?.()} style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
+                    Pick on Map
+                  </button>
+                  {(gpsLat || gpsLng) && (
+                    <button className="secondary-button" type="button" onClick={clearLocation} style={{ padding: '6px 12px', fontSize: '0.8rem', color: '#f87171' }}>
+                      Clear
+                    </button>
+                  )}
+                </div>
+                {(gpsLat || gpsLng) && (
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <input type="text" value={gpsLat} onChange={(e) => setGpsLat(e.target.value)} placeholder="Latitude"
+                      style={{ flex: 1, padding: '6px 10px', borderRadius: '6px', border: '1px solid #374151', backgroundColor: '#111827', color: '#f9fafb', fontSize: '0.8rem' }} />
+                    <input type="text" value={gpsLng} onChange={(e) => setGpsLng(e.target.value)} placeholder="Longitude"
+                      style={{ flex: 1, padding: '6px 10px', borderRadius: '6px', border: '1px solid #374151', backgroundColor: '#111827', color: '#f9fafb', fontSize: '0.8rem' }} />
+                  </div>
+                )}
+                {gpsStatus && <div className="small-text" style={{ marginTop: '4px' }}>{gpsStatus}</div>}
+              </div>
+            )}
 
             {/* Applicators */}
             <div>

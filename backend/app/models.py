@@ -104,6 +104,7 @@ class Site(Base):
     pending_pin_type: Mapped[PinType | None] = mapped_column(Enum(PinType), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     deleted_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    is_hidden: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
 
     spray_records: Mapped[list["SiteSprayRecord"]] = relationship(
         back_populates="site",

@@ -197,8 +197,12 @@ def _extract_context(record, is_pipeline: bool):
             (pipeline.area if pipeline else "") or "",
         )
     site = getattr(record, "site", None)
+    # External/standalone lease sheets live on hidden placeholder sites —
+    # flag them as "External" in reports so admins can distinguish roadside
+    # / off-map jobs from regular mapped sites.
+    site_type = "External" if (site and getattr(site, "is_hidden", False)) else "Site"
     return (
-        "Site",
+        site_type,
         data.get("lsdOrPipeline") or (site.lsd if site else "") or "",
         (site.client if site else "") or "",
         (site.area if site else "") or "",

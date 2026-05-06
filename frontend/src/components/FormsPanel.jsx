@@ -181,6 +181,7 @@ export default function FormsPanel({
   onEditRecord,
   onDeleteRecord,    // delete lease sheet (admin/office only)
   onStartLeaseSheetFromDraft,
+  onStartStandaloneLeaseSheet,
   onStartNewTMTicket,    // called with ({ client, area, spray_date, description_of_work })
   onOpenTMTicket,
   onRequestDraftsRefresh,    // parent can trigger a refresh when form closes
@@ -553,7 +554,12 @@ export default function FormsPanel({
 
           <div
             role="button"
-            onClick={() => onStartLeaseSheetFromDraft?.(null)}
+            onClick={() => {
+              const msg = 'Standalone Lease Sheet\n\nThis creates a lease sheet for a location that is NOT on the map (e.g. roadside spraying, external job, km marker on a road).\n\nIf this location already has a pin on the map, cancel and select it from the Map tab instead.\n\nContinue?';
+              if (window.confirm(msg)) {
+                onStartStandaloneLeaseSheet?.();
+              }
+            }}
             style={{
               padding: '14px',
               background: '#111827',
@@ -568,7 +574,7 @@ export default function FormsPanel({
             <div>
               <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>🌿 Herbicide Lease Sheet</div>
               <div className="small-text" style={{ color: '#9ca3af', marginTop: '2px' }}>
-                Select a site from the Map tab first, then tap "Mark as sprayed".
+                For locations NOT on the map. For mapped sites, use the Map tab → "Mark as sprayed".
               </div>
             </div>
             <span style={{ color: '#3b82f6' }}>›</span>
