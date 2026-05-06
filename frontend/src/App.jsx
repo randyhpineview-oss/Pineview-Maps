@@ -3181,16 +3181,21 @@ export default function App() {
   function handleRequestStandaloneMapPick() {
     setIsStandaloneMapPicking(true);
     setStandalonePickedLocation(null);
+    // Slide the Forms side-panel away so the worker has the full map to tap on.
+    // The overlay's display:none keeps form state intact.
+    setActiveTab(TAB_MAP);
   }
 
   function handleCancelStandaloneMapPick() {
     setIsStandaloneMapPicking(false);
     setStandalonePickedLocation(null);
+    // Return to the Forms tab so the overlay re-appears in its expected context.
+    setActiveTab(TAB_FORMS);
   }
 
   function renderStandaloneLeaseSheet() {
     return (
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 30, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 30, backgroundColor: 'rgba(0,0,0,0.5)', display: isStandaloneMapPicking ? 'none' : 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
         <Suspense fallback={null}>
           <HerbicideLeaseSheet
             standalone={true}
@@ -3226,6 +3231,9 @@ export default function App() {
     } else if (isStandaloneMapPicking) {
       setStandalonePickedLocation(location);
       setIsStandaloneMapPicking(false);
+      // Re-open the Forms tab so the standalone overlay (and the GPS
+      // fields it just populated) is visible again.
+      setActiveTab(TAB_FORMS);
     }
   }
 
@@ -4324,6 +4332,36 @@ export default function App() {
         )}
 
         {standaloneLeaseSheet && renderStandaloneLeaseSheet()}
+
+        {/* Floating "Cancel pick" banner for standalone map picking */}
+        {isStandaloneMapPicking && (
+          <div style={{
+            position: 'absolute',
+            top: 12,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 35,
+            background: '#1f2937',
+            color: '#f9fafb',
+            padding: '10px 16px',
+            borderRadius: '8px',
+            border: '1px solid #374151',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            fontSize: '0.9rem',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+          }}>
+            <span>Tap the map to choose a location</span>
+            <button
+              type="button"
+              onClick={handleCancelStandaloneMapPick}
+              style={{ background: '#374151', color: '#f9fafb', border: 'none', borderRadius: '6px', padding: '6px 12px', cursor: 'pointer' }}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
 
         {/* ── Edit Lease Sheet overlay ── */}
         {editingSprayRecord && (
