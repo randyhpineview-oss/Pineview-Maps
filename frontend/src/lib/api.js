@@ -65,6 +65,11 @@ async function request(path, options = {}) {
         return doFetch(true);
       }
       console.error('[API] Fetch error:', error);
+      if (error.name === 'AbortError') {
+        throw new Error(
+          `Request timed out after ${Math.round(timeoutMs / 1000)}s. The server may be down, slow, or hung — check Render logs.`
+        );
+      }
       throw new Error(`Network error: ${error.message}`);
     }
     clearTimeout(timer);
@@ -205,7 +210,9 @@ export const api = {
     return request(`/api/admin/users/${userId}/confirm-email`, { method: 'POST' });
   },
   sendUserPasswordReset(userId) {
-    return request(`/api/admin/users/${userId}/send-password-reset`, { method: 'POST' });
+    // SMTP send via Gmail can take 5–10s; allow 45s before giving up so we
+    // don't abort a request that's actually working.
+    return request(`/api/admin/users/${userId}/send-password-reset`, { method: 'POST', timeoutMs: 45_000 });
   },
 
   // ── Pipelines ──

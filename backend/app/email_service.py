@@ -129,7 +129,9 @@ Field Mapping & Collaboration
     msg.attach(MIMEText(text_body, "plain"))
     msg.attach(MIMEText(html_body, "html"))
 
-    # Send email
+    # Send email. timeout= guards against Gmail SMTP hanging on TLS/auth
+    # (e.g. revoked App Password) which otherwise blocks the request long
+    # enough for the browser to abort with a confusing "signal aborted".
     try:
         await aiosmtplib.send(
             msg,
@@ -138,6 +140,7 @@ Field Mapping & Collaboration
             start_tls=True,
             username=settings.smtp_user,
             password=settings.smtp_password,
+            timeout=15,
         )
     except Exception as e:
         # Log error and re-raise
@@ -263,6 +266,7 @@ Field Mapping & Collaboration
             start_tls=True,
             username=settings.smtp_user,
             password=settings.smtp_password,
+            timeout=15,
         )
     except Exception as e:
         print(f"Failed to send signup confirmation to {email}: {e}")
