@@ -181,14 +181,16 @@ function roleBadgeStyle(role) {
   }
 }
 
-function UserRow({ user, busy, onUpdateRole, onUpdateName, onDelete, currentUserEmail }) {
+function UserRow({ user, busy, onUpdateRole, onUpdateName, onDelete, onConfirmEmail, onSendPasswordReset, currentUserEmail }) {
   const [editingRole, setEditingRole] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [selectedRole, setSelectedRole] = useState(user.role);
   const [editedName, setEditedName] = useState(user.name || '');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
 
   const isSelf = currentUserEmail && user.email === currentUserEmail;
+  const emailUnconfirmed = !user.email_confirmed_at;
 
   function handleSaveRole() {
     if (selectedRole !== user.role) {
@@ -237,12 +239,23 @@ function UserRow({ user, busy, onUpdateRole, onUpdateName, onDelete, currentUser
           )}
           <div className="small-text" style={{ wordBreak: 'break-all' }}>{user.email}</div>
         </div>
-        <span
-          className="pending-badge"
-          style={{ ...roleBadgeStyle(user.role), flexShrink: 0, fontSize: '0.7rem', padding: '2px 8px', borderRadius: '4px' }}
-        >
-          {user.role}
-        </span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', alignItems: 'flex-end', flexShrink: 0 }}>
+          <span
+            className="pending-badge"
+            style={{ ...roleBadgeStyle(user.role), fontSize: '0.7rem', padding: '2px 8px', borderRadius: '4px' }}
+          >
+            {user.role}
+          </span>
+          {emailUnconfirmed ? (
+            <span
+              className="pending-badge"
+              title="This worker has not yet clicked the link in their signup confirmation email. Login and password reset will fail until they do — or until you click 'Confirm email' below."
+              style={{ background: '#b45309', color: '#fff', fontSize: '0.65rem', padding: '2px 6px', borderRadius: '4px' }}
+            >
+              Unconfirmed
+            </span>
+          ) : null}
+        </div>
       </div>
 
       <div className="small-text" style={{ marginTop: '0.35rem', color: '#94a3b8' }}>
@@ -297,6 +310,44 @@ function UserRow({ user, busy, onUpdateRole, onUpdateName, onDelete, currentUser
           >
             Change role
           </button>
+          {emailUnconfirmed && !isSelf ? (
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={busy}
+              onClick={() => onConfirmEmail?.(user.id, user.email)}
+              title="Bypass the 'click the link in your inbox' step. Use when a worker scanned the QR but never confirmed via email."
+              style={{ fontSize: '0.8rem' }}
+            >
+              Confirm email
+            </button>
+          ) : null}
+          {!isSelf ? (
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                if (!confirmReset) { setConfirmReset(true); return; }
+                onSendPasswordReset?.(user.id, user.email);
+                setConfirmReset(false);
+              }}
+              title="Email the worker a 6-digit reset code. They use it on the login screen → Forgot password."
+              style={{ fontSize: '0.8rem' }}
+            >
+              {confirmReset ? 'Send code?' : 'Reset password'}
+            </button>
+          ) : null}
+          {confirmReset && !isSelf ? (
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => setConfirmReset(false)}
+              style={{ fontSize: '0.8rem' }}
+            >
+              Cancel
+            </button>
+          ) : null}
           {!isSelf ? (
             <button
               className="danger-button"
@@ -424,6 +475,33 @@ export default function UserManagementPanel({ busy: externalBusy, currentUserEma
     }
   }
 
+  async function handleConfirmEmail(userId, email) {
+    clearMessages();
+    setBusy(true);
+    try {
+      await api.confirmUserEmail(userId);
+      setSuccess(`${email} marked as confirmed. They can now log in or reset their password.`);
+      onUsersChanged?.();
+    } catch (err) {
+      setError(err.message || 'Failed to confirm email');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSendPasswordReset(userId, email) {
+    clearMessages();
+    setBusy(true);
+    try {
+      const resp = await api.sendUserPasswordReset(userId);
+      setSuccess(resp?.message || `Password reset code sent to ${email}.`);
+    } catch (err) {
+      setError(err.message || 'Failed to send password reset code');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div>
       {/* QR-code worker self-signup card. Admin-only; backend gates on
@@ -505,6 +583,8 @@ export default function UserManagementPanel({ busy: externalBusy, currentUserEma
                 onUpdateRole={handleUpdateRole}
                 onUpdateName={handleUpdateName}
                 onDelete={handleDeleteUser}
+                onConfirmEmail={handleConfirmEmail}
+                onSendPasswordReset={handleSendPasswordReset}
                 currentUserEmail={currentUserEmail}
               />
             ))

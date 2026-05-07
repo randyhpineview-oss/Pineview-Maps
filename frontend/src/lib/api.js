@@ -195,6 +195,18 @@ export const api = {
   deleteUser(userId) {
     return request(`/api/admin/users/${userId}`, { method: 'DELETE' });
   },
+  // Admin recovery helpers — see backend/app/user_management.py for details.
+  // confirmUserEmail bypasses the "click the link in your inbox" step for
+  // a worker who's stuck at "email not confirmed". sendUserPasswordReset
+  // triggers the same 6-digit-code email the worker would get from the
+  // login page's "Forgot password" flow, but without requiring the worker
+  // to find or remember it themselves.
+  confirmUserEmail(userId) {
+    return request(`/api/admin/users/${userId}/confirm-email`, { method: 'POST' });
+  },
+  sendUserPasswordReset(userId) {
+    return request(`/api/admin/users/${userId}/send-password-reset`, { method: 'POST' });
+  },
 
   // ── Pipelines ──
   listPipelines(filters) {
