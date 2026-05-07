@@ -1,16 +1,108 @@
-"""Email service for sending password reset codes.
+"""Email service for sending password reset codes and signup confirmations.
 
-Uses aiosmtplib for async email delivery.
+Two transports, picked per-call based on env vars:
+
+- **Resend** (HTTPS) — preferred. Render's network blocks/throttles outbound
+  SMTP (port 25 always, 587 unreliably even on paid plans), so a
+  transactional email API over HTTPS is the only thing that works in
+  production. Set RESEND_API_KEY + RESEND_FROM_EMAIL to enable.
+- **SMTP via aiosmtplib** — fallback for local dev or self-hosted deploys
+  where outbound 587 is open. Set SMTP_USER + SMTP_PASSWORD.
+
+If neither is configured, the message is printed to stdout (dev mode) so
+forgot-password and worker signup don't crash on a fresh local install.
 """
 
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 import aiosmtplib
+import httpx
 
 from app.config import get_settings
 
 settings = get_settings()
+
+
+async def _send_via_resend(subject: str, to_email: str, text_body: str, html_body: str) -> None:
+    """POST the email through Resend's REST API. Raises on non-2xx."""
+    from_email = settings.resend_from_email or settings.smtp_from_email or settings.smtp_user
+    if not from_email:
+        raise RuntimeError(
+            "Resend is configured but no from-address is set. "
+            "Set RESEND_FROM_EMAIL (e.g. noreply@pineviewmaps.com)."
+        )
+    payload = {
+        "from": f"{settings.smtp_from_name} <{from_email}>",
+        "to": [to_email],
+        "subject": subject,
+        "text": text_body,
+        "html": html_body,
+    }
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {settings.resend_api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+    if resp.status_code >= 300:
+        # Surface Resend's error verbatim so the admin panel can show e.g.
+        # "domain not verified" or "rate limit exceeded".
+        raise RuntimeError(f"Resend API {resp.status_code}: {resp.text}")
+
+
+async def _send_via_smtp(subject: str, to_email: str, text_body: str, html_body: str) -> None:
+    """Send via aiosmtplib. 15s timeout so a hung connection fails fast."""
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email or settings.smtp_user}>"
+    msg["To"] = to_email
+    msg.attach(MIMEText(text_body, "plain"))
+    msg.attach(MIMEText(html_body, "html"))
+    await aiosmtplib.send(
+        msg,
+        hostname=settings.smtp_host,
+        port=settings.smtp_port,
+        start_tls=True,
+        username=settings.smtp_user,
+        password=settings.smtp_password,
+        timeout=15,
+    )
+
+
+def email_transport_configured() -> bool:
+    """True if any usable email transport (Resend or SMTP) is configured."""
+    if settings.resend_api_key:
+        return True
+    if settings.smtp_user and settings.smtp_password:
+        return True
+    return False
+
+
+async def _dispatch(subject: str, to_email: str, text_body: str, html_body: str, *, dev_label: str) -> None:
+    """Route an email through the best available transport."""
+    if settings.resend_api_key:
+        try:
+            await _send_via_resend(subject, to_email, text_body, html_body)
+            return
+        except Exception as e:
+            print(f"Failed to send {dev_label} to {to_email} via Resend: {e}")
+            raise
+
+    if settings.smtp_user and settings.smtp_password:
+        try:
+            await _send_via_smtp(subject, to_email, text_body, html_body)
+            return
+        except Exception as e:
+            print(f"Failed to send {dev_label} to {to_email} via SMTP: {e}")
+            raise
+
+    # Dev fallback: log the message so password reset / signup still works
+    # against a fresh local checkout with no SMTP or Resend configured.
+    print(f"\n{'=' * 60}\n{dev_label.upper()} for {to_email}\n{text_body}\n{'=' * 60}\n")
 
 
 async def send_password_reset_code(email: str, code: str) -> None:
@@ -23,14 +115,6 @@ async def send_password_reset_code(email: str, code: str) -> None:
     Raises:
         Exception: If email sending fails
     """
-    if not settings.smtp_user or not settings.smtp_password:
-        # In development, just print the code to console
-        print(f"\n{'='*60}")
-        print(f"PASSWORD RESET CODE for {email}")
-        print(f"Code: {code}")
-        print(f"{'='*60}\n")
-        return
-
     # Format code with spaces for readability (e.g., "123 456")
     formatted_code = f"{code[:3]} {code[3:]}"
 
@@ -119,33 +203,7 @@ Field Mapping & Collaboration
 </body>
 </html>"""
 
-    # Create message
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email or settings.smtp_user}>"
-    msg["To"] = email
-
-    # Attach parts
-    msg.attach(MIMEText(text_body, "plain"))
-    msg.attach(MIMEText(html_body, "html"))
-
-    # Send email. timeout= guards against Gmail SMTP hanging on TLS/auth
-    # (e.g. revoked App Password) which otherwise blocks the request long
-    # enough for the browser to abort with a confusing "signal aborted".
-    try:
-        await aiosmtplib.send(
-            msg,
-            hostname=settings.smtp_host,
-            port=settings.smtp_port,
-            start_tls=True,
-            username=settings.smtp_user,
-            password=settings.smtp_password,
-            timeout=15,
-        )
-    except Exception as e:
-        # Log error and re-raise
-        print(f"Failed to send email to {email}: {e}")
-        raise
+    await _dispatch(subject, email, text_body, html_body, dev_label=f"password reset code {code}")
 
 
 async def send_signup_confirmation(email: str, confirmation_url: str, name: str) -> None:
@@ -159,14 +217,6 @@ async def send_signup_confirmation(email: str, confirmation_url: str, name: str)
     Raises:
         Exception: If email sending fails
     """
-    if not settings.smtp_user or not settings.smtp_password:
-        # In development, just print the link to console
-        print(f"\n{'='*60}")
-        print(f"SIGNUP CONFIRMATION for {email} ({name})")
-        print(f"Link: {confirmation_url}")
-        print(f"{'='*60}\n")
-        return
-
     display_name = name or (email.split("@")[0].title() if email else "there")
     subject = "Welcome to Pineview Maps — Confirm your email"
 
@@ -250,24 +300,4 @@ Field Mapping & Collaboration
 </body>
 </html>"""
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email or settings.smtp_user}>"
-    msg["To"] = email
-
-    msg.attach(MIMEText(text_body, "plain"))
-    msg.attach(MIMEText(html_body, "html"))
-
-    try:
-        await aiosmtplib.send(
-            msg,
-            hostname=settings.smtp_host,
-            port=settings.smtp_port,
-            start_tls=True,
-            username=settings.smtp_user,
-            password=settings.smtp_password,
-            timeout=15,
-        )
-    except Exception as e:
-        print(f"Failed to send signup confirmation to {email}: {e}")
-        raise
+    await _dispatch(subject, email, text_body, html_body, dev_label=f"signup confirmation ({confirmation_url})")

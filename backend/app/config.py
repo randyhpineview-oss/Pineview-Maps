@@ -18,7 +18,12 @@ class Settings(BaseSettings):
     # API Configuration - explicitly allow Vercel frontend and localhost for development
     allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173,https://pineview-maps.vercel.app,https://pineviewmaps.com,https://www.pineviewmaps.com,https://pineview-maps.onrender.com"
 
-    # Email configuration for password reset codes
+    # Email configuration. Resend (HTTPS) is preferred because Render
+    # throttles/blocks outbound SMTP. SMTP stays as a fallback for local
+    # dev or self-hosted deploys where outbound 587 is open.
+    resend_api_key: str = ""  # If set, Resend is used and SMTP is ignored
+    resend_from_email: str = ""  # e.g. "noreply@pineviewmaps.com" (must be on a verified Resend domain)
+
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
     smtp_user: str = ""  # Email address to send from

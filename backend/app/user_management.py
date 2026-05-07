@@ -294,19 +294,19 @@ async def send_user_password_reset(
             detail="Could not issue reset code. Please try again.",
         )
 
-    # Catch the "SMTP not configured" silent-success case before calling the
-    # email service — otherwise send_password_reset_code() just prints to the
-    # Render log and returns, and the admin thinks the worker got an email.
-    from app.config import get_settings as _get_settings
-    _smtp = _get_settings()
-    if not _smtp.smtp_user or not _smtp.smtp_password:
-        print(f"[USER_MGMT] SMTP not configured — code for {email} was {reset_code.code}")
+    # Catch the "no email transport configured" silent-success case before
+    # calling the email service — otherwise send_password_reset_code() just
+    # prints to the Render log and returns, and the admin thinks the worker
+    # got an email.
+    from app.email_service import email_transport_configured
+    if not email_transport_configured():
+        print(f"[USER_MGMT] No email transport configured — code for {email} was {reset_code.code}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
-                "Email is not configured on the server (SMTP_USER / SMTP_PASSWORD "
-                "missing). Reset code was generated but no email could be sent. "
-                "Set the SMTP env vars in Render and redeploy."
+                "Email is not configured on the server. Set RESEND_API_KEY + "
+                "RESEND_FROM_EMAIL (recommended on Render) or SMTP_USER + "
+                "SMTP_PASSWORD, then redeploy."
             ),
         )
 
