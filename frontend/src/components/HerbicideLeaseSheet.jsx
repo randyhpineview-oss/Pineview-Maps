@@ -1835,7 +1835,14 @@ export default function HerbicideLeaseSheet({
                     </div>
                   ) : (
                     <>
-                      <input type="file" accept="image/*" capture="environment" onChange={handlePhotoUpload} style={{ display: 'none' }} id="photo-lsd" />
+                      {/* No `capture="environment"` — letting the OS pick the
+                          source means iOS shows the native action sheet
+                          (Photo Library / Take Photo / Choose Files) and
+                          Android shows the equivalent chooser, instead of
+                          jumping straight into the camera with no way for
+                          the worker to pick an existing photo from their
+                          gallery. */}
+                      <input type="file" accept="image/*" onChange={handlePhotoUpload} style={{ display: 'none' }} id="photo-lsd" />
                       <label htmlFor="photo-lsd" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100px', height: '100px', backgroundColor: '#374151', borderRadius: '6px', cursor: 'pointer', fontSize: '2rem', color: '#6b7280' }}>+</label>
                     </>
                   )}
@@ -1852,7 +1859,10 @@ export default function HerbicideLeaseSheet({
                     </div>
                   ) : (
                     <>
-                      <input type="file" accept="image/*" capture="environment" onChange={handlePhotoUpload} style={{ display: 'none' }} id="photo-site" />
+                      {/* See note on photo-lsd input: omitting capture lets
+                          the OS show its native picker so the worker can
+                          choose between camera and gallery. */}
+                      <input type="file" accept="image/*" onChange={handlePhotoUpload} style={{ display: 'none' }} id="photo-site" />
                       <label htmlFor="photo-site" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100px', height: '100px', backgroundColor: '#374151', borderRadius: '6px', cursor: photos.length >= 2 ? 'not-allowed' : 'pointer', fontSize: '2rem', color: '#6b7280' }}>+</label>
                     </>
                   )}

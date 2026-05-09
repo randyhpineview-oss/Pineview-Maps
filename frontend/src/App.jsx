@@ -497,6 +497,25 @@ export default function App() {
   const [previewSiteLocation, setPreviewSiteLocation] = useState(null);
   const [zoomTarget, setZoomTarget] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
+  // Tracks the browser-reported geolocation permission state. Used by the
+  // watchPosition effect below to AVOID calling watchPosition on every app
+  // open when the user hasn't granted permission yet — that auto-call was
+  // what made iOS PWA prompt for location access on every cold start, even
+  // when the user just wanted to look at the map.
+  //
+  // Possible values:
+  //   • 'granted'    — auto-start the watch silently (no prompt fires)
+  //   • 'denied'     — never auto-start; the "center on me" tap will hit
+  //                    the explicit error path with the actionable
+  //                    "enable in Settings" message
+  //   • 'prompt'     — never auto-start; let the user opt in by tapping
+  //                    the location button, which is the ONE place we
+  //                    intentionally surface the OS prompt
+  //   • 'unsupported'— very old browsers / WKWebView versions without the
+  //                    Permissions API; we fall through to the legacy
+  //                    auto-start behaviour as a best-effort
+  //   • 'unknown'    — initial value before the query resolves
+  const [geoPermission, setGeoPermission] = useState('unknown');
   // Pipeline state
   const [pipelines, setPipelines] = useState([]);
   const [pendingPipelines, setPendingPipelines] = useState([]);
@@ -3537,8 +3556,77 @@ export default function App() {
     };
   }
 
+  // ── Geolocation permission tracking ───────────────────────────────────
+  // Query the OS-reported permission state ONCE on mount, then subscribe
+  // to changes so the watch effect below can react when the user grants
+  // or revokes permission mid-session (e.g. they tapped "center on me",
+  // got the prompt, and tapped Allow).
+  //
+  // Why this exists: without it, the watch effect below would call
+  // watchPosition() on every Map-tab visibility transition, and iOS PWA
+  // standalone mode treats that as a fresh permission request on every
+  // cold launch — surfacing the OS prompt every time the worker opened
+  // the app. By gating the watch on permission === 'granted' we only
+  // surface the prompt at one well-defined moment: the first time the
+  // user explicitly taps the "center on me" location button.
+  useEffect(() => {
+    if (!navigator.geolocation) {
+      setGeoPermission('unsupported');
+      return undefined;
+    }
+    if (!navigator.permissions || typeof navigator.permissions.query !== 'function') {
+      // Old WKWebView versions and a few corporate browsers ship
+      // navigator.geolocation without navigator.permissions. Fall back
+      // to the legacy "auto-start watch on Map tab" behaviour by
+      // pretending permission is granted — the watch's own error
+      // callback will still surface PERMISSION_DENIED if it isn't.
+      setGeoPermission('unsupported');
+      return undefined;
+    }
+
+    let cancelled = false;
+    let permissionStatus = null;
+
+    const onChange = () => {
+      if (cancelled || !permissionStatus) return;
+      setGeoPermission(permissionStatus.state);
+    };
+
+    navigator.permissions
+      .query({ name: 'geolocation' })
+      .then((status) => {
+        if (cancelled) return;
+        permissionStatus = status;
+        setGeoPermission(status.state);
+        // PermissionStatus extends EventTarget; the 'change' event
+        // fires when iOS / Android / a browser updates the permission
+        // (user grants via prompt, revokes from Settings, etc.).
+        status.addEventListener('change', onChange);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setGeoPermission('unsupported');
+      });
+
+    return () => {
+      cancelled = true;
+      if (permissionStatus) {
+        try { permissionStatus.removeEventListener('change', onChange); } catch { /* ignore */ }
+      }
+    };
+  }, []);
+
   useEffect(() => {
     if (!navigator.geolocation) return;
+    // Only auto-start the GPS watch when permission has actually been
+    // granted (or the browser doesn't expose the Permissions API at all,
+    // in which case we fall back to the legacy behaviour). This is the
+    // change that stops iOS PWA from re-prompting on every app open: in
+    // 'prompt' / 'denied' / 'unknown' states we simply don't call
+    // watchPosition, so no OS prompt fires. The user can still tap the
+    // "center on me" button to explicitly request location, which is
+    // the one place we want the prompt to appear.
+    if (geoPermission !== 'granted' && geoPermission !== 'unsupported') return;
 
     // Only run GPS while the Map tab is the active view AND the document
     // is actually visible. Previously the watch ran unconditionally —
@@ -3616,7 +3704,7 @@ export default function App() {
       document.removeEventListener('visibilitychange', onVisibilityChange);
       stopWatch();
     };
-  }, [isFollowingUser, activeTab]);
+  }, [isFollowingUser, activeTab, geoPermission]);
 
   // Continuous centering when follow mode is enabled (even when location isn't updating)
   useEffect(() => {
@@ -3659,6 +3747,14 @@ export default function App() {
           setIsFollowingUser(true);
           setZoomTarget({ latitude: location.lat, longitude: location.lng, _ts: Date.now() });
           setMessage('Follow mode on');
+          // Defensive: not every browser fires the PermissionStatus
+          // 'change' event reliably (notably some iOS PWA versions),
+          // so when we know the user just granted access we update the
+          // tracked permission state ourselves. This unblocks the
+          // watchPosition effect above so it starts continuous tracking
+          // for the rest of the session — without this the worker
+          // would have to keep tapping "center on me" repeatedly.
+          setGeoPermission('granted');
         },
         (error) => {
           console.error('Error getting location:', error);
@@ -3666,6 +3762,12 @@ export default function App() {
           // gets an actionable message either way.
           if (error && error.code === error.PERMISSION_DENIED) {
             setMessage("Location access denied — enable in your phone's Settings → Safari/Pineview Maps → Location.");
+            // Mirror the explicit denial into our tracked state so the
+            // watch effect doesn't try to re-prompt on the next Map
+            // tab transition. The user has to grant in Settings now;
+            // tapping "center on me" again will hit this branch with
+            // the same actionable message.
+            setGeoPermission('denied');
           } else if (error && error.code === error.TIMEOUT) {
             setMessage("Couldn't get GPS in time. Make sure Location is on and try again.");
           } else {
