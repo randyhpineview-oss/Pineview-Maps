@@ -7,6 +7,7 @@ frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 frontend/.version.json
+frontend/public/version.json
 .env
 .DS_Store
 Thumbs.db

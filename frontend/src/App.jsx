@@ -46,7 +46,7 @@ import {
   upsertRecent,
   upsertSite,
 } from './lib/offlineStore';
-import { formatDate, pinTypeLabel, statusLabel } from './lib/mapUtils';
+import { formatDate, nameKey, normalizeName, pinTypeLabel, statusLabel } from './lib/mapUtils';
 import { localDateISO } from './lib/dateUtil';
 
 // ── Code-splitting: heavy / route-gated components load in their own chunks ─
@@ -153,10 +153,14 @@ function getFiltersHidingSite(site, filters, layers) {
   if (site.pin_type && layers && layers[site.pin_type] === false) {
     hiding.push({ kind: 'layer', key: site.pin_type, label: `${LAYER_LABELS[site.pin_type] || site.pin_type} layer` });
   }
-  if (filters.client && site.client !== filters.client && !isWater) {
+  // client / area equality is intentionally case-insensitive so legacy
+  // rows with mismatched casing (e.g. "Foothills" vs "FOOTHILLS") still
+  // group with the user's chosen filter value until the migration / next
+  // edit normalizes them. See lib/mapUtils#nameKey.
+  if (filters.client && nameKey(site.client) !== nameKey(filters.client) && !isWater) {
     hiding.push({ kind: 'filter', key: 'client', label: `${FILTER_LABELS.client} filter` });
   }
-  if (filters.area && site.area !== filters.area && !isWater) {
+  if (filters.area && nameKey(site.area) !== nameKey(filters.area) && !isWater) {
     hiding.push({ kind: 'filter', key: 'area', label: `${FILTER_LABELS.area} filter` });
   }
   if (filters.status && site.status !== filters.status && !isWater) {
@@ -2438,8 +2442,9 @@ export default function App() {
       const isWater = site.pin_type === 'water';
       // Layer visibility check
       if (site.pin_type && !layers[site.pin_type]) return false;
-      if (filters.client && site.client !== filters.client && !isWater) return false;
-      if (filters.area && site.area !== filters.area && !isWater) return false;
+      // Case-insensitive client / area match — see getFiltersHidingSite.
+      if (filters.client && nameKey(site.client) !== nameKey(filters.client) && !isWater) return false;
+      if (filters.area && nameKey(site.area) !== nameKey(filters.area) && !isWater) return false;
       if (filters.status && site.status !== filters.status && !isWater) return false;
       if (filters.approval_state && site.approval_state !== filters.approval_state) return false;
       if (!normalizedSearch) return true;
@@ -2454,8 +2459,8 @@ export default function App() {
     return pipelines.filter((p) => {
       if (p.deleted_at) return false;
       if (p.approval_state === 'rejected') return false;
-      if (filters.client && p.client !== filters.client) return false;
-      if (filters.area && p.area !== filters.area) return false;
+      if (filters.client && nameKey(p.client) !== nameKey(filters.client)) return false;
+      if (filters.area && nameKey(p.area) !== nameKey(filters.area)) return false;
       if (filters.approval_state && p.approval_state !== filters.approval_state) return false;
       if (!normalizedSearch) return true;
       const haystack = [p.name, p.client, p.area].filter(Boolean).join(' ').toLowerCase();
@@ -2491,13 +2496,19 @@ export default function App() {
     return baseSites;
   }, [visibleSites, sites, layers.water, isPickingLocationForEdit, editPickLocation, selectedSite]);
 
-  const clients = useMemo(
-    () => [...new Set([
-      ...sites.map((site) => site.client),
-      ...pipelines.map((p) => p.client),
-    ].filter(Boolean))].sort((a, b) => a.localeCompare(b)),
-    [sites, pipelines]
-  );
+  // Dedupe the dropdown by canonical (case-insensitive, whitespace-
+  // collapsed) key so "ABC Energy" and "abc energy" don't both appear.
+  // Display the Title-Case form so the visible label is consistent
+  // regardless of how the underlying rows were typed.
+  const clients = useMemo(() => {
+    const seen = new Map();
+    for (const value of [...sites.map((s) => s.client), ...pipelines.map((p) => p.client)]) {
+      const key = nameKey(value);
+      if (!key || seen.has(key)) continue;
+      seen.set(key, normalizeName(value));
+    }
+    return [...seen.values()].sort((a, b) => a.localeCompare(b));
+  }, [sites, pipelines]);
   // LSD-label suggestions shown under the "LSD or site label" input in the
   // add-pin popup. Sorted by label for predictable scanning — workers
   // usually know roughly what LSD they expect ("16-..."), so alphabetical
@@ -2525,13 +2536,16 @@ export default function App() {
     return [...seen.values()].sort((a, b) => a.label.localeCompare(b.label));
   }, [sites]);
 
-  const areas = useMemo(
-    () => [...new Set([
-      ...sites.map((site) => site.area),
-      ...pipelines.map((p) => p.area),
-    ].filter(Boolean))].sort((a, b) => a.localeCompare(b)),
-    [sites, pipelines]
-  );
+  // Same dedupe-by-canonical-key treatment as `clients` above.
+  const areas = useMemo(() => {
+    const seen = new Map();
+    for (const value of [...sites.map((s) => s.area), ...pipelines.map((p) => p.area)]) {
+      const key = nameKey(value);
+      if (!key || seen.has(key)) continue;
+      seen.set(key, normalizeName(value));
+    }
+    return [...seen.values()].sort((a, b) => a.localeCompare(b));
+  }, [sites, pipelines]);
 
   // Area suggestions narrowed by a given client name. If the caller's
   // client field is empty or doesn't match any existing site/pipeline,
@@ -2545,19 +2559,25 @@ export default function App() {
   // ApproveEditModal — i.e. every place a worker or admin types client
   // and area together.
   const getAreasForClient = useCallback((clientName) => {
-    const client = (clientName || '').trim().toLowerCase();
-    if (!client) return areas;
-    const scoped = new Set(
-      sites
-        .filter((s) => s.client && s.client.toLowerCase() === client)
-        .map((s) => s.area)
-        .filter(Boolean)
-    );
-    // Also pull from pipelines so a client's pipeline-only areas show up.
-    for (const p of pipelines) {
-      if (p.client && p.client.toLowerCase() === client && p.area) scoped.add(p.area);
+    const clientKey = nameKey(clientName);
+    if (!clientKey) return areas;
+    // Dedupe by canonical key, display Title-Case — same approach as
+    // the top-level `areas` memo so dropdown rows are consistent
+    // whether the user has a client filter set or not.
+    const seen = new Map();
+    for (const s of sites) {
+      if (nameKey(s.client) !== clientKey) continue;
+      const k = nameKey(s.area);
+      if (!k || seen.has(k)) continue;
+      seen.set(k, normalizeName(s.area));
     }
-    const result = [...scoped].sort((a, b) => a.localeCompare(b));
+    for (const p of pipelines) {
+      if (nameKey(p.client) !== clientKey) continue;
+      const k = nameKey(p.area);
+      if (!k || seen.has(k)) continue;
+      seen.set(k, normalizeName(p.area));
+    }
+    const result = [...seen.values()].sort((a, b) => a.localeCompare(b));
     // If the scoped list is empty (e.g. a brand-new client being typed
     // for the first time) fall back to the full list so we still offer
     // something useful instead of an invisible dropdown.
@@ -2977,8 +2997,12 @@ export default function App() {
     try {
       const created = await api.createPipeline({
         name: drawingForm.name || null,
-        client: drawingForm.client || null,
-        area: drawingForm.area || null,
+        // Normalize on save so the row lands in DB in canonical Title-
+        // Case form. Same canonical helper used by the dropdown dedupe,
+        // so what the user picks from autocomplete and what they type
+        // free-form both end up identical at rest.
+        client: normalizeName(drawingForm.client) || null,
+        area: normalizeName(drawingForm.area) || null,
         coordinates: drawingPoints,
       });
       setPipelines((prev) => [created, ...prev]);
@@ -3137,7 +3161,17 @@ export default function App() {
     if (!window.navigator.onLine) { setMessage('Online required.'); return false; }
     setAdminBusy(true);
     try {
-      const updated = await api.updatePipeline(pipeline.id, payload);
+      // Normalize free-text name fields on the way out — same rule
+      // applied at create-time in handleSubmitDrawnPipeline. Only
+      // touched when the caller actually included the field, so a
+      // partial-update payload that doesn't change client/area stays
+      // a partial update.
+      const normalizedPayload = {
+        ...payload,
+        ...('client' in payload ? { client: normalizeName(payload.client) || null } : {}),
+        ...('area' in payload ? { area: normalizeName(payload.area) || null } : {}),
+      };
+      const updated = await api.updatePipeline(pipeline.id, normalizedPayload);
       setPipelines((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
       setSelectedPipeline((prev) => prev?.id === updated.id ? { ...prev, ...updated } : prev);
       setMessage('Pipeline updated.');
@@ -3848,8 +3882,12 @@ export default function App() {
       pin_type: addPinType,
       status: 'not_inspected',
       lsd: addPinForm.lsd || null,
-      client: addPinForm.client || null,
-      area: addPinForm.area || null,
+      // Normalize client / area on save so casing variants of the same
+      // value ("ABC Energy" vs "abc energy") collapse to one canonical
+      // form in DB. lsd is intentionally untouched — those are coded
+      // labels with their own format conventions.
+      client: normalizeName(addPinForm.client) || null,
+      area: normalizeName(addPinForm.area) || null,
       latitude: addPinLocation.latitude,
       longitude: addPinLocation.longitude,
       client_submission_id: clientSubmissionId,
@@ -3984,7 +4022,16 @@ export default function App() {
     if (!window.navigator.onLine) { setMessage('Online required.'); return false; }
     setAdminBusy(true);
     try {
-      const updated = await api.updateSite(site.id, payload);
+      // Normalize client / area on the way out — same rule applied at
+      // create-time in handleSubmitNewPin. Only touched when the
+      // caller actually included the field so partial updates stay
+      // partial.
+      const normalizedPayload = {
+        ...payload,
+        ...('client' in payload ? { client: normalizeName(payload.client) || null } : {}),
+        ...('area' in payload ? { area: normalizeName(payload.area) || null } : {}),
+      };
+      const updated = await api.updateSite(site.id, normalizedPayload);
       setSites((current) => current.map((item) => (matchSiteIdentity(item, site) ? updated : item)));
       await upsertSite(updated);
       setSelectedSite(updated);

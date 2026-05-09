@@ -26,6 +26,16 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const outPath = resolve(__dirname, '../frontend/.version.json');
+// Second copy lives under public/ so Vite includes it verbatim in the build
+// output as /version.json. The running app polls this file every 30 s (see
+// the "Build-version poll" useEffect in frontend/src/App.jsx) to detect a
+// new deploy independently of the service-worker update lifecycle, which
+// is unreliable on iOS Safari due to Vercel's immutable-cache headers on
+// /sw.js. Both files contain identical JSON; the dotfile feeds vite.config
+// at build time, the public copy feeds the runtime poll. Both are
+// gitignored so deploy-to-deploy diffs don't churn version-controlled
+// state.
+const publicOutPath = resolve(__dirname, '../frontend/public/version.json');
 
 // Subtracted from the absolute commit count to produce the displayed patch.
 // Tuned so the first deploy after this script ships shows v1.1.15.
@@ -111,9 +121,8 @@ if (vercelSha) {
 const version = `1.1.${patch}`;
 const buildTime = new Date().toISOString();
 
-writeFileSync(
-  outPath,
-  JSON.stringify({ version, commit, buildTime, source }, null, 2) + '\n'
-);
+const payload = JSON.stringify({ version, commit, buildTime, source }, null, 2) + '\n';
+writeFileSync(outPath, payload);
+writeFileSync(publicOutPath, payload);
 
-console.log(`[set-version] Wrote ${outPath}: version=${version} commit=${commit} source=${source}`);
+console.log(`[set-version] Wrote ${outPath} + ${publicOutPath}: version=${version} commit=${commit} source=${source}`);

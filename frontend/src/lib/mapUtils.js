@@ -1,3 +1,31 @@
+// Canonical Title-Case form for free-text fields like `client` and `area`.
+// "ABC ENERGY" / "abc energy" / "  Abc   Energy  " all collapse to
+// "Abc Energy" so the same value stops showing up multiple times in
+// filter dropdowns and equality checks across the app. Word boundaries
+// are whitespace, hyphens, and apostrophes, so "north-west pasture"
+// becomes "North-West Pasture" and "o'brien farms" becomes
+// "O'Brien Farms". Acronyms ("ABC") unavoidably lose their casing —
+// that's the price of a single canonical form, and the user signed up
+// for it. Returns null/undefined unchanged so callers can pass raw
+// form values without a pre-check.
+export function normalizeName(value) {
+  if (value == null) return value;
+  const trimmed = String(value).trim().replace(/\s+/g, ' ');
+  if (!trimmed) return '';
+  return trimmed
+    .toLowerCase()
+    .replace(/(^|[\s\-'])(\p{L})/gu, (_, sep, ch) => sep + ch.toUpperCase());
+}
+
+// Comparison key for the same fields. Lowercased + whitespace-collapsed,
+// so two values match iff their normalizeName outputs would match.
+// Used by filter equality checks and dropdown dedupe so legacy rows
+// with mismatched casing still group together until they're touched.
+export function nameKey(value) {
+  if (value == null) return '';
+  return String(value).trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
 export function statusLabel(status) {
   if (status === 'inspected') {
     return 'Inspected';

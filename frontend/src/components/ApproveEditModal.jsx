@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import AutocompleteInput from './AutocompleteInput';
 import { api } from '../lib/api';
+import { normalizeName } from '../lib/mapUtils';
 import { generateLeaseSheetPdf } from '../lib/pdfGenerator';
 import { generateTMTicketPdf } from '../lib/tmTicketPdfGenerator';
 
@@ -132,10 +133,19 @@ export default function ApproveEditModal({
     setSubmitting(true);
     setError('');
     try {
+      // Normalize client / area to canonical Title-Case form once up
+      // front, then thread the normalized values through every branch
+      // below (regenerated lease PDFs, regenerated T&M PDFs, and the
+      // final approval payload). This keeps the row in DB, the PDFs
+      // stored on Dropbox, and the live UI all consistent — same
+      // canonical rule applied at create-time and on plain admin edits.
+      const normalizedClient = normalizeName(edits.client) || '';
+      const normalizedArea = normalizeName(edits.area) || '';
+
       // Updated field map to stamp into lease_sheet_data for regen.
       const correctedData = {
-        customer: edits.client || '',
-        area: edits.area || '',
+        customer: normalizedClient,
+        area: normalizedArea,
         lsdOrPipeline: edits[labels.locationKey] || '',
       };
 
@@ -192,8 +202,8 @@ export default function ApproveEditModal({
                   : {
                       ticket_number: '',
                       spray_date: record.spray_date,
-                      client: edits.client || '',
-                      area: edits.area || '',
+                      client: normalizedClient,
+                      area: normalizedArea,
                       description_of_work: choice.description_of_work || '',
                       rows: [derivedRow],
                     };
@@ -217,8 +227,8 @@ export default function ApproveEditModal({
             try {
               const correctedTicket = {
                 ...tmTicket,
-                client: edits.client || tmTicket.client,
-                area: edits.area || tmTicket.area,
+                client: normalizedClient || tmTicket.client,
+                area: normalizedArea || tmTicket.area,
                 rows: (tmTicket.rows || []).map((r) => ({
                   ...r,
                   location: updatedLeaseData.lsdOrPipeline || r.location,
@@ -245,8 +255,8 @@ export default function ApproveEditModal({
       const payload = {
         approval_state: 'approved',
         [labels.locationKey]: edits[labels.locationKey] || null,
-        client: edits.client || null,
-        area: edits.area || null,
+        client: normalizedClient || null,
+        area: normalizedArea || null,
         gate_code: edits.gate_code || null,
         phone_number: edits.phone_number || null,
         notes: edits.notes || null,

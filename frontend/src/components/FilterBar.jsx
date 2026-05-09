@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 
-import { pinTypeLabel } from '../lib/mapUtils';
+import { nameKey, pinTypeLabel } from '../lib/mapUtils';
 
 const LAYER_OPTIONS = [
   { key: 'lsd', label: 'LSD' },
@@ -17,6 +17,7 @@ export default function FilterBar({
   sites = [],
   onChange,
   onSearchSelect,
+  onClearAll,
   layers = { lsd: true, water: true, quad_access: true, reclaimed: true, pipelines: true },
   onLayerToggle,
 }) {
@@ -26,18 +27,35 @@ export default function FilterBar({
 
   const query = filters.search.trim().toLowerCase();
 
+  // True when at least one filter is set. Used to enable / disable the
+  // "Clear all filters" button so users get a visual cue that there's
+  // nothing to clear in the default state.
+  const hasActiveFilters = Boolean(
+    (filters.search && filters.search.trim()) ||
+    filters.client ||
+    filters.area ||
+    filters.status ||
+    filters.approval_state
+  );
+
   // Filter areas based on selected client: when a client is chosen,
   // only show areas that have sites/pipelines for that client.
+  // Membership is keyed on `nameKey` (case-insensitive, whitespace-
+  // collapsed) so a legacy site row with raw value "FOOTHILLS" still
+  // matches the canonical "Foothills" entry that App.jsx ships in the
+  // `areas` list. Without this keying the filtered list would silently
+  // drop any area whose underlying rows hadn't been re-saved since
+  // the canonicalization rolled out.
   const filteredAreas = useMemo(() => {
     if (!filters.client) return areas; // All clients → show all areas
-    const clientLower = filters.client.toLowerCase();
-    const areasForClient = new Set(
+    const clientKey = nameKey(filters.client);
+    const areaKeysForClient = new Set(
       sites
-        .filter((s) => s.client && s.client.toLowerCase() === clientLower)
-        .map((s) => s.area)
+        .filter((s) => nameKey(s.client) === clientKey)
+        .map((s) => nameKey(s.area))
         .filter(Boolean)
     );
-    return areas.filter((area) => areasForClient.has(area));
+    return areas.filter((area) => areaKeysForClient.has(nameKey(area)));
   }, [areas, filters.client, sites]);
 
   const suggestions = useMemo(() => {
@@ -184,6 +202,25 @@ export default function FilterBar({
         <option value="pending_review">Pending</option>
         <option value="rejected">Rejected</option>
       </select>
+      <button
+        type="button"
+        onClick={() => onClearAll?.()}
+        disabled={!hasActiveFilters}
+        style={{
+          width: '100%',
+          marginTop: '0.15rem',
+          borderRadius: '10px',
+          border: '1px solid rgba(143,182,255,0.16)',
+          background: hasActiveFilters ? 'rgba(220,38,38,0.18)' : 'rgba(9,17,31,0.85)',
+          color: hasActiveFilters ? '#fecaca' : '#5f7396',
+          padding: '0.5rem 0.65rem',
+          fontSize: '0.82rem',
+          cursor: hasActiveFilters ? 'pointer' : 'not-allowed',
+          transition: 'background 0.15s, color 0.15s',
+        }}
+      >
+        Clear all filters
+      </button>
     </>
   );
 }
