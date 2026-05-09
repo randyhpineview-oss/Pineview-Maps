@@ -36,7 +36,7 @@ def _get_jwks_client() -> PyJWKClient:
 
 
 def _stable_user_id(sub: str) -> int:
-    """Deterministic 32-bit positive int derived from the Supabase ``sub`` UUID.
+    """Deterministic 31-bit positive int derived from the Supabase ``sub`` UUID.
 
     Replaces Python's built-in ``hash()``, which is salted per-process in
     CPython 3.3+ and therefore produced DIFFERENT ids for the same UUID
@@ -44,13 +44,17 @@ def _stable_user_id(sub: str) -> int:
     leaned on a ``% 1_000_000`` modulus that added ~0.02% collision risk
     for even a handful of users.
 
-    SHA-256 is deterministic across processes and machines, and using
-    the first 8 hex chars (~4 billion values) drops collision risk for
-    20 users to ~4×10⁻⁸. No DB migration needed — existing rows still
-    resolve via ``_upsert_supabase_user``'s email fallback.
+    SHA-256 is deterministic across processes and machines. We take the
+    first 8 hex chars and mask off the sign bit so the result always
+    fits in a signed 32-bit Postgres ``INTEGER`` (max 2,147,483,647).
+    Without the mask, ~50% of UUIDs hashed to a value ≥ 2³¹ and the
+    INSERT/SELECT cast on ``users.id`` raised ``NumericValueOutOfRange``.
+    Collision risk at 31 bits for 20 users: ~9×10⁻⁸. No DB migration
+    needed — existing rows still resolve via ``_upsert_supabase_user``'s
+    email fallback.
     """
     digest = hashlib.sha256(sub.encode("utf-8")).hexdigest()
-    return int(digest[:8], 16)
+    return int(digest[:8], 16) & 0x7FFFFFFF
 
 
 DEMO_USERS = {
