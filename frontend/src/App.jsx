@@ -2533,14 +2533,19 @@ export default function App() {
     [sites, pipelines]
   );
 
-  // Area suggestions shown in the add-pin popup's Area field. If the
-  // user already picked a client (or typed one that matches an existing
-  // client exactly), narrow the list to areas that appear alongside that
-  // client. Otherwise fall back to the full area list so typing Area
-  // first still gives useful suggestions. This mirrors FilterBar's
-  // client-scoped area behaviour — keeps the two in sync.
-  const areasForAddPinClient = useMemo(() => {
-    const client = (addPinForm.client || '').trim().toLowerCase();
+  // Area suggestions narrowed by a given client name. If the caller's
+  // client field is empty or doesn't match any existing site/pipeline,
+  // the full area list is returned so typing area-first still surfaces
+  // useful suggestions. This mirrors FilterBar's client-scoped area
+  // behaviour — keeps every form-with-client-and-area in sync.
+  //
+  // Lifted out of `areasForAddPinClient` (which used to be a one-off
+  // useMemo wired to the in-map popup) so the same narrowing logic is
+  // available to AddPinForm, SiteDetailSheet, PipelineDetailSheet, and
+  // ApproveEditModal — i.e. every place a worker or admin types client
+  // and area together.
+  const getAreasForClient = useCallback((clientName) => {
+    const client = (clientName || '').trim().toLowerCase();
     if (!client) return areas;
     const scoped = new Set(
       sites
@@ -2557,7 +2562,12 @@ export default function App() {
     // for the first time) fall back to the full list so we still offer
     // something useful instead of an invisible dropdown.
     return result.length > 0 ? result : areas;
-  }, [sites, pipelines, areas, addPinForm.client]);
+  }, [sites, pipelines, areas]);
+
+  const areasForAddPinClient = useMemo(
+    () => getAreasForClient(addPinForm.client),
+    [getAreasForClient, addPinForm.client]
+  );
 
   // Duplicate-LSD detector for the add-pin popup. Important UX rule:
   // selecting an existing Client or Area must NEVER imply a duplicate
@@ -4780,6 +4790,7 @@ export default function App() {
               sites={sites}
               onChange={(key, value) => setFilters((c) => ({ ...c, [key]: value }))}
               onSearchSelect={handleSearchSelect}
+              onClearAll={() => setFilters(DEFAULT_FILTERS)}
               layers={layers}
               onLayerToggle={handleLayerToggle}
             />
@@ -4959,13 +4970,29 @@ export default function App() {
           </div>
         ) : null}
 
-        {/* Drawing pipeline form */}
+        {/* Drawing pipeline form.
+            Client + area now use AutocompleteInput so existing values
+            surface as the user types — same pattern as the in-map "Add
+            pin" popup further down. The pipeline-name field stays as a
+            plain input because pipeline names are unique to each
+            pipeline; surfacing other pipelines' names there would only
+            invite accidental name collisions. */}
         {isDrawingPipeline && showDrawingForm ? (
           <div className="add-pin-popup" style={{ bottom: 80, left: '50%', transform: 'translateX(-50%)' }}>
             <strong className="small-text">New Pipeline</strong>
             <input value={drawingForm.name} onChange={(e) => setDrawingForm((c) => ({ ...c, name: e.target.value }))} placeholder="Pipeline name" />
-            <input value={drawingForm.client} onChange={(e) => setDrawingForm((c) => ({ ...c, client: e.target.value }))} placeholder="Client" />
-            <input value={drawingForm.area} onChange={(e) => setDrawingForm((c) => ({ ...c, area: e.target.value }))} placeholder="Area" />
+            <AutocompleteInput
+              value={drawingForm.client}
+              onChange={(next) => setDrawingForm((c) => ({ ...c, client: next }))}
+              placeholder="Client"
+              suggestions={clients}
+            />
+            <AutocompleteInput
+              value={drawingForm.area}
+              onChange={(next) => setDrawingForm((c) => ({ ...c, area: next }))}
+              placeholder="Area"
+              suggestions={getAreasForClient(drawingForm.client)}
+            />
             <div className="button-row">
               <button className="primary-button" type="button" disabled={submittingPin} onClick={handleSubmitDrawnPipeline}>
                 {submittingPin ? 'Saving…' : 'Submit'}
@@ -5163,6 +5190,15 @@ export default function App() {
                   setPreviewingRecord(record);
                 }}
                 onEditRecord={(record) => openEditRecord(record, { site_lsd: selectedSite?.lsd, site_client: selectedSite?.client, site_area: selectedSite?.area })}
+                // Autofill data so the LSD / Client / Area inputs in the
+                // admin edit panel surface existing values — same UX as
+                // the in-map "Add pin" popup. Without these props the
+                // edit panel was the only place an admin couldn't
+                // benefit from the autocomplete a regular worker gets
+                // when adding a pin in the field.
+                clientSuggestions={clients}
+                lsdSuggestions={lsdSuggestions}
+                getAreasForClient={getAreasForClient}
               />
             ) : null}
           </div>
@@ -5204,6 +5240,12 @@ export default function App() {
                 highlightedSprayRecordId={highlightedSprayRecordId}
                 onHighlightSprayRecord={setHighlightedSprayRecordId}
                 onViewRecord={(record) => setPreviewingRecord(record)}
+                // Autofill data for the Client / Area edit fields. The
+                // pipeline-name field stays plain text (names are unique
+                // per pipeline; suggesting other pipelines' names there
+                // would just invite collisions).
+                clientSuggestions={clients}
+                getAreasForClient={getAreasForClient}
               />
             ) : null}
           </div>
@@ -5584,6 +5626,16 @@ export default function App() {
               }
               setMessage('Approved.');
             }}
+            // Autofill data for the Approve & Edit modal so an admin
+            // correcting a worker's pending submission sees existing
+            // LSD/client/area values as suggestions — same pattern as
+            // the in-map "Add pin" popup. lsdSuggestions is only
+            // meaningful for site approvals (pipelines have unique
+            // names that wouldn't suggest usefully); the modal itself
+            // skips the LSD autocomplete when kind === 'pipeline'.
+            clientSuggestions={clients}
+            lsdSuggestions={lsdSuggestions}
+            getAreasForClient={getAreasForClient}
           />
         </Suspense>
       ) : null}

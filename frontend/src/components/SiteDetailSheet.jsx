@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 
+import AutocompleteInput from './AutocompleteInput';
 import { formatDate, getDirectionsUrl, isInfoOnlyPin, pinTypeLabel, statusLabel } from '../lib/mapUtils';
 import { localDateISO } from '../lib/dateUtil';
 
@@ -37,6 +38,15 @@ export default function SiteDetailSheet({
   onStartIssueNotInspected,
   onViewPdf,
   onEditRecord,
+  // Autofill data for the LSD / Client / Area edit fields. All three
+  // are optional — if a parent doesn't pass them, the relevant input
+  // degrades gracefully to a plain text box (the AutocompleteInput
+  // dropdown only opens when there's at least one matching
+  // suggestion). App.jsx threads these in for the side-panel edit
+  // flow; older callers continue to work unchanged.
+  clientSuggestions = [],
+  lsdSuggestions = [],
+  getAreasForClient,
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editState, setEditState] = useState(() => buildEditState(site));
@@ -166,9 +176,44 @@ export default function SiteDetailSheet({
               <option value="quad_access">Quad access</option>
               <option value="reclaimed">Reclaimed</option>
             </select>
-            <input value={editState.lsd} onChange={(event) => updateEditField('lsd', event.target.value)} placeholder="LSD or site label" />
-            <input value={editState.client} onChange={(event) => updateEditField('client', event.target.value)} placeholder="Client" />
-            <input value={editState.area} onChange={(event) => updateEditField('area', event.target.value)} placeholder="Area" />
+            {/* Autocomplete on LSD / Client / Area mirrors the in-map
+                Add Pin popup so admins editing an existing pin get
+                the same spelling-consistency hints workers do when
+                creating one. Falls back to plain inputs when the
+                parent doesn't supply suggestion arrays — keeps the
+                component renderable in standalone tests. */}
+            <AutocompleteInput
+              value={editState.lsd}
+              onChange={(next) => updateEditField('lsd', next)}
+              placeholder="LSD or site label"
+              suggestions={lsdSuggestions}
+              onSelect={(item) => {
+                // Picking an existing LSD prefills any blank client /
+                // area fields from that match — same behaviour as
+                // the Add Pin popup. Don't stomp values the admin
+                // already typed.
+                const subBits = (item?.sub || '').split(' · ');
+                const matchClient = subBits[0] || '';
+                const matchArea = subBits[1] || '';
+                setEditState((prev) => ({
+                  ...prev,
+                  client: prev.client || matchClient,
+                  area: prev.area || matchArea,
+                }));
+              }}
+            />
+            <AutocompleteInput
+              value={editState.client}
+              onChange={(next) => updateEditField('client', next)}
+              placeholder="Client"
+              suggestions={clientSuggestions}
+            />
+            <AutocompleteInput
+              value={editState.area}
+              onChange={(next) => updateEditField('area', next)}
+              placeholder="Area"
+              suggestions={getAreasForClient ? getAreasForClient(editState.client) : []}
+            />
             <div className="button-row">
               <input value={editState.latitude} onChange={(event) => updateEditField('latitude', event.target.value)} placeholder="Latitude" />
               <input value={editState.longitude} onChange={(event) => updateEditField('longitude', event.target.value)} placeholder="Longitude" />

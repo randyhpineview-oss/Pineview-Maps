@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import AutocompleteInput from './AutocompleteInput';
 import { api } from '../lib/api';
 import { generateLeaseSheetPdf } from '../lib/pdfGenerator';
 import { generateTMTicketPdf } from '../lib/tmTicketPdfGenerator';
@@ -26,6 +27,13 @@ export default function ApproveEditModal({
   target,                // site or pipeline object (must have id + current fields)
   onClose,
   onSubmitted,           // called with the approved resource after success
+  // Autofill data threaded in by App.jsx so the LSD/Client/Area edit
+  // fields surface existing project values — same UX as the in-map
+  // "Add pin" popup. All three are optional; missing arrays / a
+  // missing helper degrade gracefully to plain text boxes.
+  clientSuggestions = [],
+  lsdSuggestions = [],
+  getAreasForClient,
 }) {
   const isPipeline = kind === 'pipeline';
   const labels = isPipeline
@@ -297,19 +305,53 @@ export default function ApproveEditModal({
           <>
             <div className="list-grid" style={{ marginTop: '0.75rem' }}>
               <label className="small-text">{labels.locationLabel}
-                <input value={edits[labels.locationKey]}
-                  onChange={(e) => setField(labels.locationKey, e.target.value)}
-                  placeholder={labels.locationLabel} />
+                {/* Pipelines have unique names per pipeline, so we only
+                    surface the LSD-suggestion list for site approvals.
+                    For pipelines the name field stays a plain input —
+                    suggesting other pipelines' names there would just
+                    invite collisions. */}
+                {!isPipeline && lsdSuggestions.length > 0 ? (
+                  <AutocompleteInput
+                    value={edits[labels.locationKey]}
+                    onChange={(next) => setField(labels.locationKey, next)}
+                    placeholder={labels.locationLabel}
+                    suggestions={lsdSuggestions}
+                    onSelect={(item) => {
+                      // Mirror the Add Pin popup: picking an existing
+                      // LSD prefills any blank client/area fields
+                      // from that match. Don't stomp values the
+                      // admin already typed.
+                      const subBits = (item?.sub || '').split(' · ');
+                      const matchClient = subBits[0] || '';
+                      const matchArea = subBits[1] || '';
+                      setEdits((prev) => ({
+                        ...prev,
+                        client: prev.client || matchClient,
+                        area: prev.area || matchArea,
+                      }));
+                    }}
+                  />
+                ) : (
+                  <input value={edits[labels.locationKey]}
+                    onChange={(e) => setField(labels.locationKey, e.target.value)}
+                    placeholder={labels.locationLabel} />
+                )}
               </label>
               <label className="small-text">Client
-                <input value={edits.client}
-                  onChange={(e) => setField('client', e.target.value)}
-                  placeholder="Client" />
+                <AutocompleteInput
+                  value={edits.client}
+                  onChange={(next) => setField('client', next)}
+                  placeholder="Client"
+                  suggestions={clientSuggestions}
+                />
               </label>
               <label className="small-text">Area
-                <input value={edits.area}
-                  onChange={(e) => setField('area', e.target.value)}
-                  placeholder="Area" />
+                <AutocompleteInput
+                  value={edits.area}
+                  onChange={(next) => setField('area', next)}
+                  placeholder="Area"
+                  suggestions={getAreasForClient ? getAreasForClient(edits.client) : []}
+                />
               </label>
               {!isPipeline ? (
                 <>

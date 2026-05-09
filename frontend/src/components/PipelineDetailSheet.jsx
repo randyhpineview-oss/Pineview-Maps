@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
+import AutocompleteInput from './AutocompleteInput';
+
 function buildEditState(pipeline) {
   return {
     name: pipeline?.name || '',
@@ -22,6 +24,13 @@ export default function PipelineDetailSheet({
   highlightedSprayRecordId = null,
   onHighlightSprayRecord,
   onViewRecord,
+  // Autofill data for the Client / Area edit fields. Optional — if a
+  // parent doesn't pass them, the inputs degrade to plain text boxes
+  // (AutocompleteInput's dropdown stays hidden when there are no
+  // matching suggestions). Pipeline name stays plain because names
+  // are unique to each pipeline.
+  clientSuggestions = [],
+  getAreasForClient,
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editState, setEditState] = useState(() => buildEditState(pipeline));
@@ -231,15 +240,21 @@ export default function PipelineDetailSheet({
               onChange={(e) => setEditState((s) => ({ ...s, name: e.target.value }))}
               placeholder="Pipeline name"
             />
-            <input
+            {/* Autocomplete on Client / Area mirrors the in-map
+                pipeline drawing form so an admin editing an existing
+                pipeline gets the same spelling-consistency hints a
+                worker does when drawing a new one. */}
+            <AutocompleteInput
               value={editState.client}
-              onChange={(e) => setEditState((s) => ({ ...s, client: e.target.value }))}
+              onChange={(next) => setEditState((s) => ({ ...s, client: next }))}
               placeholder="Client"
+              suggestions={clientSuggestions}
             />
-            <input
+            <AutocompleteInput
               value={editState.area}
-              onChange={(e) => setEditState((s) => ({ ...s, area: e.target.value }))}
+              onChange={(next) => setEditState((s) => ({ ...s, area: next }))}
               placeholder="Area"
+              suggestions={getAreasForClient ? getAreasForClient(editState.client) : []}
             />
             <div className="button-row">
               <button className="primary-button" type="button" disabled={adminBusy} onClick={handleSaveEdit} style={{ flex: 1 }}>
