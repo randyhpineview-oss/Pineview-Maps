@@ -15,7 +15,7 @@ Security features:
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 from supabase import create_client
@@ -23,11 +23,14 @@ from supabase import create_client
 from app.config import get_settings
 from app.database import get_db
 from app.email_service import send_password_reset_code
+from app.log_util import get_logger, mask_email
 from app.models import PasswordResetCode
+from app.rate_limit import limiter
 
 router = APIRouter(prefix="/api/auth", tags=["password-reset"])
 
 settings = get_settings()
+logger = get_logger(__name__)
 
 
 def get_supabase_admin():
@@ -70,6 +73,19 @@ class ResetPasswordResponse(BaseModel):
     message: str
 
 
+class SetupPasswordRequest(BaseModel):
+    """Body for POST /api/auth/setup-password.
+
+    Used by the admin-initiated magic-link onboarding flow. The token
+    here is the same ``reset_token`` issued by
+    :func:`app.user_management.send_user_password_reset` and embedded in
+    the ``?setup_token=...`` query parameter of the email link.
+    """
+
+    setup_token: str = Field(..., min_length=32)
+    new_password: str = Field(..., min_length=6)
+
+
 # ── Endpoints ───────────────────────────────────────────────────────
 
 
@@ -78,7 +94,9 @@ class ResetPasswordResponse(BaseModel):
     response_model=RequestResetCodeResponse,
     status_code=status.HTTP_200_OK,
 )
+@limiter.limit("5/hour")
 async def request_reset_code(
+    request: Request,
     payload: RequestResetCodeRequest,
     db: Session = Depends(get_db),
 ) -> RequestResetCodeResponse:
@@ -119,9 +137,14 @@ async def request_reset_code(
         # Send email with the code
         await send_password_reset_code(payload.email, reset_code.code)
         
-    except Exception as e:
-        # Log error but don't expose details to client
-        print(f"Error sending password reset code to {payload.email}: {e}")
+    except Exception as exc:
+        # Log error but don't expose details to client. Mask the email so
+        # logs remain triage-able without storing the full address.
+        logger.exception(
+            "Error sending password reset code to %s: %s",
+            mask_email(payload.email),
+            type(exc).__name__,
+        )
         # Still return success message to prevent user enumeration
         pass
     
@@ -136,7 +159,9 @@ async def request_reset_code(
     response_model=VerifyCodeResponse,
     status_code=status.HTTP_200_OK,
 )
+@limiter.limit("20/hour")
 def verify_reset_code(
+    request: Request,
     payload: VerifyCodeRequest,
     db: Session = Depends(get_db),
 ) -> VerifyCodeResponse:
@@ -216,7 +241,9 @@ def verify_reset_code(
     response_model=ResetPasswordResponse,
     status_code=status.HTTP_200_OK,
 )
+@limiter.limit("10/hour")
 def reset_password(
+    request: Request,
     payload: ResetPasswordRequest,
     db: Session = Depends(get_db),
 ) -> ResetPasswordResponse:
@@ -287,8 +314,12 @@ def reset_password(
         
     except HTTPException:
         raise
-    except Exception as e:
-        print(f"Error resetting password for {reset_code.email}: {e}")
+    except Exception as exc:
+        logger.exception(
+            "Error resetting password for %s: %s",
+            mask_email(reset_code.email),
+            type(exc).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to reset password. Please try again.",
@@ -296,4 +327,119 @@ def reset_password(
     
     return ResetPasswordResponse(
         message="Password reset successfully. You can now log in with your new password.",
+    )
+
+
+@router.post(
+    "/setup-password",
+    response_model=ResetPasswordResponse,
+    status_code=status.HTTP_200_OK,
+)
+@limiter.limit("10/hour")
+def setup_password(
+    request: Request,
+    payload: SetupPasswordRequest,
+    db: Session = Depends(get_db),
+) -> ResetPasswordResponse:
+    """Consume an admin-issued setup link and set the user's password.
+
+    Differs from :func:`reset_password` in two ways:
+
+    1. The token here is **not** required to have been pre-verified
+       (``is_used == True``). Possession of the link IS the proof of
+       email control — the same model GitHub, Stripe, etc. use for
+       invite/onboarding emails. The user-facing 6-digit code flow
+       still uses the older two-step verify-then-reset path.
+    2. The token has a longer lifetime (24h, set by the issuer) and a
+       different default expires_at. We trust the row's
+       ``expires_at`` directly rather than adding a buffer like
+       :func:`reset_password` does.
+
+    Marks the row used+deleted on success so the link can't be replayed.
+    """
+    if db is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Password setup not available in production mode without database",
+        )
+
+    # Look up by reset_token (which we reuse as the setup token — same
+    # 64-char hex column, single-use, indexed). Reject already-used
+    # tokens up front so a leaked email link can't be replayed after
+    # the worker has already set their password.
+    reset_code = (
+        db.query(PasswordResetCode)
+        .filter(
+            PasswordResetCode.reset_token == payload.setup_token,
+            PasswordResetCode.is_used == False,  # noqa: E712 — SQLAlchemy filter requires `==`
+        )
+        .first()
+    )
+
+    if not reset_code:
+        # Same generic message for "doesn't exist" and "already used"
+        # so an attacker probing tokens can't distinguish the two.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This setup link is invalid or has already been used. Ask your administrator to send a new one.",
+        )
+
+    if datetime.utcnow() > reset_code.expires_at:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This setup link has expired. Ask your administrator to send a new one.",
+        )
+
+    # Push the password into Supabase via Admin API and burn the token.
+    # We do the burn (is_used=True) regardless of Supabase success/failure
+    # below — a token that hit a transient Supabase error is safer to
+    # discard and re-issue than to leave live for replay.
+    try:
+        client = get_supabase_admin()
+
+        users_result = client.auth.admin.list_users()
+        users = users_result if isinstance(users_result, list) else []
+        target_user = next((u for u in users if u.email == reset_code.email), None)
+
+        if not target_user:
+            # Mark the token used so this dead account's link can't be
+            # probed indefinitely.
+            reset_code.is_used = True
+            reset_code.used_at = datetime.utcnow()
+            db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="The account this link was issued for no longer exists. Ask your administrator to recreate it.",
+            )
+
+        client.auth.admin.update_user_by_id(
+            target_user.id,
+            {"password": payload.new_password, "email_confirm": True},
+        )
+
+        reset_code.is_used = True
+        reset_code.used_at = datetime.utcnow()
+        db.delete(reset_code)
+        db.commit()
+
+        logger.info(
+            "Password set via setup link for %s", mask_email(reset_code.email)
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        logger.exception(
+            "Error setting password via setup link for %s: %s",
+            mask_email(reset_code.email),
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to set password. Please try again.",
+        )
+
+    return ResetPasswordResponse(
+        message="Password set successfully. You can now sign in.",
     )

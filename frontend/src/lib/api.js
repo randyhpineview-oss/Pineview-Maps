@@ -6,8 +6,10 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 // Check if we're using Supabase auth (production) or demo auth (development)
 const USE_SUPABASE_AUTH = !!SUPABASE_URL && !!SUPABASE_ANON_KEY;
 
-// Debug logging
-if (typeof window !== 'undefined') {
+// Debug logging (dev only) — exposing the full list of VITE_ env keys in
+// production noise isn't sensitive, but clutters console + tips off any
+// casual inspector which optional features are configured.
+if (typeof window !== 'undefined' && import.meta.env.DEV) {
   console.log('[API] Environment check:', {
     apiBaseUrl: API_BASE_URL || 'NOT SET',
     supabaseUrl: SUPABASE_URL ? 'SET' : 'NOT SET',
@@ -127,20 +129,7 @@ export const api = {
       }
     });
     const query = searchParams.toString();
-    return request(`/api/sites${query ? `?${query}` : ''}`, { demoUser }).then(data => {
-      const sample = data.slice(0, 2).map(s => ({ 
-        id: s.id, 
-        last_inspected_by_user_id: s.last_inspected_by_user_id,
-        last_inspected_by_user: s.last_inspected_by_user ? {
-          name: s.last_inspected_by_user.name,
-          email: s.last_inspected_by_user.email
-        } : null,
-        last_inspected_at: s.last_inspected_at
-      }));
-      console.log('[API] listSites response sample:', sample);
-      console.log('[API] Full first site data:', data[0]);
-      return data;
-    });
+    return request(`/api/sites${query ? `?${query}` : ''}`, { demoUser });
   },
   listPendingSites(demoUser) {
     return request('/api/pending-sites', { demoUser });
@@ -203,15 +192,16 @@ export const api = {
   // Admin recovery helpers — see backend/app/user_management.py for details.
   // confirmUserEmail bypasses the "click the link in your inbox" step for
   // a worker who's stuck at "email not confirmed". sendUserPasswordReset
-  // triggers the same 6-digit-code email the worker would get from the
-  // login page's "Forgot password" flow, but without requiring the worker
-  // to find or remember it themselves.
+  // emails the worker a one-tap magic link (?setup_token=…) that lands
+  // on a "Set Your Password" screen — used both for password recovery
+  // and for new-worker onboarding. The endpoint URL is historical; the
+  // behavior is now a setup-link, not a 6-digit code.
   confirmUserEmail(userId) {
     return request(`/api/admin/users/${userId}/confirm-email`, { method: 'POST' });
   },
   sendUserPasswordReset(userId) {
-    // SMTP send via Gmail can take 5–10s; allow 45s before giving up so we
-    // don't abort a request that's actually working.
+    // Resend/SMTP send can take 5–10s on a cold start; allow 45s before
+    // giving up so we don't abort a request that's actually working.
     return request(`/api/admin/users/${userId}/send-password-reset`, { method: 'POST', timeoutMs: 45_000 });
   },
 
@@ -484,6 +474,13 @@ export const api = {
   },
   resetPasswordWithToken(resetToken, newPassword) {
     return request('/api/auth/reset-password', { method: 'POST', body: { reset_token: resetToken, new_password: newPassword } });
+  },
+  // Admin-issued magic-link onboarding flow. The token comes from the
+  // ?setup_token=... query param on the login page; one POST sets the
+  // password and confirms the email in a single step (no prior verify
+  // call). Backend endpoint: app/password_reset.py :: setup_password.
+  setupPassword(setupToken, newPassword) {
+    return request('/api/auth/setup-password', { method: 'POST', body: { setup_token: setupToken, new_password: newPassword } });
   },
 
   // ── Worker self-signup (QR-gated) ──

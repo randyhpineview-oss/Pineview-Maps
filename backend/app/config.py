@@ -9,12 +9,23 @@ class Settings(BaseSettings):
     # Database configuration - supports both SQLite (local) and Supabase PostgreSQL (production)
     database_url: str = "sqlite:///./data/pineview.db"
     
+    # Debug toggle. When true, diagnostic loggers emit more detail and
+    # raw identifiers are allowed through (off by default in prod). Set
+    # DEBUG=true in the env for a troubleshooting window.
+    debug: bool = False
+
     # Supabase configuration (for production)
     supabase_url: str = ""
     supabase_anon_key: str = ""
     supabase_service_role_key: str = ""
     supabase_db_url: str = ""  # PostgreSQL connection string from Supabase
-    
+
+    # Optional JWKS URL override. Defaults to
+    # ``{supabase_url}/auth/v1/.well-known/jwks.json`` when unset, which
+    # matches Supabase's standard asymmetric JWT layout. Only override for
+    # self-hosted GoTrue deployments or other non-standard setups.
+    supabase_jwt_jwks_url: str = ""
+
     # API Configuration - explicitly allow Vercel frontend and localhost for development
     allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173,https://pineview-maps.vercel.app,https://pineviewmaps.com,https://www.pineviewmaps.com,https://pineview-maps.onrender.com"
 

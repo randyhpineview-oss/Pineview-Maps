@@ -86,10 +86,21 @@ export default defineConfig({
     // when that cache expired or was evicted in the field).
     //
     // Strategy notes:
-    // - registerType: 'autoUpdate' triggers a fresh SW install whenever
-    //   the build hash of any precached asset changes. Combined with
-    //   `skipWaiting + clientsClaim` below this gives users the new
-    //   build on the next page load with no manual unregister.
+    // - registerType: 'prompt' — new SW installs in the background and
+    //   parks itself in the `waiting` state instead of hot-swapping the
+    //   active one mid-session. App.jsx watches for the transition to
+    //   `waiting` and surfaces a green avatar dot + "Update available"
+    //   pill in the topbar. The worker taps Update Now to ship the
+    //   SKIP_WAITING message and reload into the new build at a safe
+    //   moment (no half-saved lease-sheet drafts).
+    // - `skipWaiting: false` + `clientsClaim: false` below keep the new
+    //   SW from stealing control until that explicit opt-in.
+    // - App.jsx *pushes* update checks every 60 s + on visibility /
+    //   online events so the prompt appears without requiring a page
+    //   refresh. Before: a new deploy would sit invisible until the
+    //   worker manually reloaded, which on iOS PWAs meant closing and
+    //   reopening the app, which itself triggered the update — making
+    //   the "Update Now" button pointless.
     // - `navigateFallback: '/index.html'` lets deep links (e.g.
     //   /?ticket=HL000123) hydrate offline; the SPA router takes over
     //   on the client.
@@ -99,7 +110,7 @@ export default defineConfig({
     //   is the right answer for those. Letting /api/* fall through to
     //   the network preserves the current online/offline detection.
     VitePWA({
-      registerType: 'autoUpdate',
+      registerType: 'prompt',
       injectRegister: 'auto',
       // The `manifest.webmanifest` already exists at /public — let the
       // plugin pick it up via `manifestFilename`/`includeAssets` rather
@@ -132,11 +143,13 @@ export default defineConfig({
         // /api/* is excluded from the navigation fallback so a 404 from
         // an API hit doesn't accidentally resolve to the SPA shell.
         navigateFallbackDenylist: [/^\/api\//],
-        // App-shell takeover — replace any old SW from previous deploys
-        // (or the unregistered stub from before this fix) on first
-        // install. Pairs with the App.jsx unregister-removal below.
-        skipWaiting: true,
-        clientsClaim: true,
+        // Keep the new SW in `waiting` until the user explicitly opts
+        // in via the "Update Now" topbar affordance — see the
+        // `swUpdateAvailable` detection block in App.jsx. With these
+        // both false, an in-flight lease-sheet submission won't be
+        // stepped on by a mid-session page reload from a deploy.
+        skipWaiting: false,
+        clientsClaim: false,
         runtimeCaching: [
           // Google Fonts CSS — small, infrequently changing.
           {

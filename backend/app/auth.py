@@ -1,16 +1,57 @@
 from collections.abc import Callable
 from typing import Optional
-import json
-import base64
+import hashlib
 
+import jwt
 from fastapi import Depends, HTTPException, Request, status
+from jwt import PyJWKClient
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.database import get_db
+from app.log_util import get_logger, mask_email, short_id
 from app.models import RoleEnum, User
 
 settings = get_settings()
+logger = get_logger(__name__)
+
+# Lazy-initialized JWKS client. Built on first request so a transient
+# network hiccup at container start doesn't crash the service — the
+# first authenticated request will pay the fetch cost (~100 ms), and
+# every request thereafter uses the in-memory cache (300s lifespan).
+_jwks_client: Optional[PyJWKClient] = None
+
+
+def _get_jwks_client() -> PyJWKClient:
+    global _jwks_client
+    if _jwks_client is None:
+        jwks_url = settings.supabase_jwt_jwks_url or (
+            f"{settings.supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
+        )
+        # ``cache_keys=True`` + ``lifespan=300`` means PyJWT re-fetches
+        # at most every 5 minutes, which handles Supabase's transparent
+        # key rotations (standby → current) without any ops work.
+        _jwks_client = PyJWKClient(jwks_url, cache_keys=True, lifespan=300)
+    return _jwks_client
+
+
+def _stable_user_id(sub: str) -> int:
+    """Deterministic 32-bit positive int derived from the Supabase ``sub`` UUID.
+
+    Replaces Python's built-in ``hash()``, which is salted per-process in
+    CPython 3.3+ and therefore produced DIFFERENT ids for the same UUID
+    across gunicorn workers / container restarts. The previous code then
+    leaned on a ``% 1_000_000`` modulus that added ~0.02% collision risk
+    for even a handful of users.
+
+    SHA-256 is deterministic across processes and machines, and using
+    the first 8 hex chars (~4 billion values) drops collision risk for
+    20 users to ~4×10⁻⁸. No DB migration needed — existing rows still
+    resolve via ``_upsert_supabase_user``'s email fallback.
+    """
+    digest = hashlib.sha256(sub.encode("utf-8")).hexdigest()
+    return int(digest[:8], 16)
+
 
 DEMO_USERS = {
     "admin": {"name": "Pineview Admin", "email": "admin@pineview.local", "role": RoleEnum.admin},
@@ -76,8 +117,14 @@ def _upsert_supabase_user(
             db.refresh(existing)
         return existing
     except Exception as exc:
-        # Surface enough info for debugging without blocking auth.
-        print(f"[AUTH] Could not upsert user {email} ({actual_id}): {exc}")
+        # Surface enough info for debugging without blocking auth or
+        # leaking raw emails into logs.
+        logger.warning(
+            "Could not upsert Supabase user (email=%s id=%s): %s",
+            mask_email(email),
+            short_id(actual_id),
+            type(exc).__name__,
+        )
         try:
             db.rollback()
         except Exception:
@@ -88,80 +135,103 @@ def _upsert_supabase_user(
 
 
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
-    # If using Supabase, verify JWT token (check JWT first, regardless of db availability)
+    # Supabase mode: verify JWT signature + claims before trusting anything
+    # the token says. The previous implementation base64-decoded the payload
+    # without verifying the signature at all, which meant a malicious client
+    # could mint a token claiming ``role: admin`` and the backend would
+    # accept it. We now verify the ES256 signature against Supabase's
+    # public JWKS before reading any claim.
     if settings.use_supabase:
         authorization: Optional[str] = request.headers.get("Authorization")
-        if authorization and authorization.startswith("Bearer "):
-            token = authorization.split(" ")[1]
-            try:
-                # Decode JWT payload using base64 (no signature verification)
-                # JWT format: header.payload.signature
-                parts = token.split(".")
-                if len(parts) != 3:
-                    raise ValueError("Invalid JWT format")
-                
-                # Decode the payload (second part)
-                # Add padding if needed for base64 decode
-                payload_b64 = parts[1]
-                padding = 4 - (len(payload_b64) % 4)
-                if padding != 4:
-                    payload_b64 += "=" * padding
-                
-                payload_bytes = base64.urlsafe_b64decode(payload_b64)
-                payload = json.loads(payload_bytes)
-                
-                user_email = payload.get("email")
-                print(f"[AUTH DEBUG] JWT payload email: {user_email}")
-                print(f"[AUTH DEBUG] Full JWT payload keys: {list(payload.keys())}")
-                if user_email:
-                    # Create a temporary user object from JWT payload
-                    user_metadata = payload.get("user_metadata", {})
-                    role_str = user_metadata.get("role", "worker")
-                    # Use user metadata name first, then fall back to email prefix
-                    user_name = user_metadata.get("name", user_email.split("@")[0].title()) if user_email else "User"
-                    try:
-                        role_enum = RoleEnum(role_str)
-                    except ValueError:
-                        role_enum = RoleEnum.worker
-                    
-                    # Extract actual user ID from Supabase JWT
-                    # Supabase uses 'sub' claim for user ID
-                    user_id = payload.get("sub")
-                    if user_id:
-                        try:
-                            # Convert string ID to integer if possible
-                            actual_id = int(user_id) if user_id.isdigit() else hash(user_id) % 1000000
-                        except (ValueError, AttributeError):
-                            # Fallback to hash of email
-                            actual_id = hash(user_email) % 1000000
-                    else:
-                        # Fallback to hash of email
-                        actual_id = hash(user_email) % 1000000
-                    
-                    # Ensure a matching row exists in the local `users` table so
-                    # FK-backed columns (e.g. created_by_user_id on T&M tickets)
-                    # can reference this caller. Without this, workers lose
-                    # visibility of their own tickets.
-                    if db is not None:
-                        user = _upsert_supabase_user(
-                            db,
-                            actual_id=actual_id,
-                            email=user_email,
-                            name=user_name,
-                            role=role_enum,
-                        )
-                    else:
-                        user = User(
-                            id=actual_id,
-                            email=user_email,
-                            name=user_name,
-                            role=role_enum,
-                        )
-                    print(f"[AUTH DEBUG] Created user object - ID: {user.id}, Email: {user.email}, Name: {user.name}")
-                    return user
-            except Exception:
-                pass
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing token")
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing authentication token",
+            )
+        token = authorization.split(" ", 1)[1].strip()
+        if not token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing authentication token",
+            )
+
+        try:
+            jwks_client = _get_jwks_client()
+            signing_key = jwks_client.get_signing_key_from_jwt(token)
+            payload = jwt.decode(
+                token,
+                signing_key.key,
+                algorithms=["ES256"],
+                audience="authenticated",
+                leeway=10,  # tolerate small client/server clock skew
+            )
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token expired",
+            )
+        except jwt.InvalidTokenError as exc:
+            logger.info("Auth rejected: %s", type(exc).__name__)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication token",
+            )
+        except Exception as exc:
+            # Typically a PyJWKClientError from a JWKS fetch/network issue.
+            # Fail closed: reject rather than silently downgrading.
+            logger.warning("JWKS verification error: %s", type(exc).__name__)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication token",
+            )
+
+        user_email = payload.get("email")
+        if not user_email:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token missing email claim",
+            )
+
+        sub = payload.get("sub")
+        if not sub:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token missing sub claim",
+            )
+
+        user_metadata = payload.get("user_metadata") or {}
+        role_str = user_metadata.get("role", "worker")
+        user_name = user_metadata.get("name") or user_email.split("@")[0].title()
+        try:
+            role_enum = RoleEnum(role_str)
+        except ValueError:
+            role_enum = RoleEnum.worker
+
+        # Deterministic integer id derived from the Supabase UUID so the
+        # same user maps to the same local row across gunicorn workers
+        # and container restarts. Numeric sub (demo/test) pass through.
+        actual_id = int(sub) if sub.isdigit() else _stable_user_id(sub)
+
+        # Ensure a matching row exists in the local `users` table so
+        # FK-backed columns (e.g. created_by_user_id on T&M tickets)
+        # can reference this caller. Without this, workers lose
+        # visibility of their own tickets.
+        if db is not None:
+            user = _upsert_supabase_user(
+                db,
+                actual_id=actual_id,
+                email=user_email,
+                name=user_name,
+                role=role_enum,
+            )
+        else:
+            user = User(
+                id=actual_id,
+                email=user_email,
+                name=user_name,
+                role=role_enum,
+            )
+        return user
     
     # Development mode: use demo users with SQLite
     if db is None:

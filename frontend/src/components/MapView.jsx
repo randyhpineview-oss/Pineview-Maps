@@ -171,6 +171,11 @@ export default function MapView({
   const lastFittedBoundsKey = useRef('');
   const hasInitiallyFitted = useRef(false);
   const markerInstancesRef = useRef(new Map());
+  // Signature cache so the imperative icon-sync effect below only calls
+  // `marker.setIcon()` on markers whose visual state actually changed.
+  // Without this we called setIcon on every marker (100+ pins) on every
+  // selection change, producing noticeable jank on mobile during pan/tap.
+  const markerIconSignaturesRef = useRef(new Map());
   const [popupSite, setPopupSite] = useState(null);
   const [popupPipeline, setPopupPipeline] = useState(null);
   const lastZoomTarget = useRef(null);
@@ -363,6 +368,11 @@ export default function MapView({
   // React-level prop updates miss on some platforms (especially mobile Safari):
   //   1. Stale markers whose site was removed → setMap(null)
   //   2. Existing markers whose icon changed (e.g. pending→approved) → setIcon()
+  //
+  // We skip setIcon on markers whose visual inputs are unchanged, via the
+  // signature cache below. This matters because this effect runs on every
+  // `popupSite` / `selectedSite` change — previously each click on a pin
+  // would re-setIcon on all ~100 markers in view (visible jank on mobile).
   useEffect(() => {
     if (!isLoaded) return;
     const currentKeys = new Set(
@@ -373,20 +383,36 @@ export default function MapView({
       if (!currentKeys.has(k)) {
         try { m.setMap(null); } catch { /* ignore */ }
         markerInstancesRef.current.delete(k);
+        markerIconSignaturesRef.current.delete(k);
       }
     }
-    // Imperatively update icons on surviving markers so mobile Safari
-    // (where the React <Marker> prop update is silently dropped) still
-    // reflects the correct icon for the current approval_state / selection.
+    // Compare the current selection key once per effect run rather than
+    // per-marker, so each marker's isSelected check is a single equality.
+    const selectedKey = popupSite
+      ? String(popupSite.id ?? popupSite.cacheId)
+      : selectedSite
+        ? String(selectedSite.id ?? selectedSite.cacheId)
+        : null;
     for (const site of sites) {
       const mKey = `${markerRevision}-${site.id || site.cacheId}`;
       const m = markerInstancesRef.current.get(mKey);
       if (!m) continue;
+      const siteKey = String(site.id ?? site.cacheId);
+      const isSelected = selectedKey != null && selectedKey === siteKey;
+      // Cheap signature of every field buildMarkerIcon() reads. If unchanged,
+      // skip the setIcon call — same icon object would be built, same pixels
+      // rendered, but we'd still pay for a Google Maps draw on mobile.
+      const signature = [
+        site.pin_type || '',
+        site.status || '',
+        site.approval_state || '',
+        site._isPreview ? 1 : 0,
+        isSelected ? 1 : 0,
+      ].join('|');
+      if (markerIconSignaturesRef.current.get(mKey) === signature) continue;
       try {
-        const isSelected =
-          (popupSite && String(popupSite.id ?? popupSite.cacheId) === String(site.id ?? site.cacheId)) ||
-          (selectedSite && String(selectedSite.id ?? selectedSite.cacheId) === String(site.id ?? site.cacheId));
         m.setIcon(buildMarkerIcon(site, isSelected));
+        markerIconSignaturesRef.current.set(mKey, signature);
       } catch { /* ignore */ }
     }
   }, [sites, markerRevision, isLoaded, popupSite, selectedSite]);
@@ -588,6 +614,24 @@ export default function MapView({
                   onClick={onShowSitesTab}
                 >
                   Browse sites
+                </button>
+              ) : null}
+              {/* "Retry loading map" button for the online-but-blocked
+                  case (ad-blocker, CDN hiccup, bad API key). The
+                  auto-reload effect above covers offline→online
+                  transitions automatically; this handles the case where
+                  the worker has been online the whole time but the Maps
+                  script is stuck because `useJsApiLoader` caches the
+                  rejected promise at module scope — only a page reload
+                  clears it. */}
+              {loadError && isOnline && !autoReloading ? (
+                <button
+                  type="button"
+                  className="map-fallback-cta"
+                  style={{ marginTop: '8px', background: '#1f2937', color: '#60a5fa' }}
+                  onClick={() => { try { window.location.reload(); } catch { /* ignore */ } }}
+                >
+                  Retry loading map
                 </button>
               ) : null}
               {/* Surface the technical error only when it's NOT a plain

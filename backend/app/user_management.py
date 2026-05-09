@@ -4,6 +4,7 @@ These endpoints allow admins to create, list, update, and delete
 Supabase Auth users directly from the Pineview Maps admin panel.
 """
 
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -14,12 +15,14 @@ from supabase import create_client
 from app.auth import require_roles
 from app.config import get_settings
 from app.database import get_db
-from app.email_service import send_password_reset_code
+from app.email_service import send_password_setup_link
+from app.log_util import get_logger, mask_email, short_id
 from app.models import PasswordResetCode, RoleEnum
 
 router = APIRouter(prefix="/api/admin/users", tags=["user-management"])
 
 settings = get_settings()
+logger = get_logger(__name__)
 
 
 def get_supabase_admin():
@@ -108,7 +111,11 @@ def create_user(payload: UserCreate) -> UserResponse:
     """Create a new Supabase Auth user with a role."""
     client = get_supabase_admin()
     try:
-        print(f"[USER_MGMT] Creating user: {payload.email} with role {payload.role.value}")
+        logger.info(
+            "Creating user %s with role %s",
+            mask_email(payload.email),
+            payload.role.value,
+        )
         result = client.auth.admin.create_user(
             {
                 "email": payload.email,
@@ -120,19 +127,23 @@ def create_user(payload: UserCreate) -> UserResponse:
                 },
             }
         )
-        print(f"[USER_MGMT] User created successfully: {result.user.id}")
+        logger.info("User created successfully: %s", short_id(result.user.id))
         return _format_user(result.user)
     except Exception as exc:
         error_msg = str(exc)
-        print(f"[USER_MGMT] Error creating user: {error_msg}")
         if "already been registered" in error_msg.lower() or "already exists" in error_msg.lower():
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="A user with this email already exists",
             )
+        logger.exception(
+            "Error creating user %s: %s",
+            mask_email(payload.email),
+            type(exc).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create user: {error_msg}",
+            detail="Failed to create user",
         )
 
 
@@ -168,9 +179,12 @@ def update_user(user_id: str, payload: UserUpdate) -> UserResponse:
     except HTTPException:
         raise
     except Exception as exc:
+        logger.exception(
+            "Error updating user %s: %s", short_id(user_id), type(exc).__name__
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update user: {exc}",
+            detail="Failed to update user",
         )
 
 
@@ -185,9 +199,12 @@ def delete_user(user_id: str) -> None:
     try:
         client.auth.admin.delete_user(user_id)
     except Exception as exc:
+        logger.exception(
+            "Error deleting user %s: %s", short_id(user_id), type(exc).__name__
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete user: {exc}",
+            detail="Failed to delete user",
         )
 
 
@@ -216,13 +233,17 @@ def confirm_user_email(user_id: str) -> UserResponse:
             user_id,
             {"email_confirm": True},
         )
-        print(f"[USER_MGMT] Email manually confirmed for user {user_id}")
+        logger.info("Email manually confirmed for user %s", short_id(user_id))
         return _format_user(result.user)
     except Exception as exc:
-        print(f"[USER_MGMT] Error confirming email for {user_id}: {exc}")
+        logger.exception(
+            "Error confirming email for user %s: %s",
+            short_id(user_id),
+            type(exc).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to confirm email: {exc}",
+            detail="Failed to confirm email",
         )
 
 
@@ -235,30 +256,49 @@ async def send_user_password_reset(
     user_id: str,
     db: Session = Depends(get_db),
 ) -> SimpleMessageResponse:
-    """Trigger a 6-digit password reset code email on behalf of a user.
+    """Email the user a one-tap **password setup link** (admin-initiated).
 
-    Mirrors the user-facing `/api/auth/forgot-password` flow but lets an admin
-    initiate it from the User Management panel — useful when a worker can't
-    receive or find the existing reset email and is calling for help.
+    Generates a single-use, 24-hour ``setup_token`` (stored in
+    ``PasswordResetCode.reset_token``) and emails a link of the form
+    ``{frontend_url}/?setup_token=...`` via :func:`send_password_setup_link`.
+    The frontend's login page detects that query param on load and shows
+    a "Set Your Password" screen which posts to ``/api/auth/setup-password``.
+
+    Why a magic link instead of a 6-digit code?
+        The previous admin button issued a 6-digit code, but the only UI
+        for entering that code lives behind the user-facing
+        "Forgot password" → "Send Reset Code" flow — and that flow
+        invalidates pre-existing codes the moment the worker requests a
+        new one. So an admin-issued code was never actually usable. A
+        magic link is single-step (click → set password → done) and
+        doubles as the new-account onboarding flow.
+
+    The endpoint URL is unchanged for frontend back-compat; only the
+    behavior and the success message change.
     """
     if db is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Password reset is not available — backend has no database session.",
+            detail="Password setup is not available — backend has no database session.",
         )
 
-    # Look up the user's email via Supabase Admin API. We could accept the
-    # email as input, but tying the action to user_id keeps the admin UI
-    # consistent with the other actions (and prevents typos).
+    # Look up the user's email + display name via Supabase Admin API.
+    # The display name is shown in the email greeting ("Hi <name> — set
+    # your password"); we fall back to the email's local part if missing.
     client = get_supabase_admin()
     try:
         user_result = client.auth.admin.get_user_by_id(user_id)
         user = getattr(user_result, "user", None) or user_result
         email = getattr(user, "email", None)
+        user_metadata = getattr(user, "user_metadata", None) or {}
+        display_name = user_metadata.get("name") if isinstance(user_metadata, dict) else None
     except Exception as exc:
+        logger.exception(
+            "Error looking up user %s: %s", short_id(user_id), type(exc).__name__
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User not found: {exc}",
+            detail="User not found",
         )
 
     if not email:
@@ -267,9 +307,10 @@ async def send_user_password_reset(
             detail="User has no email address on file.",
         )
 
-    # Mark any unused reset codes for this email as used so the worker can
-    # only use the brand-new code (avoids ambiguity if they had requested one
-    # themselves earlier).
+    # Invalidate any unused tokens still outstanding for this email so the
+    # newest setup link is the only one that can be redeemed. Covers the
+    # "admin clicked twice" and "worker also requested a 6-digit code"
+    # cases — both paths share the PasswordResetCode table.
     try:
         existing_codes = (
             db.query(PasswordResetCode)
@@ -282,25 +323,37 @@ async def send_user_password_reset(
         for code in existing_codes:
             code.is_used = True
 
-        reset_code = PasswordResetCode(email=email)
+        # Setup links live for 24h (vs 10min for the user-facing 6-digit
+        # codes) because admins typically issue them in advance of
+        # onboarding a new worker, who may not check email immediately.
+        reset_code = PasswordResetCode(
+            email=email,
+            expires_at=datetime.utcnow() + timedelta(hours=24),
+        )
         db.add(reset_code)
         db.commit()
         db.refresh(reset_code)
     except Exception as exc:
         db.rollback()
-        print(f"[USER_MGMT] DB error issuing reset code for {email}: {exc}")
+        logger.exception(
+            "DB error issuing setup link for %s: %s",
+            mask_email(email),
+            type(exc).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Could not issue reset code. Please try again.",
+            detail="Could not issue setup link. Please try again.",
         )
 
     # Catch the "no email transport configured" silent-success case before
-    # calling the email service — otherwise send_password_reset_code() just
-    # prints to the Render log and returns, and the admin thinks the worker
-    # got an email.
+    # calling the email service — otherwise the worker silently never
+    # gets a link and the admin thinks it worked.
     from app.email_service import email_transport_configured
     if not email_transport_configured():
-        print(f"[USER_MGMT] No email transport configured — code for {email} was {reset_code.code}")
+        logger.warning(
+            "No email transport configured — setup link for %s not delivered",
+            mask_email(email),
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
@@ -310,16 +363,25 @@ async def send_user_password_reset(
             ),
         )
 
+    # Build the one-tap URL. ``frontend_url`` already points at the
+    # production site (e.g. https://pineviewmaps.com) — we just append
+    # ``?setup_token=...``. The login page handles the rest on mount.
+    setup_url = f"{settings.frontend_url.rstrip('/')}/?setup_token={reset_code.reset_token}"
+
     try:
-        await send_password_reset_code(email, reset_code.code)
+        await send_password_setup_link(email, setup_url, display_name)
     except Exception as exc:
-        print(f"[USER_MGMT] SMTP error sending reset code to {email}: {exc}")
+        logger.exception(
+            "Email error sending setup link to %s: %s",
+            mask_email(email),
+            type(exc).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Reset code generated but email failed to send: {exc}",
+            detail="Setup link generated but email failed to send. Check email transport configuration.",
         )
 
-    print(f"[USER_MGMT] Admin-initiated reset code sent to {email}")
+    logger.info("Admin-initiated setup link sent to %s", mask_email(email))
     return SimpleMessageResponse(
-        message=f"Password reset code sent to {email}. They can use it on the login screen → 'Forgot password'.",
+        message=f"Password setup link sent to {email}. They'll get a one-tap link that lets them set their password and sign in.",
     )

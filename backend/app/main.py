@@ -1,9 +1,13 @@
+import logging
+import uuid
 from datetime import datetime
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy import and_, func, inspect, or_, text
 from sqlalchemy.orm import Session, defer, joinedload
 
@@ -11,7 +15,9 @@ from app.auth import get_current_user, require_roles, seed_demo_users
 from app.config import get_settings
 from app.database import Base, SessionLocal, engine, get_db
 from app.kml_import import parse_kml_file
+from app.log_util import get_logger
 from app.password_reset import router as password_reset_router
+from app.rate_limit import limiter
 from app.signup import router as signup_router
 from app.user_management import router as user_management_router
 from app.pipeline_routes import router as pipeline_router
@@ -61,13 +67,33 @@ from app.schemas import (
 )
 
 settings = get_settings()
+
+# Ensure our ``app.*`` loggers emit at INFO (or DEBUG when settings.debug
+# is on). Uvicorn configures its own ``uvicorn.*`` loggers separately and
+# we don't touch the root logger, so this doesn't cause double-emission.
+logging.getLogger("app").setLevel(
+    logging.DEBUG if settings.debug else logging.INFO
+)
+
+logger = get_logger(__name__)
 app = FastAPI(title=settings.app_name)
 
-# Add CORS middleware FIRST, before any routes or routers
-# Open CORS completely to avoid any blocking issues
+# Rate limiter for auth-adjacent endpoints (password reset, signup).
+# ``limiter`` is imported from app.rate_limit; attaching it to app.state
+# is what enables the ``@limiter.limit(...)`` decorators on individual
+# routes. Default exception handler returns 429 with a JSON detail.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# CORS: restrict to known production domains + localhost dev. The full
+# list is configurable via the ALLOWED_ORIGINS env var on Render; the
+# ``config.py`` default already covers pineviewmaps.com, its www/vercel
+# aliases, and localhost. ``allow_credentials=False`` is correct because
+# the frontend sends its Authorization header (Bearer JWT) explicitly,
+# not via browser cookies.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.origins_list,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -89,17 +115,33 @@ app.include_router(time_materials_router)
 app.include_router(reports_router)
 
 
-# Global exception handler to ensure CORS headers on errors
+# Global exception handler. Logs the full traceback server-side and
+# returns a generic error envelope with a correlation id so operators
+# can grep Render logs without leaking implementation details (SQL
+# fragments, Dropbox API messages, internal file paths) to the client.
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
+    request_id = uuid.uuid4().hex[:12]
+    logger.exception(
+        "Unhandled exception (request_id=%s method=%s path=%s): %s",
+        request_id,
+        request.method,
+        request.url.path,
+        type(exc).__name__,
+    )
+    # Mirror CORSMiddleware behavior: echo the origin back only when it's
+    # in the allow-list so the browser can surface the error body. On
+    # non-allowed origins, ship the response without CORS headers — the
+    # browser will block it from JS, which is the correct outcome.
+    origin = request.headers.get("origin", "")
+    headers = {}
+    if origin and origin in settings.origins_list:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Vary"] = "Origin"
     return JSONResponse(
         status_code=500,
-        content={"detail": str(exc)},
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
-            "Access-Control-Allow-Headers": "*",
-        },
+        content={"detail": "Internal server error", "request_id": request_id},
+        headers=headers,
     )
 
 
@@ -1500,8 +1542,9 @@ def update_site_status(
     if payload.status in (SiteStatus.inspected, SiteStatus.in_progress):
         site.last_inspected_at = datetime.utcnow()
 
-        # Store user ID, email, and name who inspected
-        print(f"[DEBUG] Storing inspection data - User ID: {current_user.id}, Email: {current_user.email}, Name: {current_user.name}")
+        # Store user ID, email, and name who inspected (the three are
+        # mirrored onto the site row so the Recently Inspected list can
+        # show attribution even if the user record is later deleted).
         if current_user.id and current_user.id > 0:
             # Only set FK if user exists in local DB
             local_user = db.query(User).filter(User.id == current_user.id).first()
@@ -1509,12 +1552,8 @@ def update_site_status(
                 site.last_inspected_by_user_id = current_user.id
         if current_user.email:
             site.last_inspected_by_email = current_user.email
-            print(f"[DEBUG] Set last_inspected_by_email to {current_user.email}")
         if current_user.name:
             site.last_inspected_by_name = current_user.name
-            print(f"[DEBUG] Set last_inspected_by_name to {current_user.name}")
-        else:
-            print(f"[DEBUG] User name is null/empty!")
 
     update = SiteUpdate(
         site_id=site.id,
@@ -1538,9 +1577,7 @@ def delete_site(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
-    print(f"[DEBUG] delete_site called for site_id: {site_id} by user: {current_user.email}")
     site = get_site_or_404(db, site_id)
-    print(f"[DEBUG] Found site: {site.id}, marking as deleted")
     site.deleted_at = datetime.utcnow()
     # Only set deleted_by_user_id if user exists in local DB to avoid FK constraint
     if current_user.id:
@@ -1550,7 +1587,6 @@ def delete_site(
             site.deleted_by_user_id = current_user.id
     site.updated_at = datetime.utcnow()
     db.commit()
-    print(f"[DEBUG] Site {site_id} marked as deleted successfully")
 
 
 @app.delete(

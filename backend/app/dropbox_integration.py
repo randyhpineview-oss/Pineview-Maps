@@ -4,6 +4,11 @@ import dropbox
 from datetime import datetime
 from typing import Optional, List
 
+from app.log_util import get_logger
+
+logger = get_logger(__name__)
+
+
 def get_dropbox_client():
     """
     Get an authenticated Dropbox client.
@@ -14,22 +19,22 @@ def get_dropbox_client():
     refresh_token = os.getenv("DROPBOX_REFRESH_TOKEN")
     app_key = os.getenv("DROPBOX_APP_KEY")
     app_secret = os.getenv("DROPBOX_APP_SECRET")
-    
+
     if refresh_token and app_key and app_secret:
-        print(f"[DROPBOX] Using refresh token flow (app_key: {app_key[:6]}...)")
+        logger.debug("Using Dropbox refresh token flow")
         return dropbox.Dropbox(
             oauth2_refresh_token=refresh_token,
             app_key=app_key,
             app_secret=app_secret,
         )
-    
+
     # Fallback to short-lived access token
     token = os.getenv("DROPBOX_ACCESS_TOKEN")
     if token:
-        print(f"[DROPBOX] Using short-lived access token (starts: {token[:8]}...)")
+        logger.debug("Using Dropbox short-lived access token")
         return dropbox.Dropbox(token)
-    
-    print("[DROPBOX] No Dropbox credentials configured")
+
+    logger.error("No Dropbox credentials configured")
     raise ValueError("Dropbox credentials not configured. Set DROPBOX_REFRESH_TOKEN + DROPBOX_APP_KEY + DROPBOX_APP_SECRET, or DROPBOX_ACCESS_TOKEN.")
 
 def _safe_name(name: str) -> str:
@@ -91,10 +96,10 @@ def _get_or_create_shared_link(dbx, file_path: str) -> Optional[str]:
     # Attempt 1: create a new shared link
     try:
         shared_link = dbx.sharing_create_shared_link_with_settings(file_path)
-        print(f"[DROPBOX] Shared link created: {shared_link.url}")
+        logger.debug("Shared link created")
         return shared_link.url
     except dropbox.exceptions.ApiError as link_err:
-        print(f"[DROPBOX] sharing_create_shared_link_with_settings error: {link_err}")
+        logger.debug("sharing_create_shared_link_with_settings error: %s", type(link_err).__name__)
         # If shared link already exists (re-upload), retrieve the existing one
         if hasattr(link_err, 'error') and hasattr(link_err.error, 'is_shared_link_already_exists'):
             try:
@@ -112,60 +117,61 @@ def _get_or_create_shared_link(dbx, file_path: str) -> Optional[str]:
                         m = meta_wrapper.metadata
                         meta = m() if callable(m) else m
                     if meta and hasattr(meta, 'url'):
-                        print(f"[DROPBOX] Using existing shared link: {meta.url}")
+                        logger.debug("Using existing shared link")
                         return meta.url
             except Exception as inner_err:
-                print(f"[DROPBOX] Error extracting existing link: {inner_err}")
+                logger.warning("Error extracting existing link: %s", type(inner_err).__name__)
     except Exception as e:
-        print(f"[DROPBOX] Unexpected error creating shared link: {type(e).__name__}: {e}")
+        logger.warning("Unexpected error creating shared link: %s", type(e).__name__)
 
     # Attempt 2: list existing shared links for the path
     try:
         links = dbx.sharing_list_shared_links(path=file_path, direct_only=True)
         if links.links:
-            print(f"[DROPBOX] Found existing shared link: {links.links[0].url}")
+            logger.debug("Found existing shared link")
             return links.links[0].url
     except Exception as e:
-        print(f"[DROPBOX] sharing_list_shared_links error: {type(e).__name__}: {e}")
+        logger.warning("sharing_list_shared_links error: %s", type(e).__name__)
 
     # Attempt 3: get a temporary link (no sharing.write scope needed)
     try:
         temp_link = dbx.files_get_temporary_link(file_path)
-        print(f"[DROPBOX] Using temporary link (4hr expiry): {temp_link.link[:60]}...")
+        logger.debug("Using temporary link (4hr expiry)")
         return temp_link.link
     except Exception as e:
-        print(f"[DROPBOX] files_get_temporary_link error: {type(e).__name__}: {e}")
+        logger.warning("files_get_temporary_link error: %s", type(e).__name__)
 
-    print(f"[DROPBOX] All link methods failed for: {file_path}")
+    logger.error("All link methods failed for file upload")
     return None
 
 
 def upload_pdf_to_dropbox(pdf_content: bytes, file_path: str) -> Optional[str]:
     """Upload a PDF to Dropbox at the given path and return the shared link."""
     try:
-        print(f"[DROPBOX] Uploading PDF ({len(pdf_content)} bytes) to: {file_path}")
+        logger.debug("Uploading PDF (%d bytes)", len(pdf_content))
         dbx = get_dropbox_client()
         folder = '/'.join(file_path.split('/')[:-1])
         _ensure_folder(dbx, folder)
-        
+
         dbx.files_upload(pdf_content, file_path, mode=dropbox.files.WriteMode.overwrite)
-        print(f"[DROPBOX] PDF uploaded successfully, creating shared link...")
+        logger.debug("PDF uploaded successfully, creating shared link")
         return _get_or_create_shared_link(dbx, file_path)
     except Exception as e:
-        print(f"[DROPBOX] Error uploading PDF: {type(e).__name__}: {e}")
+        logger.exception("Error uploading PDF: %s", type(e).__name__)
         return None
+
 
 def upload_photo_to_dropbox(photo_content: bytes, file_path: str) -> Optional[str]:
     """Upload a photo to Dropbox at the given path and return the shared link."""
     try:
-        print(f"[DROPBOX] Uploading photo ({len(photo_content)} bytes) to: {file_path}")
+        logger.debug("Uploading photo (%d bytes)", len(photo_content))
         dbx = get_dropbox_client()
         folder = '/'.join(file_path.split('/')[:-1])
         _ensure_folder(dbx, folder)
-        
+
         dbx.files_upload(photo_content, file_path, mode=dropbox.files.WriteMode.overwrite)
-        print(f"[DROPBOX] Photo uploaded successfully, creating shared link...")
+        logger.debug("Photo uploaded successfully, creating shared link")
         return _get_or_create_shared_link(dbx, file_path)
     except Exception as e:
-        print(f"[DROPBOX] Error uploading photo: {type(e).__name__}: {e}")
+        logger.exception("Error uploading photo: %s", type(e).__name__)
         return None

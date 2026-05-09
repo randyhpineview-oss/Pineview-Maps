@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { signInWithEmail } from '../lib/supabaseClient';
 import { api } from '../lib/api';
 
@@ -74,11 +74,41 @@ export default function LoginPage({ onLoginSuccess }) {
   const [success, setSuccess] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
+  // resetFlow values:
+  //   'idle'                  → standard sign-in form
+  //   'requesting'            → user-facing forgot-password (confirm email)
+  //   'entering_code'         → user-facing forgot-password (6-digit input)
+  //   'entering_password'     → user-facing forgot-password (new password)
+  //   'setting_up_password'   → admin-issued magic-link onboarding (skips
+  //                              code entry; same password form, different
+  //                              submit handler that posts to /setup-password)
+  //   'success'               → terminal success splash
   const [resetFlow, setResetFlow] = useState('idle');
   const [resetCode, setResetCode] = useState('');
   const [resetToken, setResetToken] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+
+  // ── Detect admin-issued setup link on mount ───────────────────────────
+  // An admin clicked "Send password setup link" → backend emailed a URL
+  // like https://pineviewmaps.com/?setup_token=abc123… → user opened it.
+  // We pull the token out of the URL, hand it to the password-set form,
+  // and strip the param from the address bar so a back/forward navigation
+  // or refresh doesn't try to redeem an already-used token.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('setup_token');
+    if (!token) return;
+    setResetToken(token);
+    setResetFlow('setting_up_password');
+    // Clean the URL without reloading. history.replaceState keeps the
+    // user on the same page but removes the sensitive token from the
+    // address bar / browser history.
+    params.delete('setup_token');
+    const cleaned = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}${window.location.hash}`;
+    window.history.replaceState({}, document.title, cleaned);
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -154,16 +184,28 @@ export default function LoginPage({ onLoginSuccess }) {
     setError('');
     setSuccess('');
     setIsLoading(true);
+    // Two paths share this form:
+    //   - 'setting_up_password' (admin magic link): one-step setup-password
+    //     endpoint, since possession of the link IS the verification.
+    //   - 'entering_password' (forgot-password 6-digit flow): two-step
+    //     reset-password endpoint, after the code has already been verified.
+    const isSetupLink = resetFlow === 'setting_up_password';
     try {
-      await api.resetPasswordWithToken(resetToken, newPassword);
-      setSuccess('Password reset successfully! You can now log in.');
+      if (isSetupLink) {
+        await api.setupPassword(resetToken, newPassword);
+      } else {
+        await api.resetPasswordWithToken(resetToken, newPassword);
+      }
+      setSuccess(isSetupLink
+        ? 'Password set successfully! You can now sign in.'
+        : 'Password reset successfully! You can now log in.');
       setResetFlow('success');
       setPassword('');
       setNewPassword('');
       setConfirmPassword('');
       setResetCode('');
     } catch (err) {
-      setError(err.message || 'Failed to reset password');
+      setError(err.message || (isSetupLink ? 'Failed to set password' : 'Failed to reset password'));
     } finally {
       setIsLoading(false);
     }
@@ -232,7 +274,8 @@ export default function LoginPage({ onLoginSuccess }) {
       );
     }
 
-    if (resetFlow === 'entering_password') {
+    if (resetFlow === 'entering_password' || resetFlow === 'setting_up_password') {
+      const isSetupLink = resetFlow === 'setting_up_password';
       return (
         <form onSubmit={handleResetPassword} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           <div>
@@ -271,7 +314,9 @@ export default function LoginPage({ onLoginSuccess }) {
             disabled={isLoading}
             style={{ width: '100%', background: isLoading ? '#9ca3af' : 'linear-gradient(90deg, #2563eb, #4f46e5)', color: 'white', fontWeight: 600, padding: '0.75rem 1rem', borderRadius: '0.5rem', border: 'none', fontSize: '1rem', cursor: isLoading ? 'default' : 'pointer' }}
           >
-            {isLoading ? 'Resetting...' : 'Reset Password'}
+            {isLoading
+              ? (isSetupLink ? 'Setting password…' : 'Resetting…')
+              : (isSetupLink ? 'Set Password' : 'Reset Password')}
           </button>
           <button
             type="button"
@@ -411,6 +456,8 @@ export default function LoginPage({ onLoginSuccess }) {
         return { title: 'Enter Reset Code', subtitle: 'Check your email for the 6-digit code' };
       case 'entering_password':
         return { title: 'New Password', subtitle: 'Create a new password for your account' };
+      case 'setting_up_password':
+        return { title: 'Set Your Password', subtitle: 'Choose a password for your new Pineview Maps account' };
       case 'success':
         return { title: '', subtitle: '' };
       default:

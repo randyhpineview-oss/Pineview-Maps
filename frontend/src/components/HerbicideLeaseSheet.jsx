@@ -3,6 +3,7 @@ import { generateLeaseSheetPdf } from '../lib/pdfGenerator';
 import { generateTMTicketPdf } from '../lib/tmTicketPdfGenerator';
 import { api } from '../lib/api';
 import { saveLeaseSheetDraft, deleteLeaseSheetDraft } from '../lib/offlineStore';
+import { localDateISO } from '../lib/dateUtil';
 import PdfPreviewViewer from './PdfPreviewViewer';
 import AutocompleteInput from './AutocompleteInput';
 
@@ -72,7 +73,7 @@ export default function HerbicideLeaseSheet({
   // Form state
   const [form, setForm] = useState({
     time: get12hTime(),
-    date: new Date().toISOString().split('T')[0],
+    date: localDateISO(),
     customer: '',
     area: '',
     lsdOrPipeline: '',
@@ -203,7 +204,7 @@ export default function HerbicideLeaseSheet({
       const d = editingRecord.lease_sheet_data;
       setForm({
         time: d.time || get12hTime(),
-        date: d.date || editingRecord.spray_date || new Date().toISOString().split('T')[0],
+        date: d.date || editingRecord.spray_date || localDateISO(),
         customer: d.customer || '',
         area: d.area || '',
         lsdOrPipeline: d.lsdOrPipeline || '',
@@ -297,7 +298,7 @@ export default function HerbicideLeaseSheet({
     }
 
     const currentTime = get12hTime();
-    const currentDate = new Date().toISOString().split('T')[0];
+    const currentDate = localDateISO();
     
     if (site) {
       setForm(prev => ({

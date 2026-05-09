@@ -47,6 +47,7 @@ import {
   upsertSite,
 } from './lib/offlineStore';
 import { formatDate, pinTypeLabel, statusLabel } from './lib/mapUtils';
+import { localDateISO } from './lib/dateUtil';
 
 // ── Code-splitting: heavy / route-gated components load in their own chunks ─
 //
@@ -186,37 +187,104 @@ export default function App() {
   const wasOnline = useRef(window.navigator.onLine);
   const lastSyncStatusRef = useRef(null);
 
-  // ── Service-worker update detection ─────────────────────────────────────
-  // vite-plugin-pwa registers the SW via its auto-injected registerSW shim.
-  // When a new SW has installed and is waiting, we surface an "Update Now"
-  // button in the account popover. Clicking it posts skipWaiting to the
-  // waiting worker then clears all caches and reloads so users always get
-  // the freshest build without having to close every tab.
+  // ── Service-worker update detection + push ─────────────────────────────
+  // vite-plugin-pwa is configured with `registerType: 'prompt'` +
+  // `skipWaiting: false` + `clientsClaim: false`, so a new deploy's SW
+  // installs in the background and parks in the `waiting` state. This
+  // effect pushes update checks via `registration.update()` so the worker
+  // learns about the new build within ~60 s without needing a page
+  // refresh — which on iOS PWA is particularly painful (closing and
+  // reopening the app is itself the refresh, at which point the old
+  // "Update Now" button had already become a no-op).
+  //
+  // When `swUpdateAvailable` flips to true:
+  //   - A green dot appears on the avatar in the topbar.
+  //   - An "Update available" pill shows next to the version badge.
+  //   - "↑ Update Now" remains in the account popover.
+  // Tapping any of them runs `handleAppUpdate` which posts SKIP_WAITING
+  // to the waiting SW, clears Workbox caches, and reloads. The
+  // `controllerchange` listener below is the final safety net: if the
+  // cache-clear hangs, the browser will still reload as soon as the new
+  // SW takes over.
   const [swUpdateAvailable, setSwUpdateAvailable] = useState(false);
   const swWaitingRef = useRef(null);
 
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
-    const checkForWaiting = (reg) => {
-      if (reg.waiting) {
-        swWaitingRef.current = reg.waiting;
-        setSwUpdateAvailable(true);
-      }
+    let cancelled = false;
+    let pollInterval = null;
+    let cleanupVisibility = null;
+    let cleanupOnline = null;
+    let cleanupControllerChange = null;
+
+    const markWaiting = (worker) => {
+      swWaitingRef.current = worker;
+      setSwUpdateAvailable(true);
     };
+
     navigator.serviceWorker.getRegistration().then((reg) => {
-      if (!reg) return;
-      checkForWaiting(reg);
+      if (cancelled || !reg) return;
+      // A new SW may already be waiting from a previous session — catch
+      // it immediately so we don't wait for the first `updatefound`.
+      if (reg.waiting) markWaiting(reg.waiting);
+
       reg.addEventListener('updatefound', () => {
         const newWorker = reg.installing;
         if (!newWorker) return;
         newWorker.addEventListener('statechange', () => {
+          // With skipWaiting disabled, a fresh SW lands in `installed`
+          // and stays there as `reg.waiting` until we post SKIP_WAITING.
           if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-            swWaitingRef.current = newWorker;
-            setSwUpdateAvailable(true);
+            markWaiting(newWorker);
           }
         });
       });
+
+      // Push update checks into the SW so a new deploy is seen without
+      // requiring the user to reload the page. 60 s cadence balances
+      // "promptness of the indicator" against "cost of the check"
+      // (the browser issues a HEAD to the precache manifest — cheap).
+      const checkForUpdate = () => {
+        if (document.visibilityState !== 'visible') return;
+        reg.update().catch(() => { /* ignore network blips */ });
+      };
+      pollInterval = setInterval(checkForUpdate, 60_000);
+
+      // Belt-and-braces: also check on tab focus and on back-online so
+      // the worker who closed the app during a deploy and reopens it a
+      // minute later sees the update immediately, not 60 s later.
+      const onVisible = () => {
+        if (document.visibilityState === 'visible') checkForUpdate();
+      };
+      document.addEventListener('visibilitychange', onVisible);
+      cleanupVisibility = () => document.removeEventListener('visibilitychange', onVisible);
+
+      const onOnline = () => checkForUpdate();
+      window.addEventListener('online', onOnline);
+      cleanupOnline = () => window.removeEventListener('online', onOnline);
     }).catch(() => undefined);
+
+    // When the active SW actually swaps (after SKIP_WAITING), force a
+    // page reload so the app picks up the new precached bundle. This
+    // path runs regardless of whether `handleAppUpdate`'s `caches.delete`
+    // loop succeeded — a hung cache op can no longer leave the worker
+    // stuck on the old code forever.
+    let reloaded = false;
+    const onControllerChange = () => {
+      if (reloaded) return;
+      reloaded = true;
+      window.location.reload();
+    };
+    navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
+    cleanupControllerChange = () => navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
+
+    return () => {
+      cancelled = true;
+      if (pollInterval != null) clearInterval(pollInterval);
+      if (cleanupVisibility) cleanupVisibility();
+      if (cleanupOnline) cleanupOnline();
+      if (cleanupControllerChange) cleanupControllerChange();
+    };
   }, []);
 
   const handleAppUpdate = useCallback(async () => {
@@ -227,7 +295,11 @@ export default function App() {
     try {
       const keys = await caches.keys();
       await Promise.all(keys.map((k) => caches.delete(k)));
-    } catch { /* ignore */ }
+    } catch { /* ignore — controllerchange will still reload */ }
+    // The controllerchange listener above will also fire once the
+    // waiting SW activates and will reload then. Calling reload() here
+    // as well covers the case where controllerchange never fires
+    // (e.g. no active controller yet on first install).
     window.location.reload();
   }, []);
   // Delta-sync watermarks: the `server_time` returned by the last successful
@@ -258,6 +330,14 @@ export default function App() {
   const [markerRevision, setMarkerRevision] = useState(0);
   const [message, setMessage] = useState('Loading project data...');
   const [isOnline, setIsOnline] = useState(window.navigator.onLine);
+  // Supabase Realtime channel status. Starts 'connecting' on mount and
+  // flips to 'connected' after the first SUBSCRIBED event. On
+  // CHANNEL_ERROR / TIMED_OUT / CLOSED we go to 'disconnected', which
+  // (a) surfaces a subtle yellow badge in the topbar so the worker knows
+  // updates may be lagging, and (b) speeds up the safety-net poll
+  // cadence below so the UI still gets fresh data within ~60 s while
+  // the SDK's internal reconnect is trying to recover.
+  const [realtimeStatus, setRealtimeStatus] = useState('connecting');
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   // Tracks the manual Refresh button's busy state. Kept separate from
@@ -301,7 +381,7 @@ export default function App() {
   const [sprayStartPoint, setSprayStartPoint] = useState(null);
   const [sprayEndPoint, setSprayEndPoint] = useState(null);
   const [showSprayConfirm, setShowSprayConfirm] = useState(false);
-  const [sprayForm, setSprayForm] = useState({ date: new Date().toISOString().split('T')[0], notes: '', is_avoided: false });
+  const [sprayForm, setSprayForm] = useState({ date: localDateISO(), notes: '', is_avoided: false });
   const [pendingPipelineSegment, setPendingPipelineSegment] = useState(null);
   const [highlightedSprayRecordId, setHighlightedSprayRecordId] = useState(null);
   const [isFollowingUser, setIsFollowingUser] = useState(false);
@@ -857,6 +937,11 @@ export default function App() {
       setUploadTotal(total);
       setUploadCompleted(0);
       for (const item of items.sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+        // Skip items that have been auto-paused after repeatedly failing
+        // (see catch block below). They stay in the queue so the worker
+        // can see them in the Uploading list; auto-retry is disabled
+        // until they're explicitly re-queued or removed by the user.
+        if (item.status === 'stalled') continue;
         try {
           // Lease sheets can carry a `time_materials_link` in their payload
           // which tells the backend to either (a) create a fresh T&M ticket
@@ -1023,8 +1108,33 @@ export default function App() {
           // next file's 0%, hiding the "this file is done" beat.
           setCurrentItemPercent(100);
         } catch (err) {
-          console.warn('[UPLOAD_QUEUE] Failed to upload item', item.id, '— will retry next cycle:', err?.message || err);
-          // Leave it in queue for retry on next poll cycle
+          // Auth failure: break the loop immediately so we don't churn
+          // through every remaining item with the same stale token —
+          // previously this produced a silent XHR storm in the
+          // background (one failed request per queued item, per poll
+          // tick). The next poll cycle will retry; by then Supabase
+          // should have refreshed the access token automatically.
+          if (err?.status === 401 || err?.status === 403) {
+            console.warn('[UPLOAD_QUEUE] Auth failed (', err.status, ') — pausing queue until next cycle');
+            break;
+          }
+          // Track attempts + last error so persistent failures don't
+          // loop forever. After MAX_ATTEMPTS we flip the item to
+          // 'stalled' (see skip-check above) — it stays in IDB so
+          // the worker can still see it in their Uploading list, but
+          // we stop auto-retrying. Short error messages only so we
+          // don't bloat IDB with huge payload dumps on 5xx HTML bodies.
+          const MAX_ATTEMPTS = 5;
+          const attempts = (item.attempts || 0) + 1;
+          try {
+            await updateUploadEntry(item.id, {
+              attempts,
+              lastErrorStatus: err?.status || null,
+              lastErrorMessage: String(err?.message || err).slice(0, 200),
+              status: attempts >= MAX_ATTEMPTS ? 'stalled' : 'pending',
+            });
+          } catch { /* non-fatal: worst case we retry one extra time */ }
+          console.warn('[UPLOAD_QUEUE] Upload failed (item', item.id, ', attempt', attempts + '/' + MAX_ATTEMPTS + '):', err?.message || err);
         }
       }
     } finally {
@@ -1313,20 +1423,26 @@ export default function App() {
     // fall back to a full server fetch. See bootHydrate above.
     void bootHydrate();
 
-    // ── Debug helpers for upload queue ──
-    window.debugQueue = async () => {
-      const items = await getUploadQueue();
-      console.log('[UPLOAD_QUEUE] Items in queue:', items);
-      return items;
-    };
-    window.clearQueue = async () => {
-      const items = await getUploadQueue();
-      for (const item of items) {
-        await removeUploadEntry(item.id);
-      }
-      console.log('[UPLOAD_QUEUE] Cleared all items:', items);
-      await refreshUploadQueue();
-    };
+    // ── Debug helpers for upload queue (dev only) ──
+    // Previously attached unconditionally, which meant any production
+    // user could open devtools and dump queue contents (which include
+    // site notes, customer names, photo payloads). Gate behind
+    // `import.meta.env.DEV` so the globals only exist during `vite dev`.
+    if (import.meta.env.DEV) {
+      window.debugQueue = async () => {
+        const items = await getUploadQueue();
+        console.log('[UPLOAD_QUEUE] Items in queue:', items);
+        return items;
+      };
+      window.clearQueue = async () => {
+        const items = await getUploadQueue();
+        for (const item of items) {
+          await removeUploadEntry(item.id);
+        }
+        console.log('[UPLOAD_QUEUE] Cleared all items:', items);
+        await refreshUploadQueue();
+      };
+    }
   }, [bootHydrate, refreshQueueCount, refreshUploadQueue, processUploadQueue]);
 
   // Ref wired up by the auto-poll useEffect below. Lets the back-online
@@ -1405,10 +1521,18 @@ export default function App() {
   useEffect(() => {
     if (!isOnline) return;
 
-    // 5-minute poll cadence. Visibility change still triggers an immediate
-    // tick when the tab becomes visible, so users get fresh data on wake
-    // without the 2-min background drum-beat that used to churn the pooler.
-    const POLL_MS = 300000;
+    // Adaptive poll cadence:
+    //   - Realtime connected  → 5 min. The WebSocket pushes row changes
+    //                           instantly; polling is only a safety net
+    //                           for things Realtime can't deliver (e.g.
+    //                           sync-status aggregates) so 5 min is plenty.
+    //   - Realtime disconnected → 60 s. Realtime is the primary push;
+    //                           when it's broken we compensate by polling
+    //                           faster so the field worker still sees
+    //                           new approvals / deletes within a minute.
+    // On visibility change the interval is paused entirely while the tab
+    // is hidden, and a one-shot catch-up tick runs on visibility return.
+    const POLL_MS = realtimeStatus === 'connected' ? 300000 : 60000;
 
     // ── Delta merge helpers ────────────────────────────────────────────────
     // Each is defined inline so it closes over the latest setState setters
@@ -1557,7 +1681,7 @@ export default function App() {
           });
           for (const item of items) await upsertRecent(item);
           // Remove deleted items from IndexedDB
-          for (const id of idsRemoved) await deleteRecent(id);
+          for (const id of idsRemoved) await removeRecentById(id);
         }
 
         recentsSinceRef.current = delta.server_time || recentsSinceRef.current;
@@ -1668,27 +1792,46 @@ export default function App() {
       try { processUploadQueue(); } catch { /* ignore */ }
     };
 
-    const pollInterval = setInterval(runPollTick, POLL_MS);
+    // Interval is started/cleared by the visibility handler so the
+    // poll completely pauses while the tab is hidden (iOS Safari
+    // keeps intervals alive in the background — without this, a
+    // worker's phone in their pocket would still fire delta fetches
+    // every POLL_MS forever).
+    let pollInterval = null;
+    const startInterval = () => {
+      if (pollInterval != null) return;
+      pollInterval = setInterval(runPollTick, POLL_MS);
+    };
+    const stopInterval = () => {
+      if (pollInterval == null) return;
+      clearInterval(pollInterval);
+      pollInterval = null;
+    };
+
+    if (document.visibilityState === 'visible') startInterval();
 
     // Expose the latest tick to the back-online handler so it can trigger a
     // cheap delta sync instead of running a full refreshAllData() whenever
     // the network flaps.
     runPollTickRef.current = runPollTick;
 
-    // Immediate refresh when tab becomes visible again (covers phone-unlock, tab-switch).
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
+        startInterval();
+        // Immediate catch-up tick on wake (covers phone-unlock, tab-switch).
         runPollTick();
+      } else {
+        stopInterval();
       }
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
 
     return () => {
-      clearInterval(pollInterval);
+      stopInterval();
       document.removeEventListener('visibilitychange', onVisibilityChange);
       runPollTickRef.current = null;
     };
-  }, [isOnline, serverFilters, roleCanAdmin, selectedSite, processUploadQueue]);
+  }, [isOnline, serverFilters, roleCanAdmin, selectedSite, processUploadQueue, realtimeStatus]);
 
   // ── Mirror selectedSite / selectedPipeline into refs ────────────────────
   // The Realtime subscription useEffect below opens a single long-lived
@@ -2101,11 +2244,12 @@ export default function App() {
         // 'TIMED_OUT', 'CLOSED' otherwise. Catch-up only on a successful
         // (re)connect — the SDK auto-retries failures with backoff.
         if (status === 'SUBSCRIBED') {
-          console.log('[REALTIME] Subscribed to all tables');
+          setRealtimeStatus('connected');
           // Fire one cheap delta tick to pick up any rows that changed
           // while we were disconnected.
           try { runPollTickRef.current?.(); } catch { /* ignore */ }
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          setRealtimeStatus('disconnected');
           console.warn('[REALTIME] Channel status:', status);
         }
       });
@@ -2683,7 +2827,7 @@ export default function App() {
     setSprayStartPoint(null);
     setSprayEndPoint(null);
     setShowSprayConfirm(false);
-    setSprayForm({ date: new Date().toISOString().split('T')[0], notes: '', is_avoided: false });
+    setSprayForm({ date: localDateISO(), notes: '', is_avoided: false });
     setPendingPipelineSegment(null);
     setPipelineDetailOpen(false); // Slide panel away
   }
@@ -2957,7 +3101,7 @@ export default function App() {
       await api.createSprayRecord(pipeline.id, {
         start_fraction: 0,
         end_fraction: 1,
-        spray_date: new Date().toISOString().split('T')[0],
+        spray_date: localDateISO(),
         notes: reason || '',
         is_avoided: true,
       });
@@ -3248,57 +3392,84 @@ export default function App() {
 
   useEffect(() => {
     if (!navigator.geolocation) return;
-    
-    // Initial location fetch
-    const watchId = navigator.geolocation.watchPosition(
-      (position) => {
-        const rawLocation = {
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-        };
-        
-        // Smooth location updates
-        const now = Date.now();
-        const timeSinceLastUpdate = now - lastLocationUpdateRef.current;
-        
-        // Update smoothing more frequently for smooth movement
-        if (timeSinceLastUpdate > 50) { // Update every 50ms for smooth animation
-          lastLocationUpdateRef.current = now;
-          
-          const smoothedLocation = smoothLocationTransition(smoothedLocationRef.current, rawLocation, 0.08);
-          smoothedLocationRef.current = smoothedLocation;
-          setUserLocation(smoothedLocation);
-          
-          // Auto-center on user if follow mode is enabled
-          if (isFollowingUser && mapRef.current) {
-            // Throttle follow updates to every 500ms for smooth tracking
-            if (now - lastFollowUpdateRef.current > 500) {
-              lastFollowUpdateRef.current = now;
-              console.log('[APP] Sending follow mode update:', smoothedLocation.lat, smoothedLocation.lng);
-              setZoomTarget({ 
-                latitude: smoothedLocation.lat, 
-                longitude: smoothedLocation.lng, 
-                _ts: Date.now(),
-                _isFollowMode: true // Mark as follow mode update
-              });
+
+    // Only run GPS while the Map tab is the active view AND the document
+    // is actually visible. Previously the watch ran unconditionally —
+    // which on an iPhone in a worker's pocket meant enableHighAccuracy
+    // GPS polling at ~2 Hz for the entire shift even when the app was
+    // in the background or they were on the Forms/Admin tabs. On a
+    // typical 10-hour day that dominates battery drain.
+    let watchId = null;
+
+    const startWatch = () => {
+      if (watchId != null) return;
+      watchId = navigator.geolocation.watchPosition(
+        (position) => {
+          const rawLocation = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          };
+
+          // Smooth location updates
+          const now = Date.now();
+          const timeSinceLastUpdate = now - lastLocationUpdateRef.current;
+
+          // Update smoothing more frequently for smooth movement
+          if (timeSinceLastUpdate > 50) { // Update every 50ms for smooth animation
+            lastLocationUpdateRef.current = now;
+
+            const smoothedLocation = smoothLocationTransition(smoothedLocationRef.current, rawLocation, 0.08);
+            smoothedLocationRef.current = smoothedLocation;
+            setUserLocation(smoothedLocation);
+
+            // Auto-center on user if follow mode is enabled
+            if (isFollowingUser && mapRef.current) {
+              // Throttle follow updates to every 500ms for smooth tracking
+              if (now - lastFollowUpdateRef.current > 500) {
+                lastFollowUpdateRef.current = now;
+                setZoomTarget({
+                  latitude: smoothedLocation.lat,
+                  longitude: smoothedLocation.lng,
+                  _ts: Date.now(),
+                  _isFollowMode: true // Mark as follow mode update
+                });
+              }
             }
           }
+        },
+        (error) => {
+          console.error('Location tracking error:', error);
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 5000 // Accept positions up to 5 seconds old
         }
-      },
-      (error) => {
-        console.error('Location tracking error:', error);
-      },
-      { 
-        enableHighAccuracy: true, 
-        timeout: 10000, 
-        maximumAge: 5000 // Accept positions up to 5 seconds old
-      }
-    );
-    
-    return () => {
-      navigator.geolocation.clearWatch(watchId);
+      );
     };
-  }, [isFollowingUser]);
+
+    const stopWatch = () => {
+      if (watchId == null) return;
+      navigator.geolocation.clearWatch(watchId);
+      watchId = null;
+    };
+
+    const shouldWatch = () =>
+      activeTab === TAB_MAP && document.visibilityState === 'visible';
+
+    if (shouldWatch()) startWatch();
+
+    const onVisibilityChange = () => {
+      if (shouldWatch()) startWatch();
+      else stopWatch();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      stopWatch();
+    };
+  }, [isFollowingUser, activeTab]);
 
   // Continuous centering when follow mode is enabled (even when location isn't updating)
   useEffect(() => {
@@ -3324,8 +3495,13 @@ export default function App() {
 
   function handleCenterOnUserLocation() {
     if (!userLocation) {
-      setMessage('Getting location...');
-      // Request current position if we don't have one
+      setMessage('Getting location…');
+      // Request current position if we don't have one. Timeout tightened
+      // from 15 s to 10 s: anything longer than that on a phone with
+      // working GPS usually means permissions are denied or the OS is
+      // stalling, and the worker is better served by a clear "check
+      // permissions" message than waiting another 5 s for the same
+      // answer.
       navigator.geolocation.getCurrentPosition(
         (position) => {
           const location = {
@@ -3339,12 +3515,20 @@ export default function App() {
         },
         (error) => {
           console.error('Error getting location:', error);
-          setMessage('Unable to get location. Check GPS permissions.');
+          // Distinguish permission-denied from timeout so the worker
+          // gets an actionable message either way.
+          if (error && error.code === error.PERMISSION_DENIED) {
+            setMessage("Location access denied — enable in your phone's Settings → Safari/Pineview Maps → Location.");
+          } else if (error && error.code === error.TIMEOUT) {
+            setMessage("Couldn't get GPS in time. Make sure Location is on and try again.");
+          } else {
+            setMessage("Couldn't get location — check GPS permissions.");
+          }
         },
-        { 
-          enableHighAccuracy: true, 
-          timeout: 15000, 
-          maximumAge: 0 
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 0
         }
       );
       return;
@@ -4004,6 +4188,20 @@ export default function App() {
         <span className="topbar-title">Pineview Maps</span>
         <div className="topbar-right">
           <span className={`badge ${isOnline ? 'online' : 'offline'}`}>{isOnline ? 'Online' : 'Offline'}</span>
+          {/* Realtime disconnect indicator. Only shown when we have
+              network but the Supabase WebSocket channel is down —
+              polling still brings fresh data within ~60 s (see adaptive
+              POLL_MS above) but the field worker should know updates
+              aren't instant. Hidden entirely on happy path. */}
+          {isOnline && realtimeStatus === 'disconnected' ? (
+            <span
+              className="badge"
+              style={{ background: '#854d0e', color: '#fde68a', border: '1px solid #a16207' }}
+              title="Realtime WebSocket disconnected — still polling every 60 s for updates"
+            >
+              <span className="topbar-label-desktop">Realtime: </span>reconnecting
+            </span>
+          ) : null}
           {/* Manual refresh: full resync on demand. The auto-poll now runs at
               2 min intervals to save egress, so this button is how users force
               an immediate refresh when they expect a just-submitted change. */}
@@ -4150,13 +4348,38 @@ export default function App() {
               loaded without digging into devtools. Hidden on mobile via
               `topbar-account-inline-only`; mobile users get the same string
               inside the avatar popover below. */}
-          <span
-            className="badge topbar-account-inline-only"
-            title={`Build ${APP_VERSION_LABEL}`}
-            style={{ background: 'transparent', color: '#6b7280', fontSize: '0.7rem', padding: '2px 6px' }}
-          >
-            {APP_VERSION_LABEL}
-          </span>
+          {swUpdateAvailable ? (
+            /* Update-available pill — pushed into the topbar the moment
+               the background reg.update() poll finds a new SW waiting.
+               Clickable: tapping runs the same SKIP_WAITING + reload
+               as the popover "Update Now" item so the worker can apply
+               the update in one tap without opening any menu. */
+            <button
+              type="button"
+              className="badge topbar-account-inline-only"
+              onClick={handleAppUpdate}
+              title="A new version is available — tap to update"
+              style={{
+                background: '#064e3b',
+                color: '#6ee7b7',
+                border: '1px solid #10b981',
+                fontSize: '0.7rem',
+                padding: '2px 8px',
+                cursor: 'pointer',
+                fontWeight: 600,
+              }}
+            >
+              ↑ Update available
+            </button>
+          ) : (
+            <span
+              className="badge topbar-account-inline-only"
+              title={`Build ${APP_VERSION_LABEL}`}
+              style={{ background: 'transparent', color: '#6b7280', fontSize: '0.7rem', padding: '2px 6px' }}
+            >
+              {APP_VERSION_LABEL}
+            </span>
+          )}
 
           {/* Mobile-only avatar menu: collapses name + View as Worker +
               Sign Out into a single 28 px circle with the user's initial.
@@ -4175,7 +4398,15 @@ export default function App() {
               title={userDisplayName}
             >
               {userInitial}
-              {viewAsWorker ? <span className="topbar-account-trigger-dot" aria-hidden="true" /> : null}
+              {/* Dot priority: green "update available" trumps orange
+                  "viewing as worker" because the former is actionable
+                  and transient, while the latter is a persistent mode
+                  reminder. Orange returns once the update is applied. */}
+              {swUpdateAvailable ? (
+                <span className="topbar-account-trigger-dot topbar-account-trigger-dot--update" aria-hidden="true" />
+              ) : viewAsWorker ? (
+                <span className="topbar-account-trigger-dot" aria-hidden="true" />
+              ) : null}
             </button>
             {accountMenuOpen ? (
               <div className="topbar-account-popover" role="menu">

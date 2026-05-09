@@ -5,6 +5,7 @@ import {
   getLeaseSheetDrafts,
   upsertTMTickets,
 } from '../lib/offlineStore';
+import { localDateISO } from '../lib/dateUtil';
 
 /**
  * The Forms panel replaces the old Recents panel.
@@ -258,7 +259,7 @@ export default function FormsPanel({
 
   // "New T&M ticket" modal
   const [newTMOpen, setNewTMOpen] = useState(false);
-  const [newTMDate, setNewTMDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [newTMDate, setNewTMDate] = useState(() => localDateISO());
   const [newTMClient, setNewTMClient] = useState('');
   const [newTMArea, setNewTMArea] = useState('');
   const [newTMDesc, setNewTMDesc] = useState('');
@@ -583,7 +584,7 @@ export default function FormsPanel({
           <div
             role="button"
             onClick={() => {
-              setNewTMDate(new Date().toISOString().split('T')[0]);
+              setNewTMDate(localDateISO());
               setNewTMClient('');
               setNewTMArea('');
               setNewTMDesc('');

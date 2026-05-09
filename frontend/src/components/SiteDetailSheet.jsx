@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import { formatDate, getDirectionsUrl, isInfoOnlyPin, pinTypeLabel, statusLabel } from '../lib/mapUtils';
+import { localDateISO } from '../lib/dateUtil';
 
 function buildEditState(site) {
   return {
@@ -378,7 +379,7 @@ export default function SiteDetailSheet({
                         setShowIssuePrompt(false);
                         setIssueReason('');
                         onStatusChange(site, 'issue', '');
-                        onCreateSprayRecord(site, { spray_date: new Date().toISOString().split('T')[0], notes: reason, is_avoided: true });
+                        onCreateSprayRecord(site, { spray_date: localDateISO(), notes: reason, is_avoided: true });
                       }}
                     >
                       Skip

@@ -21,18 +21,21 @@ Security:
 import hmac
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from supabase import create_client
 
 from app.auth import require_roles
 from app.config import get_settings
 from app.email_service import send_signup_confirmation
+from app.log_util import get_logger, mask_email
 from app.models import RoleEnum
+from app.rate_limit import limiter
 
 router = APIRouter(tags=["worker-signup"])
 
 settings = get_settings()
+logger = get_logger(__name__)
 
 
 def _get_supabase_admin():
@@ -72,7 +75,8 @@ class InviteUrlResponse(BaseModel):
     response_model=SignupResponse,
     status_code=status.HTTP_200_OK,
 )
-async def worker_signup(payload: SignupRequest) -> SignupResponse:
+@limiter.limit("5/hour")
+async def worker_signup(request: Request, payload: SignupRequest) -> SignupResponse:
     """Create a new worker account gated by the QR-code invite secret.
 
     Returns a generic success message whether or not the email already exists
@@ -116,11 +120,18 @@ async def worker_signup(payload: SignupRequest) -> SignupResponse:
         # Duplicate email: return the same generic success the happy path uses
         # so an attacker can't probe for existing accounts.
         if "already been registered" in msg or "already exists" in msg or "duplicate" in msg:
-            print(f"[SIGNUP] Duplicate signup attempt for {payload.email} (silently accepted)")
+            logger.info(
+                "Duplicate signup attempt for %s (silently accepted)",
+                mask_email(payload.email),
+            )
             return SignupResponse(
                 message="Check your email to confirm your account.",
             )
-        print(f"[SIGNUP] Error creating user for {payload.email}: {exc}")
+        logger.exception(
+            "Error creating Supabase user for %s: %s",
+            mask_email(payload.email),
+            type(exc).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not create account. Please try again.",
@@ -152,12 +163,18 @@ async def worker_signup(payload: SignupRequest) -> SignupResponse:
             if isinstance(inner, dict):
                 confirmation_url = inner.get("action_link") or inner.get("action_url")
     except Exception as exc:
-        print(f"[SIGNUP] Error generating confirmation link for {payload.email}: {exc}")
+        logger.exception(
+            "Error generating confirmation link for %s: %s",
+            mask_email(payload.email),
+            type(exc).__name__,
+        )
 
     if not confirmation_url:
         # User was created but we couldn't mint a link — surface a 500 so the
         # admin can investigate rather than silently leaving the worker stuck.
-        print(f"[SIGNUP] No confirmation link returned for {payload.email}")
+        logger.warning(
+            "No confirmation link returned for %s", mask_email(payload.email)
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Account created but confirmation email could not be prepared. Contact your administrator.",
@@ -166,7 +183,11 @@ async def worker_signup(payload: SignupRequest) -> SignupResponse:
     try:
         await send_signup_confirmation(payload.email, confirmation_url, display_name)
     except Exception as exc:
-        print(f"[SIGNUP] Error sending confirmation email to {payload.email}: {exc}")
+        logger.exception(
+            "Error sending confirmation email to %s: %s",
+            mask_email(payload.email),
+            type(exc).__name__,
+        )
         # Don't expose SMTP details to the client; but do signal a failure so
         # the worker can retry (admin may need to fix SMTP config).
         raise HTTPException(

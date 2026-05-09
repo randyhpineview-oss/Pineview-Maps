@@ -332,10 +332,10 @@ function UserRow({ user, busy, onUpdateRole, onUpdateName, onDelete, onConfirmEm
                 onSendPasswordReset?.(user.id, user.email);
                 setConfirmReset(false);
               }}
-              title="Email the worker a 6-digit reset code. They use it on the login screen → Forgot password."
+              title="Email the worker a one-tap link to set their password. The link expires in 24 hours and is single-use. Also useful for onboarding — pair this with creating a fresh user above."
               style={{ fontSize: '0.8rem' }}
             >
-              {confirmReset ? 'Send code?' : 'Reset password'}
+              {confirmReset ? 'Send link?' : 'Send setup link'}
             </button>
           ) : null}
           {confirmReset && !isSelf ? (
@@ -494,9 +494,9 @@ export default function UserManagementPanel({ busy: externalBusy, currentUserEma
     setBusy(true);
     try {
       const resp = await api.sendUserPasswordReset(userId);
-      setSuccess(resp?.message || `Password reset code sent to ${email}.`);
+      setSuccess(resp?.message || `Password setup link sent to ${email}.`);
     } catch (err) {
-      setError(err.message || 'Failed to send password reset code');
+      setError(err.message || 'Failed to send password setup link');
     } finally {
       setBusy(false);
     }

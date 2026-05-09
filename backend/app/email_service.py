@@ -301,3 +301,111 @@ Field Mapping & Collaboration
 </html>"""
 
     await _dispatch(subject, email, text_body, html_body, dev_label=f"signup confirmation ({confirmation_url})")
+
+
+async def send_password_setup_link(email: str, setup_url: str, name: str | None) -> None:
+    """Send an admin-initiated "set your password" magic link.
+
+    This replaces the old admin 6-digit-code workflow. The link goes
+    straight to a "Set Your Password" screen on the frontend (which
+    posts to /api/auth/setup-password with the embedded token), so the
+    worker doesn't need to copy/paste a code or click "Forgot password"
+    on the login page first.
+
+    Args:
+        email: The recipient's email address.
+        setup_url: Frontend URL containing the single-use ``setup_token``
+            query parameter, e.g. ``https://pineviewmaps.com/?setup_token=...``.
+        name: Worker's display name; shown in the greeting. ``None``/empty
+            falls back to the email's local part.
+
+    Raises:
+        Exception: If sending fails on the configured transport.
+    """
+    display_name = name or (email.split("@")[0].title() if email else "there")
+    subject = "Set up your Pineview Maps password"
+
+    text_body = f"""Hi {display_name},
+
+An administrator has set up a Pineview Maps account for you. Click the
+link below to choose your password and sign in:
+
+{setup_url}
+
+This link expires in 24 hours and can only be used once. If you weren't
+expecting this email, you can safely ignore it.
+
+---
+Pineview Maps
+Field Mapping & Collaboration
+"""
+
+    html_body = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Set up your Pineview Maps password</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f3f4f6;">
+    <table role="presentation" style="width: 100%; border-collapse: collapse;">
+        <tr>
+            <td align="center" style="padding: 40px 0;">
+                <table role="presentation" style="width: 600px; border-collapse: collapse; background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                    <tr>
+                        <td style="padding: 40px 30px; text-align: center; background: linear-gradient(135deg, #2563eb, #4f46e5); border-radius: 8px 8px 0 0;">
+                            <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600;">Pineview Maps</h1>
+                            <p style="margin: 8px 0 0 0; color: rgba(255,255,255,0.9); font-size: 14px;">Field Mapping & Collaboration</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 40px 30px;">
+                            <h2 style="margin: 0 0 20px 0; color: #111827; font-size: 20px; font-weight: 600;">Hi {display_name} — set your password</h2>
+                            <p style="margin: 0 0 24px 0; color: #4b5563; font-size: 16px; line-height: 1.5;">
+                                An administrator has set up a Pineview Maps account for you.
+                                Click the button below to choose your password and sign in.
+                            </p>
+
+                            <table role="presentation" style="width: 100%; margin: 24px 0;">
+                                <tr>
+                                    <td align="center">
+                                        <a href="{setup_url}" style="display: inline-block; background: linear-gradient(135deg, #2563eb, #4f46e5); color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px;">
+                                            Set my password
+                                        </a>
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <p style="margin: 24px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.5;">
+                                Or paste this URL into your browser:<br>
+                                <a href="{setup_url}" style="color: #2563eb; word-break: break-all;">{setup_url}</a>
+                            </p>
+
+                            <p style="margin: 16px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.5;">
+                                <strong style="color: #dc2626;">This link expires in 24 hours and can only be used once.</strong>
+                            </p>
+
+                            <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 32px 0;">
+
+                            <p style="margin: 0; color: #9ca3af; font-size: 13px; line-height: 1.5;">
+                                If you weren't expecting this email, you can safely ignore it — your account
+                                stays inactive until someone uses this link.
+                            </p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 20px 30px; text-align: center; background-color: #f9fafb; border-radius: 0 0 8px 8px;">
+                            <p style="margin: 0; color: #9ca3af; font-size: 12px;">
+                                Pineview Maps &copy; {__import__('datetime').datetime.now().year}<br>
+                                Secure authentication powered by Supabase
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>"""
+
+    await _dispatch(subject, email, text_body, html_body, dev_label=f"password setup link ({setup_url})")
