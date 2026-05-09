@@ -14,7 +14,7 @@ import { nearestFraction } from './lib/mapUtils';
 import { generateLeaseSheetPdf } from './lib/pdfGenerator';
 import { generateTMTicketPdf } from './lib/tmTicketPdfGenerator';
 import { onAuthStateChange, signOut, supabase } from './lib/supabaseClient';
-import { APP_VERSION_LABEL } from './version';
+import { APP_VERSION, APP_VERSION_LABEL } from './version';
 import {
   getAllLookups,
   getLastSyncAt,
@@ -284,6 +284,94 @@ export default function App() {
       if (cleanupVisibility) cleanupVisibility();
       if (cleanupOnline) cleanupOnline();
       if (cleanupControllerChange) cleanupControllerChange();
+    };
+  }, []);
+
+  // ── Build-version poll: independent path for "new deploy" detection ─────
+  // The SW-based path above is the primary detection mechanism, but it's
+  // fragile in the field:
+  //   • Vercel's `Cache-Control: ..., immutable` on /sw.js (now overridden
+  //     in vercel.json, but stale entries persist on installed devices)
+  //     makes iOS Safari skip the network entirely on `reg.update()`.
+  //   • `updatefound` is unreliable on iOS PWA standalone mode.
+  //   • `reg.update()` errors are silently swallowed (intentional, for
+  //     network-blip resilience), so a chronic failure looks identical
+  //     to a successful "no new version" check.
+  //   • If `getRegistration()` returns null on first mount, polling is
+  //     never set up and never recovers.
+  //
+  // This independent poll fetches /version.json (written to public/ by
+  // scripts/set-version.mjs at build time, served with `no-store` cache
+  // headers) every 30 s. When the response's `version` differs from
+  // APP_VERSION (the build constant baked into the running bundle), we
+  // light the green "Update available" dot regardless of SW state. The
+  // user taps "Update Now" → the existing handleAppUpdate clears
+  // caches and reloads. handleAppUpdate already gracefully handles the
+  // "no waiting SW yet" case (postMessage is a no-op when swWaitingRef
+  // is null), so the same one-tap flow works whether the SW lifecycle
+  // detected the update or not.
+  useEffect(() => {
+    // Skip in dev — APP_VERSION is the literal 'dev' and a stale
+    // public/version.json from a prior local build would otherwise
+    // fire false positives against every HMR boot.
+    if (APP_VERSION === 'dev') return undefined;
+    if (typeof fetch !== 'function') return undefined;
+
+    let cancelled = false;
+    let interval = null;
+    let cleanupVisibility = null;
+    let cleanupOnline = null;
+
+    const checkVersion = async () => {
+      if (cancelled) return;
+      if (document.visibilityState !== 'visible') return;
+      try {
+        // Cache-bust + cache: 'no-store' so neither the browser, the SW,
+        // nor any intermediate proxy can hand us a stale response. The
+        // SW's runtimeCaching is scoped to Google Fonts only, so this
+        // request falls through to the network, but the explicit
+        // no-store is belt-and-braces for misconfigured proxies.
+        const res = await fetch(`/version.json?t=${Date.now()}`, {
+          cache: 'no-store',
+          credentials: 'omit',
+        });
+        if (!res.ok) return;
+        const body = await res.json();
+        if (cancelled) return;
+        const remote = body && typeof body.version === 'string' ? body.version : '';
+        if (remote && remote !== APP_VERSION) {
+          // One-shot log per session-detection so devtools shows why
+          // the green dot lit up. Subsequent ticks are silent because
+          // setSwUpdateAvailable(true) is idempotent.
+          console.info(
+            `[version-poll] new build detected: running=${APP_VERSION} server=${remote}`,
+          );
+          setSwUpdateAvailable(true);
+        }
+      } catch { /* offline or fetch failure — try again next tick */ }
+    };
+
+    // Kick once on mount, then every 30 s, then on tab focus / back-online
+    // so the worker who returned to the app right after a deploy sees the
+    // dot immediately, not 30 s later.
+    checkVersion();
+    interval = setInterval(checkVersion, 30_000);
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') checkVersion();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    cleanupVisibility = () => document.removeEventListener('visibilitychange', onVisible);
+
+    const onOnline = () => checkVersion();
+    window.addEventListener('online', onOnline);
+    cleanupOnline = () => window.removeEventListener('online', onOnline);
+
+    return () => {
+      cancelled = true;
+      if (interval != null) clearInterval(interval);
+      if (cleanupVisibility) cleanupVisibility();
+      if (cleanupOnline) cleanupOnline();
     };
   }, []);
 
@@ -2996,10 +3084,13 @@ export default function App() {
     try {
       await api.deletePipeline(pipeline.id);
       setMessage('Pipeline moved to Recent Deletes.');
-      // Background catch-up only.
+      // Background catch-up: keep loadDeletedPipelines() because the
+      // deleted-pipelines list is NOT covered by runPollTick / sync-status.
+      // Drop loadPendingPipelines() — runPollTick re-fetches it via
+      // count-divergence detection, which would fire the same
+      // /api/pending-pipelines request in parallel.
       void Promise.allSettled([
         loadDeletedPipelines(),
-        loadPendingPipelines(),
         runPollTickRef.current ? runPollTickRef.current() : Promise.resolve(),
       ]);
       return true;
@@ -3760,14 +3851,16 @@ export default function App() {
       await api.deleteSite(site.id);
       await removeSite(site);
       setMessage('Pin deleted.');
-      // Background catch-up — don't block the UI. Refreshes deletedSites
-      // so the "Recent Deletes" admin list gets the soft-deleted row, and
-      // re-hydrates pendingSites from the server in case the delete moved
-      // other state (e.g. unlinked lease sheets).
-      void Promise.allSettled([
-        loadPendingSites(),
-        runPollTickRef.current ? runPollTickRef.current() : Promise.resolve(),
-      ]);
+      // Background catch-up — runPollTick re-fetches pendingSites only
+      // when the count actually diverges (which it will, since this
+      // delete just shrunk the count by 1 if it was pending). Avoids
+      // the parallel duplicate /api/pending-sites round-trip that
+      // calling loadPendingSites() alongside would produce.
+      // loadPendingSites() doubles as loadDeletedSites() (single
+      // endpoint serves both) so the Recent Deletes list still
+      // catches up — runPollTick triggers it on the next tick if
+      // the count changes.
+      try { runPollTickRef.current?.(); } catch { /* non-fatal */ }
       return true;
     } catch (error) {
       // Roll back optimistic state so the user doesn't lose the pin silently.
@@ -3912,15 +4005,22 @@ export default function App() {
     try {
       await action();
       setMessage(successMessage);
-      // Background-only refresh: the user has already seen the optimistic
-      // change; this just catches up server-derived fields (e.g. server
-      // timestamps) and the deleted-* lists which the poll loop doesn't
-      // touch. No await on purpose.
-      void Promise.allSettled([
-        roleCanAdmin ? loadPendingSites() : Promise.resolve(),
-        roleCanAdmin ? loadPendingPipelines() : Promise.resolve(),
-        runPollTickRef.current ? runPollTickRef.current() : Promise.resolve(),
-      ]);
+      // Background-only catch-up: the user has already seen the optimistic
+      // change; this just confirms server-derived fields (e.g. server
+      // timestamps) match.
+      //
+      // We deliberately call ONLY runPollTick here, not
+      // loadPendingSites / loadPendingPipelines. runPollTick reads
+      // /api/sync-status (~100B) and only re-fetches the pending
+      // lists when the server-reported count diverges from what we
+      // last saw — which is exactly when the action just changed
+      // them. Calling the load helpers explicitly here used to fire
+      // the SAME pending-list endpoints in parallel with the poll
+      // tick (4 round-trips for 2 lists, every admin click), which
+      // accounted for most of the post-action burst traffic that
+      // showed up as orange p95 alerts on Render. No await on
+      // purpose — the optimistic UI is already correct.
+      try { runPollTickRef.current?.(); } catch { /* non-fatal */ }
     } catch (error) {
       setMessage(error.message || 'Admin action failed.');
       // Full refresh on failure so the optimistic change is rolled back
@@ -5173,11 +5273,11 @@ export default function App() {
                   // the API call was in flight.
                   setSites((prev) => removeSitesByIdentity(prev, siteId));
                   void removeSite({ id: siteId });
-                  // Background catch-up only — no awaiting refreshAllData.
-                  void Promise.allSettled([
-                    loadPendingSites(),
-                    runPollTickRef.current ? runPollTickRef.current() : Promise.resolve(),
-                  ]);
+                  // Background catch-up — runPollTick handles the
+                  // pending-sites refetch via count-divergence; calling
+                  // loadPendingSites() in parallel would fire the same
+                  // endpoint twice.
+                  try { runPollTickRef.current?.(); } catch { /* non-fatal */ }
                 } catch (error) {
                   // Roll back both optimistic removes so the card and the
                   // map marker both come back with their original data.
@@ -5235,11 +5335,12 @@ export default function App() {
                 try {
                   await api.approvePipeline(pipelineId, { approval_state: 'rejected' });
                   setMessage('Pipeline rejected.');
-                  void Promise.allSettled([
-                    loadPipelines(),
-                    loadPendingPipelines(),
-                    runPollTickRef.current ? runPollTickRef.current() : Promise.resolve(),
-                  ]);
+                  // runPollTick handles both the pipelines list (via
+                  // syncPipelinesIncrementally + delta endpoint) and
+                  // the pending-pipelines list (via count-divergence
+                  // re-fetch). Explicit loadPipelines + loadPendingPipelines
+                  // here would just fire the same endpoints in parallel.
+                  try { runPollTickRef.current?.(); } catch { /* non-fatal */ }
                 } catch (error) {
                   if (removedPending) {
                     setPendingPipelines((prev) => (prev.some((p) => p.id === pipelineId) ? prev : [removedPending, ...prev]));
