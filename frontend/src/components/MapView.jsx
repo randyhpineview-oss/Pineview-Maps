@@ -364,21 +364,42 @@ export default function MapView({
     if (!stillVisible) setPopupSite(null);
   }, [popupSite, sites]);
 
-  // Imperative marker sync: handles two cases that @react-google-maps/api's
-  // React-level prop updates miss on some platforms (especially mobile Safari):
-  //   1. Stale markers whose site was removed → setMap(null)
-  //   2. Existing markers whose icon changed (e.g. pending→approved) → setIcon()
+  // Imperative marker sync: now that the marker key includes the site's
+  // visual signature (see the <Marker> render below), changes to
+  // pin_type / status / approval_state / _isPreview are handled by
+  // React unmount→remount — NOT by setIcon on the surviving marker.
+  // This effect therefore handles only TWO remaining cases:
   //
-  // We skip setIcon on markers whose visual inputs are unchanged, via the
-  // signature cache below. This matters because this effect runs on every
-  // `popupSite` / `selectedSite` change — previously each click on a pin
-  // would re-setIcon on all ~100 markers in view (visible jank on mobile).
+  //   1. A site disappears from `sites` entirely (rejected, deleted,
+  //      filtered out by a layer toggle). React's <Marker> unmount
+  //      should drop it via onUnmount, but we keep the cleanup loop
+  //      below as belt-and-braces in case onUnmount ever doesn't fire
+  //      (it's been observed to silently no-op on iOS Safari under
+  //      heavy re-render pressure).
+  //
+  //   2. A SELECTION change (popup open/close). isSelected is
+  //      deliberately excluded from the marker key so popups don't
+  //      thrash the map by remounting markers — instead we imperatively
+  //      setIcon() on just the affected marker(s). The signature cache
+  //      below skips the call when the visual state hasn't actually
+  //      changed; without it, every pin-tap re-applied an identical
+  //      icon to all ~100 markers in view (visible jank on mobile).
   useEffect(() => {
     if (!isLoaded) return;
+    const visualSigOf = (s) => [
+      s.pin_type || '',
+      s.status || '',
+      s.approval_state || '',
+      s._isPreview ? 1 : 0,
+    ].join('|');
     const currentKeys = new Set(
-      sites.map((s) => `${markerRevision}-${s.id || s.cacheId}`)
+      sites.map((s) => `${markerRevision}-${s.id || s.cacheId}-${visualSigOf(s)}`)
     );
-    // Remove markers for sites that no longer exist
+    // Remove markers whose key is no longer in the current site list.
+    // After the key change to include visualSig, this also catches the
+    // case where a site's pin_type/approval_state changed: the OLD key
+    // is stale, the NEW key is fresh, and we can drop the underlying
+    // google.maps.Marker if the React unmount somehow didn't fire.
     for (const [k, m] of Array.from(markerInstancesRef.current.entries())) {
       if (!currentKeys.has(k)) {
         try { m.setMap(null); } catch { /* ignore */ }
@@ -394,21 +415,14 @@ export default function MapView({
         ? String(selectedSite.id ?? selectedSite.cacheId)
         : null;
     for (const site of sites) {
-      const mKey = `${markerRevision}-${site.id || site.cacheId}`;
+      const mKey = `${markerRevision}-${site.id || site.cacheId}-${visualSigOf(site)}`;
       const m = markerInstancesRef.current.get(mKey);
       if (!m) continue;
       const siteKey = String(site.id ?? site.cacheId);
       const isSelected = selectedKey != null && selectedKey === siteKey;
-      // Cheap signature of every field buildMarkerIcon() reads. If unchanged,
-      // skip the setIcon call — same icon object would be built, same pixels
-      // rendered, but we'd still pay for a Google Maps draw on mobile.
-      const signature = [
-        site.pin_type || '',
-        site.status || '',
-        site.approval_state || '',
-        site._isPreview ? 1 : 0,
-        isSelected ? 1 : 0,
-      ].join('|');
+      // Signature here only varies on isSelected (the rest is in the
+      // marker key now). Skip the setIcon call when nothing changed.
+      const signature = isSelected ? '1' : '0';
       if (markerIconSignaturesRef.current.get(mKey) === signature) continue;
       try {
         m.setIcon(buildMarkerIcon(site, isSelected));
@@ -867,7 +881,37 @@ export default function MapView({
         </OverlayView>
 
         {sites.map((site) => {
-          const mKey = `${markerRevision}-${site.id || site.cacheId}`;
+          // Marker key includes the site's visual signature (every field
+          // buildMarkerIcon() reads, except isSelected). When the
+          // signature changes — e.g. an admin approves a pending pin or
+          // flips its pin_type to 'reclaimed' — React sees a NEW key,
+          // unmounts the old <Marker> (whose onUnmount fires
+          // setMap(null) and cleanly destroys the underlying Google
+          // Maps marker DOM), and mounts a fresh one with the correct
+          // icon from the start.
+          //
+          // Why this matters on iOS PWA specifically: @react-google-maps/api's
+          // <Marker> caches the initial `icon` prop and doesn't reliably
+          // sync subsequent updates on iOS Safari. The previous code
+          // worked around this by relying on the imperative setIcon()
+          // effect below — but that left the OLD icon's DOM element
+          // leaked on the map canvas, producing the "exclamation-mark
+          // peeks out from underneath the new pin" stack-up that admins
+          // saw on their own device after approving a pin (other
+          // devices, receiving the change via realtime, didn't trigger
+          // the bug-prone optimistic remove-and-reinsert path).
+          //
+          // isSelected is intentionally NOT in the key — popup open/close
+          // happens dozens of times per session and we want those to
+          // keep using the fast imperative setIcon() path (signature
+          // cache + skip-if-unchanged), not unmount/remount.
+          const visualSig = [
+            site.pin_type || '',
+            site.status || '',
+            site.approval_state || '',
+            site._isPreview ? 1 : 0,
+          ].join('|');
+          const mKey = `${markerRevision}-${site.id || site.cacheId}-${visualSig}`;
           return (
             <Marker
               key={mKey}
@@ -876,8 +920,30 @@ export default function MapView({
                 (popupSite && String(popupSite.id ?? popupSite.cacheId) === String(site.id ?? site.cacheId)) ||
                 (selectedSite && String(selectedSite.id ?? selectedSite.cacheId) === String(site.id ?? site.cacheId))
               )}
-              onLoad={(m) => { markerInstancesRef.current.set(mKey, m); }}
-              onUnmount={(m) => { try { m.setMap(null); } catch { /* ignore */ } markerInstancesRef.current.delete(mKey); }}
+              onLoad={(m) => {
+                // Defensive: if iOS Safari ever double-fires onLoad for
+                // the same key (a documented edge case under heavy
+                // re-render pressure), kill the previous instance
+                // before adopting the new one. Without this, the old
+                // marker would be orphaned on the map with no React
+                // lifecycle hook left to clean it up.
+                const existing = markerInstancesRef.current.get(mKey);
+                if (existing && existing !== m) {
+                  try { existing.setMap(null); } catch { /* ignore */ }
+                }
+                markerInstancesRef.current.set(mKey, m);
+              }}
+              onUnmount={(m) => {
+                try { m.setMap(null); } catch { /* ignore */ }
+                // Only delete the ref entry if it still points to this
+                // exact instance — protects against the case where a
+                // late onUnmount fires AFTER a new onLoad for the same
+                // key has already replaced it.
+                if (markerInstancesRef.current.get(mKey) === m) {
+                  markerInstancesRef.current.delete(mKey);
+                  markerIconSignaturesRef.current.delete(mKey);
+                }
+              }}
               onClick={() => { setPopupSite(site); setPopupPipeline(null); }}
             />
           );
