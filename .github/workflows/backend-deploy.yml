@@ -31,9 +31,16 @@ jobs:
         # Add test command here if you have tests
         echo "No tests configured"
         
-    - name: Trigger Render Deploy
+    - name: Trigger Render Deploy (manual runs only)
+      # Render's native GitHub integration already auto-deploys on push
+      # to master, so the deploy-hook curl is redundant on push events
+      # and would cause double-deploys. Gate it to workflow_dispatch so
+      # the "Run workflow" button in the Actions UI is the only way it
+      # fires — useful for forcing a redeploy without a new commit
+      # (e.g. after rotating secrets or recovering from a Render
+      # deploy that errored out mid-build).
+      if: github.event_name == 'workflow_dispatch'
       run: |
-        curl -X POST ${{ secrets. (manual runs only)
-      if: github.event_name == 'workflow_dispatch'RENDER_DEPLOY_HOOK }}
+        curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK }}
       env:
         RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
