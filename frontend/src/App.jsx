@@ -208,6 +208,13 @@ export default function App() {
   // SW takes over.
   const [swUpdateAvailable, setSwUpdateAvailable] = useState(false);
   const swWaitingRef = useRef(null);
+  // Published by the build-version poll effect below so the regular
+  // poll-tick loop (which runs reliably on iOS PWA, where setInterval
+  // alone is throttled) can piggyback a version check on every tick.
+  // Without this, iOS PWA workers only saw the green "Update available"
+  // pill after killing and reopening the app — exactly the behaviour the
+  // pill was designed to eliminate.
+  const checkAppVersionRef = useRef(null);
 
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
@@ -351,10 +358,33 @@ export default function App() {
       } catch { /* offline or fetch failure — try again next tick */ }
     };
 
+    // Debounced wrapper used by the iOS-friendly trigger paths below.
+    // Without the throttle a worker tapping rapidly through forms could
+    // fire dozens of /version.json requests per second; 60 s between
+    // checks is plenty (server still gets a fresh read within 60 s of
+    // the next interaction).
+    let lastCheckAt = 0;
+    const checkVersionThrottled = () => {
+      const now = Date.now();
+      if (now - lastCheckAt < 60_000) return;
+      lastCheckAt = now;
+      checkVersion();
+    };
+
+    // Publish the checker so the regular poll-tick loop (defined in a
+    // separate useEffect further down) can call it on every tick.
+    // On desktop browsers the setInterval below is the primary trigger;
+    // on iOS PWA, where WKWebView throttles setInterval even in
+    // foreground, the poll-tick path is the one that fires reliably
+    // because it's piggybacking on real network activity that iOS
+    // doesn't pause.
+    checkAppVersionRef.current = checkVersionThrottled;
+
     // Kick once on mount, then every 30 s, then on tab focus / back-online
     // so the worker who returned to the app right after a deploy sees the
     // dot immediately, not 30 s later.
     checkVersion();
+    lastCheckAt = Date.now();
     interval = setInterval(checkVersion, 30_000);
 
     const onVisible = () => {
@@ -367,11 +397,27 @@ export default function App() {
     window.addEventListener('online', onOnline);
     cleanupOnline = () => window.removeEventListener('online', onOnline);
 
+    // iOS-PWA-friendly trigger: every user tap drives a (debounced)
+    // version check. WKWebView fires pointer events with rock-solid
+    // reliability while the app is in foreground, even when it's
+    // throttling setInterval — and a worker actively logging spray
+    // records is touching the screen every few seconds, so this
+    // guarantees the green "Update available" pill lights up within
+    // ~60 s of the next interaction after a deploy lands. Passive
+    // listener on the capture phase so we never block a tap; and
+    // pointerdown is the only DOM event that fires for both touch
+    // and mouse on a single hook.
+    const onPointer = () => checkVersionThrottled();
+    document.addEventListener('pointerdown', onPointer, { passive: true, capture: true });
+    const cleanupPointer = () => document.removeEventListener('pointerdown', onPointer, { capture: true });
+
     return () => {
       cancelled = true;
+      checkAppVersionRef.current = null;
       if (interval != null) clearInterval(interval);
       if (cleanupVisibility) cleanupVisibility();
       if (cleanupOnline) cleanupOnline();
+      cleanupPointer();
     };
   }, []);
 
@@ -1878,6 +1924,16 @@ export default function App() {
 
       // Retry any stuck upload queue items on each tick (also visibility-gated).
       try { processUploadQueue(); } catch { /* ignore */ }
+
+      // Piggyback the build-version check on this poll tick. The standalone
+      // setInterval that drives version polling on desktop is throttled by
+      // WKWebView on iOS PWA — runPollTick is firing reliably because it's
+      // tied to real network activity that iOS doesn't pause, so this is
+      // the path that actually lights the green "Update available" pill on
+      // a worker's iPhone in the field. Cheap (~150 byte fetch with
+      // no-store headers) and idempotent (setSwUpdateAvailable(true) is
+      // a no-op once the dot is already lit).
+      try { checkAppVersionRef.current?.(); } catch { /* non-fatal */ }
     };
 
     // Interval is started/cleared by the visibility handler so the
