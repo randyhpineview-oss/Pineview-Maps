@@ -581,14 +581,17 @@ export default function App() {
   const [sprayStartPoint, setSprayStartPoint] = useState(null);
   const [sprayEndPoint, setSprayEndPoint] = useState(null);
   const [showSprayConfirm, setShowSprayConfirm] = useState(false);
-  // sprayForm holds the date + notes typed in the spray-confirm popup
+  // sprayForm holds the spray date typed in the spray-confirm popup
   // before the user is forwarded into the pipeline lease-sheet flow.
-  // The legacy `is_avoided` field used to drive an in-popup checkbox
-  // ("Issue with site — skip lease sheet") that bypassed the lease
-  // sheet entirely; that path is now handled by the dedicated "Mark
-  // Not Inspected" prompt in PipelineDetailSheet, so the checkbox —
-  // and its is_avoided plumbing in handleConfirmSpray — was removed.
-  const [sprayForm, setSprayForm] = useState({ date: localDateISO(), notes: '' });
+  // History: also held a `notes` string and an `is_avoided` flag that
+  // drove a checkbox ("Issue with site — skip lease sheet") which
+  // bypassed the lease sheet entirely. Both fields were removed once
+  // the dedicated "Mark Not Inspected" prompt in PipelineDetailSheet
+  // became the canonical way to record an issue, and the lease-sheet
+  // flow itself collects any notes the worker wants to attach. Kept
+  // as an object (rather than a flat sprayDate) so future fields
+  // unique to the popup can be added without churning the call sites.
+  const [sprayForm, setSprayForm] = useState({ date: localDateISO() });
   const [pendingPipelineSegment, setPendingPipelineSegment] = useState(null);
   const [highlightedSprayRecordId, setHighlightedSprayRecordId] = useState(null);
   const [isFollowingUser, setIsFollowingUser] = useState(false);
@@ -3162,7 +3165,7 @@ export default function App() {
     setSprayStartPoint(null);
     setSprayEndPoint(null);
     setShowSprayConfirm(false);
-    setSprayForm({ date: localDateISO(), notes: '' });
+    setSprayForm({ date: localDateISO() });
     setPendingPipelineSegment(null);
     setPipelineDetailOpen(false); // Slide panel away
   }
@@ -5157,11 +5160,6 @@ export default function App() {
               type="date"
               value={sprayForm.date}
               onChange={(e) => setSprayForm((c) => ({ ...c, date: e.target.value }))}
-            />
-            <input
-              value={sprayForm.notes}
-              onChange={(e) => setSprayForm((c) => ({ ...c, notes: e.target.value }))}
-              placeholder="Notes (optional)"
             />
             <div className="button-row">
               <button className="primary-button" type="button" disabled={adminBusy} onClick={handleConfirmSpray}>
