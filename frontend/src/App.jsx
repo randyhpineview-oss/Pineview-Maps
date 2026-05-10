@@ -203,9 +203,8 @@ export default function App() {
   //
   // When `swUpdateAvailable` flips to true:
   //   - A red pulsing dot appears on the avatar in the topbar.
-  //   - An "Update available" pill shows next to the version badge.
-  //   - "↑ Update Now" remains in the account popover.
-  // Tapping any of them runs `handleAppUpdate` which posts SKIP_WAITING
+  //   - "↑ Update Now" appears in the account popover (desktop + mobile).
+  // Tapping the popover item runs `handleAppUpdate` which posts SKIP_WAITING
   // to the waiting SW, clears Workbox caches, and reloads. The
   // `controllerchange` listener below is the final safety net: if the
   // cache-clear hangs, the browser will still reload as soon as the new
@@ -215,9 +214,9 @@ export default function App() {
   // Published by the build-version poll effect below so the regular
   // poll-tick loop (which runs reliably on iOS PWA, where setInterval
   // alone is throttled) can piggyback a version check on every tick.
-  // Without this, iOS PWA workers only saw the green "Update available"
-  // pill after killing and reopening the app — exactly the behaviour the
-  // pill was designed to eliminate.
+  // Without this, iOS PWA workers only saw the red "Update available"
+  // dot after killing and reopening the app — exactly the behaviour the
+  // dot was designed to eliminate.
   const checkAppVersionRef = useRef(null);
 
   useEffect(() => {
@@ -406,7 +405,7 @@ export default function App() {
     // reliability while the app is in foreground, even when it's
     // throttling setInterval — and a worker actively logging spray
     // records is touching the screen every few seconds, so this
-    // guarantees the green "Update available" pill lights up within
+    // guarantees the red "Update available" dot lights up within
     // ~60 s of the next interaction after a deploy lands. Passive
     // listener on the capture phase so we never block a tap; and
     // pointerdown is the only DOM event that fires for both touch
@@ -1952,7 +1951,7 @@ export default function App() {
       // setInterval that drives version polling on desktop is throttled by
       // WKWebView on iOS PWA — runPollTick is firing reliably because it's
       // tied to real network activity that iOS doesn't pause, so this is
-      // the path that actually lights the green "Update available" pill on
+      // the path that actually lights the red "Update available" dot on
       // a worker's iPhone in the field. Cheap (~150 byte fetch with
       // no-store headers) and idempotent (setSwUpdateAvailable(true) is
       // a no-op once the dot is already lit).
@@ -4653,39 +4652,17 @@ export default function App() {
               Lets a worker / office / admin confirm what build they have
               loaded without digging into devtools. Hidden on mobile via
               `topbar-account-inline-only`; mobile users get the same string
-              inside the avatar popover below. */}
-          {swUpdateAvailable ? (
-            /* Update-available pill — pushed into the topbar the moment
-               the background reg.update() poll finds a new SW waiting.
-               Clickable: tapping runs the same SKIP_WAITING + reload
-               as the popover "Update Now" item so the worker can apply
-               the update in one tap without opening any menu. */
-            <button
-              type="button"
-              className="badge topbar-account-inline-only"
-              onClick={handleAppUpdate}
-              title="A new version is available — tap to update"
-              style={{
-                background: '#064e3b',
-                color: '#6ee7b7',
-                border: '1px solid #10b981',
-                fontSize: '0.7rem',
-                padding: '2px 8px',
-                cursor: 'pointer',
-                fontWeight: 600,
-              }}
-            >
-              ↑ Update available
-            </button>
-          ) : (
-            <span
-              className="badge topbar-account-inline-only"
-              title={`Build ${APP_VERSION_LABEL}`}
-              style={{ background: 'transparent', color: '#6b7280', fontSize: '0.7rem', padding: '2px 6px' }}
-            >
-              {APP_VERSION_LABEL}
-            </span>
-          )}
+              inside the avatar popover below. The old swUpdateAvailable
+              ternary that flipped this into a green "↑ Update available"
+              pill was removed — the avatar dot + popover "Update Now" are
+              the canonical update affordance on both desktop and mobile. */}
+          <span
+            className="badge topbar-account-inline-only"
+            title={`Build ${APP_VERSION_LABEL}`}
+            style={{ background: 'transparent', color: '#6b7280', fontSize: '0.7rem', padding: '2px 6px' }}
+          >
+            {APP_VERSION_LABEL}
+          </span>
 
           {/* Mobile-only avatar menu: collapses name + View as Worker +
               Sign Out into a single 28 px circle with the user's initial.
