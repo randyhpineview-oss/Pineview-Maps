@@ -638,7 +638,13 @@ button { cursor: pointer; }
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
-.add-pin-popup input {
+/* Text-like inputs only. The :not() guards keep this rule from
+   styling the checkbox in the spray-confirm popup ("Issue with site —
+   skip lease sheet") — without them, `width: 100%` + 10 px padding
+   stretches the checkbox to fill the 240 px popup and pushes its
+   sibling <span> label entirely off-screen, which read to users as
+   "the checkbox label is missing / invisible". */
+.add-pin-popup input:not([type="checkbox"]):not([type="radio"]) {
   width: 100%;
   border-radius: 10px;
   border: 1px solid rgba(143, 182, 255, 0.16);
