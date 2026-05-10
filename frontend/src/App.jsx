@@ -227,8 +227,44 @@ export default function App() {
     let cleanupOnline = null;
     let cleanupControllerChange = null;
 
-    const markWaiting = (worker) => {
+    // Cross-check /version.json before lighting the indicator.
+    //
+    // The SW lifecycle and the version-poll path (further down in this
+    // component) race on every deploy. Path B (version-poll) is the
+    // faster signal source — it just GETs a tiny JSON file — so the
+    // user typically sees the indicator and clicks "Update Now" while
+    // the browser is still byte-comparing the new /sw.js. At that
+    // moment swWaitingRef is null, so handleAppUpdate's postMessage
+    // SKIP_WAITING is a no-op; the reload happens, the new bundle
+    // loads, and APP_VERSION jumps to the new build. Then, *after* the
+    // reload, the browser finishes installing the new SW and parks it
+    // in `waiting` — at which point this listener fires for a SW that
+    // matches the build the user is already running, producing a
+    // confusing second "Update available" prompt that updates nothing.
+    //
+    // Suppress that false positive by consulting the same source of
+    // truth Path B uses: if /version.json reports we're already on the
+    // running APP_VERSION, the waiting SW is for the build we just
+    // updated to — keep the ref so a subsequent SKIP_WAITING can still
+    // tear it down cleanly, but don't surface the indicator. Network
+    // errors fall through to fire (preserve old behaviour on offline /
+    // edge-cache hiccups so we never silently hide a real update).
+    const markWaiting = async (worker) => {
       swWaitingRef.current = worker;
+      try {
+        const res = await fetch(`/version.json?t=${Date.now()}`, {
+          cache: 'no-store',
+          credentials: 'omit',
+        });
+        if (res.ok) {
+          const body = await res.json();
+          const remote = body && typeof body.version === 'string' ? body.version : '';
+          if (remote && remote === APP_VERSION) {
+            // Already on the build the waiting SW corresponds to.
+            return;
+          }
+        }
+      } catch { /* network blip — fall through and fire */ }
       setSwUpdateAvailable(true);
     };
 
