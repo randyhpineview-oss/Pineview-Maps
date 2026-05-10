@@ -581,7 +581,14 @@ export default function App() {
   const [sprayStartPoint, setSprayStartPoint] = useState(null);
   const [sprayEndPoint, setSprayEndPoint] = useState(null);
   const [showSprayConfirm, setShowSprayConfirm] = useState(false);
-  const [sprayForm, setSprayForm] = useState({ date: localDateISO(), notes: '', is_avoided: false });
+  // sprayForm holds the date + notes typed in the spray-confirm popup
+  // before the user is forwarded into the pipeline lease-sheet flow.
+  // The legacy `is_avoided` field used to drive an in-popup checkbox
+  // ("Issue with site — skip lease sheet") that bypassed the lease
+  // sheet entirely; that path is now handled by the dedicated "Mark
+  // Not Inspected" prompt in PipelineDetailSheet, so the checkbox —
+  // and its is_avoided plumbing in handleConfirmSpray — was removed.
+  const [sprayForm, setSprayForm] = useState({ date: localDateISO(), notes: '' });
   const [pendingPipelineSegment, setPendingPipelineSegment] = useState(null);
   const [highlightedSprayRecordId, setHighlightedSprayRecordId] = useState(null);
   const [isFollowingUser, setIsFollowingUser] = useState(false);
@@ -3155,7 +3162,7 @@ export default function App() {
     setSprayStartPoint(null);
     setSprayEndPoint(null);
     setShowSprayConfirm(false);
-    setSprayForm({ date: localDateISO(), notes: '', is_avoided: false });
+    setSprayForm({ date: localDateISO(), notes: '' });
     setPendingPipelineSegment(null);
     setPipelineDetailOpen(false); // Slide panel away
   }
@@ -3223,53 +3230,24 @@ export default function App() {
     const endFraction = Math.max(startFrac, endFrac);
     const segmentDistanceMeters = Math.round(Math.abs(endFraction - startFraction) * (selectedPipeline.total_length_km || 0) * 1000);
 
-    if (sprayForm.is_avoided && !(sprayForm.notes || '').trim()) {
-      setMessage('Please add an issue note when marking not sprayed/issue.');
-      return;
-    }
-
-    if (!sprayForm.is_avoided) {
-      setPendingPipelineSegment({
-        pipelineId: selectedPipeline.id,
-        start_fraction: startFraction,
-        end_fraction: endFraction,
-        spray_date: sprayForm.date,
-        distance_meters: segmentDistanceMeters,
-      });
-      setInspectionSite(null);
-      setInspectionPipeline(selectedPipeline);
-      setIsSprayMarking(false);
-      setSprayStartPoint(null);
-      setSprayEndPoint(null);
-      setShowSprayConfirm(false);
-      return;
-    }
-
-    setAdminBusy(true);
-    try {
-      await api.createSprayRecord(selectedPipeline.id, {
-        start_fraction: startFraction,
-        end_fraction: endFraction,
-        spray_date: sprayForm.date,
-        notes: sprayForm.notes || null,
-        is_avoided: sprayForm.is_avoided,
-      });
-      // Refresh pipeline data
-      const updated = await api.getPipeline(selectedPipeline.id);
-      setSelectedPipeline(updated);
-      setPipelineSprayRecords(updated.spray_records || []);
-      setPipelines((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
-      setMessage('Issue/not sprayed segment saved.');
-      setIsSprayMarking(false);
-      setSprayStartPoint(null);
-      setSprayEndPoint(null);
-      setShowSprayConfirm(false);
-      setPipelineDetailOpen(true); // Bring panel back
-    } catch (error) {
-      setMessage(error.message || 'Failed to save spray record.');
-    } finally {
-      setAdminBusy(false);
-    }
+    // Always forward into the pipeline lease-sheet flow. The previous
+    // "is_avoided" branch (which created an avoided spray record
+    // directly and skipped the lease sheet) was driven by a popup
+    // checkbox that was removed once "Mark Not Inspected" in
+    // PipelineDetailSheet became the canonical way to record an issue.
+    setPendingPipelineSegment({
+      pipelineId: selectedPipeline.id,
+      start_fraction: startFraction,
+      end_fraction: endFraction,
+      spray_date: sprayForm.date,
+      distance_meters: segmentDistanceMeters,
+    });
+    setInspectionSite(null);
+    setInspectionPipeline(selectedPipeline);
+    setIsSprayMarking(false);
+    setSprayStartPoint(null);
+    setSprayEndPoint(null);
+    setShowSprayConfirm(false);
   }
 
   async function handleDeleteSprayRecord(recordId, pipelineId) {
@@ -5183,16 +5161,8 @@ export default function App() {
             <input
               value={sprayForm.notes}
               onChange={(e) => setSprayForm((c) => ({ ...c, notes: e.target.value }))}
-              placeholder={sprayForm.is_avoided ? 'Issue reason (required)' : 'Notes (optional)'}
+              placeholder="Notes (optional)"
             />
-            <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-              <input
-                type="checkbox"
-                checked={sprayForm.is_avoided}
-                onChange={(e) => setSprayForm((c) => ({ ...c, is_avoided: e.target.checked }))}
-              />
-              <span className="small-text">Issue with site — skip lease sheet</span>
-            </label>
             <div className="button-row">
               <button className="primary-button" type="button" disabled={adminBusy} onClick={handleConfirmSpray}>
                 {adminBusy ? 'Saving…' : 'Confirm'}
