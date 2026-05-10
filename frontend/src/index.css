@@ -120,10 +120,10 @@ button { cursor: pointer; }
 /* Orange dot in the corner of the avatar when "View as Worker" is on,
    so admins always see at a glance which view they're in even before
    opening the menu. Mirrors the orange badge color used inline.
-   The --update modifier turns it green with a soft pulse when a new
-   service-worker build is waiting to install, mirroring the inline
-   "Update available" pill so the worker sees the signal whether the
-   topbar is in desktop (inline pill) or mobile (avatar dot) layout. */
+   The --update modifier turns it red with a soft pulse when a new
+   service-worker build is waiting to install, so the worker sees the
+   signal whether the topbar is in desktop (inline pill) or mobile
+   (avatar dot) layout. */
 .topbar-account-trigger-dot {
   position: absolute;
   top: -2px;
@@ -137,15 +137,15 @@ button { cursor: pointer; }
 }
 
 .topbar-account-trigger-dot--update {
-  background: #10b981;
-  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6);
+  background: #ef4444;
+  box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6);
   animation: topbarUpdateDotPulse 2.2s ease-in-out infinite;
 }
 
 @keyframes topbarUpdateDotPulse {
-  0%   { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.55); }
-  60%  { box-shadow: 0 0 0 7px rgba(16, 185, 129, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+  0%   { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.55); }
+  60%  { box-shadow: 0 0 0 7px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
 }
 
 .topbar-account-popover {

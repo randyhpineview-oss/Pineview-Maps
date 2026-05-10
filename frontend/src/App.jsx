@@ -202,7 +202,7 @@ export default function App() {
   // "Update Now" button had already become a no-op).
   //
   // When `swUpdateAvailable` flips to true:
-  //   - A green dot appears on the avatar in the topbar.
+  //   - A red pulsing dot appears on the avatar in the topbar.
   //   - An "Update available" pill shows next to the version badge.
   //   - "↑ Update Now" remains in the account popover.
   // Tapping any of them runs `handleAppUpdate` which posts SKIP_WAITING
@@ -315,7 +315,7 @@ export default function App() {
   // scripts/set-version.mjs at build time, served with `no-store` cache
   // headers) every 30 s. When the response's `version` differs from
   // APP_VERSION (the build constant baked into the running bundle), we
-  // light the green "Update available" dot regardless of SW state. The
+  // light the red "Update available" dot regardless of SW state. The
   // user taps "Update Now" → the existing handleAppUpdate clears
   // caches and reloads. handleAppUpdate already gracefully handles the
   // "no waiting SW yet" case (postMessage is a no-op when swWaitingRef
@@ -4704,7 +4704,7 @@ export default function App() {
               title={userDisplayName}
             >
               {userInitial}
-              {/* Dot priority: green "update available" trumps orange
+              {/* Dot priority: red "update available" trumps orange
                   "viewing as worker" because the former is actionable
                   and transient, while the latter is a persistent mode
                   reminder. Orange returns once the update is applied. */}
