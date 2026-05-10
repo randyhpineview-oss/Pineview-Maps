@@ -578,6 +578,16 @@ export default function App() {
   const [showDrawingForm, setShowDrawingForm] = useState(false);
   // Spray marking state
   const [isSprayMarking, setIsSprayMarking] = useState(false);
+  // Differentiates the two segment-selection flows that share the spray-
+  // marking infrastructure (banner, map taps, confirm popup):
+  //   'inspection' — "Mark Inspection" entry from PipelineDetailSheet;
+  //                  confirms a sprayed segment, forwards to lease sheet.
+  //   'issue'      — "⚠ Issue with Pipeline" entry; reason has already
+  //                  been captured, popup offers Yes-Fill-Sheet / Skip /
+  //                  Cancel applied to the selected segment.
+  // Drives the popup title, banner text, and which confirm handler
+  // runs. Stays null when no marking is in progress.
+  const [sprayMarkingMode, setSprayMarkingMode] = useState(null);
   const [sprayStartPoint, setSprayStartPoint] = useState(null);
   const [sprayEndPoint, setSprayEndPoint] = useState(null);
   const [showSprayConfirm, setShowSprayConfirm] = useState(false);
@@ -3157,11 +3167,17 @@ export default function App() {
     }
   }
 
-  // Spray marking
-  function handleStartSprayMarking(pipeline) {
+  // Spray marking. The optional `mode` arg distinguishes the
+  // "Mark Inspection" entry (default 'inspection') from the
+  // "⚠ Issue with Pipeline" entry ('issue'). Both flows reuse the
+  // same map taps + confirm popup; the popup branches on mode to show
+  // the right title and either a single Confirm button (inspection) or
+  // Yes-Fill-Sheet / Skip / Cancel (issue).
+  function handleStartSprayMarking(pipeline, mode = 'inspection') {
     if (!pipeline) return;
     setSelectedPipeline(pipeline);
     setIsSprayMarking(true);
+    setSprayMarkingMode(mode);
     setSprayStartPoint(null);
     setSprayEndPoint(null);
     setShowSprayConfirm(false);
@@ -3172,9 +3188,16 @@ export default function App() {
 
   function handleCancelSprayMarking() {
     setIsSprayMarking(false);
+    setSprayMarkingMode(null);
     setSprayStartPoint(null);
     setSprayEndPoint(null);
     setShowSprayConfirm(false);
+    // If we were in issue mode, the reason captured by the prompt is
+    // sitting in inspectionReason / inspectionSiteStatus — wipe both so
+    // they don't leak into the next inspection or stale-render the
+    // lease-sheet overlay if the user immediately starts a new flow.
+    setInspectionReason('');
+    setInspectionSiteStatus('inspected');
     if (selectedPipeline) {
       setPipelineDetailOpen(true); // Bring panel back
     }
@@ -3248,9 +3271,73 @@ export default function App() {
     setInspectionSite(null);
     setInspectionPipeline(selectedPipeline);
     setIsSprayMarking(false);
+    setSprayMarkingMode(null);
     setSprayStartPoint(null);
     setSprayEndPoint(null);
     setShowSprayConfirm(false);
+  }
+
+  // Issue-mode counterpart to handleConfirmSpray: instead of forwarding
+  // the segment to the lease-sheet flow, create an is_avoided spray
+  // record on the selected segment directly (the "Skip lease sheet"
+  // path the user picked from the popup). The reason captured by the
+  // ⚠ Issue with Pipeline prompt is in `inspectionReason` and gets
+  // attached as the spray record's notes so it surfaces in Spray
+  // History next to the segment.
+  async function handleConfirmIssueSkip() {
+    if (!selectedPipeline || !sprayStartPoint || !sprayEndPoint) return;
+    const coords = selectedPipeline.coordinates;
+    if (!coords || coords.length < 2) return;
+
+    const startFrac = nearestFraction(sprayStartPoint, coords);
+    const endFrac = nearestFraction(sprayEndPoint, coords);
+    const startFraction = Math.min(startFrac, endFrac);
+    const endFraction = Math.max(startFrac, endFrac);
+    const reason = inspectionReason || '';
+    // Treat ≥99% coverage as "the whole pipeline" so two near-end taps
+    // still land on the legacy full-pipeline-issue behavior. For genuine
+    // partial segments we let the backend's _update_pipeline_spray_status
+    // derive the overall pipeline status from the new record set instead
+    // of forcing 'issue_not_inspected' — a small problem segment on an
+    // otherwise-inspected pipeline shouldn't repaint the entire line as
+    // not-inspected.
+    const isFullPipeline = startFraction <= 0.001 && endFraction >= 0.999;
+
+    setAdminBusy(true);
+    try {
+      await api.createSprayRecord(selectedPipeline.id, {
+        start_fraction: startFraction,
+        end_fraction: endFraction,
+        spray_date: sprayForm.date,
+        notes: reason,
+        is_avoided: true,
+      });
+      if (isFullPipeline) {
+        // Same override the legacy handleMarkPipelineNotInspectedDirect
+        // applied: a single is_avoided record covering 0–1 would otherwise
+        // be auto-derived as 'not_sprayed' rather than 'issue_not_inspected'.
+        const overridden = await api.updatePipelineStatus(selectedPipeline.id, { status: 'issue_not_inspected' });
+        setPipelines((prev) => prev.map((p) => (p.id === overridden.id ? overridden : p)));
+      }
+      // Refresh so the detail panel shows the new spray record + final status.
+      const refreshed = await api.getPipeline(selectedPipeline.id);
+      setSelectedPipeline(refreshed);
+      setPipelineSprayRecords(refreshed.spray_records || []);
+      setPipelines((prev) => prev.map((p) => (p.id === refreshed.id ? refreshed : p)));
+      setMessage(isFullPipeline ? 'Pipeline marked as issue (not inspected).' : 'Issue segment recorded.');
+      setPipelineDetailOpen(true);
+    } catch (err) {
+      setMessage(err.message || 'Failed to save issue record.');
+    } finally {
+      setAdminBusy(false);
+      setIsSprayMarking(false);
+      setSprayMarkingMode(null);
+      setSprayStartPoint(null);
+      setSprayEndPoint(null);
+      setShowSprayConfirm(false);
+      setInspectionReason('');
+      setInspectionSiteStatus('inspected');
+    }
   }
 
   async function handleDeleteSprayRecord(recordId, pipelineId) {
@@ -3415,34 +3502,15 @@ export default function App() {
       setInspectionPipeline(null);
       setPendingPipelineSegment(null);
     } else {
+      // For pipelines, drop into segment-selection mode (mode='issue')
+      // so the user picks a stretch on the map; the popup that follows
+      // offers Yes-Fill-Sheet (lease sheet for the segment) / Skip
+      // (is_avoided record on the segment) / Cancel. The reason is
+      // already in inspectionReason and inspectionSiteStatus is
+      // 'issue_not_inspected', so the lease-sheet branch picks both up
+      // automatically when handleConfirmSpray fires.
       setInspectionSite(null);
-      handleStartSprayMarking(siteOrPipeline);
-    }
-  }
-
-  async function handleMarkPipelineNotInspectedDirect(pipeline, reason = '') {
-    // Create an is_avoided spray record covering the full pipeline so the
-    // reason is visible in Spray History, then force status override since
-    // _update_pipeline_spray_status() will have set it to 'not_sprayed'.
-    try {
-      await api.createSprayRecord(pipeline.id, {
-        start_fraction: 0,
-        end_fraction: 1,
-        spray_date: localDateISO(),
-        notes: reason || '',
-        is_avoided: true,
-      });
-      const updated = await api.updatePipelineStatus(pipeline.id, { status: 'issue_not_inspected' });
-      setPipelines((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
-      setSelectedPipeline((prev) => prev && prev.id === updated.id ? updated : prev);
-      // Refresh spray records list for the detail panel
-      try {
-        const refreshed = await api.getPipeline(pipeline.id);
-        setPipelineSprayRecords(refreshed.spray_records || []);
-      } catch { /* ignore */ }
-      setMessage('Pipeline marked as issue (not inspected).');
-    } catch (err) {
-      setMessage(err.message || 'Status update failed.');
+      handleStartSprayMarking(siteOrPipeline, 'issue');
     }
   }
 
@@ -5140,33 +5208,83 @@ export default function App() {
           </div>
         ) : null}
 
-        {/* Spray marking banner */}
+        {/* Spray marking banner. Reads "sprayed section" by default and
+            "issue section" when the worker entered via ⚠ Issue with
+            Pipeline, so the same map UI makes its purpose obvious. */}
         {isSprayMarking && !showSprayConfirm ? (
           <div className="place-banner" style={{ flexDirection: 'column', gap: '0.5rem' }}>
             <div>
-              {!sprayStartPoint
-                ? 'Tap the START of the sprayed section'
-                : 'Tap the END of the sprayed section'}
+              {(() => {
+                const subject = sprayMarkingMode === 'issue' ? 'issue' : 'sprayed';
+                return !sprayStartPoint
+                  ? `Tap the START of the ${subject} section`
+                  : `Tap the END of the ${subject} section`;
+              })()}
             </div>
             <button className="cancel-btn" type="button" onClick={handleCancelSprayMarking}>Cancel</button>
           </div>
         ) : null}
 
-        {/* Spray confirmation dialog */}
+        {/* Spray confirmation dialog. Two modes:
+            • 'inspection' (default): single Confirm button → forwards the
+              segment to the lease-sheet flow.
+            • 'issue': displays the reason captured by the ⚠ Issue with
+              Pipeline prompt and offers Yes-Fill-Sheet / Skip / Cancel.
+              "Yes" reuses handleConfirmSpray (lease sheet picks up the
+              already-set inspectionReason + 'issue_not_inspected'
+              status); "Skip" calls handleConfirmIssueSkip to record an
+              is_avoided spray record on the segment without a sheet. */}
         {showSprayConfirm ? (
           <div className="add-pin-popup" style={{ bottom: 80, left: '50%', transform: 'translateX(-50%)' }}>
-            <strong className="small-text">Confirm Spray Record</strong>
+            <strong className="small-text">
+              {sprayMarkingMode === 'issue' ? 'Confirm Issue Segment' : 'Confirm Spray Record'}
+            </strong>
             <input
               type="date"
               value={sprayForm.date}
               onChange={(e) => setSprayForm((c) => ({ ...c, date: e.target.value }))}
             />
-            <div className="button-row">
-              <button className="primary-button" type="button" disabled={adminBusy} onClick={handleConfirmSpray}>
-                {adminBusy ? 'Saving…' : 'Confirm'}
-              </button>
-              <button className="secondary-button" type="button" onClick={handleCancelSprayMarking}>Cancel</button>
-            </div>
+            {sprayMarkingMode === 'issue' && inspectionReason ? (
+              <div className="small-text" style={{ color: '#fbbf24', fontStyle: 'italic' }}>
+                Reason: {inspectionReason}
+              </div>
+            ) : null}
+            {sprayMarkingMode === 'issue' ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={adminBusy}
+                  onClick={handleConfirmSpray}
+                >
+                  {adminBusy ? 'Saving…' : 'Yes — Fill Sheet'}
+                </button>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={adminBusy}
+                  onClick={handleConfirmIssueSkip}
+                  style={{ background: '#64748b' }}
+                >
+                  {adminBusy ? '…' : 'Skip'}
+                </button>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={handleCancelSprayMarking}
+                  disabled={adminBusy}
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <div className="button-row">
+                <button className="primary-button" type="button" disabled={adminBusy} onClick={handleConfirmSpray}>
+                  {adminBusy ? 'Saving…' : 'Confirm'}
+                </button>
+                <button className="secondary-button" type="button" onClick={handleCancelSprayMarking}>Cancel</button>
+              </div>
+            )}
           </div>
         ) : null}
 
@@ -5358,7 +5476,6 @@ export default function App() {
                 onDeletePipeline={handleDeletePipeline}
                 onMarkInspection={handleStartSprayMarking}
                 onMarkIssueNotInspected={handleStartIssueNotInspected}
-                onMarkNotInspectedDirect={handleMarkPipelineNotInspectedDirect}
                 adminBusy={adminBusy}
                 sprayRecords={pipelineSprayRecords}
                 onDeleteSprayRecord={handleDeleteSprayRecord}

@@ -17,8 +17,14 @@ export default function PipelineDetailSheet({
   onSavePipeline,
   onDeletePipeline,
   onMarkInspection,
+  // Pipeline-only entry for the "⚠ Issue with Pipeline" flow. Receives
+  // (pipeline, reason). App.jsx routes this into segment-selection mode
+  // ('issue') so the user picks a stretch on the map; the spray-confirm
+  // popup that follows offers Yes-Fill-Sheet / Skip / Cancel applied to
+  // that segment. The legacy inline Yes/Skip prompt that used to live
+  // on this sheet is gone — the choice is now in the popup, after the
+  // worker has actually selected the segment.
   onMarkIssueNotInspected,
-  onMarkNotInspectedDirect,
   adminBusy = false,
   sprayRecords = [],
   onDeleteSprayRecord,
@@ -36,13 +42,9 @@ export default function PipelineDetailSheet({
   const { prompt } = useDialog();
   const [isEditing, setIsEditing] = useState(false);
   const [editState, setEditState] = useState(() => buildEditState(pipeline));
-  const [showNotInspectedPrompt, setShowNotInspectedPrompt] = useState(false);
-  const [issueReason, setIssueReason] = useState('');
 
   useEffect(() => {
     setIsEditing(false);
-    setShowNotInspectedPrompt(false);
-    setIssueReason('');
     setEditState(buildEditState(pipeline));
   }, [pipeline?.id]);
 
@@ -154,73 +156,37 @@ export default function PipelineDetailSheet({
             Mark Inspection
           </button>
         </div>
-        {showNotInspectedPrompt ? (
-          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.5rem' }}>
-            <span style={{ fontSize: '0.78rem', color: '#9ca3af', whiteSpace: 'nowrap' }}>Fill lease sheet?</span>
-            <button
-              className="status-button green"
-              type="button"
-              disabled={adminBusy}
-              style={{ fontSize: '0.78rem', padding: '4px 10px' }}
-              onClick={() => {
-                const reason = issueReason;
-                setShowNotInspectedPrompt(false);
-                setIssueReason('');
-                onMarkIssueNotInspected?.(pipeline, reason);
-              }}
-            >
-              Yes — Fill Sheet
-            </button>
-            <button
-              className="secondary-button"
-              type="button"
-              disabled={adminBusy}
-              style={{ fontSize: '0.78rem', padding: '4px 10px', background: '#64748b' }}
-              onClick={() => {
-                const reason = issueReason;
-                setShowNotInspectedPrompt(false);
-                setIssueReason('');
-                onMarkNotInspectedDirect?.(pipeline, reason);
-              }}
-            >
-              Skip
-            </button>
-            <button
-              className="secondary-button"
-              type="button"
-              style={{ fontSize: '0.78rem', padding: '4px 8px' }}
-              onClick={() => { setShowNotInspectedPrompt(false); setIssueReason(''); }}
-            >
-              Cancel
-            </button>
-          </div>
-        ) : (
-          <div className="button-row" style={{ marginBottom: '0.5rem' }}>
-            <button
-              className="secondary-button"
-              type="button"
-              disabled={adminBusy || pipeline.approval_state === 'pending_review'}
-              style={{ flex: 1, background: '#64748b' }}
-              onClick={async () => {
-                // The prompt's `validate` hook collapses what used to be
-                // two dialogs (window.prompt then a follow-up alert when
-                // empty) into one round-trip — the error renders inline
-                // below the input on Enter without dismissing.
-                const reason = await prompt({
-                  title: 'Issue with pipeline',
-                  message: 'Why is there an issue with this pipeline? (This will be saved on the spray record so the next person can see why.)',
-                  placeholder: 'Reason',
-                  validate: (v) => v.trim() ? null : 'A reason is required.',
-                });
-                if (reason === null) return;
-                setIssueReason(reason);
-                setShowNotInspectedPrompt(true);
-              }}
-            >
-              ⚠ Issue with Pipeline
-            </button>
-          </div>
-        )}
+        {/* "⚠ Issue with Pipeline" entry. After the reason prompt, App.jsx
+            takes over: it puts the map into segment-selection mode and
+            shows a confirm popup with Yes-Fill-Sheet / Skip / Cancel
+            applied to whatever stretch the worker taps. The legacy
+            inline Yes/Skip prompt that used to render here is gone — it
+            forced the choice before the worker had picked a segment,
+            which made the "Skip" path always cover the whole pipeline. */}
+        <div className="button-row" style={{ marginBottom: '0.5rem' }}>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={adminBusy || pipeline.approval_state === 'pending_review'}
+            style={{ flex: 1, background: '#64748b' }}
+            onClick={async () => {
+              // The prompt's `validate` hook collapses what used to be
+              // two dialogs (window.prompt then a follow-up alert when
+              // empty) into one round-trip — the error renders inline
+              // below the input on Enter without dismissing.
+              const reason = await prompt({
+                title: 'Issue with pipeline',
+                message: 'Why is there an issue with this pipeline? (This will be saved on the spray record so the next person can see why.)',
+                placeholder: 'Reason',
+                validate: (v) => v.trim() ? null : 'A reason is required.',
+              });
+              if (reason === null) return;
+              onMarkIssueNotInspected?.(pipeline, reason);
+            }}
+          >
+            ⚠ Issue with Pipeline
+          </button>
+        </div>
 
         {canManage && !isEditing && (
           <div className="button-row">
