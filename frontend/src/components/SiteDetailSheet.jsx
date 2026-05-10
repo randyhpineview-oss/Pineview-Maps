@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import AutocompleteInput from './AutocompleteInput';
 import { formatDate, getDirectionsUrl, isInfoOnlyPin, pinTypeLabel, statusLabel } from '../lib/mapUtils';
 import { localDateISO } from '../lib/dateUtil';
+import { useDialog } from './DialogProvider';
 
 function buildEditState(site) {
   return {
@@ -48,6 +49,7 @@ export default function SiteDetailSheet({
   lsdSuggestions = [],
   getAreasForClient,
 }) {
+  const { confirm, prompt } = useDialog();
   const [isEditing, setIsEditing] = useState(false);
   const [editState, setEditState] = useState(() => buildEditState(site));
   const [quickEditing, setQuickEditing] = useState(false);
@@ -142,7 +144,11 @@ export default function SiteDetailSheet({
       return;
     }
 
-    if (!window.confirm(`Delete ${site.lsd || 'this pin'}?`)) {
+    if (!(await confirm({
+      message: `Delete ${site.lsd || 'this pin'}?`,
+      severity: 'danger',
+      okLabel: 'Delete',
+    }))) {
       return;
     }
 
@@ -443,15 +449,19 @@ export default function SiteDetailSheet({
                     className="secondary-button"
                     type="button"
                     disabled={statusSaving}
-                    onClick={() => {
-                      const reason = window.prompt('Why is there an issue with this site? (This will be saved on the spray record so the next person can see why.)');
+                    onClick={async () => {
+                      // The prompt's `validate` hook collapses what used to be
+                      // two dialogs (window.prompt then a follow-up alert when
+                      // empty) into one round-trip — the error renders inline
+                      // below the input on Enter without dismissing.
+                      const reason = await prompt({
+                        title: 'Issue with site',
+                        message: 'Why is there an issue with this site? (This will be saved on the spray record so the next person can see why.)',
+                        placeholder: 'Reason',
+                        validate: (v) => v.trim() ? null : 'A reason is required.',
+                      });
                       if (reason === null) return;
-                      const trimmed = String(reason).trim();
-                      if (!trimmed) {
-                        alert('A reason is required.');
-                        return;
-                      }
-                      setIssueReason(trimmed);
+                      setIssueReason(reason);
                       setShowIssuePrompt(true);
                     }}
                     style={{ background: '#64748b' }}

@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import { pinTypeLabel, statusLabel } from '../lib/mapUtils';
 import UserManagementPanel from './UserManagementPanel';
 import LookupManager from './LookupManager';
+import { useDialog } from './DialogProvider';
 
 function PendingSiteCard({ site, busy, onApprove, onReject, onApproveAndEdit, onSelectSite }) {
   // Approve & Edit now opens the full review modal (ApproveEditModal)
@@ -109,6 +110,7 @@ export default function AdminPanel({
   // only rendered when a handler is supplied.
   onOpenReports,
 }) {
+  const { confirm } = useDialog();
   const [file, setFile] = useState(null);
   const [pipelineFile, setPipelineFile] = useState(null);
   const [resetClient, setResetClient] = useState('');
@@ -147,14 +149,23 @@ export default function AdminPanel({
   async function handleBulkApprovePending() {
     if (pendingApprovalCount === 0) return;
     const label = pendingApprovalCount === 1 ? 'pending approval' : 'pending approvals';
-    if (!window.confirm(`Approve all ${pendingApprovalCount} ${label}?`)) return;
+    if (!(await confirm({
+      title: 'Approve all pending',
+      message: `Approve all ${pendingApprovalCount} ${label}?`,
+      okLabel: 'Approve all',
+    }))) return;
     await onBulkApprovePending?.();
   }
 
   async function handleBulkRejectPending() {
     if (pendingApprovalCount === 0) return;
     const label = pendingApprovalCount === 1 ? 'pending approval' : 'pending approvals';
-    if (!window.confirm(`Reject all ${pendingApprovalCount} ${label}? This cannot be undone for new field-added items.`)) return;
+    if (!(await confirm({
+      title: 'Reject all pending',
+      message: `Reject all ${pendingApprovalCount} ${label}? This cannot be undone for new field-added items.`,
+      severity: 'danger',
+      okLabel: 'Reject all',
+    }))) return;
     await onBulkRejectPending?.();
   }
 
@@ -170,7 +181,12 @@ export default function AdminPanel({
   async function handleBulkDeleteAllPermanent() {
     if (deletedCount === 0) return;
     const label = deletedCount === 1 ? 'item' : 'items';
-    if (!window.confirm(`Permanently delete all ${deletedCount} ${label} in Recent Deletes? This cannot be undone.`)) return;
+    if (!(await confirm({
+      title: 'Delete forever',
+      message: `Permanently delete all ${deletedCount} ${label} in Recent Deletes? This cannot be undone.`,
+      severity: 'danger',
+      okLabel: 'Delete forever',
+    }))) return;
     await onBulkDeleteAllPermanent?.();
   }
 
@@ -329,8 +345,13 @@ export default function AdminPanel({
                       <button className="primary-button" type="button" disabled={busy} onClick={() => onRestorePipeline?.(pipeline.id)}>
                         Restore
                       </button>
-                      <button className="danger-button" type="button" disabled={busy} onClick={() => {
-                        if (window.confirm(`Permanently delete "${pipeline.name || 'Unnamed pipeline'}"? This cannot be undone.`)) {
+                      <button className="danger-button" type="button" disabled={busy} onClick={async () => {
+                        if (await confirm({
+                          title: 'Delete forever',
+                          message: `Permanently delete "${pipeline.name || 'Unnamed pipeline'}"? This cannot be undone.`,
+                          severity: 'danger',
+                          okLabel: 'Delete forever',
+                        })) {
                           onDeletePipelinePermanent?.(pipeline.id);
                         }
                       }} style={{ marginLeft: '0.5rem' }}>
@@ -357,8 +378,13 @@ export default function AdminPanel({
                       <button className="primary-button" type="button" disabled={busy} onClick={() => onRestoreLeaseSheet?.(record)}>
                         Restore
                       </button>
-                      <button className="danger-button" type="button" disabled={busy} onClick={() => {
-                        if (window.confirm(`Permanently delete lease sheet "${record.ticket_number || ''}"? This cannot be undone.`)) {
+                      <button className="danger-button" type="button" disabled={busy} onClick={async () => {
+                        if (await confirm({
+                          title: 'Delete forever',
+                          message: `Permanently delete lease sheet "${record.ticket_number || ''}"? This cannot be undone.`,
+                          severity: 'danger',
+                          okLabel: 'Delete forever',
+                        })) {
                           onDeleteLeaseSheetPermanent?.(record);
                         }
                       }} style={{ marginLeft: '0.5rem' }}>
@@ -385,8 +411,13 @@ export default function AdminPanel({
                       <button className="primary-button" type="button" disabled={busy} onClick={() => onRestoreTMTicket?.(ticket.id)}>
                         Restore
                       </button>
-                      <button className="danger-button" type="button" disabled={busy} onClick={() => {
-                        if (window.confirm(`Permanently delete T&M ticket "${ticket.ticket_number || ''}"? This cannot be undone.`)) {
+                      <button className="danger-button" type="button" disabled={busy} onClick={async () => {
+                        if (await confirm({
+                          title: 'Delete forever',
+                          message: `Permanently delete T&M ticket "${ticket.ticket_number || ''}"? This cannot be undone.`,
+                          severity: 'danger',
+                          okLabel: 'Delete forever',
+                        })) {
                           onDeleteTMTicketPermanent?.(ticket.id);
                         }
                       }} style={{ marginLeft: '0.5rem' }}>

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import AutocompleteInput from './AutocompleteInput';
+import { useDialog } from './DialogProvider';
 
 function buildEditState(pipeline) {
   return {
@@ -32,6 +33,7 @@ export default function PipelineDetailSheet({
   clientSuggestions = [],
   getAreasForClient,
 }) {
+  const { prompt } = useDialog();
   const [isEditing, setIsEditing] = useState(false);
   const [editState, setEditState] = useState(() => buildEditState(pipeline));
   const [showNotInspectedPrompt, setShowNotInspectedPrompt] = useState(false);
@@ -199,15 +201,19 @@ export default function PipelineDetailSheet({
               type="button"
               disabled={adminBusy || pipeline.approval_state === 'pending_review'}
               style={{ flex: 1, background: '#64748b' }}
-              onClick={() => {
-                const reason = window.prompt('Why is there an issue with this pipeline? (This will be saved on the spray record so the next person can see why.)');
+              onClick={async () => {
+                // The prompt's `validate` hook collapses what used to be
+                // two dialogs (window.prompt then a follow-up alert when
+                // empty) into one round-trip — the error renders inline
+                // below the input on Enter without dismissing.
+                const reason = await prompt({
+                  title: 'Issue with pipeline',
+                  message: 'Why is there an issue with this pipeline? (This will be saved on the spray record so the next person can see why.)',
+                  placeholder: 'Reason',
+                  validate: (v) => v.trim() ? null : 'A reason is required.',
+                });
                 if (reason === null) return;
-                const trimmed = String(reason).trim();
-                if (!trimmed) {
-                  alert('A reason is required.');
-                  return;
-                }
-                setIssueReason(trimmed);
+                setIssueReason(reason);
                 setShowNotInspectedPrompt(true);
               }}
             >

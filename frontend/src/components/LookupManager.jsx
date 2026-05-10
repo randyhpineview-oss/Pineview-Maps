@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { api } from '../lib/api';
+import { useDialog } from './DialogProvider';
 
 const TABS = [
   { key: 'herbicides', label: 'Herbicides' },
@@ -30,6 +31,7 @@ const btnStyle = (bg) => ({
 });
 
 export default function LookupManager({ cachedLookups = {}, onLookupsChanged }) {
+  const { alert, confirm } = useDialog();
   const [tab, setTab] = useState('herbicides');
   const [newName, setNewName] = useState('');
   const [newExtra, setNewExtra] = useState('');
@@ -54,7 +56,7 @@ export default function LookupManager({ cachedLookups = {}, onLookupsChanged }) 
       setNewIsAccessRoad(false);
       onLookupsChanged?.();
     } catch (e) {
-      alert('Failed to add: ' + (e.message || e));
+      await alert({ title: 'Add failed', message: String(e.message || e), severity: 'danger' });
     }
   }
 
@@ -67,12 +69,12 @@ export default function LookupManager({ cachedLookups = {}, onLookupsChanged }) 
       setEditId(null);
       onLookupsChanged?.();
     } catch (e) {
-      alert('Failed to update: ' + (e.message || e));
+      await alert({ title: 'Update failed', message: String(e.message || e), severity: 'danger' });
     }
   }
 
   async function handleDelete(id) {
-    if (!window.confirm('Remove this item?')) return;
+    if (!(await confirm({ message: 'Remove this item?', severity: 'danger', okLabel: 'Remove' }))) return;
     try {
       if (tab === 'herbicides') await api.deleteHerbicide(id);
       else if (tab === 'applicators') await api.deleteApplicator(id);
@@ -80,7 +82,7 @@ export default function LookupManager({ cachedLookups = {}, onLookupsChanged }) 
       else if (tab === 'locations') await api.deleteLocationType(id);
       onLookupsChanged?.();
     } catch (e) {
-      alert('Failed to delete: ' + (e.message || e));
+      await alert({ title: 'Delete failed', message: String(e.message || e), severity: 'danger' });
     }
   }
 

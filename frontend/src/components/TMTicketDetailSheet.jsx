@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api';
 import { getTMTicket as getCachedTMTicket, upsertTMTicket } from '../lib/offlineStore';
+import { useDialog } from './DialogProvider';
 import {
   DEFAULT_OFFICE_LINES,
   AUTO_LINE_LABELS,
@@ -67,6 +68,7 @@ export default function TMTicketDetailSheet({
   // any call site that doesn't want background uploads).
   onQueueSubmit = null,
 }) {
+  const { alert, confirm } = useDialog();
   const canOfficeEdit = roleCanAdmin || roleCanOffice;
   const [ticket, setTicket] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -337,9 +339,9 @@ export default function TMTicketDetailSheet({
       setRowsEdits({});
       setNewRows([]);
       setRowsToDelete([]);
-      alert('Saved.');
+      await alert({ message: 'Saved.' });
     } catch (e) {
-      alert('Save failed: ' + (e.message || 'Unknown error'));
+      await alert({ title: 'Save failed', message: String(e.message || 'Unknown error'), severity: 'danger' });
     } finally {
       setIsSaving(false);
     }
@@ -350,25 +352,27 @@ export default function TMTicketDetailSheet({
   // edits on their side \u2014 backend guard). Admin/office also get this
   // button now, useful for parking a ticket at "submitted" when someone
   // else should do the approval. The PDF uploaded reflects the submitter's
-  // role: worker \u2192 no pricing; admin/office \u2192 with pricing already baked
+  // role: worker → no pricing; admin/office → with pricing already baked
   // in. When the ticket is later approved, Dropbox is overwritten with
   // the final priced + signed version.
   const handleSubmit = async () => {
     if (hasMissingQty) {
-      alert(
-        'Fill in a quantity (use 0 if unused) for:\n\n\u2022 ' +
-          missingQtyLabels.join('\n\u2022 ')
-      );
+      await alert({
+        title: 'Missing quantities',
+        message: 'Fill in a quantity (use 0 if unused) for:\n\n• ' + missingQtyLabels.join('\n• '),
+      });
       return;
     }
     // Dialog wording depends on who's submitting: workers are locked out
     // of further edits once they hand off; admin/office stay unlocked.
     const confirmMsg = canOfficeEdit
-      ? 'Move this ticket to "pending" status?\n\n'
-        + 'You or another office/admin user can then approve it.'
-      : 'Mark this ticket as pending for office approval?\n\n'
-        + 'You will no longer be able to edit it. Office will add pricing and finalize.';
-    if (!confirm(confirmMsg)) return;
+      ? 'Move this ticket to "pending" status?\n\nYou or another office/admin user can then approve it.'
+      : 'Mark this ticket as pending for office approval?\n\nYou will no longer be able to edit it. Office will add pricing and finalize.';
+    if (!(await confirm({
+      title: 'Mark as pending',
+      message: confirmMsg,
+      okLabel: 'Mark as pending',
+    }))) return;
     setIsSaving(true);
     try {
       // regenerateCurrentPdf honours canOfficeEdit, so worker submissions
@@ -421,9 +425,9 @@ export default function TMTicketDetailSheet({
       setRowsEdits({});
       setNewRows([]);
       setRowsToDelete([]);
-      alert('Ticket marked as pending.');
+      await alert({ message: 'Ticket marked as pending.' });
     } catch (e) {
-      alert('Submit failed: ' + (e.message || 'Unknown error'));
+      await alert({ title: 'Submit failed', message: String(e.message || 'Unknown error'), severity: 'danger' });
     } finally {
       setIsSaving(false);
     }
@@ -432,17 +436,23 @@ export default function TMTicketDetailSheet({
   // Shared pre-approval check: same 7-field rule as worker submit. Office/
   // admin approving a ticket where the worker left qty blank gets the same
   // friendly list of what's missing rather than a silent 400 from the API.
-  const guardMissingQtyForApproval = () => {
+  //
+  // Async because it now awaits a styled alert dialog instead of the
+  // synchronous native one. Both call sites below await it.
+  const guardMissingQtyForApproval = async () => {
     if (!hasMissingQty) return true;
-    alert(
-      'Cannot approve — the following worker-filled quantities are still empty '
-      + '(use 0 if unused):\n\n• ' + missingQtyLabels.join('\n• ')
-    );
+    await alert({
+      title: 'Cannot approve',
+      message:
+        'The following worker-filled quantities are still empty (use 0 if unused):\n\n• '
+        + missingQtyLabels.join('\n• '),
+      severity: 'danger',
+    });
     return false;
   };
 
   const handleApproveWithSignature = async (signatureBase64) => {
-    if (!guardMissingQtyForApproval()) {
+    if (!(await guardMissingQtyForApproval())) {
       setIsSignatureOpen(false);
       return;
     }
@@ -473,7 +483,7 @@ export default function TMTicketDetailSheet({
       setNewRows([]);
       setRowsToDelete([]);
     } catch (e) {
-      alert('Approval failed: ' + (e.message || 'Unknown error'));
+      await alert({ title: 'Approval failed', message: String(e.message || 'Unknown error'), severity: 'danger' });
     } finally {
       setIsSaving(false);
     }
@@ -483,14 +493,19 @@ export default function TMTicketDetailSheet({
   // can be made. Backend wipes approved_at / approved_by / approved_signature
   // on this transition so the next save regenerates a clean PDF.
   const handleUnapprove = async () => {
-    if (!confirm('Unapprove this ticket? The signature and approval info will be cleared so it can be edited and re-approved.')) return;
+    if (!(await confirm({
+      title: 'Unapprove ticket',
+      message: 'Unapprove this ticket? The signature and approval info will be cleared so it can be edited and re-approved.',
+      severity: 'danger',
+      okLabel: 'Unapprove',
+    }))) return;
     setIsSaving(true);
     try {
       const updated = await api.updateTMTicket(ticket.id, { status: 'submitted' });
       setTicket(updated);
       setRowsEdits({});
     } catch (e) {
-      alert('Unapprove failed: ' + (e.message || 'Unknown error'));
+      await alert({ title: 'Unapprove failed', message: String(e.message || 'Unknown error'), severity: 'danger' });
     } finally {
       setIsSaving(false);
     }
@@ -499,14 +514,24 @@ export default function TMTicketDetailSheet({
   // Office-only: permanently delete the ticket. Linked spray records are
   // unlinked (not deleted) by the backend, and T&M rows cascade via FK.
   const handleDelete = async () => {
-    if (!confirm(`Delete T&M ticket ${ticket.ticket_number}?\n\nThis cannot be undone. Linked spray records are kept but unlinked from this ticket.`)) return;
-    if (!confirm('Are you absolutely sure? This is permanent.')) return;
+    if (!(await confirm({
+      title: 'Delete T&M ticket',
+      message: `Delete T&M ticket ${ticket.ticket_number}?\n\nThis cannot be undone. Linked spray records are kept but unlinked from this ticket.`,
+      severity: 'danger',
+      okLabel: 'Delete',
+    }))) return;
+    if (!(await confirm({
+      title: 'Final confirmation',
+      message: 'Are you absolutely sure? This is permanent.',
+      severity: 'danger',
+      okLabel: 'Yes, delete forever',
+    }))) return;
     setIsSaving(true);
     try {
       await api.deleteTMTicket(ticket.id);
       if (onClose) onClose();
     } catch (e) {
-      alert('Delete failed: ' + (e.message || 'Unknown error'));
+      await alert({ title: 'Delete failed', message: String(e.message || 'Unknown error'), severity: 'danger' });
       setIsSaving(false);
     }
   };
@@ -514,8 +539,12 @@ export default function TMTicketDetailSheet({
   // Approve without drawing a signature — the PDF will have a blank signature
   // line so office can print and hand-sign after the fact.
   const handleApproveWithoutSignature = async () => {
-    if (!guardMissingQtyForApproval()) return;
-    if (!confirm('Approve this ticket without a signature? The PDF will have a blank signature line.')) return;
+    if (!(await guardMissingQtyForApproval())) return;
+    if (!(await confirm({
+      title: 'Approve without signature',
+      message: 'Approve this ticket without a signature? The PDF will have a blank signature line.',
+      okLabel: 'Approve',
+    }))) return;
     setIsSaving(true);
     try {
       const pdfBase64 = await regenerateCurrentPdf();
@@ -540,7 +569,7 @@ export default function TMTicketDetailSheet({
       setNewRows([]);
       setRowsToDelete([]);
     } catch (e) {
-      alert('Approval failed: ' + (e.message || 'Unknown error'));
+      await alert({ title: 'Approval failed', message: String(e.message || 'Unknown error'), severity: 'danger' });
     } finally {
       setIsSaving(false);
     }
@@ -552,7 +581,7 @@ export default function TMTicketDetailSheet({
       setPreviewBase64(b64);
       setIsPreviewOpen(true);
     } catch (e) {
-      alert('Preview failed: ' + (e.message || 'Unknown error'));
+      await alert({ title: 'Preview failed', message: String(e.message || 'Unknown error'), severity: 'danger' });
     }
   };
 

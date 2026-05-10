@@ -6,6 +6,7 @@ import { saveLeaseSheetDraft, deleteLeaseSheetDraft } from '../lib/offlineStore'
 import { localDateISO } from '../lib/dateUtil';
 import PdfPreviewViewer from './PdfPreviewViewer';
 import AutocompleteInput from './AutocompleteInput';
+import { useDialog } from './DialogProvider';
 
 function get12hTime() {
   const now = new Date();
@@ -40,6 +41,7 @@ export default function HerbicideLeaseSheet({
   onCancelMapPick = null,
   pickedLocation = null,
 }) {
+  const { alert } = useDialog();
   const isEditMode = !!editingRecord;
   const initializedRef = useRef(false);
   const [herbicides, setHerbicides] = useState([]);
@@ -433,7 +435,10 @@ export default function HerbicideLeaseSheet({
 
   const handlePreview = async () => {
     if (requiredMissing.length > 0) {
-      alert('Please fill all required fields before continuing:\n\n• ' + requiredMissing.join('\n• '));
+      await alert({
+        title: 'Missing required fields',
+        message: 'Please fill all required fields before continuing:\n\n• ' + requiredMissing.join('\n• '),
+      });
       return;
     }
     try {
@@ -463,7 +468,11 @@ export default function HerbicideLeaseSheet({
       setIsPreviewing(true);
     } catch (err) {
       console.error('[LEASE] Preview failed:', err);
-      alert('Failed to generate preview: ' + (err.message || 'Unknown error'));
+      await alert({
+        title: 'Preview failed',
+        message: String(err.message || 'Unknown error'),
+        severity: 'danger',
+      });
     }
   };
 
@@ -757,7 +766,11 @@ export default function HerbicideLeaseSheet({
         try { await deleteLeaseSheetDraft(draftId); } catch { /* ignore */ }
       }
     } catch (err) {
-      alert('Upload failed: ' + (err.message || 'Unknown error'));
+      await alert({
+        title: 'Upload failed',
+        message: String(err.message || 'Unknown error'),
+        severity: 'danger',
+      });
       setIsSubmitting(false);
     }
   };
@@ -801,7 +814,11 @@ export default function HerbicideLeaseSheet({
       setDraftId(saved.id);
       onDraftSaved?.(saved);
     } catch (err) {
-      alert('Could not save draft: ' + (err.message || 'Unknown error'));
+      await alert({
+        title: 'Could not save draft',
+        message: String(err.message || 'Unknown error'),
+        severity: 'danger',
+      });
     } finally {
       setIsSavingDraft(false);
     }

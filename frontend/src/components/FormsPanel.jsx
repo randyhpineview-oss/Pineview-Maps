@@ -6,6 +6,7 @@ import {
   upsertTMTickets,
 } from '../lib/offlineStore';
 import { localDateISO } from '../lib/dateUtil';
+import { useDialog } from './DialogProvider';
 
 /**
  * The Forms panel replaces the old Recents panel.
@@ -208,6 +209,7 @@ export default function FormsPanel({
   viewAsWorker = false,
   currentUserName = '',
 }) {
+  const { confirm } = useDialog();
   const [subTab, setSubTab] = useState(SUB_FORMS);
   const [ipTab, setIpTab] = useState(IP_UPLOADING);
   const [recTab, setRecTab] = useState(REC_ALL);
@@ -555,9 +557,12 @@ export default function FormsPanel({
 
           <div
             role="button"
-            onClick={() => {
-              const msg = 'Standalone Lease Sheet\n\nThis creates a lease sheet for a location that is NOT on the map (e.g. roadside spraying, external job, km marker on a road).\n\nIf this location already has a pin on the map, cancel and select it from the Map tab instead.\n\nContinue?';
-              if (window.confirm(msg)) {
+            onClick={async () => {
+              if (await confirm({
+                title: 'Standalone Lease Sheet',
+                message: 'This creates a lease sheet for a location that is NOT on the map (e.g. roadside spraying, external job, km marker on a road).\n\nIf this location already has a pin on the map, cancel and select it from the Map tab instead.',
+                okLabel: 'Continue',
+              })) {
                 onStartStandaloneLeaseSheet?.();
               }
             }}
@@ -829,7 +834,11 @@ export default function FormsPanel({
                       type="button"
                       className="danger-button"
                       onClick={async () => {
-                        if (!confirm('Delete this draft?')) return;
+                        if (!(await confirm({
+                          message: 'Delete this draft?',
+                          severity: 'danger',
+                          okLabel: 'Delete',
+                        }))) return;
                         await deleteLeaseSheetDraft(d.id);
                         setDrafts((prev) => prev.filter((x) => x.id !== d.id));
                         onRequestDraftsRefresh?.();

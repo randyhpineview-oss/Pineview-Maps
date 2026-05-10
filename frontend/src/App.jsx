@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import AutocompleteInput from './components/AutocompleteInput';
+import { useDialog } from './components/DialogProvider';
 import FilterBar from './components/FilterBar';
 import InstallAppPrompt from './components/InstallAppPrompt';
 import LoginPage from './components/LoginPage';
@@ -190,6 +191,11 @@ export default function App() {
   // Dev builds still get a one-shot unregister in main.jsx so leftover
   // production SWs don't intercept HMR; production no longer wipes its
   // own SW.
+  // Styled dialog API — replaces window.alert / confirm / prompt. The
+  // returned identities are stable across renders (see DialogProvider),
+  // so closures over `alert` / `confirm` (e.g. inside processUploadQueue,
+  // explainRejectConflict) stay valid even when the parent re-renders.
+  const { alert, confirm } = useDialog();
   const wasOnline = useRef(window.navigator.onLine);
   const lastSyncStatusRef = useRef(null);
 
@@ -1283,7 +1289,15 @@ export default function App() {
             } catch (err) {
               if (err?.status === 409) {
                 const detail = err?.detail || {};
-                alert(`This location already exists on the map (site #${detail.site_id || '?'}). Please select it from the Map tab.`);
+                // Block the queue loop on this dialog — same behavior as
+                // the previous native alert (which froze the JS thread).
+                // The await keeps the for-loop paused until the worker
+                // dismisses, so we don't churn through other items while
+                // they're still reading the message.
+                await alert({
+                  title: 'Location already on map',
+                  message: `This location already exists on the map (site #${detail.site_id || '?'}). Please select it from the Map tab.`,
+                });
                 // Remove from queue — the worker must re-submit against the existing site.
                 await removeUploadEntry(item.id);
                 continue;
@@ -3303,7 +3317,12 @@ export default function App() {
 
   async function handleDeletePipeline(pipeline) {
     if (!window.navigator.onLine) { setMessage('Online required.'); return false; }
-    if (!window.confirm(`Delete pipeline "${pipeline.name || 'Unnamed'}"? It will be moved to Recent Deletes.`)) return false;
+    if (!(await confirm({
+      title: 'Delete pipeline',
+      message: `Delete pipeline "${pipeline.name || 'Unnamed'}"? It will be moved to Recent Deletes.`,
+      severity: 'danger',
+      okLabel: 'Delete',
+    }))) return false;
     setAdminBusy(true);
 
     // Snapshot for rollback on API failure.
@@ -4284,7 +4303,12 @@ export default function App() {
   // only — the approve branch is handled inside ApproveEditModal). Keeps
   // the user's billable work intact by refusing to reject a pin that
   // still has linked lease sheets.
-  function explainRejectConflict(error, kind = 'site') {
+  // Async because the styled dialog returns a Promise (the previous
+  // native alert was synchronous). Both callers below await this; the
+  // boolean return value tells them whether they handled the error
+  // surface themselves (true) or the caller should fall back to the
+  // generic setMessage(...) toast (false).
+  async function explainRejectConflict(error, kind = 'site') {
     const detail = error?.detail;
     if (!detail || detail.reason !== 'has_linked_spray_records') return false;
     const linked = detail.linked_spray_records || [];
@@ -4293,11 +4317,13 @@ export default function App() {
       const tn = r.ticket_number ? ` ${r.ticket_number}` : ` #${r.id}`;
       return `• Lease sheet${tn}${date}${r.is_avoided ? ' [avoided]' : ''}`;
     }).join('\n');
-    alert(
-      `Cannot reject this ${kind} — ${linked.length} lease sheet(s) are still linked:\n\n` +
-      `${lines}\n\n` +
-      `Delete those lease sheets (and any linked T&M rows) first, then retry reject.`
-    );
+    await alert({
+      title: `Cannot reject ${kind}`,
+      message:
+        `${linked.length} lease sheet(s) are still linked:\n\n${lines}\n\n` +
+        'Delete those lease sheets (and any linked T&M rows) first, then retry reject.',
+      severity: 'danger',
+    });
     return true;
   }
 
@@ -5463,7 +5489,12 @@ export default function App() {
               onViewPdf={(record) => setPreviewingRecord(record)}
               onEditRecord={(record) => openEditRecord(record)}
               onDeleteRecord={async (record) => {
-                if (!window.confirm(`Delete lease sheet ${record.ticket_number || ''}?`)) return;
+                if (!(await confirm({
+                  title: 'Delete lease sheet',
+                  message: `Delete lease sheet ${record.ticket_number || ''}?`,
+                  severity: 'danger',
+                  okLabel: 'Delete',
+                }))) return;
                 try {
                   // Check if it's a site or pipeline lease sheet
                   if (record.site_id != null) {
@@ -5618,7 +5649,7 @@ export default function App() {
                   if (removedFromSites) {
                     setSites((prev) => (prev.some((s) => matchSiteIdentity(s, siteId)) ? prev : [removedFromSites, ...prev]));
                   }
-                  if (!explainRejectConflict(error, 'pin')) {
+                  if (!(await explainRejectConflict(error, 'pin'))) {
                     setMessage(error?.message || 'Reject failed.');
                   }
                 } finally {
@@ -5679,7 +5710,7 @@ export default function App() {
                   if (removedFromPipelines) {
                     setPipelines((prev) => (prev.some((p) => p.id === pipelineId) ? prev : [removedFromPipelines, ...prev]));
                   }
-                  if (!explainRejectConflict(error, 'pipeline')) {
+                  if (!(await explainRejectConflict(error, 'pipeline'))) {
                     setMessage(error?.message || 'Reject failed.');
                   }
                 } finally {
