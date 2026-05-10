@@ -4503,20 +4503,11 @@ export default function App() {
         <span className="topbar-title">Pineview Maps</span>
         <div className="topbar-right">
           <span className={`badge ${isOnline ? 'online' : 'offline'}`}>{isOnline ? 'Online' : 'Offline'}</span>
-          {/* Realtime disconnect indicator. Only shown when we have
-              network but the Supabase WebSocket channel is down —
-              polling still brings fresh data within ~60 s (see adaptive
-              POLL_MS above) but the field worker should know updates
-              aren't instant. Hidden entirely on happy path. */}
-          {isOnline && realtimeStatus === 'disconnected' ? (
-            <span
-              className="badge"
-              style={{ background: '#854d0e', color: '#fde68a', border: '1px solid #a16207' }}
-              title="Realtime WebSocket disconnected — still polling every 60 s for updates"
-            >
-              <span className="topbar-label-desktop">Realtime: </span>reconnecting
-            </span>
-          ) : null}
+          {/* Realtime status badge intentionally removed — the Online/Offline
+              indicator above is enough for field workers; a separate
+              "Realtime: reconnecting" pill was deemed too noisy. The
+              `realtimeStatus` state itself is still tracked because it drives
+              the adaptive poll cadence (see POLL_MS in the poll useEffect). */}
           {/* Manual refresh: full resync on demand. The auto-poll now runs at
               2 min intervals to save egress, so this button is how users force
               an immediate refresh when they expect a just-submitted change. */}
