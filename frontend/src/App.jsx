@@ -3892,11 +3892,9 @@ export default function App() {
       client_submission_id: clientSubmissionId,
     };
     try {
-      console.log('[PIN] Creating pin:', payload);
       let submittedSite = null;
       if (window.navigator.onLine) {
         const created = await api.createSite(payload);
-        console.log('[PIN] Pin created successfully:', created);
         setSites((current) => [created, ...current]);
         await upsertSite(created);
         // If the new pin is in pending_review, append it locally and bump

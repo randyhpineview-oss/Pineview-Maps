@@ -316,6 +316,19 @@ def _migrate_add_columns() -> None:
                 # still enforces uniqueness functionally.
                 print(f"Warning: uq_site_spray_records_client_submission_id index creation failed: {e}")
 
+            # One-shot cleanup of the redundant `ix_site_spray_records_
+            # client_submission_id` index that earlier deploys auto-created
+            # via the SQLAlchemy `index=True` flag on the column. The
+            # partial unique index above covers every equality lookup we
+            # do, so the plain index is dead weight on writes. `DROP INDEX
+            # IF EXISTS` is idempotent — a no-op on subsequent cold starts.
+            try:
+                conn.execute(text(
+                    "DROP INDEX IF EXISTS ix_site_spray_records_client_submission_id"
+                ))
+            except Exception as e:
+                print(f"Warning: ix_site_spray_records_client_submission_id index drop failed: {e}")
+
         if insp.has_table("spray_records"):
             existing_records = {col["name"] for col in insp.get_columns("spray_records")}
             if "is_avoided" not in existing_records:
@@ -370,6 +383,17 @@ def _migrate_add_columns() -> None:
                 ))
             except Exception as e:
                 print(f"Warning: uq_spray_records_client_submission_id index creation failed: {e}")
+
+            # Mirror of the site_spray_records cleanup above — drop the
+            # redundant `ix_spray_records_client_submission_id` plain index
+            # left over from earlier deploys that used `index=True` on the
+            # column. The partial unique index handles every lookup.
+            try:
+                conn.execute(text(
+                    "DROP INDEX IF EXISTS ix_spray_records_client_submission_id"
+                ))
+            except Exception as e:
+                print(f"Warning: ix_spray_records_client_submission_id index drop failed: {e}")
 
 
 def get_site_or_404(db: Session, site_id: int) -> Site:

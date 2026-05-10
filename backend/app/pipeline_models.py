@@ -92,8 +92,10 @@ class SprayRecord(Base):
         index=True,
     )
     # Idempotency key for offline-queued pipeline lease sheets. Mirrors
-    # SiteSprayRecord.client_submission_id — see that field's docstring.
-    client_submission_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    # SiteSprayRecord.client_submission_id — see that field's docstring,
+    # including the explanation for why `index=True` is intentionally
+    # absent (the partial unique index covers every lookup we do).
+    client_submission_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     pipeline: Mapped[Pipeline] = relationship(back_populates="spray_records")
     # String-keyed target class to avoid importing models.py (circular-

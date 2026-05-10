@@ -25,7 +25,7 @@
 
       1. `#root` starts at `opacity: 0` and is only revealed when the
          `.pv-ready` class is added (by window.__pineviewHideSplash or
-         the 15 s safety timer). This means *any* React renders during
+         the 8 s safety timer). This means *any* React renders during
          the splash window — including a stale old bundle briefly
          rendering the offline fallback before the SW auto-reloads —
          paint completely invisibly. The user can never see them leak
@@ -132,6 +132,14 @@
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#09111f;color:#e5eefb;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:1.5rem;text-align:center;z-index:10000;">
+        <div style="max-width:22rem;">
+          <div style="font-size:1.05rem;font-weight:600;letter-spacing:0.04em;margin-bottom:0.5rem;">Pineview Maps</div>
+          <div style="font-size:0.85rem;color:#9bb0d2;line-height:1.5;">This app needs JavaScript to run. Please enable JavaScript in your browser settings and reload the page.</div>
+        </div>
+      </div>
+    </noscript>
     <div id="pv-splash" role="status" aria-live="polite" aria-label="Loading Pineview">
       <div class="pv-splash-inner">
         <img class="pv-splash-logo" src="/icon-192.png" alt="" width="96" height="96" />
@@ -149,15 +157,18 @@
         if (r) r.classList.add('pv-ready');
       }
       // Safety net: if main.jsx fails to load (e.g. extreme cold start or
-      // network blip), hide the splash AND reveal #root after 15 s so the
+      // network blip), hide the splash AND reveal #root after 8 s so the
       // user sees the underlying error / empty state instead of an
       // indefinite spinner (or, worse, an invisible #root + empty splash
-      // bg).
+      // bg). 8 s comfortably covers a Render free-tier cold start (~3 s)
+      // plus the JS bundle download and React mount on a slow phone — on
+      // a real wedge, surfacing the underlying state 7 s sooner is the
+      // better UX than letting the worker stare at the spinner.
       window.__pineviewSplashFallbackTimer = setTimeout(function () {
         var el = document.getElementById('pv-splash');
         if (el) el.classList.add('pv-splash-hidden');
         pvRevealRoot();
-      }, 15000);
+      }, 8000);
       window.__pineviewHideSplash = function () {
         clearTimeout(window.__pineviewSplashFallbackTimer);
         // Reveal #root slightly before the splash starts fading so the

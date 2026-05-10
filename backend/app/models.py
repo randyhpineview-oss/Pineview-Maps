@@ -181,7 +181,15 @@ class SiteSprayRecord(Base):
     # drops *after* the server processed the request but before the client
     # got the 200. Nullable for legacy rows (pre-migration); enforced via a
     # partial unique index in _migrate_add_columns().
-    client_submission_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    #
+    # No `index=True` here on purpose: the partial unique index
+    # (`uq_site_spray_records_client_submission_id`) created in
+    # _migrate_add_columns() already covers every equality lookup we do
+    # against this column. A second plain index on the same column would
+    # be dead weight on writes. The redundant `ix_site_spray_records_*`
+    # index that earlier deploys created via `index=True` is dropped on
+    # startup by the same migration block.
+    client_submission_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     site: Mapped[Site] = relationship(back_populates="spray_records")
     tm_ticket: Mapped["TimeMaterialsTicket | None"] = relationship(
