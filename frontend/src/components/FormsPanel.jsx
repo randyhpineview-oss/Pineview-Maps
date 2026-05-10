@@ -179,6 +179,14 @@ export default function FormsPanel({
   uploadTabSignal = 0,
   clients = [],          // shared global client list from the map's pins
   areas = [],            // shared global area list from the map's pins
+  // Optional helper from App.jsx — returns the area subset that
+  // belongs to a given client (derived from sites + pipelines, same
+  // logic FilterBar / AddPinForm / ApproveEditModal use). When
+  // provided, the New T&M Ticket modal narrows its Area dropdown to
+  // those areas so workers don't see every area in the company once
+  // they've picked a client. Falls back to the full `areas` list
+  // when not supplied (older callers stay unchanged).
+  getAreasForClient = null,
   onViewPdf,
   onEditRecord,
   onDeleteRecord,    // delete lease sheet (admin/office only)
@@ -266,6 +274,27 @@ export default function FormsPanel({
   const [newTMArea, setNewTMArea] = useState('');
   const [newTMDesc, setNewTMDesc] = useState('');
   const [newTMBusy, setNewTMBusy] = useState(false);
+
+  // Areas scoped to the currently-selected client in the New T&M modal.
+  // When no client is picked yet, fall back to the full list so the
+  // dropdown isn't empty before the user has committed to a client.
+  // When the helper isn't provided (legacy callers), also fall back to
+  // the full list so the dropdown still works.
+  const newTMAreaOptions = useMemo(() => {
+    if (!newTMClient || typeof getAreasForClient !== 'function') return areas;
+    return getAreasForClient(newTMClient);
+  }, [getAreasForClient, newTMClient, areas]);
+
+  // If the user picks a client whose scoped area list doesn't include
+  // the previously-selected area (e.g. they switched clients after
+  // already filling Area), clear the stale value so the form can't be
+  // submitted with a client/area mismatch. Skip when the area is empty
+  // already — nothing to clear.
+  useEffect(() => {
+    if (!newTMArea) return;
+    if (newTMAreaOptions.includes(newTMArea)) return;
+    setNewTMArea('');
+  }, [newTMAreaOptions, newTMArea]);
 
   // Debounced search
   const [searchInput, setSearchInput] = useState('');
@@ -1051,16 +1080,20 @@ export default function FormsPanel({
               <select
                 value={newTMArea}
                 onChange={(e) => setNewTMArea(e.target.value)}
+                disabled={!newTMClient}
                 style={{
                   padding: '8px 10px',
                   borderRadius: '6px',
                   border: '1px solid #374151',
                   background: '#0b1220',
                   color: '#f9fafb',
+                  opacity: newTMClient ? 1 : 0.6,
                 }}
               >
-                <option value="">-- Select area --</option>
-                {areas.map((a) => (
+                <option value="">
+                  {newTMClient ? '-- Select area --' : '-- Select client first --'}
+                </option>
+                {newTMAreaOptions.map((a) => (
                   <option key={a} value={a}>{a}</option>
                 ))}
               </select>

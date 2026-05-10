@@ -5486,6 +5486,11 @@ export default function App() {
               uploadTabSignal={uploadTabSignal}
               clients={clients}
               areas={areas}
+              // Same client→area narrowing helper used by every other
+              // form (lease sheet, AddPin, ApproveEditModal, …) — keeps
+              // the New T&M modal's Area dropdown scoped to the picked
+              // client so workers don't see every area in the company.
+              getAreasForClient={getAreasForClient}
               onViewPdf={(record) => setPreviewingRecord(record)}
               onEditRecord={(record) => openEditRecord(record)}
               onDeleteRecord={async (record) => {
