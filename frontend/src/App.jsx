@@ -28,12 +28,14 @@ import {
   getUsers,
   getWatermarks,
   queueAction,
+  putUser,
   queueUpload,
   removePipeline,
   removeQueuedAction,
   removeRecentById,
   removeUploadEntry,
   removeSite,
+  removeUserById,
   replaceLookups,
   replacePipelines,
   replaceRecents,
@@ -1300,22 +1302,55 @@ export default function App() {
           // next file's 0%, hiding the "this file is done" beat.
           setCurrentItemPercent(100);
         } catch (err) {
-          // Auth failure: break the loop immediately so we don't churn
-          // through every remaining item with the same stale token —
-          // previously this produced a silent XHR storm in the
-          // background (one failed request per queued item, per poll
-          // tick). The next poll cycle will retry; by then Supabase
-          // should have refreshed the access token automatically.
+          // ── Auth failure: try a one-shot session refresh ─────────────
+          // 401/403 typically means the access token expired. Supabase's
+          // auto-refresh covers most cases, but if the queue picked up
+          // an item between the token's expiry and the SDK's refresh
+          // call we hit this branch. Try `refreshSession()` once before
+          // giving up; on success keep the queue moving (subsequent
+          // items use the fresh token automatically because
+          // `requestWithUploadProgress` reads from the current session
+          // on every call). The failed item itself isn't retried this
+          // pass — it'll come around on the next poll tick or the
+          // SIGNED_IN/TOKEN_REFRESHED kick — and we deliberately do NOT
+          // bump its attempts counter because the failure was
+          // recoverable, not a payload problem.
           if (err?.status === 401 || err?.status === 403) {
-            console.warn('[UPLOAD_QUEUE] Auth failed (', err.status, ') — pausing queue until next cycle');
+            try {
+              const { data, error } = await supabase.auth.refreshSession();
+              if (!error && data?.session) {
+                console.info('[UPLOAD_QUEUE] Session refreshed after', err.status, '— continuing with next item');
+                continue;
+              }
+            } catch { /* fall through to break */ }
+            console.warn('[UPLOAD_QUEUE] Auth failed (', err.status, ') and refresh failed — pausing queue until next cycle');
             break;
           }
-          // Track attempts + last error so persistent failures don't
-          // loop forever. After MAX_ATTEMPTS we flip the item to
-          // 'stalled' (see skip-check above) — it stays in IDB so
-          // the worker can still see it in their Uploading list, but
-          // we stop auto-retrying. Short error messages only so we
-          // don't bloat IDB with huge payload dumps on 5xx HTML bodies.
+          // ── Validation failure: permanent ─────────────────────────────
+          // 400 / 422 means the payload will never be accepted as-is
+          // (missing required field, malformed value, schema mismatch).
+          // Retrying MAX_ATTEMPTS times before stalling wastes worker
+          // bandwidth and delays surfacing the broken item in the
+          // Uploading list. Flip to 'stalled' immediately.
+          if (err?.status === 400 || err?.status === 422) {
+            try {
+              await updateUploadEntry(item.id, {
+                attempts: (item.attempts || 0) + 1,
+                lastErrorStatus: err.status,
+                lastErrorMessage: String(err?.message || err).slice(0, 200),
+                status: 'stalled',
+              });
+            } catch { /* non-fatal */ }
+            console.warn('[UPLOAD_QUEUE] Permanent failure (', err.status, ') on item', item.id, ':', err?.message || err);
+            continue;
+          }
+          // ── Transient failure: track attempts, ramp to stalled ────────
+          // Persistent 5xx, network flakes, etc. After MAX_ATTEMPTS we
+          // flip the item to 'stalled' (see skip-check above) — it
+          // stays in IDB so the worker can still see it in their
+          // Uploading list, but we stop auto-retrying. Short error
+          // messages only so we don't bloat IDB with huge payload dumps
+          // on 5xx HTML bodies.
           const MAX_ATTEMPTS = 5;
           const attempts = (item.attempts || 0) + 1;
           try {
@@ -1554,6 +1589,15 @@ export default function App() {
     }
   }, [isRefreshing, refreshAllData, refreshQueueCount, refreshUploadQueue]);
 
+  // Ref-mirror of processUploadQueue so the auth-state-change listener
+  // (whose useEffect runs once with [] deps) can call the latest version
+  // without re-subscribing every time the callback identity updates. Used
+  // for the SIGNED_IN / TOKEN_REFRESHED queue-drain trigger.
+  const processUploadQueueRef = useRef(processUploadQueue);
+  useEffect(() => {
+    processUploadQueueRef.current = processUploadQueue;
+  }, [processUploadQueue]);
+
   useEffect(() => {
     let mounted = true;
     
@@ -1569,6 +1613,17 @@ export default function App() {
               localStorage.setItem('supabase-access-token', authSession.access_token);
             } else {
               localStorage.removeItem('supabase-access-token');
+            }
+
+            // Drain the upload queue when we get a fresh token. Covers
+            // two cases that previously left items stuck for up to 5 min
+            // (the next poll tick) before retry:
+            //   • SIGNED_IN — worker logs back in after a sign-out
+            //   • TOKEN_REFRESHED — Supabase auto-refresh succeeded
+            //     (e.g. after the in-loop refresh in processUploadQueue
+            //     above), so any remaining queue items can now go.
+            if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && window.navigator.onLine) {
+              try { processUploadQueueRef.current?.(); } catch { /* non-fatal */ }
             }
           }
         });
@@ -2145,19 +2200,40 @@ export default function App() {
     if (!supabase || !user || !window.navigator.onLine) return;
 
     // ── helpers used by every handler ────────────────────────────────────
+    //
+    // Supabase Realtime (via wal2json) can deliver integer column values
+    // as strings, e.g. `id: "123"` instead of `id: 123`. The rest of the
+    // app (API responses, IndexedDB cache, optimistic mutations) uses
+    // numeric ids, so a string here creates a ghost duplicate in every
+    // `setSites` Map/findIndex keyed by `row.id` — the root cause of the
+    // "reject leaves orange ! on the map" bug.  We coerce all known
+    // integer FK / id columns at this single gate so downstream
+    // comparisons (`row.id === sel.id`, `r.site_id === selectedSite.id`,
+    // …) don't have to repeat the check at every callsite.
+    //
+    // Why an explicit allowlist (and not a blanket "if value is a string
+    // that parses to a number, coerce it"): some text columns happen to
+    // be all-digits (ticket numbers like "00001", lsd labels, etc.) and
+    // we don't want to silently re-type those.
+    const INT_COLUMNS = [
+      'id',
+      'site_id',
+      'pipeline_id',
+      'tm_ticket_id',
+      'spray_record_id',
+      'created_by_user_id',
+      'approved_by_user_id',
+      'deleted_by_user_id',
+    ];
+    const coerceIntColumn = (row, key) => {
+      if (row[key] == null || typeof row[key] !== 'string') return;
+      const n = Number(row[key]);
+      if (!Number.isNaN(n)) row[key] = n;
+    };
     const rowOf = (payload) => {
       const row = payload.eventType === 'DELETE' ? payload.old : payload.new;
-      // Supabase Realtime (via wal2json) can deliver integer column
-      // values as strings, e.g. id: "123" instead of id: 123. The
-      // rest of the app (API responses, IndexedDB cache, optimistic
-      // mutations) uses numeric ids, so a string here would create a
-      // ghost duplicate in every `setSites` Map/findIndex keyed by
-      // `row.id` — the root cause of the "reject leaves orange ! on
-      // the map" bug.  Coerce once, at the gate.
-      if (row && row.id != null && typeof row.id === 'string') {
-        const n = Number(row.id);
-        if (!Number.isNaN(n)) row.id = n;
-      }
+      if (!row) return row;
+      for (const key of INT_COLUMNS) coerceIntColumn(row, key);
       return row;
     };
     const merge = (existing, incoming) => (existing ? { ...existing, ...incoming } : incoming);
@@ -2379,13 +2455,19 @@ export default function App() {
       const row = rowOf(payload);
       if (!row || row.id == null) return;
       setCachedUsers((prev) => {
-        let next;
-        if (payload.eventType === 'DELETE') next = removeById(prev, row.id);
-        else next = upsertById(prev, row);
-        // Persist asynchronously (replace is idempotent)
-        void replaceUsers(next);
-        return next;
+        if (payload.eventType === 'DELETE') return removeById(prev, row.id);
+        return upsertById(prev, row);
       });
+      // Persist the single-row change directly to IDB. Previously this
+      // path called `replaceUsers(entire list)` which clear()s the
+      // `users` store and re-puts every row — O(n) writes on every
+      // Realtime user event. `putUser` / `removeUserById` are O(1) and
+      // semantically equivalent because the store's keyPath is `id`.
+      if (payload.eventType === 'DELETE') {
+        void removeUserById(row.id);
+      } else {
+        void putUser(row);
+      }
     };
 
     // ── lookup tables (herbicides / applicators / weeds / locations) ─────

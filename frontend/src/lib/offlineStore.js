@@ -216,6 +216,24 @@ export async function getUsers() {
   return db.getAll('users');
 }
 
+// Per-row upsert / delete used by Realtime user events. Cheaper than
+// `replaceUsers(entire list)` for a one-row change: O(1) IDB write
+// instead of clear + rewrite of the whole store. The full-list
+// `replaceUsers` is still used for the initial bootstrap after a
+// `api.listUsers()` round-trip — that path naturally wants to wipe and
+// re-seed in one shot.
+export async function putUser(user) {
+  if (!user || user.id == null) return;
+  const db = await dbPromise;
+  await db.put('users', user);
+}
+
+export async function removeUserById(id) {
+  if (id == null) return;
+  const db = await dbPromise;
+  await db.delete('users', id);
+}
+
 // ── Upload queue (background lease sheet / spray record uploads) ──
 
 export async function queueUpload(entry) {
@@ -371,12 +389,29 @@ export async function upsertTMTicket(ticket) {
   await db.put('tmTickets', ticket);
 }
 
+// Spread-merges incoming ticket payloads into existing cache rows.
+//
+// The /api/time-materials/delta endpoint now ships a slim row that
+// omits `office_data` and `approved_signature` (see backend
+// `TimeMaterialsTicketDeltaRow`) to cut admin egress. The detail-view
+// IDB store, however, is meant to hold the FULL ticket so
+// `TMTicketDetailSheet` can open offline. If we naively `put(slimRow)`
+// here we'd clobber any heavy fields previously warmed by a full-list
+// fetch or a detail-view open.
+//
+// Spread-merge gives us the best of both: keys present in `t` overwrite
+// (status flips, edits, etc. propagate); keys NOT present in `t`
+// preserve the existing cached value (heavy fields stay intact). New
+// tickets that have never been cached are written as-is — the detail
+// view will fill in the heavy fields when the user opens it.
 export async function upsertTMTickets(tickets) {
   if (!Array.isArray(tickets) || tickets.length === 0) return;
   const db = await dbPromise;
   const tx = db.transaction('tmTickets', 'readwrite');
   for (const t of tickets) {
-    if (t && t.id) await tx.store.put(t);
+    if (!t || t.id == null) continue;
+    const existing = await tx.store.get(t.id);
+    await tx.store.put(existing ? { ...existing, ...t } : t);
   }
   await tx.done;
 }

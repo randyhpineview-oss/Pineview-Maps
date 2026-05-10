@@ -28,6 +28,7 @@ from app.pipeline_models import SprayRecord as PipelineSprayRecord
 from app.schemas import (
     TimeMaterialsRowRead,
     TimeMaterialsTicketCreate,
+    TimeMaterialsTicketDeltaRow,
     TimeMaterialsTicketRead,
     TimeMaterialsTicketUpdate,
     TMTicketsDeltaResponse,
@@ -395,13 +396,27 @@ def tm_tickets_delta(
     )
     rows = base.order_by(TimeMaterialsTicket.updated_at.desc()).limit(500).all()
 
-    items: list[TimeMaterialsTicketRead] = []
+    # Construct slim rows directly. The delta payload deliberately
+    # omits ``office_data`` and ``approved_signature`` (see the
+    # ``TimeMaterialsTicketDeltaRow`` docstring) — list views never
+    # read either field, and detail open via
+    # ``GET /api/time-materials/{ticket_id}`` still returns the full
+    # ``TimeMaterialsTicketRead`` for editing / signature preview. This
+    # cuts ~30–50 KB per signed ticket out of every poll-tick payload
+    # for admin / office users.
+    #
+    # We also no longer call ``_strip_office_fields_for_worker`` here:
+    # the slim schema already excludes both fields it would strip
+    # (``office_data.lines[*].rate`` is moot once ``office_data`` is
+    # gone, and ``approved_signature`` is gone too), so worker and
+    # admin payloads are now identical on /delta.
+    items: list[TimeMaterialsTicketDeltaRow] = []
     ids_removed: list[int] = []
     for t in rows:
         if t.deleted_at is not None:
             ids_removed.append(t.id)
         else:
-            items.append(_strip_office_fields_for_worker(t, current_user))
+            items.append(TimeMaterialsTicketDeltaRow.model_validate(t))
 
     return TMTicketsDeltaResponse(
         items=items,

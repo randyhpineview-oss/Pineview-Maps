@@ -182,13 +182,50 @@ def startup_event() -> None:
             print(f"Warning: Could not reset sites_id_seq: {e}")
 
 
+# Schema migration version. BUMP THIS WHENEVER YOU CHANGE THE BODY OF
+# `_migrate_add_columns()` — adding a new column, a new index, an ALTER
+# TYPE, anything. Forgetting to bump means existing databases skip the
+# new migration on subsequent boots; it'll still run correctly on a
+# fresh DB because the schema_meta SELECT returns NULL there.
+#
+# Format: an opaque-but-meaningful string. Date-prefix + initial keeps
+# bumps obvious in git blame. The exact value doesn't matter as long as
+# it differs from any prior committed value.
+_MIGRATION_VERSION = "2026-05-09-a"
+
+
 def _migrate_add_columns() -> None:
-    """Add columns that create_all() won't add to existing tables."""
+    """Add columns that create_all() won't add to existing tables.
+
+    Short-circuits when ``schema_meta.migration_version`` already
+    matches ``_MIGRATION_VERSION`` so cold starts on Render don't pay
+    the ~200 ms of inspect() reflection + redundant CREATE INDEX
+    round-trips on every container wake. Idempotent on first run
+    against any DB (fresh or already-migrated).
+    """
     if engine is None:
         return
-    insp = inspect(engine)
-    
+
     is_sqlite = str(engine.url).startswith("sqlite")
+
+    # ── Short-circuit: skip the body if this DB is already on the
+    # current MIGRATION_VERSION. The schema_meta table itself is
+    # idempotently created here so the very first run after this
+    # function ships works on existing prod DBs without a manual step.
+    with engine.begin() as conn:
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS schema_meta ("
+            " key TEXT PRIMARY KEY,"
+            " value TEXT NOT NULL"
+            ")"
+        ))
+        current = conn.execute(text(
+            "SELECT value FROM schema_meta WHERE key = 'migration_version'"
+        )).scalar()
+    if current == _MIGRATION_VERSION:
+        return
+
+    insp = inspect(engine)
     with engine.begin() as conn:
         if not is_sqlite:
             try:
@@ -394,6 +431,36 @@ def _migrate_add_columns() -> None:
                 ))
             except Exception as e:
                 print(f"Warning: ix_spray_records_client_submission_id index drop failed: {e}")
+
+    # ── Stamp schema_meta so subsequent cold starts can short-circuit.
+    # Done in its own transaction so the migrations above commit even if
+    # this UPSERT trips. Postgres + SQLite (3.24+) both support
+    # `ON CONFLICT(key) DO UPDATE`. We branch the SQL only because
+    # SQLite's parameter substitution differs slightly across drivers
+    # we've used in the past — keeping it explicit is safer than
+    # debugging a binding edge case at startup.
+    try:
+        with engine.begin() as conn:
+            if is_sqlite:
+                conn.execute(
+                    text(
+                        "INSERT INTO schema_meta(key, value) VALUES('migration_version', :v) "
+                        "ON CONFLICT(key) DO UPDATE SET value = :v"
+                    ),
+                    {"v": _MIGRATION_VERSION},
+                )
+            else:
+                conn.execute(
+                    text(
+                        "INSERT INTO schema_meta(key, value) VALUES('migration_version', :v) "
+                        "ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value"
+                    ),
+                    {"v": _MIGRATION_VERSION},
+                )
+    except Exception as e:
+        # Non-fatal: the next cold start will just re-run the migrations
+        # (which are all idempotent). Logging is enough.
+        print(f"Warning: schema_meta version stamp failed: {e}")
 
 
 def get_site_or_404(db: Session, site_id: int) -> Site:
@@ -2190,10 +2257,18 @@ async def pdf_proxy(
             resp = await client.get(download_url)
             if resp.status_code != 200:
                 raise HTTPException(status_code=502, detail=f"Dropbox returned {resp.status_code}")
+            # Lease-sheet PDFs are immutable in practice (admin re-upload
+            # is rare). `private` because the endpoint is auth-gated —
+            # the requesting browser may cache, but shared caches /
+            # proxies must not. 1 hour balances repeat-view egress
+            # savings against the unlikely re-upload staleness window.
             return StreamingResponse(
                 iter([resp.content]),
                 media_type="application/pdf",
-                headers={"Content-Disposition": "inline; filename=lease_sheet.pdf"},
+                headers={
+                    "Content-Disposition": "inline; filename=lease_sheet.pdf",
+                    "Cache-Control": "private, max-age=3600",
+                },
             )
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="Timeout fetching PDF from Dropbox")
@@ -2241,7 +2316,15 @@ async def proxy_photo(
             # Convert to base64
             base64_data = base64.b64encode(resp.content).decode("utf-8")
             
-            return {"data": base64_data, "type": content_type}
+            # Same caching rationale as pdf_proxy above: photos are
+            # immutable in practice; `private` keeps the response out of
+            # shared caches because the endpoint is auth-gated; 1 hour
+            # max-age cuts repeat-view egress on the worker's device
+            # (gallery scrubs, lease-sheet preview re-opens, etc.).
+            return JSONResponse(
+                content={"data": base64_data, "type": content_type},
+                headers={"Cache-Control": "private, max-age=3600"},
+            )
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="Timeout fetching image from Dropbox")
     except Exception as e:

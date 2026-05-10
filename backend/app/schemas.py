@@ -447,6 +447,50 @@ class TimeMaterialsTicketRead(BaseModel):
     rows: list[TimeMaterialsRowRead] = Field(default_factory=list)
 
 
+class TimeMaterialsTicketDeltaRow(BaseModel):
+    """Slim view of a T&M ticket for the /delta endpoint.
+
+    Mirrors `TimeMaterialsTicketRead` but deliberately omits the two
+    heaviest fields:
+
+      * ``office_data`` — typically a few KB of pricing JSON, but only
+        consumed by the detail view (admin/office editing) and the PDF
+        generator (which already re-fetches the full row before render).
+      * ``approved_signature`` — base64-encoded PNG, ~30–50 KB per row.
+        Only ever rendered in the detail-sheet preview and the
+        signature-pad modal; the list view never reads it.
+
+    Detail open via ``GET /api/time-materials/{ticket_id}`` still returns
+    the full ``TimeMaterialsTicketRead``, so neither field is lost — they
+    just don't ship on every poll-tick of every admin's FormsPanel.
+
+    Frontend cache merge note: the FormsPanel writes delta items into
+    the offline ``tmTickets`` IndexedDB store. ``upsertTMTickets`` does a
+    spread-merge against any existing cache row, so a slim payload coming
+    over the wire never clobbers heavy fields that were warmed by an
+    earlier full-list fetch or detail open.
+    """
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    ticket_number: str
+    spray_date: date
+    client: str
+    area: str
+    description_of_work: str | None = None
+    po_approval_number: str | None = None
+    created_by_user_id: int | None = None
+    created_by_name: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    pdf_url: str | None = None
+    approved_by_user_id: int | None = None
+    approved_by_name: str | None = None
+    approved_at: datetime | None = None
+    status: TMTicketStatus
+    rows: list[TimeMaterialsRowRead] = Field(default_factory=list)
+
+
 class TMTicketsDeltaResponse(BaseModel):
     """Incremental T&M tickets update — see /api/time-materials/delta.
 
@@ -455,7 +499,7 @@ class TMTicketsDeltaResponse(BaseModel):
     frontend should drop them from its local cache.
     `server_time` — pass this back as `?since=` on the next call.
     """
-    items: list[TimeMaterialsTicketRead]
+    items: list[TimeMaterialsTicketDeltaRow]
     ids_removed: list[int]
     server_time: datetime
 
