@@ -771,6 +771,17 @@ export default function QuoteBuilder({
       })).map((li) => ({ ...li, subtotal: computeLineSubtotal(li) }));
       setLineItems(lines);
       setSubmittedQuote(null);
+      // CRITICAL: drop any cached peek from the previous quote in this
+      // session. Without this, peekQuoteNumberCached() short-circuits on
+      // the stale value, generateQuotePdf() bakes the OLD quote number
+      // into the PDF bytes, and the backend then UNIQUE-collides on
+      // insert and silently retries with nextval — producing a row whose
+      // quote_number (e.g. Q000004) doesn't match the number rendered on
+      // its uploaded PDF (still Q000003). Clearing here forces a fresh
+      // peek on the next Preview/Submit so all three (DB row, Dropbox
+      // path, PDF content) agree.
+      setPeekedQuoteNumber('');
+      setPreviewBase64('');
       setSubmitError('');
       setActiveTab(TAB_NEW);
     } catch (e) {
