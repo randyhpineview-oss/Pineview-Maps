@@ -510,6 +510,66 @@ export const api = {
     // cold DB connection. Still small (<2 MB), so a 60s ceiling is plenty.
     return request(`/api/admin/reports/spray-records/preview?${sp.toString()}`, { timeoutMs: 60_000 });
   },
+  // ── Quote Builder (admin/office only) ──
+  // Catalog + submitted-quote endpoints. Like the Reports endpoints above,
+  // these are ONLY hit when the Quote Builder overlay is open — there's no
+  // background polling, so worker sessions never touch them.
+  getQuoteRates() {
+    return request('/api/quote-rates');
+  },
+  createQuoteCategory(payload) {
+    return request('/api/quote-rates/categories', { method: 'POST', body: payload });
+  },
+  updateQuoteCategory(id, payload) {
+    return request(`/api/quote-rates/categories/${id}`, { method: 'PATCH', body: payload });
+  },
+  deleteQuoteCategory(id) {
+    return request(`/api/quote-rates/categories/${id}`, { method: 'DELETE' });
+  },
+  createQuoteItem(payload) {
+    return request('/api/quote-rates/items', { method: 'POST', body: payload });
+  },
+  updateQuoteItem(id, payload) {
+    return request(`/api/quote-rates/items/${id}`, { method: 'PATCH', body: payload });
+  },
+  deleteQuoteItem(id) {
+    return request(`/api/quote-rates/items/${id}`, { method: 'DELETE' });
+  },
+  // Submit a finished quote. Server allocates the Q###### number, uploads
+  // the client-generated PDF to Dropbox at /{YYYY} Quotes/{Client}/..., and
+  // returns the full QuoteDetail (incl. assigned number + pdf_url).
+  submitQuote(payload) {
+    // Quote PDF generation + JSON serialization can briefly nudge past
+    // the default 20s on a slow Dropbox upload; bump the ceiling so a
+    // mid-flight timeout doesn't burn the sequence value.
+    return request('/api/quotes', { method: 'POST', body: payload, timeoutMs: 45_000 });
+  },
+  listRecentQuotes({ limit, offset, client, from, to } = {}) {
+    const params = new URLSearchParams();
+    if (limit != null) params.set('limit', String(limit));
+    if (offset != null) params.set('offset', String(offset));
+    if (client) params.set('client', client);
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    const query = params.toString();
+    return request(`/api/quotes/recent${query ? `?${query}` : ''}`);
+  },
+  listDeletedQuotes() {
+    return request('/api/quotes/deleted');
+  },
+  getQuote(id) {
+    return request(`/api/quotes/${id}`);
+  },
+  deleteQuote(id) {
+    return request(`/api/quotes/${id}`, { method: 'DELETE' });
+  },
+  restoreQuote(id) {
+    return request(`/api/quotes/${id}/restore`, { method: 'POST' });
+  },
+  deleteQuotePermanent(id) {
+    return request(`/api/quotes/${id}/permanent`, { method: 'DELETE' });
+  },
+
   /**
    * Download a CSV report. Uses `fetch` directly (not `request`) because we
    * need a binary stream to land in a Blob rather than JSON parsing. Returns

@@ -328,6 +328,116 @@ class TimeMaterialsRow(Base):
     )
 
 
+class QuoteRateCategory(Base):
+    """A category in the Quote Builder rate catalog (e.g., Hydroseeding,
+    Herbicide Application, Drone Mapping, Drone Seeding).
+
+    Edited only via the Settings tab inside the Quote Builder overlay — NOT
+    via the existing Lookup Tables panel. Schema mirrors the existing lookup
+    tables (id, name, sort_order, is_active, timestamps).
+    """
+    __tablename__ = "quote_rate_categories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    items: Mapped[list["QuoteRateItem"]] = relationship(
+        back_populates="category",
+        cascade="all, delete-orphan",
+        order_by="QuoteRateItem.sort_order",
+    )
+
+
+class QuoteRateItem(Base):
+    """A single line-item rate inside a category. Each row is one priced
+    entry the user can pick when assembling a quote (e.g. "T400 Hydroseeder"
+    at $425/hr, "Seed (per bag)" at $750/22.8 kg bag).
+
+    `default_markup_pct` is NULL for normal items. When set (e.g., 10.0 for
+    "Seed (sourced at cost)"), the quote builder renders an inline
+    "+X% (label)" checkbox on the line and adds the markup to the subtotal
+    via `qty × rate × (1 + pct/100)`.
+    """
+    __tablename__ = "quote_rate_items"
+    __table_args__ = (
+        UniqueConstraint("category_id", "name", name="uq_quote_rate_items_category_name"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    category_id: Mapped[int] = mapped_column(
+        ForeignKey("quote_rate_categories.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    unit: Mapped[str] = mapped_column(String(60), nullable=False, default="")
+    rate: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False, default=0)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    default_markup_pct: Mapped[float | None] = mapped_column(Numeric(6, 2), nullable=True)
+    default_markup_label: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    category: Mapped[QuoteRateCategory] = relationship(back_populates="items")
+
+
+class Quote(Base):
+    """A submitted quote. The full line-item array is kept as JSONB
+    (`line_items_json`) so we don't need a separate quote_lines table — the
+    catalog can drift after submission without breaking historical quotes.
+
+    Soft-delete via `deleted_at` matches the spray-records / TM-ticket
+    pattern so AdminPanel → Recent Deletes can surface restorable rows.
+    """
+    __tablename__ = "quotes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    quote_number: Mapped[str] = mapped_column(String(20), nullable=False, unique=True, index=True)
+    client: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    area: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    project_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    quote_date: Mapped[datetime] = mapped_column(Date, nullable=False, index=True)
+    mix_categories: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    tax_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    tax_label: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    tax_rate: Mapped[float | None] = mapped_column(Numeric(6, 3), nullable=True)
+    subtotal: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    tax_amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    grand_total: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    line_items_json: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pdf_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    created_by_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_by_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    deleted_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+
+
 class PasswordResetCode(Base):
     """Model for storing 6-digit password reset codes.
     

@@ -109,6 +109,13 @@ export default function AdminPanel({
   // Opens the full-page Reports overlay. Admin/office only — button is
   // only rendered when a handler is supplied.
   onOpenReports,
+  // Opens the full-page Quote Builder overlay. Same admin/office gating
+  // as Reports — only rendered when a handler is supplied.
+  onOpenQuotes,
+  // Soft-deleted quotes (same Recent Deletes pattern as lease sheets / TM).
+  deletedQuotes = [],
+  onRestoreQuote,
+  onDeleteQuotePermanent,
 }) {
   const { confirm } = useDialog();
   const [file, setFile] = useState(null);
@@ -176,7 +183,8 @@ export default function AdminPanel({
     deletedSites.length +
     deletedPipelines.length +
     deletedLeaseSheets.length +
-    deletedTMTickets.length;
+    deletedTMTickets.length +
+    deletedQuotes.length;
 
   async function handleBulkDeleteAllPermanent() {
     if (deletedCount === 0) return;
@@ -210,6 +218,24 @@ export default function AdminPanel({
               onClick={onOpenReports}
             >
               Open Reports
+            </button>
+          </div>
+        ) : null}
+        {/* Quote Builder entry point. Same admin/office gating as Reports —
+            the parent only supplies onOpenQuotes for roleCanAdmin sessions.
+            Tapping this lazy-loads QuoteBuilder.jsx on demand. */}
+        {onOpenQuotes ? (
+          <div className="site-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <div>
+              <strong>📝 Quote Builder</strong>
+              <div className="small-text">Build quotes from the 2026 rate catalog — Hydroseeding, Herbicide, Drone.</div>
+            </div>
+            <button
+              className="primary-button"
+              type="button"
+              onClick={onOpenQuotes}
+            >
+              Open Quotes
             </button>
           </div>
         ) : null}
@@ -419,6 +445,39 @@ export default function AdminPanel({
                           okLabel: 'Delete forever',
                         })) {
                           onDeleteTMTicketPermanent?.(ticket.id);
+                        }
+                      }} style={{ marginLeft: '0.5rem' }}>
+                        Delete Forever
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {deletedQuotes.map((quote) => (
+                  <div className="site-row" key={`quote-${quote.id}`}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
+                      <div>
+                        <strong>{quote.quote_number || 'No Quote'}</strong>
+                        <div className="small-text">
+                          Quote • {quote.quote_date} • {quote.client || 'No client'}{quote.area ? ` / ${quote.area}` : ''}
+                        </div>
+                        <div className="small-text" style={{ color: '#9ca3af' }}>
+                          Grand total: ${Number(quote.grand_total ?? 0).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                      </div>
+                      <span className="pending-badge" style={{ background: '#64748b' }}>Deleted</span>
+                    </div>
+                    <div className="button-row" style={{ marginTop: '0.75rem' }}>
+                      <button className="primary-button" type="button" disabled={busy} onClick={() => onRestoreQuote?.(quote.id)}>
+                        Restore
+                      </button>
+                      <button className="danger-button" type="button" disabled={busy} onClick={async () => {
+                        if (await confirm({
+                          title: 'Delete forever',
+                          message: `Permanently delete quote "${quote.quote_number || ''}"? This cannot be undone.`,
+                          severity: 'danger',
+                          okLabel: 'Delete forever',
+                        })) {
+                          onDeleteQuotePermanent?.(quote.id);
                         }
                       }} style={{ marginLeft: '0.5rem' }}>
                         Delete Forever

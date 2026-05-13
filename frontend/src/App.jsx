@@ -79,6 +79,9 @@ const TMTicketDetailSheet = lazy(() => import('./components/TMTicketDetailSheet'
 // the user taps "Open Reports" so worker sessions never pay for it, and
 // even an admin who never runs a report never downloads it.
 const ReportsDashboard = lazy(() => import('./components/ReportsDashboard'));
+// Quote Builder is same deal — admin/office only, chunk fetched on demand
+// when the user taps "Open Quotes" in AdminPanel. Workers never download it.
+const QuoteBuilder = lazy(() => import('./components/QuoteBuilder'));
 
 const DEFAULT_FILTERS = { search: '', client: '', area: '', status: '', approval_state: '' };
 const DEFAULT_LAYERS = { lsd: true, water: true, quad_access: true, reclaimed: true, pipelines: true };
@@ -507,6 +510,7 @@ export default function App() {
   const [deletedSites, setDeletedSites] = useState([]);
   const [deletedLeaseSheets, setDeletedLeaseSheets] = useState([]);
   const [deletedTMTickets, setDeletedTMTickets] = useState([]);
+  const [deletedQuotes, setDeletedQuotes] = useState([]);
   const [selectedSite, setSelectedSite] = useState(null);
   const [markerRevision, setMarkerRevision] = useState(0);
   const [message, setMessage] = useState('Loading project data...');
@@ -663,6 +667,7 @@ export default function App() {
   // button clicks, so having it open vs closed has zero egress cost until
   // the user clicks Generate/Download.
   const [showReportsDashboard, setShowReportsDashboard] = useState(false);
+  const [showQuoteBuilder, setShowQuoteBuilder] = useState(false);
   // Token bumped by the poll loop whenever sync-status reports
   // `tm_tickets_last_updated` has moved. FormsPanel listens to it and
   // re-fetches its Open / Recently Submitted T&M lists so users see
@@ -1017,6 +1022,22 @@ export default function App() {
       setDeletedTMTickets(deleted);
     } catch {
       setDeletedTMTickets([]);
+    }
+  }, [roleCanAdmin]);
+
+  // Quote Builder deleted-quotes loader — same shape as the other Recent
+  // Deletes loaders so it can be slotted into AdminPanel without bespoke
+  // wiring. Only admin/office can see deleted quotes.
+  const loadDeletedQuotes = useCallback(async () => {
+    if (!roleCanAdmin || !window.navigator.onLine) {
+      setDeletedQuotes([]);
+      return;
+    }
+    try {
+      const deleted = await api.listDeletedQuotes();
+      setDeletedQuotes(deleted);
+    } catch {
+      setDeletedQuotes([]);
     }
   }, [roleCanAdmin]);
 
@@ -1458,6 +1479,7 @@ export default function App() {
             loadDeletedPipelines(),
             loadDeletedLeaseSheets(),
             loadDeletedTMTickets(),
+            loadDeletedQuotes(),
           ]);
 
           // Seed delta-sync watermarks from sync-status RIGHT AFTER the full
@@ -4584,6 +4606,26 @@ export default function App() {
     });
   }
 
+  // Quote Builder soft-delete restore + permanent. Mirrors the TM ticket
+  // handlers above so AdminPanel's per-row buttons can share their plumbing.
+  async function handleRestoreQuote(quoteId) {
+    await runAdminAction(async () => {
+      await api.restoreQuote(quoteId);
+      await loadDeletedQuotes();
+    }, 'Quote restored successfully.', {
+      optimistic: () => setDeletedQuotes((prev) => prev.filter((q) => q.id !== quoteId)),
+    });
+  }
+
+  async function handleDeleteQuotePermanent(quoteId) {
+    await runAdminAction(async () => {
+      await api.deleteQuotePermanent(quoteId);
+      await loadDeletedQuotes();
+    }, 'Quote permanently deleted.', {
+      optimistic: () => setDeletedQuotes((prev) => prev.filter((q) => q.id !== quoteId)),
+    });
+  }
+
   // Empty the Recent Deletes recycle bin in one action. Mirrors the
   // `handleBulkApprovePending` / `handleBulkRejectPending` shape above so
   // admins get the same "review-then-act-in-bulk" ergonomics in both
@@ -4595,7 +4637,8 @@ export default function App() {
       deletedSites.length +
       deletedPipelines.length +
       deletedLeaseSheets.length +
-      deletedTMTickets.length;
+      deletedTMTickets.length +
+      deletedQuotes.length;
     if (total === 0) return;
     setAdminBusy(true);
     setMessage(`Permanently deleting ${total} item${total === 1 ? '' : 's'}…`);
@@ -4622,13 +4665,17 @@ export default function App() {
       for (const ticket of deletedTMTickets) {
         try { await api.deleteTMTicketPermanent(ticket.id); } catch (error) { failed.push(error); }
       }
-      // Refresh all four deleted-item lists so the UI reflects the purge.
+      for (const quote of deletedQuotes) {
+        try { await api.deleteQuotePermanent(quote.id); } catch (error) { failed.push(error); }
+      }
+      // Refresh all five deleted-item lists so the UI reflects the purge.
       // loadPendingSites doubles as loadDeletedSites (see its body) so we
       // call it here to refresh both lists in one shot.
       await loadPendingSites();
       await loadDeletedPipelines();
       await loadDeletedLeaseSheets();
       await loadDeletedTMTickets();
+      await loadDeletedQuotes();
       const deleted = total - failed.length;
       setMessage(failed.length > 0
         ? `Permanently deleted ${deleted} of ${total}. ${failed.length} failed.`
@@ -5845,6 +5892,10 @@ export default function App() {
               // makes the intent explicit and keeps the button from
               // appearing if an admin flips on "View as Worker".
               onOpenReports={roleCanAdmin ? () => setShowReportsDashboard(true) : undefined}
+              onOpenQuotes={roleCanAdmin ? () => setShowQuoteBuilder(true) : undefined}
+              deletedQuotes={deletedQuotes}
+              onRestoreQuote={handleRestoreQuote}
+              onDeleteQuotePermanent={handleDeleteQuotePermanent}
             />
             </Suspense>
           </div>
@@ -5860,6 +5911,24 @@ export default function App() {
           <ReportsDashboard
             onClose={() => setShowReportsDashboard(false)}
             cachedLookups={cachedLookups}
+          />
+        </Suspense>
+      ) : null}
+
+      {/* ── Quote Builder (admin/office full-page overlay) ──
+          Same pattern as ReportsDashboard: only mounted while open, lazy
+          chunk fetched on first open, no background polling. Closes if
+          role downgrades (View as Worker) thanks to the roleCanAdmin
+          guard, which mirrors the Reports overlay above. onQuotesChanged
+          refreshes the deleted-quotes list so AdminPanel reflects soft
+          deletes the user performs from the Recent Quotes tab. */}
+      {showQuoteBuilder && roleCanAdmin ? (
+        <Suspense fallback={null}>
+          <QuoteBuilder
+            onClose={() => setShowQuoteBuilder(false)}
+            onQuotesChanged={loadDeletedQuotes}
+            clients={clients}
+            areas={areas}
           />
         </Suspense>
       ) : null}

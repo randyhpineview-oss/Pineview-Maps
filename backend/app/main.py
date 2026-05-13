@@ -23,10 +23,15 @@ from app.user_management import router as user_management_router
 from app.pipeline_routes import router as pipeline_router
 from app.lookup_routes import router as lookup_router
 from app.reports_routes import router as reports_router
+from app.quote_rates_routes import router as quote_rates_router
+from app.quotes_routes import router as quotes_router
 from app.pipeline_models import Pipeline, SprayRecord  # noqa: F401 — ensure tables are registered
 from app.models import (
     ApprovalState,
     PinType,
+    Quote,
+    QuoteRateCategory,
+    QuoteRateItem,
     RoleEnum,
     Site,
     SiteSprayRecord,
@@ -113,6 +118,8 @@ app.include_router(pipeline_router)
 app.include_router(lookup_router)
 app.include_router(time_materials_router)
 app.include_router(reports_router)
+app.include_router(quote_rates_router)
+app.include_router(quotes_router)
 
 
 # Global exception handler. Logs the full traceback server-side and
@@ -191,7 +198,7 @@ def startup_event() -> None:
 # Format: an opaque-but-meaningful string. Date-prefix + initial keeps
 # bumps obvious in git blame. The exact value doesn't matter as long as
 # it differs from any prior committed value.
-_MIGRATION_VERSION = "2026-05-09-a"
+_MIGRATION_VERSION = "2026-05-12-quote-builder"
 
 
 def _migrate_add_columns() -> None:
@@ -274,6 +281,31 @@ def _migrate_add_columns() -> None:
             )
         except Exception as e:
             print(f"[STARTUP] Could not ensure T&M tables: {e}")
+
+        # Ensure Quote Builder tables exist. The quote_seq sequence is
+        # created separately by quote_builder_migration.sql — on a fresh
+        # Postgres install create_all() doesn't make the bare sequence so
+        # we also issue an idempotent CREATE SEQUENCE here. (SQLAlchemy
+        # autogenerates per-column SERIAL sequences for the id PKs, but
+        # `quote_seq` is a standalone sequence used by the submit handler
+        # to allocate Q###### numbers.)
+        try:
+            Base.metadata.create_all(
+                bind=engine,
+                tables=[
+                    QuoteRateCategory.__table__,
+                    QuoteRateItem.__table__,
+                    Quote.__table__,
+                ],
+                checkfirst=True,
+            )
+            if not is_sqlite:
+                conn.execute(text(
+                    "CREATE SEQUENCE IF NOT EXISTS quote_seq "
+                    "START WITH 1 INCREMENT BY 1 MINVALUE 1 NO CYCLE"
+                ))
+        except Exception as e:
+            print(f"[STARTUP] Could not ensure Quote Builder tables: {e}")
 
         # Add `deleted_at` to time_materials_tickets on upgrade. Required by
         # the /api/time-materials/delta endpoint to ship removed IDs to
