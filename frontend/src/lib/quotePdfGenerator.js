@@ -145,47 +145,64 @@ export async function generateQuotePdf(quote) {
   y += 6;
 
   // ── Line items table ──
-  // Columns: Description (flex) | Qty (right) | Unit (left) | Rate (right) | Subtotal (right)
+  // Columns: Description (flex, left) | Qty (center) | Unit (center) | Rate (center) | Subtotal (center)
   // When `mix_categories`, we also surface the Category as a sub-line under
   // the description. Note rows render as a single full-width italic row.
-  const colSubW = 80;
+  // Subtotal widened from 80 → 90 to keep dollar amounts off the right edge.
+  const colSubW = 90;
   const colRateW = 70;
   const colUnitW = 60;
   const colQtyW = 50;
   const colDescW = contentW - colQtyW - colUnitW - colRateW - colSubW;
   const headerH = 20;
 
-  // Header row
-  doc.setDrawColor(80);
-  doc.setFillColor(235, 240, 250);
-  doc.rect(marginL, y, contentW, headerH, 'F');
-  doc.setLineWidth(0.5);
-  doc.rect(marginL, y, contentW, headerH);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9);
-  let cx = marginL + 4;
-  doc.text('Description', cx, y + 13);
-  cx += colDescW;
-  doc.text('Qty', cx + colQtyW - 4, y + 13, { align: 'right' });
-  cx += colQtyW;
-  doc.text('Unit', cx + 4, y + 13);
-  cx += colUnitW;
-  doc.text('Rate', cx + colRateW - 4, y + 13, { align: 'right' });
-  cx += colRateW;
-  doc.text('Subtotal', cx + colSubW - 4, y + 13, { align: 'right' });
-  y += headerH;
+  // X-coordinate of the *center* of each non-description column. Used by
+  // both the header and the body so the column heading sits directly
+  // above its data.
+  const qtyCenterX = marginL + colDescW + colQtyW / 2;
+  const unitCenterX = marginL + colDescW + colQtyW + colUnitW / 2;
+  const rateCenterX = marginL + colDescW + colQtyW + colUnitW + colRateW / 2;
+  const subCenterX = marginL + colDescW + colQtyW + colUnitW + colRateW + colSubW / 2;
+
+  // Drawing the table header is wrapped in a closure so we can call it
+  // again after a page break — otherwise rows on page 2+ would float
+  // without any column labels.
+  const drawTableHeader = () => {
+    doc.setDrawColor(80);
+    doc.setFillColor(235, 240, 250);
+    doc.rect(marginL, y, contentW, headerH, 'F');
+    doc.setLineWidth(0.5);
+    doc.rect(marginL, y, contentW, headerH);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.text('Description', marginL + 4, y + 13);
+    doc.text('Qty',      qtyCenterX,  y + 13, { align: 'center' });
+    doc.text('Unit',     unitCenterX, y + 13, { align: 'center' });
+    doc.text('Rate',     rateCenterX, y + 13, { align: 'center' });
+    doc.text('Subtotal', subCenterX,  y + 13, { align: 'center' });
+    y += headerH;
+    // Reset draw color/font for body rows.
+    doc.setDrawColor(180);
+    doc.setLineWidth(0.3);
+    doc.setFont('helvetica', 'normal');
+  };
+
+  drawTableHeader();
 
   const items = Array.isArray(quote.line_items) ? quote.line_items : [];
-  const newPageIfNeeded = (needed) => {
+  // `redrawHeader` flag controls whether the table column header gets
+  // repeated on the new page. Inside the row loop we want it; for the
+  // totals block / quote notes we don't (they aren't tabular).
+  // Bottom reserve = 80pt: the footer text is at pageH-36, so this
+  // leaves ~44pt clearance for tall multi-line rows + the footer caps
+  // (avoids the overlap risk we'd have at e.g. pageH-60).
+  const newPageIfNeeded = (needed, { redrawHeader = false } = {}) => {
     if (y + needed > pageH - 80) {
       doc.addPage();
       y = 36;
+      if (redrawHeader) drawTableHeader();
     }
   };
-
-  // Reset draw color/font for body rows.
-  doc.setDrawColor(180);
-  doc.setLineWidth(0.3);
 
   for (const line of items) {
     if (!line) continue;
@@ -198,7 +215,7 @@ export async function generateQuotePdf(quote) {
       doc.setFontSize(9);
       const lines = doc.splitTextToSize(noteText, contentW - 8);
       const rowH = Math.max(18, lines.length * 12 + 6);
-      newPageIfNeeded(rowH);
+      newPageIfNeeded(rowH, { redrawHeader: true });
       doc.rect(marginL, y, contentW, rowH);
       doc.text(lines, marginL + 4, y + 13);
       y += rowH;
@@ -218,7 +235,7 @@ export async function generateQuotePdf(quote) {
     }
     const wrappedDesc = doc.splitTextToSize(descLines.join('  '), colDescW - 8);
     const rowH = Math.max(18, wrappedDesc.length * 11 + 6);
-    newPageIfNeeded(rowH);
+    newPageIfNeeded(rowH, { redrawHeader: true });
 
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
@@ -230,25 +247,24 @@ export async function generateQuotePdf(quote) {
     doc.line(vx, y, vx, y + rowH); vx += colRateW;
     doc.line(vx, y, vx, y + rowH);
 
-    // Description (multi-line)
+    // Description (multi-line, left-aligned)
     doc.text(wrappedDesc, marginL + 4, y + 12);
 
-    // Right side numbers (vertically centered on first line)
+    // Numeric / unit cells — all centered so the value sits directly
+    // beneath its centered column heading. Decimal-alignment on currency
+    // is sacrificed for visual cleanliness; the per-line subtotals are
+    // bold so they still scan vertically.
     const numY = y + 13;
     const qtyText = line.qty != null && line.qty !== '' ? formatNumber(line.qty, 4) : '';
     const unitText = String(line.unit || '');
     const rateText = line.rate != null && line.rate !== '' ? formatMoney(line.rate) : '';
     const subText = formatMoney(line.subtotal ?? computeLineSubtotal(line));
 
-    cx = marginL + colDescW;
-    doc.text(qtyText, cx + colQtyW - 4, numY, { align: 'right' });
-    cx += colQtyW;
-    doc.text(unitText, cx + 4, numY);
-    cx += colUnitW;
-    doc.text(rateText, cx + colRateW - 4, numY, { align: 'right' });
-    cx += colRateW;
+    doc.text(qtyText,  qtyCenterX,  numY, { align: 'center' });
+    doc.text(unitText, unitCenterX, numY, { align: 'center' });
+    doc.text(rateText, rateCenterX, numY, { align: 'center' });
     doc.setFont('helvetica', 'bold');
-    doc.text(subText, cx + colSubW - 4, numY, { align: 'right' });
+    doc.text(subText,  subCenterX,  numY, { align: 'center' });
     doc.setFont('helvetica', 'normal');
 
     y += rowH;
@@ -261,7 +277,10 @@ export async function generateQuotePdf(quote) {
     taxRate: quote.tax_rate,
   });
 
-  y += 8;
+  // Breathing room between the last table row and the totals block.
+  // Was 8pt — looked cramped against the row stroke. 28pt ≈ 0.4" gives
+  // the totals their own visual zone.
+  y += 28;
   newPageIfNeeded(70);
   const totalsLabelX = pageW - marginR - 180;
   const totalsValueX = pageW - marginR - 4;
@@ -304,15 +323,25 @@ export async function generateQuotePdf(quote) {
     y += 12 * noteLines.length;
   }
 
-  // ── Footer (last page) ──
+  // ── Footer (every page, including page 1 when content overflows) ──
+  // Loop over every page added by jsPDF and stamp the footer + page
+  // number. Drawing in a single pass at the end means we know the final
+  // page count so "Page X of Y" can be accurate.
+  const totalPages = doc.internal.getNumberOfPages();
   doc.setFont('helvetica', 'italic');
   doc.setFontSize(7.5);
   doc.setTextColor(120);
-  doc.text(
-    'Quote valid for 30 days. Final billing on a Time & Materials basis unless otherwise noted.',
-    marginL,
-    pageH - 36,
-  );
+  for (let p = 1; p <= totalPages; p++) {
+    doc.setPage(p);
+    doc.text(
+      'Quote valid for 30 days. Final billing on a Time & Materials basis unless otherwise noted.',
+      marginL,
+      pageH - 36,
+    );
+    if (totalPages > 1) {
+      doc.text(`Page ${p} of ${totalPages}`, pageW - marginR, pageH - 36, { align: 'right' });
+    }
+  }
   doc.setTextColor(0);
 
   const blob = doc.output('blob');

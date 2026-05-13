@@ -31,6 +31,31 @@ const LINE_KIND_NOTE = 'note';
 const DEFAULT_TAX_LABEL = 'GST';
 const DEFAULT_TAX_RATE = 5;
 
+// ── Mobile-detection hook ─────────────────────────────────────────────────
+// Phones (≤ 640px) get stacked card layouts for the line-items table,
+// Recent Quotes table, and Settings item table. Tablets and larger keep
+// the dense row-grid / table layouts. The breakpoint is below the 768px
+// iPad-mini portrait width on purpose, so iPads stay on the dense view.
+function useIsMobile(maxWidthPx = 640) {
+  const [isMobile, setIsMobile] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia(`(max-width: ${maxWidthPx}px)`).matches;
+  });
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const mq = window.matchMedia(`(max-width: ${maxWidthPx}px)`);
+    const handler = (e) => setIsMobile(e.matches);
+    // Prefer the modern listener API; fall back to addListener for older Safari.
+    if (mq.addEventListener) mq.addEventListener('change', handler);
+    else mq.addListener(handler);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener('change', handler);
+      else mq.removeListener(handler);
+    };
+  }, [maxWidthPx]);
+  return isMobile;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────
 function localISODate(d = new Date()) {
   const y = d.getFullYear();
@@ -118,10 +143,29 @@ const S = {
     padding: '6px 14px', fontSize: '0.85rem', cursor: 'pointer',
   },
   body: { flex: 1, overflowY: 'auto', padding: '14px', display: 'flex', flexDirection: 'column', gap: '14px' },
+  // Phone-tightened body: ~60% of the desktop padding so more of the
+  // 375-430px iPhone viewport is usable for fields. The cards inside
+  // also get tighter padding via S.cardMobile.
+  bodyMobile: { flex: 1, overflowY: 'auto', padding: '8px', display: 'flex', flexDirection: 'column', gap: '10px' },
   card: {
     background: 'rgba(14,23,43,0.9)',
     border: '1px solid rgba(143,182,255,0.12)',
     borderRadius: '12px', padding: '14px',
+  },
+  cardMobile: {
+    background: 'rgba(14,23,43,0.9)',
+    border: '1px solid rgba(143,182,255,0.12)',
+    borderRadius: '10px', padding: '10px',
+  },
+  // Card wrapper for a single line-item row in mobile mode. Tighter
+  // padding than `S.card` (line items can be numerous) but visually
+  // distinct so each item reads as its own unit.
+  lineItemCardMobile: {
+    background: 'rgba(20,30,55,0.55)',
+    border: '1px solid rgba(143,182,255,0.12)',
+    borderRadius: '10px',
+    padding: '10px',
+    display: 'flex', flexDirection: 'column', gap: '8px',
   },
   sectionTitle: { margin: 0, marginBottom: '10px', fontSize: '0.95rem', fontWeight: 700 },
   label: { display: 'block', fontSize: '0.75rem', color: '#9ab1d6', marginBottom: '4px' },
@@ -305,6 +349,7 @@ export default function QuoteBuilder({
   areas = [],
 }) {
   const { confirm } = useDialog();
+  const isMobile = useIsMobile();
 
   // ── Top-level state ───────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState(TAB_NEW);
@@ -826,6 +871,7 @@ export default function QuoteBuilder({
           onSubmit={handleSubmit}
           onReset={resetForm}
           online={online}
+          isMobile={isMobile}
         />
       ) : null}
 
@@ -843,6 +889,7 @@ export default function QuoteBuilder({
           onDuplicate={handleDuplicate}
           onSoftDelete={handleSoftDelete}
           online={online}
+          isMobile={isMobile}
         />
       ) : null}
 
@@ -853,6 +900,7 @@ export default function QuoteBuilder({
           catalogError={catalogError}
           onReloadCatalog={loadCatalog}
           online={online}
+          isMobile={isMobile}
         />
       ) : null}
 
@@ -888,12 +936,12 @@ function NewQuoteTab(props) {
     clients, areas, totals,
     submitting, submitError, submittedQuote, peekedQuoteNumber,
     previewOpen, previewBase64, setPreviewOpen,
-    onPreview, onSubmit, onReset, online,
+    onPreview, onSubmit, onReset, online, isMobile,
   } = props;
 
   return (
     <>
-      <div style={S.body}>
+      <div style={isMobile ? S.bodyMobile : S.body}>
         {!online ? (
           <div style={S.banner}>⚠ You're offline — submitting a quote needs an internet connection.</div>
         ) : null}
@@ -1044,19 +1092,23 @@ function NewQuoteTab(props) {
             </div>
           ) : (
             <>
-              {/* Column headers */}
-              <div style={{
-                ...(mixCategories ? S.lineRowGridMix : S.lineRowGrid),
-                paddingBottom: '6px', borderBottom: '1px solid rgba(143,182,255,0.12)', marginBottom: '6px',
-              }}>
-                {mixCategories ? <div style={S.th}>Category</div> : null}
-                <div style={S.th}>Item / Description</div>
-                <div style={{ ...S.th, textAlign: 'right' }}>Qty</div>
-                <div style={S.th}>Unit</div>
-                <div style={{ ...S.th, textAlign: 'right' }}>Rate</div>
-                <div style={{ ...S.th, textAlign: 'right' }}>Subtotal</div>
-                <div />
-              </div>
+              {/* Column headers — hidden on mobile (each card has its own
+                  inline labels). On desktop the header bar uses the same
+                  grid columns as the row so headings sit above their data. */}
+              {!isMobile ? (
+                <div style={{
+                  ...(mixCategories ? S.lineRowGridMix : S.lineRowGrid),
+                  paddingBottom: '6px', borderBottom: '1px solid rgba(143,182,255,0.12)', marginBottom: '6px',
+                }}>
+                  {mixCategories ? <div style={S.th}>Category</div> : null}
+                  <div style={S.th}>Item / Description</div>
+                  <div style={{ ...S.th, textAlign: 'right' }}>Qty</div>
+                  <div style={S.th}>Unit</div>
+                  <div style={{ ...S.th, textAlign: 'right' }}>Rate</div>
+                  <div style={{ ...S.th, textAlign: 'right' }}>Subtotal</div>
+                  <div />
+                </div>
+              ) : null}
               {lineItems.length === 0 ? (
                 <div style={{ fontSize: '0.85rem', color: '#9ab1d6', padding: '10px 0' }}>
                   No line items yet. Use the buttons below to add catalog rows,
@@ -1071,6 +1123,7 @@ function NewQuoteTab(props) {
                     mixCategories={mixCategories}
                     primaryCategory={primaryCategory}
                     activeCategories={activeCategories}
+                    isMobile={isMobile}
                     onUpdate={(patch) => updateLine(idx, patch)}
                     onRemove={() => removeLine(idx)}
                     onMoveUp={idx > 0 ? () => moveLine(idx, -1) : null}
@@ -1212,7 +1265,7 @@ function NewQuoteTab(props) {
 }
 
 // ── Sub-component: single line-item row ───────────────────────────────────
-function LineItemRow({ idx, line, mixCategories, primaryCategory, activeCategories, onUpdate, onRemove, onMoveUp, onMoveDown, onSelectCatalogItem, onSaveCustomToCatalog }) {
+function LineItemRow({ idx, line, mixCategories, primaryCategory, activeCategories, isMobile, onUpdate, onRemove, onMoveUp, onMoveDown, onSelectCatalogItem, onSaveCustomToCatalog }) {
   // Effective category for this row in single mode = primary, in mixed = row's own.
   const rowCategory = useMemo(() => {
     if (mixCategories) {
@@ -1237,6 +1290,30 @@ function LineItemRow({ idx, line, mixCategories, primaryCategory, activeCategori
 
   // ── Note row (collapse all price columns) ──
   if (line.kind === LINE_KIND_NOTE) {
+    // Disabled-state styling shared by both layouts so the iOS layout
+    // doesn't shift when a row is at the top or bottom of the list.
+    const upStyle = { ...S.iconBtn, opacity: onMoveUp ? 1 : 0.3, cursor: onMoveUp ? 'pointer' : 'not-allowed' };
+    const downStyle = { ...S.iconBtn, opacity: onMoveDown ? 1 : 0.3, cursor: onMoveDown ? 'pointer' : 'not-allowed' };
+    if (isMobile) {
+      // Stacked card: textarea on top, action row below. Tighter than the
+      // desktop flex-row but still keeps ↑ ↓ ✕ visible without scrolling.
+      return (
+        <div style={S.lineItemCardMobile}>
+          <span style={{ fontSize: '0.7rem', color: '#9ab1d6' }}>Note</span>
+          <textarea
+            style={{ ...S.inputSm, minHeight: '50px', resize: 'vertical', fontStyle: 'italic' }}
+            value={line.description}
+            onChange={(e) => onUpdate({ description: e.target.value })}
+            placeholder="Note — renders italic on the PDF"
+          />
+          <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+            <button type="button" onClick={onMoveUp || undefined} disabled={!onMoveUp} style={upStyle} aria-label="Move note up">↑</button>
+            <button type="button" onClick={onMoveDown || undefined} disabled={!onMoveDown} style={downStyle} aria-label="Move note down">↓</button>
+            <button type="button" onClick={onRemove} style={{ ...S.iconBtn, color: '#fca5a5' }} aria-label="Remove note">✕</button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div style={{ display: 'flex', gap: '6px', alignItems: 'center', padding: '6px 0' }}>
         <span style={{ fontSize: '0.7rem', color: '#9ab1d6', minWidth: '50px' }}>Note</span>
@@ -1249,22 +1326,8 @@ function LineItemRow({ idx, line, mixCategories, primaryCategory, activeCategori
         {/* ↑ ↓ ✕ for note rows. Disabled buttons render at low opacity so
             the layout doesn't shift between rows at the start/end of the
             list. */}
-        <button
-          type="button"
-          onClick={onMoveUp || undefined}
-          disabled={!onMoveUp}
-          style={{ ...S.iconBtn, opacity: onMoveUp ? 1 : 0.3, cursor: onMoveUp ? 'pointer' : 'not-allowed' }}
-          aria-label="Move note up"
-          title="Move up"
-        >↑</button>
-        <button
-          type="button"
-          onClick={onMoveDown || undefined}
-          disabled={!onMoveDown}
-          style={{ ...S.iconBtn, opacity: onMoveDown ? 1 : 0.3, cursor: onMoveDown ? 'pointer' : 'not-allowed' }}
-          aria-label="Move note down"
-          title="Move down"
-        >↓</button>
+        <button type="button" onClick={onMoveUp || undefined} disabled={!onMoveUp} style={upStyle} aria-label="Move note up" title="Move up">↑</button>
+        <button type="button" onClick={onMoveDown || undefined} disabled={!onMoveDown} style={downStyle} aria-label="Move note down" title="Move down">↓</button>
         <button type="button" onClick={onRemove} style={{ ...S.iconBtn, color: '#fca5a5' }} aria-label="Remove note">✕</button>
       </div>
     );
@@ -1273,63 +1336,254 @@ function LineItemRow({ idx, line, mixCategories, primaryCategory, activeCategori
   // ── Catalog / custom row ──
   const isCustom = line.kind === LINE_KIND_CUSTOM;
 
+  // Shared category dropdown — same in both layouts but wrapped with a
+  // label on mobile so the user knows what the dropdown is for without
+  // a column header.
+  const categorySelect = mixCategories ? (
+    <select
+      style={S.inputSm}
+      value={line.category_id || ''}
+      onChange={(e) => {
+        const newCatId = e.target.value ? Number(e.target.value) : null;
+        const newCat = activeCategories.find((c) => c.id === newCatId) || null;
+        onUpdate({
+          category_id: newCatId,
+          category_name: newCat?.name || null,
+          item_id: null,
+        });
+      }}
+    >
+      <option value="">— Category —</option>
+      {activeCategories.map((c) => (
+        <option key={c.id} value={c.id}>{c.name}</option>
+      ))}
+    </select>
+  ) : null;
+
+  // Shared item dropdown / custom description input. Same JSX in both
+  // layouts; the wrapper around it differs (grid cell vs labeled card).
+  const itemControl = isCustom ? (
+    <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+      <input
+        style={{ ...S.inputSm, flex: 1 }}
+        value={line.description}
+        onChange={(e) => onUpdate({ description: e.target.value })}
+        placeholder="Custom description"
+      />
+      <button
+        type="button"
+        title="Save this custom line as a catalog item"
+        onClick={() => setSavePopoverOpen((v) => !v)}
+        style={{ ...S.iconBtn, padding: '4px 6px' }}
+      >
+        💾
+      </button>
+    </div>
+  ) : (
+    <select
+      style={S.inputSm}
+      value={line.item_id || ''}
+      onChange={(e) => onSelectCatalogItem(e.target.value ? Number(e.target.value) : null)}
+      disabled={!rowCategory}
+    >
+      <option value="">{rowCategory ? '— Pick an item —' : '— Pick a category first —'}</option>
+      {availableItems.map((it) => (
+        <option key={it.id} value={it.id}>
+          {it.name}{it.unit ? ` · ${it.unit}` : ''} {Number(it.rate) > 0 ? `· $${Number(it.rate).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
+        </option>
+      ))}
+    </select>
+  );
+
+  // Shared markup row (rendered as a footer block in both layouts).
+  const markupNeeded = (line.markup_pct != null && Number(line.markup_pct) !== 0) || line.markup_enabled || isCustom;
+  const markupBlock = markupNeeded ? (
+    <div style={{
+      ...(isMobile ? {} : { gridColumn: mixCategories ? '2 / -1' : '1 / -1' }),
+      display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap',
+      paddingLeft: '4px', paddingTop: '2px',
+    }}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', cursor: 'pointer' }}>
+        <input
+          type="checkbox"
+          checked={!!line.markup_enabled}
+          onChange={(e) => onUpdate({
+            markup_enabled: e.target.checked,
+            markup_pct: e.target.checked && line.markup_pct == null ? 10 : line.markup_pct,
+          })}
+          style={{ width: '14px', height: '14px', cursor: 'pointer' }}
+        />
+        <span>Add markup</span>
+      </label>
+      {line.markup_enabled ? (
+        <>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            style={{ ...S.inputSm, width: '70px' }}
+            value={line.markup_pct ?? ''}
+            onChange={(e) => onUpdate({ markup_pct: e.target.value === '' ? null : Number(e.target.value) })}
+          />
+          <span style={{ fontSize: '0.78rem', color: '#9ab1d6' }}>%</span>
+          <input
+            style={{ ...S.inputSm, width: '120px' }}
+            value={line.markup_label || ''}
+            onChange={(e) => onUpdate({ markup_label: e.target.value })}
+            placeholder="label (e.g. cost)"
+          />
+        </>
+      ) : null}
+    </div>
+  ) : null;
+
+  // Shared save-to-catalog popover (custom rows only).
+  const savePopover = isCustom && savePopoverOpen ? (
+    <div style={{
+      ...(isMobile ? {} : { gridColumn: '1 / -1' }),
+      background: 'rgba(9,17,31,0.75)', border: '1px solid rgba(143,182,255,0.18)',
+      borderRadius: '8px', padding: '10px', marginTop: '6px',
+    }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px' }}>
+        <div>
+          <label style={S.label}>Save to category</label>
+          <select style={S.input} value={saveCategoryId} onChange={(e) => setSaveCategoryId(e.target.value)}>
+            <option value="">Pick a category…</option>
+            {activeCategories.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label style={S.label}>Also save default markup</label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', cursor: 'pointer', marginTop: '4px' }}>
+            <input
+              type="checkbox"
+              checked={saveDefaultMarkup}
+              onChange={(e) => setSaveDefaultMarkup(e.target.checked)}
+              style={{ width: '14px', height: '14px', cursor: 'pointer' }}
+            />
+            <span>
+              Save current markup ({line.markup_enabled && Number(line.markup_pct) > 0
+                ? `${formatNumber(line.markup_pct, 2)}%${line.markup_label ? ` — ${line.markup_label}` : ''}`
+                : 'none'})
+            </span>
+          </label>
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          style={S.primary}
+          disabled={!saveCategoryId || !line.description?.trim()}
+          onClick={async () => {
+            await onSaveCustomToCatalog({
+              categoryId: saveCategoryId,
+              defaultMarkupPct: saveDefaultMarkup && Number(line.markup_pct) > 0 ? Number(line.markup_pct) : null,
+              defaultMarkupLabel: saveDefaultMarkup ? line.markup_label : null,
+            });
+            setSavePopoverOpen(false);
+          }}
+        >
+          Save to catalog
+        </button>
+        <button type="button" style={S.secondary} onClick={() => setSavePopoverOpen(false)}>
+          Cancel
+        </button>
+      </div>
+      {!line.description?.trim() ? (
+        <div style={{ fontSize: '0.75rem', color: '#fbbf24', marginTop: '6px' }}>
+          Add a description above before saving to catalog.
+        </div>
+      ) : null}
+    </div>
+  ) : null;
+
+  // ── Mobile (≤ 640px): stacked card with inline labels ──
+  // The desktop column header is hidden on mobile so each input must
+  // carry its own label. Qty/Unit and Rate/Subtotal sit two-up to keep
+  // the card compact while staying touch-friendly (44px-ish hit areas).
+  if (isMobile) {
+    const upStyle = { ...S.iconBtn, opacity: onMoveUp ? 1 : 0.3, cursor: onMoveUp ? 'pointer' : 'not-allowed' };
+    const downStyle = { ...S.iconBtn, opacity: onMoveDown ? 1 : 0.3, cursor: onMoveDown ? 'pointer' : 'not-allowed' };
+    return (
+      <div style={S.lineItemCardMobile}>
+        {mixCategories ? (
+          <div>
+            <label style={S.label}>Category</label>
+            {categorySelect}
+          </div>
+        ) : null}
+        <div>
+          <label style={S.label}>{isCustom ? 'Description' : 'Item'}</label>
+          {itemControl}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+          <div>
+            <label style={S.label}>Qty</label>
+            <input
+              type="number"
+              step="any"
+              style={{ ...S.inputSm, textAlign: 'right' }}
+              value={line.qty ?? ''}
+              onChange={(e) => onUpdate({ qty: e.target.value })}
+              placeholder="0"
+            />
+          </div>
+          <div>
+            <label style={S.label}>Unit</label>
+            <input
+              style={S.inputSm}
+              value={line.unit || ''}
+              onChange={(e) => onUpdate({ unit: e.target.value })}
+              placeholder="hr / day / m²"
+            />
+          </div>
+          <div>
+            <label style={S.label}>Rate</label>
+            <input
+              type="number"
+              step="any"
+              style={{ ...S.inputSm, textAlign: 'right' }}
+              value={line.rate ?? ''}
+              onChange={(e) => onUpdate({ rate: e.target.value })}
+              placeholder="0.00"
+            />
+          </div>
+          <div>
+            <label style={S.label}>Subtotal</label>
+            <div style={{
+              ...S.inputSm,
+              textAlign: 'right',
+              fontVariantNumeric: 'tabular-nums',
+              fontWeight: 600,
+              padding: '7px 10px',
+              border: '1px solid rgba(143,182,255,0.08)',
+              background: 'rgba(9,17,31,0.45)',
+            }}>
+              {formatMoney(line.subtotal)}
+            </div>
+          </div>
+        </div>
+        {markupBlock}
+        <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+          <button type="button" onClick={onMoveUp || undefined} disabled={!onMoveUp} style={upStyle} aria-label="Move line up">↑</button>
+          <button type="button" onClick={onMoveDown || undefined} disabled={!onMoveDown} style={downStyle} aria-label="Move line down">↓</button>
+          <button type="button" onClick={onRemove} style={{ ...S.iconBtn, color: '#fca5a5' }} aria-label="Remove line">✕</button>
+        </div>
+        {savePopover}
+      </div>
+    );
+  }
+
+  // ── Desktop ≥ 641px: dense grid row that mirrors the column header. ──
   return (
     <div style={{ ...(mixCategories ? S.lineRowGridMix : S.lineRowGrid), padding: '6px 0' }}>
       {/* Per-line category (mixed mode only) */}
-      {mixCategories ? (
-        <select
-          style={S.inputSm}
-          value={line.category_id || ''}
-          onChange={(e) => {
-            const newCatId = e.target.value ? Number(e.target.value) : null;
-            const newCat = activeCategories.find((c) => c.id === newCatId) || null;
-            onUpdate({
-              category_id: newCatId,
-              category_name: newCat?.name || null,
-              item_id: null,
-            });
-          }}
-        >
-          <option value="">— Category —</option>
-          {activeCategories.map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </select>
-      ) : null}
+      {categorySelect}
 
       {/* Item dropdown (catalog) OR description input (custom) */}
-      {isCustom ? (
-        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-          <input
-            style={{ ...S.inputSm, flex: 1 }}
-            value={line.description}
-            onChange={(e) => onUpdate({ description: e.target.value })}
-            placeholder="Custom description"
-          />
-          <button
-            type="button"
-            title="Save this custom line as a catalog item"
-            onClick={() => setSavePopoverOpen((v) => !v)}
-            style={{ ...S.iconBtn, padding: '4px 6px' }}
-          >
-            💾
-          </button>
-        </div>
-      ) : (
-        <select
-          style={S.inputSm}
-          value={line.item_id || ''}
-          onChange={(e) => onSelectCatalogItem(e.target.value ? Number(e.target.value) : null)}
-          disabled={!rowCategory}
-        >
-          <option value="">{rowCategory ? '— Pick an item —' : '— Pick a category first —'}</option>
-          {availableItems.map((it) => (
-            <option key={it.id} value={it.id}>
-              {it.name}{it.unit ? ` · ${it.unit}` : ''} {Number(it.rate) > 0 ? `· $${Number(it.rate).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
-            </option>
-          ))}
-        </select>
-      )}
+      {itemControl}
 
       {/* Qty */}
       <input
@@ -1389,100 +1643,10 @@ function LineItemRow({ idx, line, mixCategories, primaryCategory, activeCategori
         >✕</button>
       </div>
 
-      {/* Markup checkbox row (only when the line has a markup config or is custom) */}
-      {(line.markup_pct != null && Number(line.markup_pct) !== 0) || line.markup_enabled || isCustom ? (
-        <div style={{ gridColumn: mixCategories ? '2 / -1' : '1 / -1', display: 'flex', alignItems: 'center', gap: '8px', paddingLeft: '4px', paddingTop: '2px' }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={!!line.markup_enabled}
-              onChange={(e) => onUpdate({
-                markup_enabled: e.target.checked,
-                markup_pct: e.target.checked && line.markup_pct == null ? 10 : line.markup_pct,
-              })}
-              style={{ width: '14px', height: '14px', cursor: 'pointer' }}
-            />
-            <span>Add markup</span>
-          </label>
-          {line.markup_enabled ? (
-            <>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                style={{ ...S.inputSm, width: '70px' }}
-                value={line.markup_pct ?? ''}
-                onChange={(e) => onUpdate({ markup_pct: e.target.value === '' ? null : Number(e.target.value) })}
-              />
-              <span style={{ fontSize: '0.78rem', color: '#9ab1d6' }}>%</span>
-              <input
-                style={{ ...S.inputSm, width: '120px' }}
-                value={line.markup_label || ''}
-                onChange={(e) => onUpdate({ markup_label: e.target.value })}
-                placeholder="label (e.g. cost)"
-              />
-            </>
-          ) : null}
-        </div>
-      ) : null}
-
-      {/* Save-to-catalog popover (custom rows only) */}
-      {isCustom && savePopoverOpen ? (
-        <div style={{ gridColumn: '1 / -1', background: 'rgba(9,17,31,0.75)', border: '1px solid rgba(143,182,255,0.18)', borderRadius: '8px', padding: '10px', marginTop: '6px' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px' }}>
-            <div>
-              <label style={S.label}>Save to category</label>
-              <select style={S.input} value={saveCategoryId} onChange={(e) => setSaveCategoryId(e.target.value)}>
-                <option value="">Pick a category…</option>
-                {activeCategories.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label style={S.label}>Also save default markup</label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', cursor: 'pointer', marginTop: '4px' }}>
-                <input
-                  type="checkbox"
-                  checked={saveDefaultMarkup}
-                  onChange={(e) => setSaveDefaultMarkup(e.target.checked)}
-                  style={{ width: '14px', height: '14px', cursor: 'pointer' }}
-                />
-                <span>
-                  Save current markup ({line.markup_enabled && Number(line.markup_pct) > 0
-                    ? `${formatNumber(line.markup_pct, 2)}%${line.markup_label ? ` — ${line.markup_label}` : ''}`
-                    : 'none'})
-                </span>
-              </label>
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              style={S.primary}
-              disabled={!saveCategoryId || !line.description?.trim()}
-              onClick={async () => {
-                await onSaveCustomToCatalog({
-                  categoryId: saveCategoryId,
-                  defaultMarkupPct: saveDefaultMarkup && Number(line.markup_pct) > 0 ? Number(line.markup_pct) : null,
-                  defaultMarkupLabel: saveDefaultMarkup ? line.markup_label : null,
-                });
-                setSavePopoverOpen(false);
-              }}
-            >
-              Save to catalog
-            </button>
-            <button type="button" style={S.secondary} onClick={() => setSavePopoverOpen(false)}>
-              Cancel
-            </button>
-          </div>
-          {!line.description?.trim() ? (
-            <div style={{ fontSize: '0.75rem', color: '#fbbf24', marginTop: '6px' }}>
-              Add a description above before saving to catalog.
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+      {/* Markup row + Save popover are full-width grid cells via the
+          gridColumn property baked into their wrappers above. */}
+      {markupBlock}
+      {savePopover}
     </div>
   );
 }
@@ -1492,22 +1656,22 @@ function RecentQuotesTab({
   recent, recentLoading, recentError, onApplyFilters,
   filterClient, setFilterClient, filterFrom, setFilterFrom, filterTo, setFilterTo,
   clients,
-  onViewPdf, onDuplicate, onSoftDelete, online,
+  onViewPdf, onDuplicate, onSoftDelete, online, isMobile,
 }) {
   return (
-    <div style={S.body}>
+    <div style={isMobile ? S.bodyMobile : S.body}>
       {!online ? (
         <div style={S.banner}>⚠ You're offline — recent quotes need an internet connection.</div>
       ) : null}
-      <section style={S.card}>
+      <section style={isMobile ? S.cardMobile : S.card}>
         <h3 style={S.sectionTitle}>Filters</h3>
         <div style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+          gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(auto-fit, minmax(180px, 1fr))',
           gap: '10px',
           alignItems: 'end',
         }}>
-          <div>
+          <div style={isMobile ? { gridColumn: '1 / -1' } : undefined}>
             <label style={S.label}>Client</label>
             <input
               list="recent-quote-clients"
@@ -1528,8 +1692,8 @@ function RecentQuotesTab({
             <label style={S.label}>To date</label>
             <input type="date" style={S.input} value={filterTo} onChange={(e) => setFilterTo(e.target.value)} />
           </div>
-          <div>
-            <button type="button" style={S.primary} onClick={onApplyFilters} disabled={!online || recentLoading}>
+          <div style={isMobile ? { gridColumn: '1 / -1' } : undefined}>
+            <button type="button" style={{ ...S.primary, width: isMobile ? '100%' : 'auto' }} onClick={onApplyFilters} disabled={!online || recentLoading}>
               {recentLoading ? 'Loading…' : 'Apply filters'}
             </button>
           </div>
@@ -1538,7 +1702,7 @@ function RecentQuotesTab({
 
       {recentError ? <div style={{ ...S.banner, ...S.errorBanner }}>{recentError}</div> : null}
 
-      <section style={S.card}>
+      <section style={isMobile ? S.cardMobile : S.card}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
           <h3 style={{ ...S.sectionTitle, marginBottom: 0 }}>
             Recent Quotes {recent.length > 0 ? <span style={{ color: '#9ab1d6', fontWeight: 400 }}>({recent.length})</span> : null}
@@ -1552,6 +1716,46 @@ function RecentQuotesTab({
         ) : recent.length === 0 ? (
           <div style={{ fontSize: '0.85rem', color: '#9ab1d6', padding: '14px 0' }}>
             No quotes match. Submit a quote from the New Quote tab and it'll appear here.
+          </div>
+        ) : isMobile ? (
+          // Mobile: each quote is its own card (the desktop table needs
+          // ≥ 600px to fit Quote#/Client/Area/Date/Total/Actions without
+          // forcing an awkward horizontal scroll).
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {recent.map((q) => (
+              <div key={q.id} style={{
+                background: 'rgba(20,30,55,0.55)',
+                border: '1px solid rgba(143,182,255,0.12)',
+                borderRadius: '10px',
+                padding: '10px',
+                display: 'flex', flexDirection: 'column', gap: '6px',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '8px' }}>
+                  <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>{q.quote_number}</span>
+                  <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{formatMoney(q.grand_total)}</span>
+                </div>
+                <div style={{ fontSize: '0.85rem' }}>
+                  {q.client}
+                  {q.area ? <span style={{ color: '#9ab1d6' }}> · {q.area}</span> : null}
+                </div>
+                <div style={{ fontSize: '0.78rem', color: '#9ab1d6' }}>{formatDate(q.quote_date)}</div>
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '4px' }}>
+                  <button type="button" style={{ ...S.iconBtn, flex: 1, minWidth: '90px' }} onClick={() => onViewPdf(q)} disabled={!q.pdf_url}>
+                    View PDF
+                  </button>
+                  <button type="button" style={{ ...S.iconBtn, flex: 1, minWidth: '90px' }} onClick={() => onDuplicate(q.id)}>
+                    Duplicate
+                  </button>
+                  <button
+                    type="button"
+                    style={{ ...S.iconBtn, flex: 1, minWidth: '90px', color: '#fca5a5', borderColor: 'rgba(220,38,38,0.4)' }}
+                    onClick={() => onSoftDelete(q)}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
@@ -1605,7 +1809,7 @@ function RecentQuotesTab({
 }
 
 // ── Sub-component: Settings tab ──────────────────────────────────────────
-function SettingsTab({ catalog, catalogLoading, catalogError, onReloadCatalog, online }) {
+function SettingsTab({ catalog, catalogLoading, catalogError, onReloadCatalog, online, isMobile }) {
   // Local "draft" state for each item/category so the user can type
   // freely. Save happens on blur (or explicit Save button).
   const [busy, setBusy] = useState(false);
@@ -1760,8 +1964,82 @@ function SettingsTab({ catalog, catalogLoading, catalogError, onReloadCatalog, o
     await swapSortOrder('item', items[itemIdx], items[target], (id, patch) => api.updateQuoteItem(id, patch));
   };
 
+  // Mobile branch for the "Add new item" form. Stacks the same fields
+  // as the desktop in-table row but as a labeled mini-form so it fits
+  // a 375px viewport without horizontal scroll.
+  const renderAddItemRowMobile = (cat) => (
+    <div style={{
+      background: 'rgba(20,30,55,0.55)',
+      border: '1px dashed rgba(143,182,255,0.25)',
+      borderRadius: '10px',
+      padding: '10px',
+      display: 'flex', flexDirection: 'column', gap: '8px',
+    }}>
+      <div style={{ fontSize: '0.78rem', color: '#9ab1d6', fontWeight: 600 }}>+ Add new item</div>
+      <div>
+        <label style={S.label}>Name</label>
+        <input
+          style={S.inputSm}
+          value={adding[cat.id]?.name || ''}
+          onChange={(e) => setAddingFor(cat.id, { name: e.target.value })}
+          placeholder="New item name"
+        />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+        <div>
+          <label style={S.label}>Unit</label>
+          <input
+            style={S.inputSm}
+            value={adding[cat.id]?.unit || ''}
+            onChange={(e) => setAddingFor(cat.id, { unit: e.target.value })}
+            placeholder="hr / day / m²"
+          />
+        </div>
+        <div>
+          <label style={S.label}>Rate</label>
+          <input
+            type="number"
+            step="any"
+            style={{ ...S.inputSm, textAlign: 'right' }}
+            value={adding[cat.id]?.rate ?? ''}
+            onChange={(e) => setAddingFor(cat.id, { rate: e.target.value })}
+            placeholder="0.00"
+          />
+        </div>
+        <div>
+          <label style={S.label}>Markup %</label>
+          <input
+            type="number"
+            step="0.01"
+            style={{ ...S.inputSm, textAlign: 'right' }}
+            value={adding[cat.id]?.markup_pct ?? ''}
+            onChange={(e) => setAddingFor(cat.id, { markup_pct: e.target.value })}
+            placeholder=""
+          />
+        </div>
+        <div>
+          <label style={S.label}>Markup label</label>
+          <input
+            style={S.inputSm}
+            value={adding[cat.id]?.markup_label || ''}
+            onChange={(e) => setAddingFor(cat.id, { markup_label: e.target.value })}
+            placeholder="cost"
+          />
+        </div>
+      </div>
+      <button
+        type="button"
+        style={{ ...S.primary, color: '#fff', width: '100%' }}
+        disabled={!adding[cat.id]?.name?.trim() || busy}
+        onClick={() => handleAddItem(cat.id)}
+      >
+        + Add item
+      </button>
+    </div>
+  );
+
   return (
-    <div style={S.body}>
+    <div style={isMobile ? S.bodyMobile : S.body}>
       {!online ? (
         <div style={S.banner}>⚠ You're offline — catalog edits need an internet connection.</div>
       ) : null}
@@ -1771,11 +2049,11 @@ function SettingsTab({ catalog, catalogLoading, catalogError, onReloadCatalog, o
       {error ? <div style={{ ...S.banner, ...S.errorBanner }}>{error}</div> : null}
 
       {/* Add new category */}
-      <section style={S.card}>
+      <section style={isMobile ? S.cardMobile : S.card}>
         <h3 style={S.sectionTitle}>Add Category</h3>
         <div style={{
           display: 'grid',
-          gridTemplateColumns: 'minmax(180px, 1fr) minmax(220px, 2fr) auto',
+          gridTemplateColumns: isMobile ? '1fr' : 'minmax(180px, 1fr) minmax(220px, 2fr) auto',
           gap: '10px', alignItems: 'end',
         }}>
           <div>
@@ -1788,7 +2066,7 @@ function SettingsTab({ catalog, catalogLoading, catalogError, onReloadCatalog, o
           </div>
           <button
             type="button"
-            style={{ ...S.primary, opacity: (!newCatName.trim() || busy) ? 0.6 : 1 }}
+            style={{ ...S.primary, opacity: (!newCatName.trim() || busy) ? 0.6 : 1, width: isMobile ? '100%' : 'auto' }}
             disabled={!newCatName.trim() || busy}
             onClick={handleCreateCategory}
           >
@@ -1802,103 +2080,124 @@ function SettingsTab({ catalog, catalogLoading, catalogError, onReloadCatalog, o
         <div style={{ fontSize: '0.85rem', color: '#9ab1d6', padding: '14px 0' }}>Loading catalog…</div>
       ) : (
         catalog.map((cat, catIdx) => (
-          <section key={cat.id} style={S.card}>
+          <section key={cat.id} style={isMobile ? S.cardMobile : S.card}>
             <CategoryHeaderEditor
               cat={cat}
               busy={busy}
+              isMobile={isMobile}
               onPatch={handlePatchCategory}
               onDelete={() => handleDeleteCategory(cat)}
               onMoveUp={catIdx > 0 ? () => handleMoveCategory(catIdx, -1) : null}
               onMoveDown={catIdx < catalog.length - 1 ? () => handleMoveCategory(catIdx, 1) : null}
             />
 
-            {/* Items table */}
-            <div style={{ overflowX: 'auto', marginTop: '10px' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                <thead>
-                  <tr>
-                    <th style={{ ...S.th, padding: '6px 8px', textAlign: 'left' }}>Item</th>
-                    <th style={{ ...S.th, padding: '6px 8px', textAlign: 'left', width: '120px' }}>Unit</th>
-                    <th style={{ ...S.th, padding: '6px 8px', textAlign: 'right', width: '110px' }}>Rate</th>
-                    <th style={{ ...S.th, padding: '6px 8px', textAlign: 'right', width: '100px' }}>Markup %</th>
-                    <th style={{ ...S.th, padding: '6px 8px', textAlign: 'left', width: '130px' }}>Markup label</th>
-                    <th style={{ ...S.th, padding: '6px 8px', textAlign: 'right', width: '80px' }}>Sort</th>
-                    <th style={{ ...S.th, padding: '6px 8px', width: '110px' }}></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(cat.items || []).map((item, itemIdx) => (
-                    <ItemRowEditor
-                      key={item.id}
-                      item={item}
-                      busy={busy}
-                      onPatch={handlePatchItem}
-                      onDelete={() => handleDeleteItem(item)}
-                      onMoveUp={itemIdx > 0 ? () => handleMoveItem(cat, itemIdx, -1) : null}
-                      onMoveDown={itemIdx < (cat.items || []).length - 1 ? () => handleMoveItem(cat, itemIdx, 1) : null}
-                    />
-                  ))}
-                  {/* Add-item row */}
-                  <tr style={{ borderTop: '1px solid rgba(143,182,255,0.08)' }}>
-                    <td style={{ padding: '6px 8px' }}>
-                      <input
-                        style={S.inputSm}
-                        value={adding[cat.id]?.name || ''}
-                        onChange={(e) => setAddingFor(cat.id, { name: e.target.value })}
-                        placeholder="New item name"
+            {/* Items list. On mobile each item is its own card and the
+                add-item form is rendered as a separate mini-form below.
+                On desktop it stays as the dense 7-column table. */}
+            {isMobile ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
+                {(cat.items || []).map((item, itemIdx) => (
+                  <ItemRowEditor
+                    key={item.id}
+                    item={item}
+                    busy={busy}
+                    isMobile
+                    onPatch={handlePatchItem}
+                    onDelete={() => handleDeleteItem(item)}
+                    onMoveUp={itemIdx > 0 ? () => handleMoveItem(cat, itemIdx, -1) : null}
+                    onMoveDown={itemIdx < (cat.items || []).length - 1 ? () => handleMoveItem(cat, itemIdx, 1) : null}
+                  />
+                ))}
+                {renderAddItemRowMobile(cat)}
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto', marginTop: '10px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                  <thead>
+                    <tr>
+                      <th style={{ ...S.th, padding: '6px 8px', textAlign: 'left' }}>Item</th>
+                      <th style={{ ...S.th, padding: '6px 8px', textAlign: 'left', width: '120px' }}>Unit</th>
+                      <th style={{ ...S.th, padding: '6px 8px', textAlign: 'right', width: '110px' }}>Rate</th>
+                      <th style={{ ...S.th, padding: '6px 8px', textAlign: 'right', width: '100px' }}>Markup %</th>
+                      <th style={{ ...S.th, padding: '6px 8px', textAlign: 'left', width: '130px' }}>Markup label</th>
+                      <th style={{ ...S.th, padding: '6px 8px', textAlign: 'right', width: '80px' }}>Sort</th>
+                      <th style={{ ...S.th, padding: '6px 8px', width: '110px' }}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(cat.items || []).map((item, itemIdx) => (
+                      <ItemRowEditor
+                        key={item.id}
+                        item={item}
+                        busy={busy}
+                        onPatch={handlePatchItem}
+                        onDelete={() => handleDeleteItem(item)}
+                        onMoveUp={itemIdx > 0 ? () => handleMoveItem(cat, itemIdx, -1) : null}
+                        onMoveDown={itemIdx < (cat.items || []).length - 1 ? () => handleMoveItem(cat, itemIdx, 1) : null}
                       />
-                    </td>
-                    <td style={{ padding: '6px 8px' }}>
-                      <input
-                        style={S.inputSm}
-                        value={adding[cat.id]?.unit || ''}
-                        onChange={(e) => setAddingFor(cat.id, { unit: e.target.value })}
-                        placeholder="hr / day / m²"
-                      />
-                    </td>
-                    <td style={{ padding: '6px 8px' }}>
-                      <input
-                        type="number"
-                        step="any"
-                        style={{ ...S.inputSm, textAlign: 'right' }}
-                        value={adding[cat.id]?.rate ?? ''}
-                        onChange={(e) => setAddingFor(cat.id, { rate: e.target.value })}
-                        placeholder="0.00"
-                      />
-                    </td>
-                    <td style={{ padding: '6px 8px' }}>
-                      <input
-                        type="number"
-                        step="0.01"
-                        style={{ ...S.inputSm, textAlign: 'right' }}
-                        value={adding[cat.id]?.markup_pct ?? ''}
-                        onChange={(e) => setAddingFor(cat.id, { markup_pct: e.target.value })}
-                        placeholder=""
-                      />
-                    </td>
-                    <td style={{ padding: '6px 8px' }}>
-                      <input
-                        style={S.inputSm}
-                        value={adding[cat.id]?.markup_label || ''}
-                        onChange={(e) => setAddingFor(cat.id, { markup_label: e.target.value })}
-                        placeholder="cost"
-                      />
-                    </td>
-                    <td style={{ padding: '6px 8px' }} />
-                    <td style={{ padding: '6px 8px', textAlign: 'right' }}>
-                      <button
-                        type="button"
-                        style={{ ...S.iconBtn, color: '#86efac' }}
-                        disabled={!adding[cat.id]?.name?.trim() || busy}
-                        onClick={() => handleAddItem(cat.id)}
-                      >
-                        + Add
-                      </button>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+                    ))}
+                    {/* Add-item row */}
+                    <tr style={{ borderTop: '1px solid rgba(143,182,255,0.08)' }}>
+                      <td style={{ padding: '6px 8px' }}>
+                        <input
+                          style={S.inputSm}
+                          value={adding[cat.id]?.name || ''}
+                          onChange={(e) => setAddingFor(cat.id, { name: e.target.value })}
+                          placeholder="New item name"
+                        />
+                      </td>
+                      <td style={{ padding: '6px 8px' }}>
+                        <input
+                          style={S.inputSm}
+                          value={adding[cat.id]?.unit || ''}
+                          onChange={(e) => setAddingFor(cat.id, { unit: e.target.value })}
+                          placeholder="hr / day / m²"
+                        />
+                      </td>
+                      <td style={{ padding: '6px 8px' }}>
+                        <input
+                          type="number"
+                          step="any"
+                          style={{ ...S.inputSm, textAlign: 'right' }}
+                          value={adding[cat.id]?.rate ?? ''}
+                          onChange={(e) => setAddingFor(cat.id, { rate: e.target.value })}
+                          placeholder="0.00"
+                        />
+                      </td>
+                      <td style={{ padding: '6px 8px' }}>
+                        <input
+                          type="number"
+                          step="0.01"
+                          style={{ ...S.inputSm, textAlign: 'right' }}
+                          value={adding[cat.id]?.markup_pct ?? ''}
+                          onChange={(e) => setAddingFor(cat.id, { markup_pct: e.target.value })}
+                          placeholder=""
+                        />
+                      </td>
+                      <td style={{ padding: '6px 8px' }}>
+                        <input
+                          style={S.inputSm}
+                          value={adding[cat.id]?.markup_label || ''}
+                          onChange={(e) => setAddingFor(cat.id, { markup_label: e.target.value })}
+                          placeholder="cost"
+                        />
+                      </td>
+                      <td style={{ padding: '6px 8px' }} />
+                      <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                        <button
+                          type="button"
+                          style={{ ...S.iconBtn, color: '#86efac' }}
+                          disabled={!adding[cat.id]?.name?.trim() || busy}
+                          onClick={() => handleAddItem(cat.id)}
+                        >
+                          + Add
+                        </button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
         ))
       )}
@@ -1907,7 +2206,7 @@ function SettingsTab({ catalog, catalogLoading, catalogError, onReloadCatalog, o
 }
 
 // ── Sub-component: editable category header (Settings tab) ───────────────
-function CategoryHeaderEditor({ cat, busy, onPatch, onDelete, onMoveUp, onMoveDown }) {
+function CategoryHeaderEditor({ cat, busy, isMobile, onPatch, onDelete, onMoveUp, onMoveDown }) {
   const [name, setName] = useState(cat.name || '');
   const [notes, setNotes] = useState(cat.notes || '');
   const [sortOrder, setSortOrder] = useState(cat.sort_order ?? 0);
@@ -1923,10 +2222,12 @@ function CategoryHeaderEditor({ cat, busy, onPatch, onDelete, onMoveUp, onMoveDo
     Number(sortOrder) !== Number(cat.sort_order ?? 0)
   );
 
+  // Phone: stack name/notes/sort vertically and put Save + ↑↓ Hide on
+  // their own action row. Desktop: 5-column grid in a single row.
   return (
     <div style={{
       display: 'grid',
-      gridTemplateColumns: 'minmax(160px, 1fr) minmax(220px, 2fr) 90px auto auto',
+      gridTemplateColumns: isMobile ? '1fr' : 'minmax(160px, 1fr) minmax(220px, 2fr) 90px auto auto',
       gap: '10px', alignItems: 'end',
     }}>
       <div>
@@ -1937,7 +2238,7 @@ function CategoryHeaderEditor({ cat, busy, onPatch, onDelete, onMoveUp, onMoveDo
         <label style={S.label}>Notes</label>
         <input style={S.input} value={notes} onChange={(e) => setNotes(e.target.value)} />
       </div>
-      <div>
+      <div style={isMobile ? { maxWidth: '120px' } : undefined}>
         <label style={S.label}>Sort</label>
         <input
           type="number"
@@ -1946,45 +2247,84 @@ function CategoryHeaderEditor({ cat, busy, onPatch, onDelete, onMoveUp, onMoveDo
           onChange={(e) => setSortOrder(e.target.value)}
         />
       </div>
-      <button
-        type="button"
-        style={{ ...S.primary, opacity: (!dirty || busy) ? 0.5 : 1 }}
-        disabled={!dirty || busy}
-        onClick={() => onPatch(cat.id, {
-          name: name.trim() || cat.name,
-          notes: notes || null,
-          sort_order: Number(sortOrder) || 0,
-        })}
-      >
-        Save
-      </button>
-      <div style={{ display: 'flex', gap: '4px' }}>
-        <button
-          type="button"
-          onClick={onMoveUp || undefined}
-          disabled={!onMoveUp || busy}
-          style={{ ...S.iconBtn, opacity: onMoveUp ? 1 : 0.3 }}
-          title="Move category up"
-          aria-label="Move category up"
-        >↑</button>
-        <button
-          type="button"
-          onClick={onMoveDown || undefined}
-          disabled={!onMoveDown || busy}
-          style={{ ...S.iconBtn, opacity: onMoveDown ? 1 : 0.3 }}
-          title="Move category down"
-          aria-label="Move category down"
-        >↓</button>
-        <button type="button" style={S.danger} disabled={busy} onClick={onDelete}>
-          Hide
-        </button>
-      </div>
+      {isMobile ? (
+        // Combined action row on mobile: Save (flex 1) + ↑ ↓ Hide
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'stretch' }}>
+          <button
+            type="button"
+            style={{ ...S.primary, opacity: (!dirty || busy) ? 0.5 : 1, flex: 1 }}
+            disabled={!dirty || busy}
+            onClick={() => onPatch(cat.id, {
+              name: name.trim() || cat.name,
+              notes: notes || null,
+              sort_order: Number(sortOrder) || 0,
+            })}
+          >
+            Save
+          </button>
+          <button
+            type="button"
+            onClick={onMoveUp || undefined}
+            disabled={!onMoveUp || busy}
+            style={{ ...S.iconBtn, opacity: onMoveUp ? 1 : 0.3 }}
+            title="Move category up"
+            aria-label="Move category up"
+          >↑</button>
+          <button
+            type="button"
+            onClick={onMoveDown || undefined}
+            disabled={!onMoveDown || busy}
+            style={{ ...S.iconBtn, opacity: onMoveDown ? 1 : 0.3 }}
+            title="Move category down"
+            aria-label="Move category down"
+          >↓</button>
+          <button type="button" style={S.danger} disabled={busy} onClick={onDelete}>
+            Hide
+          </button>
+        </div>
+      ) : (
+        <>
+          <button
+            type="button"
+            style={{ ...S.primary, opacity: (!dirty || busy) ? 0.5 : 1 }}
+            disabled={!dirty || busy}
+            onClick={() => onPatch(cat.id, {
+              name: name.trim() || cat.name,
+              notes: notes || null,
+              sort_order: Number(sortOrder) || 0,
+            })}
+          >
+            Save
+          </button>
+          <div style={{ display: 'flex', gap: '4px' }}>
+            <button
+              type="button"
+              onClick={onMoveUp || undefined}
+              disabled={!onMoveUp || busy}
+              style={{ ...S.iconBtn, opacity: onMoveUp ? 1 : 0.3 }}
+              title="Move category up"
+              aria-label="Move category up"
+            >↑</button>
+            <button
+              type="button"
+              onClick={onMoveDown || undefined}
+              disabled={!onMoveDown || busy}
+              style={{ ...S.iconBtn, opacity: onMoveDown ? 1 : 0.3 }}
+              title="Move category down"
+              aria-label="Move category down"
+            >↓</button>
+            <button type="button" style={S.danger} disabled={busy} onClick={onDelete}>
+              Hide
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
 // ── Sub-component: editable item row (Settings tab) ──────────────────────
-function ItemRowEditor({ item, busy, onPatch, onDelete, onMoveUp, onMoveDown }) {
+function ItemRowEditor({ item, busy, isMobile, onPatch, onDelete, onMoveUp, onMoveDown }) {
   const [name, setName] = useState(item.name || '');
   const [unit, setUnit] = useState(item.unit || '');
   const [rate, setRate] = useState(item.rate ?? 0);
@@ -2034,6 +2374,104 @@ function ItemRowEditor({ item, busy, onPatch, onDelete, onMoveUp, onMoveDown }) 
       sort_order: Number(next.sort_order) || 0,
     });
   };
+
+  // ── Mobile (≤ 640px): card layout. Each field is labeled inline so
+  //    we don't need a column header above the list. The smaller fields
+  //    pack into a 2-up grid; the action row is full-width below. ──
+  if (isMobile) {
+    return (
+      <div style={{
+        background: 'rgba(20,30,55,0.55)',
+        border: '1px solid rgba(143,182,255,0.12)',
+        borderRadius: '10px',
+        padding: '10px',
+        display: 'flex', flexDirection: 'column', gap: '8px',
+      }}>
+        <div>
+          <label style={S.label}>Item</label>
+          <input
+            style={S.inputSm}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => persistIfDirty({ name })}
+          />
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+          <div>
+            <label style={S.label}>Unit</label>
+            <input
+              style={S.inputSm}
+              value={unit}
+              onChange={(e) => setUnit(e.target.value)}
+              onBlur={() => persistIfDirty({ unit })}
+            />
+          </div>
+          <div>
+            <label style={S.label}>Rate</label>
+            <input
+              type="number"
+              step="any"
+              style={{ ...S.inputSm, textAlign: 'right' }}
+              value={rate}
+              onChange={(e) => setRate(e.target.value)}
+              onBlur={() => persistIfDirty({ rate })}
+            />
+          </div>
+          <div>
+            <label style={S.label}>Markup %</label>
+            <input
+              type="number"
+              step="0.01"
+              style={{ ...S.inputSm, textAlign: 'right' }}
+              value={markupPct}
+              onChange={(e) => setMarkupPct(e.target.value)}
+              onBlur={() => persistIfDirty({ default_markup_pct: markupPct })}
+            />
+          </div>
+          <div>
+            <label style={S.label}>Markup label</label>
+            <input
+              style={S.inputSm}
+              value={markupLabel}
+              onChange={(e) => setMarkupLabel(e.target.value)}
+              onBlur={() => persistIfDirty({ default_markup_label: markupLabel })}
+            />
+          </div>
+          <div>
+            <label style={S.label}>Sort</label>
+            <input
+              type="number"
+              style={{ ...S.inputSm, textAlign: 'right' }}
+              value={sortOrder}
+              onChange={(e) => setSortOrder(e.target.value)}
+              onBlur={() => persistIfDirty({ sort_order: sortOrder })}
+            />
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+          <button
+            type="button"
+            onClick={onMoveUp || undefined}
+            disabled={!onMoveUp || busy}
+            style={{ ...S.iconBtn, opacity: onMoveUp ? 1 : 0.3 }}
+            title="Move item up"
+            aria-label="Move item up"
+          >↑</button>
+          <button
+            type="button"
+            onClick={onMoveDown || undefined}
+            disabled={!onMoveDown || busy}
+            style={{ ...S.iconBtn, opacity: onMoveDown ? 1 : 0.3 }}
+            title="Move item down"
+            aria-label="Move item down"
+          >↓</button>
+          <button type="button" style={{ ...S.iconBtn, color: '#fca5a5' }} disabled={busy} onClick={onDelete}>
+            Hide
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <tr style={{ borderTop: '1px solid rgba(143,182,255,0.08)' }}>
