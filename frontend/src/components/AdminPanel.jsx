@@ -202,43 +202,6 @@ export default function AdminPanel({
     <div className="panel">
       <h2>Admin tools</h2>
       <div className="list-grid">
-        {/* Reports dashboard entry point. Only shown when the parent
-            supplies a handler (admin/office) — worker sessions never mount
-            this panel at all, so the reports code path is fully inert for
-            them. Tapping this lazy-loads ReportsDashboard.jsx on demand. */}
-        {onOpenReports ? (
-          <div className="site-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <div>
-              <strong>📊 Reports Dashboard</strong>
-              <div className="small-text">Generate custom CSV reports — daily, weekly, or annual.</div>
-            </div>
-            <button
-              className="primary-button"
-              type="button"
-              onClick={onOpenReports}
-            >
-              Open Reports
-            </button>
-          </div>
-        ) : null}
-        {/* Quote Builder entry point. Same admin/office gating as Reports —
-            the parent only supplies onOpenQuotes for roleCanAdmin sessions.
-            Tapping this lazy-loads QuoteBuilder.jsx on demand. */}
-        {onOpenQuotes ? (
-          <div className="site-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <div>
-              <strong>📝 Quote Builder</strong>
-              <div className="small-text">Build quotes from the 2026 rate catalog — Hydroseeding, Herbicide, Drone.</div>
-            </div>
-            <button
-              className="primary-button"
-              type="button"
-              onClick={onOpenQuotes}
-            >
-              Open Quotes
-            </button>
-          </div>
-        ) : null}
         <CollapsibleSection title="Pending Approvals" count={pendingApprovalCount} defaultOpen={pendingApprovalCount > 0}>
           <div className="list-grid">
             {pendingApprovalCount === 0 ? (
@@ -583,6 +546,43 @@ export default function AdminPanel({
         <CollapsibleSection title="Lookup Tables" defaultOpen={false}>
           <LookupManager cachedLookups={cachedLookups} onLookupsChanged={onLookupsChanged} />
         </CollapsibleSection>
+
+        {/* Reports Dashboard + Quote Builder live at the bottom of the
+            panel because they're the buttons admins reach for least often
+            (vs. Pending / Recent Deletes / User Management above). Both
+            are admin/office-only — worker sessions never mount this
+            panel at all — and both lazy-load their target overlay on
+            tap (ReportsDashboard.jsx / QuoteBuilder.jsx). */}
+        {onOpenReports ? (
+          <div className="site-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <div>
+              <strong>📊 Reports Dashboard</strong>
+              <div className="small-text">Generate custom CSV reports — daily, weekly, or annual.</div>
+            </div>
+            <button
+              className="primary-button"
+              type="button"
+              onClick={onOpenReports}
+            >
+              Open Reports
+            </button>
+          </div>
+        ) : null}
+        {onOpenQuotes ? (
+          <div className="site-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <div>
+              <strong>📝 Quote Builder</strong>
+              <div className="small-text">Build quotes from the 2026 rate catalog — Hydroseeding, Herbicide, Drone.</div>
+            </div>
+            <button
+              className="primary-button"
+              type="button"
+              onClick={onOpenQuotes}
+            >
+              Open Quotes
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );
