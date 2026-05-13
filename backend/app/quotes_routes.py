@@ -26,6 +26,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth import require_roles
@@ -115,6 +116,13 @@ class QuoteCreate(BaseModel):
     line_items: list[QuoteLineItemPayload] = Field(default_factory=list)
     notes: str | None = None
     pdf_base64: str | None = None
+    # Optional `Q######` from /peek-number — the frontend renders the
+    # preview/print PDF with this number visible, then submits with it set
+    # so the persisted quote_number matches what the user saw on screen.
+    # If two operators race, the loser's submit silently falls back to a
+    # fresh nextval allocation (their PDF will have a slightly stale
+    # number, which is acceptable for a 1-2 admin team).
+    expected_quote_number: str | None = None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -124,6 +132,67 @@ def _allocate_quote_number(db: Session) -> str:
     result = db.execute(text("SELECT nextval('quote_seq')"))
     seq_value = result.scalar()
     return f"Q{seq_value:06d}"
+
+
+def _peek_next_quote_number(db: Session) -> str:
+    """Return the next `Q######` that nextval('quote_seq') would yield,
+    WITHOUT consuming the sequence. Used by the New Quote form so the
+    preview PDF can show the actual upcoming number instead of a
+    placeholder, while leaving the number available for the next quote
+    if the user closes without submitting.
+
+    `last_value` + (1 if `is_called` else 0) is the standard way to peek
+    a Postgres sequence's next value. `is_called=false` means nextval has
+    never been invoked since the last setval(...,false) — in that case
+    the next nextval returns last_value itself.
+    """
+    row = db.execute(text("SELECT last_value, is_called FROM quote_seq")).fetchone()
+    if row is None:
+        next_val = 1
+    else:
+        last_value, is_called = row
+        next_val = last_value + 1 if is_called else last_value
+    return f"Q{next_val:06d}"
+
+
+_QUOTE_NUMBER_RE = re.compile(r"^Q(\d{6})$")
+
+
+def _allocate_with_expected(db: Session, expected: str | None) -> str:
+    """Allocate a `Q######`. If `expected` is supplied (from peek) and is
+    still ahead of the current sequence position, atomically advance the
+    sequence to that exact value. Otherwise fall through to plain nextval
+    (which is what races and stale peeks land on).
+
+    Idempotent re-allocation on UNIQUE collision is handled by the caller.
+    """
+    if expected:
+        m = _QUOTE_NUMBER_RE.match(expected.strip())
+        if m:
+            try:
+                expected_seq = int(m.group(1))
+                # Atomic: max(current, expected) becomes the new last_value
+                # with is_called=true, so the *next* nextval would return
+                # last_value+1. Returns the assigned value.
+                row = db.execute(
+                    text(
+                        "SELECT setval('quote_seq', "
+                        "GREATEST((SELECT last_value FROM quote_seq), :v), true)"
+                    ),
+                    {"v": expected_seq},
+                ).scalar()
+                # Use whichever number setval landed on. If two operators
+                # peeked the same number, the second setval is a no-op
+                # (current already at expected), they get the same number,
+                # and the UNIQUE constraint on quote_number rejects the
+                # second insert — see submit_quote()'s retry block.
+                return f"Q{int(row):06d}"
+            except Exception as e:
+                logger.warning(
+                    "expected_quote_number=%r unusable (%s); falling back to nextval",
+                    expected, type(e).__name__,
+                )
+    return _allocate_quote_number(db)
 
 
 def _build_quote_pdf_path(quote_date: date_type, client: str, quote_number: str) -> str:
@@ -184,7 +253,10 @@ def submit_quote(
     if not payload.line_items:
         raise HTTPException(status_code=400, detail="Quote must include at least one line item")
 
-    quote_number = _allocate_quote_number(db)
+    # Attempt to honor the peeked number first. On UNIQUE collision (very
+    # rare race: two ops submitted with the same expected number), we
+    # retry once with a plain nextval so the user isn't left with a 500.
+    quote_number = _allocate_with_expected(db, payload.expected_quote_number)
     subtotal, tax_amount, grand_total = _compute_totals(
         payload.line_items, payload.tax_enabled, payload.tax_rate
     )
@@ -202,36 +274,74 @@ def submit_quote(
             logger.warning("Quote %s PDF upload failed: %s", quote_number, type(e).__name__)
             pdf_url = None
 
-    quote = Quote(
-        quote_number=quote_number,
-        client=client,
-        area=(payload.area or "").strip() or None,
-        project_description=payload.project_description,
-        quote_date=payload.quote_date,
-        mix_categories=payload.mix_categories,
-        tax_enabled=payload.tax_enabled,
-        tax_label=payload.tax_label,
-        tax_rate=payload.tax_rate,
-        subtotal=subtotal,
-        tax_amount=tax_amount,
-        grand_total=grand_total,
-        line_items_json=[li.model_dump() for li in payload.line_items],
-        notes=payload.notes,
-        pdf_url=pdf_url,
-        created_by_user_id=current_user.id if current_user else None,
-        created_by_email=current_user.email if current_user else None,
-        created_by_name=current_user.name if current_user else None,
-    )
+    def _build_quote_row(qn: str, url: Optional[str]) -> Quote:
+        return Quote(
+            quote_number=qn,
+            client=client,
+            area=(payload.area or "").strip() or None,
+            project_description=payload.project_description,
+            quote_date=payload.quote_date,
+            mix_categories=payload.mix_categories,
+            tax_enabled=payload.tax_enabled,
+            tax_label=payload.tax_label,
+            tax_rate=payload.tax_rate,
+            subtotal=subtotal,
+            tax_amount=tax_amount,
+            grand_total=grand_total,
+            line_items_json=[li.model_dump() for li in payload.line_items],
+            notes=payload.notes,
+            pdf_url=url,
+            created_by_user_id=current_user.id if current_user else None,
+            created_by_email=current_user.email if current_user else None,
+            created_by_name=current_user.name if current_user else None,
+        )
+
+    quote = _build_quote_row(quote_number, pdf_url)
     db.add(quote)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Race recovery: someone else committed the same quote_number first.
+        # Roll back, allocate a fresh number via plain nextval, re-upload
+        # the PDF under the new path, retry the insert.
+        db.rollback()
+        logger.warning(
+            "Quote %s collided on UNIQUE; retrying with fresh nextval", quote_number,
+        )
+        quote_number = _allocate_quote_number(db)
+        if payload.pdf_base64:
+            try:
+                pdf_bytes = base64.b64decode(payload.pdf_base64)
+                pdf_path = _build_quote_pdf_path(payload.quote_date, client, quote_number)
+                pdf_url = upload_pdf_to_dropbox(pdf_bytes, pdf_path)
+            except Exception as e:
+                logger.warning(
+                    "Quote %s retry PDF upload failed: %s",
+                    quote_number, type(e).__name__,
+                )
+                pdf_url = None
+        quote = _build_quote_row(quote_number, pdf_url)
+        db.add(quote)
+        db.commit()
     db.refresh(quote)
     return quote
 
 
 # ── List endpoints ─────────────────────────────────────────────────────────
-# IMPORTANT: keep `/recent` and `/deleted` BEFORE `/{quote_id}` — FastAPI
-# matches in registration order and would otherwise try to parse "recent"
-# or "deleted" as the int path param and 422.
+# IMPORTANT: keep `/recent`, `/deleted`, and `/peek-number` BEFORE
+# `/{quote_id}` — FastAPI matches in registration order and would
+# otherwise try to parse those words as the int path param and 422.
+
+@router.get("/peek-number")
+def peek_quote_number(db: Session = Depends(get_db)):
+    """Return the next `Q######` that nextval would yield, WITHOUT
+    consuming the sequence. The frontend calls this when the user opens
+    Preview / clicks Submit so the rendered PDF can show the actual
+    upcoming number. If the user closes without submitting, no number is
+    burned and the next quote starts at the same value.
+    """
+    return {"quote_number": _peek_next_quote_number(db)}
+
 
 @router.get("/recent", response_model=list[QuoteRead])
 def list_recent(

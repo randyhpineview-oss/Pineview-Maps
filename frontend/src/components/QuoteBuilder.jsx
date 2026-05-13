@@ -190,13 +190,15 @@ const S = {
   // full-width description input instead.
   lineRowGrid: {
     display: 'grid',
-    gridTemplateColumns: 'minmax(160px, 2fr) 70px 100px 90px 90px 28px',
+    // Trailing 78px column holds the ↑ ↓ ✕ stack (one inline flex of 3
+    // small icon buttons, ~22px each + gaps).
+    gridTemplateColumns: 'minmax(160px, 2fr) 70px 100px 90px 90px 78px',
     gap: '6px', alignItems: 'center',
   },
   lineRowGridMix: {
     display: 'grid',
     // When mix-categories is on, the row gains a leading Category dropdown.
-    gridTemplateColumns: '140px minmax(140px, 2fr) 70px 100px 90px 90px 28px',
+    gridTemplateColumns: '140px minmax(140px, 2fr) 70px 100px 90px 90px 78px',
     gap: '6px', alignItems: 'center',
   },
   th: {
@@ -208,6 +210,12 @@ const S = {
 
 // ── Sub-component: PDF preview sub-modal ──────────────────────────────────
 function PdfSubModal({ title, pdfBase64, pdfBytes, onClose }) {
+  // Print via a hidden iframe rather than `window.open(blobUrl, '_blank')`.
+  // The window.open path was unreliable in PWAs and Chromium standalone
+  // mode: blob: PDF URLs frequently failed to fire `onload`, leaving the
+  // new window blank and giving the impression of a "print crash".
+  // The iframe approach embeds the PDF inside the current page's origin
+  // and reliably fires onload for the embedded PDF viewer.
   const handlePrint = () => {
     let bytes = pdfBytes;
     if (!bytes && pdfBase64) {
@@ -222,15 +230,45 @@ function PdfSubModal({ title, pdfBase64, pdfBytes, onClose }) {
     if (!bytes || bytes.length === 0) return;
     const blob = new Blob([bytes], { type: 'application/pdf' });
     const url = URL.createObjectURL(blob);
-    const printWindow = window.open(url, '_blank');
-    if (printWindow) {
-      printWindow.onload = () => {
-        printWindow.print();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-      };
-    } else {
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    }
+
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    iframe.style.visibility = 'hidden';
+    // Loaded into a hidden iframe, the browser invokes its built-in PDF
+    // plugin which reliably exposes `print()` on contentWindow.
+    iframe.src = url;
+
+    const cleanup = () => {
+      try { iframe.remove(); } catch { /* ignore */ }
+      URL.revokeObjectURL(url);
+    };
+
+    iframe.onload = () => {
+      // Tiny delay lets Chrome/Edge finish wiring up the PDF plugin's
+      // print handler before we invoke it. Without this, calling print()
+      // immediately inside onload occasionally no-ops on Chromium.
+      setTimeout(() => {
+        try {
+          iframe.contentWindow?.focus();
+          iframe.contentWindow?.print();
+        } catch {
+          // Fallback: open the blob in a new tab so the user can print
+          // from the browser's PDF viewer manually.
+          window.open(url, '_blank');
+        }
+      }, 200);
+      // Cleanup well after the print dialog has closed. 60s is more than
+      // enough for a user to finish or cancel the print.
+      setTimeout(cleanup, 60_000);
+    };
+    iframe.onerror = cleanup;
+
+    document.body.appendChild(iframe);
   };
 
   return (
@@ -331,6 +369,14 @@ export default function QuoteBuilder({
   // each click so edits show up.
   const [previewBase64, setPreviewBase64] = useState('');
   const [previewOpen, setPreviewOpen] = useState(false);
+  // Server-peeked quote number for the in-progress quote. Populated by
+  // GET /api/quotes/peek-number on the first Preview / Submit click and
+  // cached so the same number is shown across multiple previews of the
+  // same draft. The sequence is NOT consumed by peeking — if the user
+  // closes without submitting, the same number is reused next time.
+  // On a successful submit the backend honors this number via setval()
+  // unless another operator raced ahead.
+  const [peekedQuoteNumber, setPeekedQuoteNumber] = useState('');
 
   const resetForm = useCallback(() => {
     setClient('');
@@ -347,6 +393,9 @@ export default function QuoteBuilder({
     setSubmittedQuote(null);
     setSubmitError('');
     setPreviewBase64('');
+    // Clear the cached peek so the next "Start a new quote" gets a fresh
+    // number (which may have advanced if other operators submitted in between).
+    setPeekedQuoteNumber('');
   }, []);
 
   // ── Recent Quotes state ───────────────────────────────────────────────
@@ -426,6 +475,21 @@ export default function QuoteBuilder({
     setLineItems((prev) => prev.filter((_, i) => i !== idx));
   }, []);
 
+  // Reorder a line by `delta` (+1 = down, -1 = up). Out-of-range moves
+  // are no-ops so the LineItemRow can disable the ↑/↓ buttons at the
+  // edges and we don't have to repeat the bounds check at each call site.
+  const moveLine = useCallback((idx, delta) => {
+    setLineItems((prev) => {
+      const target = idx + delta;
+      if (idx < 0 || idx >= prev.length) return prev;
+      if (target < 0 || target >= prev.length) return prev;
+      const next = prev.slice();
+      const [row] = next.splice(idx, 1);
+      next.splice(target, 0, row);
+      return next;
+    });
+  }, []);
+
   const addLine = useCallback((kind) => {
     setLineItems((prev) => {
       const seedCategory = !mixCategories && primaryCategory
@@ -499,7 +563,7 @@ export default function QuoteBuilder({
     taxEnabled, taxLabel, taxRate, quoteNotes, lineItems,
   ]);
 
-  const buildSubmitPayload = useCallback((pdfBase64) => ({
+  const buildSubmitPayload = useCallback((pdfBase64, expectedQuoteNumber) => ({
     client: client.trim(),
     area: (area || '').trim() || null,
     project_description: projectDescription || null,
@@ -510,6 +574,7 @@ export default function QuoteBuilder({
     tax_rate: taxEnabled ? Number(taxRate) || 0 : null,
     notes: quoteNotes || null,
     pdf_base64: pdfBase64 || null,
+    expected_quote_number: expectedQuoteNumber || null,
     line_items: lineItems.map((li) => ({
       kind: li.kind,
       category_id: li.category_id || null,
@@ -528,6 +593,22 @@ export default function QuoteBuilder({
     client, area, projectDescription, quoteDate, mixCategories,
     taxEnabled, taxLabel, taxRate, quoteNotes, lineItems,
   ]);
+
+  // Peek the next quote number from the server, caching the result so
+  // multiple Preview clicks on the same draft show the same number.
+  // Falls back gracefully (returns '') if the request fails — the PDF
+  // will then carry the "Q###### (pending)" placeholder.
+  const peekQuoteNumberCached = useCallback(async () => {
+    if (peekedQuoteNumber) return peekedQuoteNumber;
+    try {
+      const result = await api.peekQuoteNumber();
+      const qn = result?.quote_number || '';
+      if (qn) setPeekedQuoteNumber(qn);
+      return qn;
+    } catch {
+      return '';
+    }
+  }, [peekedQuoteNumber]);
 
   // ── Form validation (matches server-side checks) ──────────────────────
   function validateForSubmit() {
@@ -549,14 +630,18 @@ export default function QuoteBuilder({
     if (err) { setSubmitError(err); return; }
     setSubmitError('');
     try {
-      const { base64 } = await generateQuotePdf(buildQuoteForPdf(null));
+      // Peek the upcoming Q###### so the preview PDF shows the real
+      // number. If the user closes without submitting, the same number
+      // is reused for the next quote (sequence isn't consumed by peek).
+      const qn = await peekQuoteNumberCached();
+      const { base64 } = await generateQuotePdf(buildQuoteForPdf(qn));
       setPreviewBase64(base64);
       setPreviewOpen(true);
     } catch (e) {
       setSubmitError(e?.message || 'PDF preview failed');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [buildQuoteForPdf, client, lineItems, quoteDate]);
+  }, [buildQuoteForPdf, peekQuoteNumberCached, client, lineItems, quoteDate]);
 
   const handleSubmit = useCallback(async () => {
     const err = validateForSubmit();
@@ -565,25 +650,16 @@ export default function QuoteBuilder({
     setSubmitting(true);
     setSubmitError('');
     try {
-      // Generate the PDF with a placeholder number first; the real number
-      // arrives in the POST response and would require a 2nd PDF pass to
-      // embed. To keep the PDF correct on the FIRST file in Dropbox we
-      // would need to ask the backend for the next number before generate.
-      // For V1 we accept the placeholder text "Q###### (pending)" on the
-      // submitted PDF — the operator can re-generate via "View PDF" in
-      // Recent Quotes once they have the assigned number if needed.
-      //
-      // ── Two-phase generate so the Dropbox PDF carries the real number ──
-      // 1) Generate a temp PDF (placeholder number) just to have a payload.
-      // 2) POST → backend allocates Q###### + uploads → returns assigned
-      //    number + pdf_url. We re-generate the PDF locally with the real
-      //    number and re-upload via PATCH if/when we add that endpoint.
-      //
-      // V1: skip the regen — the Dropbox upload uses the temp PDF and the
-      // operator can regenerate manually if the placeholder bothers them.
-      const placeholderQuote = buildQuoteForPdf('Q###### (pending)');
-      const { base64 } = await generateQuotePdf(placeholderQuote);
-      const created = await api.submitQuote(buildSubmitPayload(base64));
+      // Render the submit-time PDF with the SAME peeked number we showed
+      // the user on Preview, then send `expected_quote_number` so the
+      // backend honors that exact value via setval(quote_seq, n) — this
+      // keeps the Dropbox PDF, the DB row, and the on-screen confirmation
+      // all in sync. If a race forces the backend to fall back to a fresh
+      // nextval, it re-uploads the (slightly-stale-numbered) PDF under
+      // the new path; that's a 1-in-a-million case for a 1-2 admin team.
+      const qn = await peekQuoteNumberCached();
+      const { base64 } = await generateQuotePdf(buildQuoteForPdf(qn));
+      const created = await api.submitQuote(buildSubmitPayload(base64, qn));
       setSubmittedQuote(created);
       // Refresh the Recent Quotes list silently so it's ready when the
       // user clicks the View tab.
@@ -599,6 +675,7 @@ export default function QuoteBuilder({
     online,
     buildQuoteForPdf,
     buildSubmitPayload,
+    peekQuoteNumberCached,
     loadRecent,
     onQuotesChanged,
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -726,7 +803,7 @@ export default function QuoteBuilder({
           quoteNotes={quoteNotes} setQuoteNotes={setQuoteNotes}
           lineItems={lineItems}
           // line item handlers
-          addLine={addLine} updateLine={updateLine} removeLine={removeLine}
+          addLine={addLine} updateLine={updateLine} removeLine={removeLine} moveLine={moveLine}
           selectCatalogItem={selectCatalogItem}
           // catalog
           catalog={catalog}
@@ -741,6 +818,7 @@ export default function QuoteBuilder({
           submitting={submitting}
           submitError={submitError}
           submittedQuote={submittedQuote}
+          peekedQuoteNumber={peekedQuoteNumber}
           previewOpen={previewOpen}
           previewBase64={previewBase64}
           setPreviewOpen={setPreviewOpen}
@@ -781,7 +859,7 @@ export default function QuoteBuilder({
       {/* PDF sub-modals (z-index 95) — preview before submit, view after */}
       {previewOpen ? (
         <PdfSubModal
-          title={`Preview — ${submittedQuote?.quote_number || 'Q###### (pending)'}`}
+          title={`Preview — ${submittedQuote?.quote_number || peekedQuoteNumber || 'Q###### (pending)'}`}
           pdfBase64={previewBase64}
           onClose={() => setPreviewOpen(false)}
         />
@@ -805,10 +883,10 @@ function NewQuoteTab(props) {
     primaryCategoryId, setPrimaryCategoryId,
     taxEnabled, setTaxEnabled, taxLabel, setTaxLabel, taxRate, setTaxRate,
     quoteNotes, setQuoteNotes, lineItems,
-    addLine, updateLine, removeLine, selectCatalogItem,
+    addLine, updateLine, removeLine, moveLine, selectCatalogItem,
     catalog, activeCategories, primaryCategory, catalogLoading, catalogError, onReloadCatalog,
     clients, areas, totals,
-    submitting, submitError, submittedQuote,
+    submitting, submitError, submittedQuote, peekedQuoteNumber,
     previewOpen, previewBase64, setPreviewOpen,
     onPreview, onSubmit, onReset, online,
   } = props;
@@ -896,7 +974,10 @@ function NewQuoteTab(props) {
               <label style={S.label}>Quote #</label>
               <input
                 style={{ ...S.input, color: '#9ab1d6', cursor: 'not-allowed' }}
-                value={submittedQuote?.quote_number || 'Q###### — auto-assigned on submit'}
+                value={
+                  submittedQuote?.quote_number
+                  || (peekedQuoteNumber ? `${peekedQuoteNumber} — pending submit` : 'Q###### — auto-assigned on submit')
+                }
                 readOnly
               />
             </div>
@@ -992,6 +1073,8 @@ function NewQuoteTab(props) {
                     activeCategories={activeCategories}
                     onUpdate={(patch) => updateLine(idx, patch)}
                     onRemove={() => removeLine(idx)}
+                    onMoveUp={idx > 0 ? () => moveLine(idx, -1) : null}
+                    onMoveDown={idx < lineItems.length - 1 ? () => moveLine(idx, 1) : null}
                     onSelectCatalogItem={(itemId) => selectCatalogItem(idx, itemId)}
                     onSaveCustomToCatalog={async ({ categoryId, defaultMarkupPct, defaultMarkupLabel }) => {
                       try {
@@ -1129,7 +1212,7 @@ function NewQuoteTab(props) {
 }
 
 // ── Sub-component: single line-item row ───────────────────────────────────
-function LineItemRow({ idx, line, mixCategories, primaryCategory, activeCategories, onUpdate, onRemove, onSelectCatalogItem, onSaveCustomToCatalog }) {
+function LineItemRow({ idx, line, mixCategories, primaryCategory, activeCategories, onUpdate, onRemove, onMoveUp, onMoveDown, onSelectCatalogItem, onSaveCustomToCatalog }) {
   // Effective category for this row in single mode = primary, in mixed = row's own.
   const rowCategory = useMemo(() => {
     if (mixCategories) {
@@ -1163,6 +1246,25 @@ function LineItemRow({ idx, line, mixCategories, primaryCategory, activeCategori
           onChange={(e) => onUpdate({ description: e.target.value })}
           placeholder="Note — renders italic on the PDF (e.g. section header, scope caveat)"
         />
+        {/* ↑ ↓ ✕ for note rows. Disabled buttons render at low opacity so
+            the layout doesn't shift between rows at the start/end of the
+            list. */}
+        <button
+          type="button"
+          onClick={onMoveUp || undefined}
+          disabled={!onMoveUp}
+          style={{ ...S.iconBtn, opacity: onMoveUp ? 1 : 0.3, cursor: onMoveUp ? 'pointer' : 'not-allowed' }}
+          aria-label="Move note up"
+          title="Move up"
+        >↑</button>
+        <button
+          type="button"
+          onClick={onMoveDown || undefined}
+          disabled={!onMoveDown}
+          style={{ ...S.iconBtn, opacity: onMoveDown ? 1 : 0.3, cursor: onMoveDown ? 'pointer' : 'not-allowed' }}
+          aria-label="Move note down"
+          title="Move down"
+        >↓</button>
         <button type="button" onClick={onRemove} style={{ ...S.iconBtn, color: '#fca5a5' }} aria-label="Remove note">✕</button>
       </div>
     );
@@ -1258,10 +1360,34 @@ function LineItemRow({ idx, line, mixCategories, primaryCategory, activeCategori
       <div style={{ ...S.td, textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
         {formatMoney(line.subtotal)}
       </div>
-      {/* Remove */}
-      <button type="button" onClick={onRemove} style={{ ...S.iconBtn, color: '#fca5a5' }} aria-label="Remove line">
-        ✕
-      </button>
+      {/* ↑ ↓ ✕ — packed into the trailing action column. Disabled state
+          uses low opacity rather than display:none so the row layout
+          stays consistent across the list. */}
+      <div style={{ display: 'flex', gap: '2px', justifyContent: 'flex-end', alignItems: 'center' }}>
+        <button
+          type="button"
+          onClick={onMoveUp || undefined}
+          disabled={!onMoveUp}
+          style={{ ...S.iconBtn, padding: '4px 6px', opacity: onMoveUp ? 1 : 0.3, cursor: onMoveUp ? 'pointer' : 'not-allowed' }}
+          aria-label="Move line up"
+          title="Move up"
+        >↑</button>
+        <button
+          type="button"
+          onClick={onMoveDown || undefined}
+          disabled={!onMoveDown}
+          style={{ ...S.iconBtn, padding: '4px 6px', opacity: onMoveDown ? 1 : 0.3, cursor: onMoveDown ? 'pointer' : 'not-allowed' }}
+          aria-label="Move line down"
+          title="Move down"
+        >↓</button>
+        <button
+          type="button"
+          onClick={onRemove}
+          style={{ ...S.iconBtn, padding: '4px 6px', color: '#fca5a5' }}
+          aria-label="Remove line"
+          title="Remove"
+        >✕</button>
+      </div>
 
       {/* Markup checkbox row (only when the line has a markup config or is custom) */}
       {(line.markup_pct != null && Number(line.markup_pct) !== 0) || line.markup_enabled || isCustom ? (
@@ -1596,6 +1722,44 @@ function SettingsTab({ catalog, catalogLoading, catalogError, onReloadCatalog, o
     }
   };
 
+  // ── Reorder helpers ──
+  // Swap two items' (or two categories') sort_order values via PATCH and
+  // reload. We swap rather than renumber the whole list so a tap is one
+  // round-trip per affected row instead of N. The catalog endpoint orders
+  // by sort_order ASC then name, so swapping the two values is enough to
+  // visibly reorder the pair on the next reload.
+  const swapSortOrder = async (kindLabel, a, b, patchFn) => {
+    setBusy(true); setError('');
+    try {
+      const aSort = Number(a.sort_order) || 0;
+      const bSort = Number(b.sort_order) || 0;
+      // If both share the same sort_order (legacy seed data), bump the
+      // moved-up one one slot below the moved-down one to force order.
+      const aNew = aSort === bSort ? bSort - 1 : bSort;
+      const bNew = aSort === bSort ? bSort : aSort;
+      await patchFn(a.id, { sort_order: aNew });
+      await patchFn(b.id, { sort_order: bNew });
+      await onReloadCatalog();
+    } catch (e) {
+      setError(e?.message || `Reorder ${kindLabel} failed`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleMoveCategory = async (idx, delta) => {
+    const target = idx + delta;
+    if (target < 0 || target >= catalog.length) return;
+    await swapSortOrder('category', catalog[idx], catalog[target], (id, patch) => api.updateQuoteCategory(id, patch));
+  };
+
+  const handleMoveItem = async (cat, itemIdx, delta) => {
+    const items = cat.items || [];
+    const target = itemIdx + delta;
+    if (target < 0 || target >= items.length) return;
+    await swapSortOrder('item', items[itemIdx], items[target], (id, patch) => api.updateQuoteItem(id, patch));
+  };
+
   return (
     <div style={S.body}>
       {!online ? (
@@ -1637,13 +1801,15 @@ function SettingsTab({ catalog, catalogLoading, catalogError, onReloadCatalog, o
       {catalogLoading && catalog.length === 0 ? (
         <div style={{ fontSize: '0.85rem', color: '#9ab1d6', padding: '14px 0' }}>Loading catalog…</div>
       ) : (
-        catalog.map((cat) => (
+        catalog.map((cat, catIdx) => (
           <section key={cat.id} style={S.card}>
             <CategoryHeaderEditor
               cat={cat}
               busy={busy}
               onPatch={handlePatchCategory}
               onDelete={() => handleDeleteCategory(cat)}
+              onMoveUp={catIdx > 0 ? () => handleMoveCategory(catIdx, -1) : null}
+              onMoveDown={catIdx < catalog.length - 1 ? () => handleMoveCategory(catIdx, 1) : null}
             />
 
             {/* Items table */}
@@ -1657,17 +1823,19 @@ function SettingsTab({ catalog, catalogLoading, catalogError, onReloadCatalog, o
                     <th style={{ ...S.th, padding: '6px 8px', textAlign: 'right', width: '100px' }}>Markup %</th>
                     <th style={{ ...S.th, padding: '6px 8px', textAlign: 'left', width: '130px' }}>Markup label</th>
                     <th style={{ ...S.th, padding: '6px 8px', textAlign: 'right', width: '80px' }}>Sort</th>
-                    <th style={{ ...S.th, padding: '6px 8px', width: '60px' }}></th>
+                    <th style={{ ...S.th, padding: '6px 8px', width: '110px' }}></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(cat.items || []).map((item) => (
+                  {(cat.items || []).map((item, itemIdx) => (
                     <ItemRowEditor
                       key={item.id}
                       item={item}
                       busy={busy}
                       onPatch={handlePatchItem}
                       onDelete={() => handleDeleteItem(item)}
+                      onMoveUp={itemIdx > 0 ? () => handleMoveItem(cat, itemIdx, -1) : null}
+                      onMoveDown={itemIdx < (cat.items || []).length - 1 ? () => handleMoveItem(cat, itemIdx, 1) : null}
                     />
                   ))}
                   {/* Add-item row */}
@@ -1739,7 +1907,7 @@ function SettingsTab({ catalog, catalogLoading, catalogError, onReloadCatalog, o
 }
 
 // ── Sub-component: editable category header (Settings tab) ───────────────
-function CategoryHeaderEditor({ cat, busy, onPatch, onDelete }) {
+function CategoryHeaderEditor({ cat, busy, onPatch, onDelete, onMoveUp, onMoveDown }) {
   const [name, setName] = useState(cat.name || '');
   const [notes, setNotes] = useState(cat.notes || '');
   const [sortOrder, setSortOrder] = useState(cat.sort_order ?? 0);
@@ -1790,15 +1958,33 @@ function CategoryHeaderEditor({ cat, busy, onPatch, onDelete }) {
       >
         Save
       </button>
-      <button type="button" style={S.danger} disabled={busy} onClick={onDelete}>
-        Hide
-      </button>
+      <div style={{ display: 'flex', gap: '4px' }}>
+        <button
+          type="button"
+          onClick={onMoveUp || undefined}
+          disabled={!onMoveUp || busy}
+          style={{ ...S.iconBtn, opacity: onMoveUp ? 1 : 0.3 }}
+          title="Move category up"
+          aria-label="Move category up"
+        >↑</button>
+        <button
+          type="button"
+          onClick={onMoveDown || undefined}
+          disabled={!onMoveDown || busy}
+          style={{ ...S.iconBtn, opacity: onMoveDown ? 1 : 0.3 }}
+          title="Move category down"
+          aria-label="Move category down"
+        >↓</button>
+        <button type="button" style={S.danger} disabled={busy} onClick={onDelete}>
+          Hide
+        </button>
+      </div>
     </div>
   );
 }
 
 // ── Sub-component: editable item row (Settings tab) ──────────────────────
-function ItemRowEditor({ item, busy, onPatch, onDelete }) {
+function ItemRowEditor({ item, busy, onPatch, onDelete, onMoveUp, onMoveDown }) {
   const [name, setName] = useState(item.name || '');
   const [unit, setUnit] = useState(item.unit || '');
   const [rate, setRate] = useState(item.rate ?? 0);
@@ -1907,9 +2093,27 @@ function ItemRowEditor({ item, busy, onPatch, onDelete }) {
         />
       </td>
       <td style={{ padding: '6px 8px', textAlign: 'right' }}>
-        <button type="button" style={{ ...S.iconBtn, color: '#fca5a5' }} disabled={busy} onClick={onDelete}>
-          Hide
-        </button>
+        <div style={{ display: 'flex', gap: '2px', justifyContent: 'flex-end', alignItems: 'center' }}>
+          <button
+            type="button"
+            onClick={onMoveUp || undefined}
+            disabled={!onMoveUp || busy}
+            style={{ ...S.iconBtn, padding: '4px 6px', opacity: onMoveUp ? 1 : 0.3 }}
+            title="Move item up"
+            aria-label="Move item up"
+          >↑</button>
+          <button
+            type="button"
+            onClick={onMoveDown || undefined}
+            disabled={!onMoveDown || busy}
+            style={{ ...S.iconBtn, padding: '4px 6px', opacity: onMoveDown ? 1 : 0.3 }}
+            title="Move item down"
+            aria-label="Move item down"
+          >↓</button>
+          <button type="button" style={{ ...S.iconBtn, padding: '4px 6px', color: '#fca5a5' }} disabled={busy} onClick={onDelete}>
+            Hide
+          </button>
+        </div>
       </td>
     </tr>
   );

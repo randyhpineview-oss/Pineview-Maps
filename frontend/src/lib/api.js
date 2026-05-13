@@ -544,6 +544,12 @@ export const api = {
     // mid-flight timeout doesn't burn the sequence value.
     return request('/api/quotes', { method: 'POST', body: payload, timeoutMs: 45_000 });
   },
+  // Peek at the next Q###### the server would assign without consuming
+  // the sequence. Used for preview rendering — if the user doesn't
+  // submit, the same number stays available for the next quote.
+  peekQuoteNumber() {
+    return request('/api/quotes/peek-number');
+  },
   listRecentQuotes({ limit, offset, client, from, to } = {}) {
     const params = new URLSearchParams();
     if (limit != null) params.set('limit', String(limit));

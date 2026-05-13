@@ -278,11 +278,16 @@ export async function generateQuotePdf(quote) {
     const taxLabel = `${quote.tax_label || 'Tax'} (${formatNumber(quote.tax_rate, 3)}%)`;
     drawTotalRow(taxLabel, totals.taxAmount);
   }
-  // Divider
+  // Divider with proper clearance.
+  // After the last regular row, `y` is one line-height past the previous
+  // baseline. We add 4pt padding before the divider, then 14pt before the
+  // Grand Total baseline so the 11pt bold caps don't overlap the line
+  // (was: line at y-4 → 6pt above GT caps → visible overlap on the descender).
+  y += 4;
   doc.setDrawColor(60);
   doc.setLineWidth(0.5);
-  doc.line(totalsLabelX, y - 4, pageW - marginR, y - 4);
-  y += 2;
+  doc.line(totalsLabelX, y, pageW - marginR, y);
+  y += 14;
   drawTotalRow('Grand Total', totals.grandTotal, { bold: true });
 
   // ── Quote-level notes ──
