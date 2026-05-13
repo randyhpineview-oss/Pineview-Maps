@@ -2131,7 +2131,6 @@ function SettingsTab({ catalog, catalogLoading, catalogError, onReloadCatalog, o
                       <th style={{ ...S.th, padding: '6px 8px', textAlign: 'right', width: '110px' }}>Rate</th>
                       <th style={{ ...S.th, padding: '6px 8px', textAlign: 'right', width: '100px' }}>Markup %</th>
                       <th style={{ ...S.th, padding: '6px 8px', textAlign: 'left', width: '130px' }}>Markup label</th>
-                      <th style={{ ...S.th, padding: '6px 8px', textAlign: 'right', width: '80px' }}>Sort</th>
                       <th style={{ ...S.th, padding: '6px 8px', width: '110px' }}></th>
                     </tr>
                   </thead>
@@ -2193,7 +2192,6 @@ function SettingsTab({ catalog, catalogLoading, catalogError, onReloadCatalog, o
                           placeholder="cost"
                         />
                       </td>
-                      <td style={{ padding: '6px 8px' }} />
                       <td style={{ padding: '6px 8px', textAlign: 'right' }}>
                         <button
                           type="button"
@@ -2233,12 +2231,15 @@ function CategoryHeaderEditor({ cat, busy, isMobile, onPatch, onDelete, onMoveUp
     Number(sortOrder) !== Number(cat.sort_order ?? 0)
   );
 
-  // Phone: stack name/notes/sort vertically and put Save + ↑↓ Hide on
-  // their own action row. Desktop: 5-column grid in a single row.
+  // Phone: stack name/notes vertically and put Save + ↑↓ Hide on their
+  // own action row. Desktop: 4-column grid in a single row. (Sort order
+  // is managed via the ↑↓ buttons; the raw integer used to be exposed
+  // here but it was redundant and visually noisy — see the matching
+  // omission in ItemRowEditor below.)
   return (
     <div style={{
       display: 'grid',
-      gridTemplateColumns: isMobile ? '1fr' : 'minmax(160px, 1fr) minmax(220px, 2fr) 90px auto auto',
+      gridTemplateColumns: isMobile ? '1fr' : 'minmax(160px, 1fr) minmax(220px, 2fr) auto auto',
       gap: '10px', alignItems: 'end',
     }}>
       <div>
@@ -2248,15 +2249,6 @@ function CategoryHeaderEditor({ cat, busy, isMobile, onPatch, onDelete, onMoveUp
       <div>
         <label style={S.label}>Notes</label>
         <input style={S.input} value={notes} onChange={(e) => setNotes(e.target.value)} />
-      </div>
-      <div style={isMobile ? { maxWidth: '120px' } : undefined}>
-        <label style={S.label}>Sort</label>
-        <input
-          type="number"
-          style={{ ...S.input, textAlign: 'right' }}
-          value={sortOrder}
-          onChange={(e) => setSortOrder(e.target.value)}
-        />
       </div>
       {isMobile ? (
         // Combined action row on mobile: Save (flex 1) + ↑ ↓ Hide
@@ -2448,16 +2440,6 @@ function ItemRowEditor({ item, busy, isMobile, onPatch, onDelete, onMoveUp, onMo
               onBlur={() => persistIfDirty({ default_markup_label: markupLabel })}
             />
           </div>
-          <div>
-            <label style={S.label}>Sort</label>
-            <input
-              type="number"
-              style={{ ...S.inputSm, textAlign: 'right' }}
-              value={sortOrder}
-              onChange={(e) => setSortOrder(e.target.value)}
-              onBlur={() => persistIfDirty({ sort_order: sortOrder })}
-            />
-          </div>
         </div>
         <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
           <button
@@ -2530,15 +2512,6 @@ function ItemRowEditor({ item, busy, isMobile, onPatch, onDelete, onMoveUp, onMo
           onChange={(e) => setMarkupLabel(e.target.value)}
           onBlur={() => persistIfDirty({ default_markup_label: markupLabel })}
           placeholder=""
-        />
-      </td>
-      <td style={{ padding: '6px 8px' }}>
-        <input
-          type="number"
-          style={{ ...S.inputSm, textAlign: 'right' }}
-          value={sortOrder}
-          onChange={(e) => setSortOrder(e.target.value)}
-          onBlur={() => persistIfDirty({ sort_order: sortOrder })}
         />
       </td>
       <td style={{ padding: '6px 8px', textAlign: 'right' }}>
