@@ -526,6 +526,12 @@ export const api = {
   deleteQuoteCategory(id) {
     return request(`/api/quote-rates/categories/${id}`, { method: 'DELETE' });
   },
+  // Permanent hard-delete: removes the row + cascades items. Historical
+  // quotes survive because their line items are snapshotted into
+  // quotes.line_items_json (no FK back to quote_rate_categories).
+  permanentDeleteQuoteCategory(id) {
+    return request(`/api/quote-rates/categories/${id}/permanent`, { method: 'DELETE' });
+  },
   createQuoteItem(payload) {
     return request('/api/quote-rates/items', { method: 'POST', body: payload });
   },

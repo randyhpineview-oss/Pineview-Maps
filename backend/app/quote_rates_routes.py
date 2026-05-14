@@ -198,6 +198,29 @@ def delete_category(category_id: int, db: Session = Depends(get_db)):
     db.commit()
 
 
+@router.delete("/categories/{category_id}/permanent", status_code=status.HTTP_204_NO_CONTENT)
+def permanent_delete_category(category_id: int, db: Session = Depends(get_db)):
+    """Hard-delete: physically remove the category row. The FK on
+    quote_rate_items has `ON DELETE CASCADE` so all items in the category
+    are removed in the same transaction.
+
+    Historical quotes are NOT affected because `quotes.line_items_json`
+    is a JSONB snapshot — it stores `category_id` and `category_name` per
+    line, but no FK back to this table, so deleting the row leaves saved
+    quotes' line items rendering exactly as they did when submitted.
+
+    Use case: a category was created in error or has rotated permanently
+    out of the company's offerings, and the admin doesn't want it
+    cluttering the soft-deleted recovery surface (recreating a category
+    with the same name re-activates the soft-deleted one).
+    """
+    cat = db.query(QuoteRateCategory).filter(QuoteRateCategory.id == category_id).first()
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+    db.delete(cat)  # cascade removes items
+    db.commit()
+
+
 # ── Item mutations ─────────────────────────────────────────────────────────
 
 @router.post("/items", response_model=QuoteRateItemRead, status_code=status.HTTP_201_CREATED)

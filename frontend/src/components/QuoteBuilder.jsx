@@ -2109,6 +2109,32 @@ function SettingsTab({ catalog, catalogLoading, catalogError, onReloadCatalog, o
     }
   };
 
+  // Permanent hard-delete. Distinct from Hide — actually removes the
+  // category row + cascades all of its items. Past quotes are unaffected
+  // (they snapshot line items into quotes.line_items_json) but the
+  // catalog loses the category for good. Confirmation message includes
+  // the item count so the admin sees exactly what's about to vanish.
+  const handlePermanentDeleteCategory = async (cat) => {
+    const itemCount = (cat.items || []).length;
+    if (!(await confirm({
+      title: 'Delete category permanently',
+      message: itemCount > 0
+        ? `Permanently delete "${cat.name}" and its ${itemCount} item${itemCount === 1 ? '' : 's'}? This cannot be undone. Past quotes are unaffected — they keep their saved snapshot.`
+        : `Permanently delete "${cat.name}"? This cannot be undone.`,
+      severity: 'danger',
+      okLabel: 'Delete forever',
+    }))) return;
+    setBusy(true); setError('');
+    try {
+      await api.permanentDeleteQuoteCategory(cat.id);
+      await onReloadCatalog();
+    } catch (e) {
+      setError(e?.message || 'Delete failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleAddItem = async (catId) => {
     const draft = adding[catId];
     if (!draft?.name?.trim()) return;
@@ -2323,6 +2349,7 @@ function SettingsTab({ catalog, catalogLoading, catalogError, onReloadCatalog, o
               isMobile={isMobile}
               onPatch={handlePatchCategory}
               onDelete={() => handleDeleteCategory(cat)}
+              onPermanentDelete={() => handlePermanentDeleteCategory(cat)}
               onMoveUp={catIdx > 0 ? () => handleMoveCategory(catIdx, -1) : null}
               onMoveDown={catIdx < catalog.length - 1 ? () => handleMoveCategory(catIdx, 1) : null}
             />
@@ -2440,7 +2467,7 @@ function SettingsTab({ catalog, catalogLoading, catalogError, onReloadCatalog, o
 }
 
 // ── Sub-component: editable category header (Settings tab) ───────────────
-function CategoryHeaderEditor({ cat, busy, isMobile, onPatch, onDelete, onMoveUp, onMoveDown }) {
+function CategoryHeaderEditor({ cat, busy, isMobile, onPatch, onDelete, onPermanentDelete, onMoveUp, onMoveDown }) {
   const [name, setName] = useState(cat.name || '');
   const [notes, setNotes] = useState(cat.notes || '');
   const [sortOrder, setSortOrder] = useState(cat.sort_order ?? 0);
@@ -2509,6 +2536,20 @@ function CategoryHeaderEditor({ cat, busy, isMobile, onPatch, onDelete, onMoveUp
           <button type="button" style={S.danger} disabled={busy} onClick={onDelete}>
             Hide
           </button>
+          {/* Hard-delete — ghosted-red "✖" so it's clearly destructive
+              and visually distinct from the standard Hide button. The
+              confirmation dialog is the real safety net (lists item count
+              + spells out it cannot be undone). */}
+          <button
+            type="button"
+            style={{ ...S.danger, background: 'rgba(127,29,29,0.85)', borderColor: 'rgba(220,38,38,0.85)' }}
+            disabled={busy}
+            onClick={onPermanentDelete}
+            title="Delete category permanently (cannot be undone)"
+            aria-label="Delete category permanently"
+          >
+            ✖ Delete
+          </button>
         </div>
       ) : (
         <>
@@ -2543,6 +2584,16 @@ function CategoryHeaderEditor({ cat, busy, isMobile, onPatch, onDelete, onMoveUp
             >↓</button>
             <button type="button" style={S.danger} disabled={busy} onClick={onDelete}>
               Hide
+            </button>
+            <button
+              type="button"
+              style={{ ...S.danger, background: 'rgba(127,29,29,0.85)', borderColor: 'rgba(220,38,38,0.85)' }}
+              disabled={busy}
+              onClick={onPermanentDelete}
+              title="Delete category permanently (cannot be undone)"
+              aria-label="Delete category permanently"
+            >
+              ✖ Delete
             </button>
           </div>
         </>
