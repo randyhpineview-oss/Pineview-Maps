@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import { pinTypeLabel, statusLabel } from '../lib/mapUtils';
 import UserManagementPanel from './UserManagementPanel';
 import LookupManager from './LookupManager';
+import DeviceAdmin from './DeviceAdmin';
 import { useDialog } from './DialogProvider';
 
 function PendingSiteCard({ site, busy, onApprove, onReject, onApproveAndEdit, onSelectSite }) {
@@ -545,6 +546,15 @@ export default function AdminPanel({
 
         <CollapsibleSection title="User Management" defaultOpen={false}>
           <UserManagementPanel busy={busy} currentUserEmail={currentUserEmail} cachedUsers={cachedUsers} onUsersChanged={onUsersChanged} />
+        </CollapsibleSection>
+
+        {/* Truck Tracking sits next to User Management because device admin
+            (register iPad, assign driver, rotate token) is conceptually a
+            people/fleet operation rather than a data-import or pin-management
+            one. DeviceAdmin self-loads its own users + devices lists so the
+            parent doesn't need to thread additional props. */}
+        <CollapsibleSection title="Truck Tracking (iPads)" defaultOpen={false}>
+          <DeviceAdmin busy={busy} />
         </CollapsibleSection>
 
         <CollapsibleSection title="Lookup Tables" defaultOpen={false}>

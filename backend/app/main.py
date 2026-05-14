@@ -26,6 +26,11 @@ from app.reports_routes import router as reports_router
 from app.quote_rates_routes import router as quote_rates_router
 from app.quotes_routes import router as quotes_router
 from app.calendar_routes import router as calendar_router
+from app.devices_routes import (
+    read_router as devices_read_router,
+    admin_router as devices_admin_router,
+    ingest_router as devices_ingest_router,
+)
 from app.pipeline_models import Pipeline, SprayRecord  # noqa: F401 — ensure tables are registered
 from app.calendar_models import (  # noqa: F401 — ensure tables are registered
     CalendarBid,
@@ -33,6 +38,7 @@ from app.calendar_models import (  # noqa: F401 — ensure tables are registered
     CalendarEvent,
     CalendarTask,
 )
+from app.device_models import Device, DevicePing  # noqa: F401 — ensure tables are registered
 from app.models import (
     ApprovalState,
     PinType,
@@ -128,6 +134,13 @@ app.include_router(reports_router)
 app.include_router(quote_rates_router)
 app.include_router(quotes_router)
 app.include_router(calendar_router)
+# Three device routers split by audience:
+#   - read: GET /api/devices (any logged-in role; powers the map layer)
+#   - admin: /api/admin/devices/* (admin only; create/rotate/edit/delete)
+#   - ingest: POST /api/devices/ping (bearer-token, NOT JWT; OwnTracks)
+app.include_router(devices_read_router)
+app.include_router(devices_admin_router)
+app.include_router(devices_ingest_router)
 
 
 # Global exception handler. Logs the full traceback server-side and
@@ -195,6 +208,23 @@ def startup_event() -> None:
             print("[STARTUP] Calendar tables ensured")
         except Exception as e:
             print(f"Warning: Could not create calendar tables: {e}")
+        # Create devices tables if they don't exist. The full migration
+        # (indexes, REPLICA IDENTITY, supabase_realtime publication) lives in
+        # database/devices_setup.sql; this fallback covers the case where the
+        # API ships before that SQL is run, so basic CRUD still works (just
+        # without Realtime push until the SQL migration is applied).
+        try:
+            Base.metadata.create_all(
+                bind=engine,
+                tables=[
+                    Device.__table__,
+                    DevicePing.__table__,
+                ],
+                checkfirst=True,
+            )
+            print("[STARTUP] Devices tables ensured")
+        except Exception as e:
+            print(f"Warning: Could not create devices tables: {e}")
         # Run column migrations on Postgres too
         try:
             _migrate_add_columns()
@@ -225,7 +255,7 @@ def startup_event() -> None:
 # Format: an opaque-but-meaningful string. Date-prefix + initial keeps
 # bumps obvious in git blame. The exact value doesn't matter as long as
 # it differs from any prior committed value.
-_MIGRATION_VERSION = "2026-05-12-quote-builder"
+_MIGRATION_VERSION = "2026-05-14-devices"
 
 
 def _migrate_add_columns() -> None:

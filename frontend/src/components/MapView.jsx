@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { GoogleMap, Marker, OverlayView, Polyline, useJsApiLoader } from '@react-google-maps/api';
 
 import { buildMarkerIcon, pinTypeLabel, nearestFraction } from '../lib/mapUtils';
+import TrucksLayer from './TrucksLayer';
 
 const mapContainerStyle = { width: '100%', height: '100%' };
 
@@ -166,6 +167,13 @@ export default function MapView({
   // offline→online transition mid-form would wipe their lease sheet
   // / T&M ticket draft.
   activeTab = 'map',
+  // Truck-tracking props (Phase 1). `devices` is the array of registered
+  // iPads with their last-known position; `showTrucksLayer` is the
+  // layer-toggle bool driven from the topbar/sidebar layer panel. Both
+  // default empty/false so MapView still works in code paths that don't
+  // load device data (e.g. tests).
+  devices = [],
+  showTrucksLayer = true,
 }) {
   const mapRef = useRef(null);
   const lastFittedBoundsKey = useRef('');
@@ -879,6 +887,12 @@ export default function MapView({
             style={{ display: 'none', width: 0, height: 0, pointerEvents: 'none' }}
           />
         </OverlayView>
+
+        {/* Truck layer (Phase 1 — OwnTracks). Renders one Marker per
+            active device with a last-known position, plus its own popup
+            OverlayView. Owns its own popupDevice state so the heavy
+            popupSite/popupPipeline state in MapView stays untouched. */}
+        <TrucksLayer devices={devices} visible={showTrucksLayer} />
 
         {sites.map((site) => {
           // Marker key includes the site's visual signature (every field

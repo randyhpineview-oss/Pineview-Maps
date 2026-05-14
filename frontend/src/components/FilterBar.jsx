@@ -8,6 +8,7 @@ const LAYER_OPTIONS = [
   { key: 'quad_access', label: 'Quad Access' },
   { key: 'reclaimed', label: 'Reclaimed' },
   { key: 'pipelines', label: 'Pipelines' },
+  { key: 'trucks', label: 'Trucks' },
 ];
 
 export default function FilterBar({
@@ -18,7 +19,7 @@ export default function FilterBar({
   onChange,
   onSearchSelect,
   onClearAll,
-  layers = { lsd: true, water: true, quad_access: true, reclaimed: true, pipelines: true },
+  layers = { lsd: true, water: true, quad_access: true, reclaimed: true, pipelines: true, trucks: true },
   onLayerToggle,
 }) {
   const [focused, setFocused] = useState(false);

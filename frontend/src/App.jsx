@@ -88,7 +88,7 @@ const QuoteBuilder = lazy(() => import('./components/QuoteBuilder'));
 const CalendarOverlay = lazy(() => import('./components/CalendarOverlay'));
 
 const DEFAULT_FILTERS = { search: '', client: '', area: '', status: '', approval_state: '' };
-const DEFAULT_LAYERS = { lsd: true, water: true, quad_access: true, reclaimed: true, pipelines: true };
+const DEFAULT_LAYERS = { lsd: true, water: true, quad_access: true, reclaimed: true, pipelines: true, trucks: true };
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
 
 const TAB_MAP = 'map';
@@ -579,6 +579,11 @@ export default function App() {
   const [pipelineDetailOpen, setPipelineDetailOpen] = useState(false);
   const [pipelineSprayRecords, setPipelineSprayRecords] = useState([]);
   const [layers, setLayers] = useState(DEFAULT_LAYERS);
+  // Devices (registered iPads running OwnTracks). One row per truck with
+  // its last-known position + color, used by MapView's TrucksLayer.
+  // Hydrated from /api/devices on boot, then kept fresh via Supabase
+  // Realtime on the `devices` table (added to the channel chain below).
+  const [devices, setDevices] = useState([]);
   // Drawing pipeline state
   const [isDrawingPipeline, setIsDrawingPipeline] = useState(false);
   const [drawingPoints, setDrawingPoints] = useState([]);
@@ -960,6 +965,24 @@ export default function App() {
       console.error('[USERS] Failed to load from server');
     }
   }, [userRole]);
+
+  // Devices: registered iPads running OwnTracks. No IndexedDB cache layer
+  // because the fleet is tiny (single-digit row count) and the only
+  // payload that matters is the position snapshot — stale cached
+  // positions would be more misleading than a brief blank state. Realtime
+  // keeps the in-memory array fresh after this initial load.
+  const loadDevices = useCallback(async () => {
+    if (!window.navigator.onLine) return;
+    try {
+      const data = await api.listDevices();
+      setDevices(Array.isArray(data) ? data : []);
+    } catch (e) {
+      // Soft-fail: an offline boot or transient 5xx shouldn't blow up
+      // the whole app. The map keeps rendering site pins; trucks just
+      // don't show until the next successful load / Realtime event.
+      console.warn('[DEVICES] Failed to load devices from server:', e);
+    }
+  }, []);
 
   // Pipelines: cached from IndexedDB instantly, then refreshed from server
   // when online. Mirror of loadCachedSites/loadServerSites so the boot path
@@ -1482,6 +1505,7 @@ export default function App() {
             loadServerRecents(),
             loadServerLookups(),
             loadServerUsers(),
+            loadDevices(),
             loadPipelines(),
             loadPendingPipelines(),
             loadDeletedPipelines(),
@@ -1533,7 +1557,7 @@ export default function App() {
       setMessage('Ready');
     }
   }, [loadCachedSites, loadCachedPipelines, loadCachedRecents, loadCachedLookups, loadCachedUsers,
-      loadServerSites, loadServerRecents, loadServerLookups, loadServerUsers,
+      loadServerSites, loadServerRecents, loadServerLookups, loadServerUsers, loadDevices,
       loadPipelines, loadPendingPipelines, loadDeletedPipelines,
       loadDeletedLeaseSheets, loadDeletedTMTickets]);
 
@@ -1620,6 +1644,7 @@ export default function App() {
             await Promise.all([
               lookupsStale ? loadServerLookups() : Promise.resolve(),
               loadServerUsers(),
+              loadDevices(),
               loadPendingSites(),
               loadPendingPipelines(),
               loadDeletedPipelines(),
@@ -2514,6 +2539,19 @@ export default function App() {
     const onTMTickets = () => setTmRefreshToken((x) => x + 1);
     const onTMRows = () => setTmRefreshToken((x) => x + 1);
 
+    // ── devices: registered iPads (OwnTracks). Each Realtime event is
+    //    a position update, color/label change, or activation toggle.
+    //    We just upsert; the map's TrucksLayer filters out is_active=false
+    //    and rows missing a last_lat/last_lng on render.
+    const onDevices = (payload) => {
+      const row = rowOf(payload);
+      if (!row || row.id == null) return;
+      setDevices((prev) => {
+        if (payload.eventType === 'DELETE') return removeById(prev, row.id);
+        return upsertById(prev, row);
+      });
+    };
+
     // ── users: roster, role changes, deletions ──────────────────────────
     const onUsers = (payload) => {
       const row = rowOf(payload);
@@ -2582,6 +2620,7 @@ export default function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'time_materials_tickets' }, onTMTickets)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'time_materials_rows' }, onTMRows)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, onUsers)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'devices' }, onDevices)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'herbicides' }, onHerbicides)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'applicators' }, onApplicators)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'noxious_weeds' }, onWeeds)
@@ -5032,6 +5071,8 @@ export default function App() {
             onSprayClick={handleSprayClick}
             highlightedSprayRecordId={highlightedSprayRecordId}
             onSprayRecordClick={(record) => setHighlightedSprayRecordId(prev => prev === record.id ? null : record.id)}
+            devices={devices}
+            showTrucksLayer={layers.trucks ?? true}
           />
         </div>
 

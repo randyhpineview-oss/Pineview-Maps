@@ -1,0 +1,188 @@
+import { useState } from 'react';
+import { Marker, OverlayView } from '@react-google-maps/api';
+
+// Side-view pickup truck SVG. The body fills with `color`; everything
+// else (wheels, window glint, stroke) stays constant so the truck reads
+// as the SAME shape across the whole fleet, just colored differently.
+//
+// Width/height are intentionally larger than the LSD pin (~22x26) so a
+// moving vehicle is easy to spot on a satellite view of a 160-acre lease
+// alongside a bunch of stationary pins.
+function truckSvg(color) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="32" viewBox="0 0 48 32">
+    <ellipse cx="24" cy="29" rx="20" ry="2.2" fill="rgba(0,0,0,0.35)"/>
+    <path d="M3 20 L3 13 L20 13 L24 7 L36 7 L41 13 L45 13 L45 20 L42 20 A4.5 4.5 0 0 0 33 20 L15 20 A4.5 4.5 0 0 0 6 20 Z"
+          fill="${color}" stroke="#0f172a" stroke-width="1.6" stroke-linejoin="round"/>
+    <path d="M24 9 L35 9 L39 13 L26 13 Z" fill="#ffffff" fill-opacity="0.78"/>
+    <circle cx="10.5" cy="22" r="4.5" fill="#1f2937" stroke="#0f172a" stroke-width="1.2"/>
+    <circle cx="10.5" cy="22" r="2.2" fill="#9ca3af"/>
+    <circle cx="37.5" cy="22" r="4.5" fill="#1f2937" stroke="#0f172a" stroke-width="1.2"/>
+    <circle cx="37.5" cy="22" r="2.2" fill="#9ca3af"/>
+  </svg>`;
+}
+
+function buildTruckIcon(colorHex) {
+  const svg = truckSvg(colorHex || '#1E88E5');
+  // Bottom-center anchor so the truck sits ON its position instead of
+  // hovering above it. Without this the wheels float 16px north of the
+  // actual GPS coordinate.
+  const w = 48;
+  const h = 32;
+  return {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    scaledSize: window.google ? new window.google.maps.Size(w, h) : undefined,
+    anchor: window.google ? new window.google.maps.Point(w / 2, h - 4) : undefined,
+  };
+}
+
+// Human-friendly "last seen" delta. Same logic as DeviceAdmin's helper
+// but inlined here so the popup doesn't import an admin component.
+function relativeTime(iso) {
+  if (!iso) return '—';
+  const ts = new Date(iso).getTime();
+  if (Number.isNaN(ts)) return '—';
+  const diffMs = Date.now() - ts;
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} hr ago`;
+  const days = Math.floor(hrs / 24);
+  if (days === 1) return 'yesterday';
+  if (days < 7) return `${days} days ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+/**
+ * Renders one Marker per active device plus a tooltip OverlayView for
+ * the currently selected truck. Must be a child of `<GoogleMap>` (uses
+ * Marker + OverlayView from @react-google-maps/api).
+ *
+ * Marker-key discipline (matching the iOS PWA stale-icon fix on Sites):
+ * the key includes `color_hex` so an admin color change unmounts the
+ * old marker and mounts a new one with the new icon. Position is NOT
+ * in the key — @react-google-maps/api syncs the `position` prop fine
+ * without a remount, and position changes every 15 min so remounting
+ * each time would be wasteful + visually janky on iOS Safari.
+ *
+ * Props:
+ *   - devices: array of DeviceRead from /api/devices (only `is_active`
+ *              rows that have at least one ping pass the render filter)
+ *   - visible: bool — when false, the entire layer is hidden (toggle
+ *              from the layer panel). Defaults to true; the App-level
+ *              toggle decides what to pass.
+ */
+export default function TrucksLayer({ devices = [], visible = true }) {
+  const [popupDevice, setPopupDevice] = useState(null);
+
+  if (!visible) return null;
+
+  // Filter out any device without a position yet. A freshly-registered
+  // iPad with no pings doesn't render until OwnTracks lands its first
+  // payload — putting it at lat 0 / lng 0 would slap a pin off the
+  // coast of Africa, which has bitten approximately every map app ever.
+  const renderable = devices.filter(
+    (d) => d.is_active && Number.isFinite(d.last_lat) && Number.isFinite(d.last_lng),
+  );
+
+  // Resolve the popup target against the LATEST device row so a Realtime
+  // update (new position, new color, etc.) keeps the popup in sync.
+  // Without this, opening the popup snapshots the device and the popup
+  // shows stale data until the user closes and reopens it.
+  const activePopup = popupDevice
+    ? devices.find((d) => d.id === popupDevice.id) || null
+    : null;
+
+  return (
+    <>
+      {renderable.map((device) => {
+        // Key includes color_hex so a color change triggers a clean
+        // unmount/remount. Position updates apply via the `position`
+        // prop without a remount.
+        const mKey = `truck-${device.id}-${device.color_hex}`;
+        return (
+          <Marker
+            key={mKey}
+            position={{ lat: device.last_lat, lng: device.last_lng }}
+            icon={buildTruckIcon(device.color_hex)}
+            // High zIndex so the truck floats above site pins — moving
+            // vehicles are usually what an admin is actively watching.
+            zIndex={500}
+            onClick={() => setPopupDevice(device)}
+          />
+        );
+      })}
+
+      {activePopup ? (
+        <OverlayView
+          position={{ lat: activePopup.last_lat, lng: activePopup.last_lng }}
+          mapPaneName={OverlayView.FLOAT_PANE}
+          // Center horizontally, anchor above the truck so the tooltip
+          // doesn't cover the marker the user just tapped.
+          getPixelPositionOffset={(w, h) => ({ x: -(w / 2), y: -(h + 36) })}
+        >
+          <div
+            style={{
+              background: '#0f1c33',
+              color: '#e5eefb',
+              border: '1px solid rgba(143,182,255,0.2)',
+              borderRadius: '0.5rem',
+              padding: '0.6rem 0.8rem',
+              minWidth: '10rem',
+              maxWidth: '15rem',
+              boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+              fontSize: '0.85rem',
+              lineHeight: 1.35,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+              <span
+                aria-hidden
+                style={{
+                  display: 'inline-block',
+                  width: 14,
+                  height: 14,
+                  borderRadius: '50%',
+                  background: activePopup.color_hex,
+                  border: '1px solid rgba(255,255,255,0.25)',
+                  flexShrink: 0,
+                }}
+              />
+              <strong style={{ flexGrow: 1, minWidth: 0 }}>{activePopup.label}</strong>
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={() => setPopupDevice(null)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#9ab1d6',
+                  cursor: 'pointer',
+                  padding: '0 0.25rem',
+                  fontSize: '1rem',
+                  lineHeight: 1,
+                }}
+              >
+                ×
+              </button>
+            </div>
+            <div style={{ marginTop: '0.4rem', color: '#9ab1d6', fontSize: '0.78rem' }}>
+              {activePopup.assigned_user_name ? (
+                <div>👤 {activePopup.assigned_user_name}</div>
+              ) : (
+                <div>👤 Unassigned</div>
+              )}
+              <div>🕒 {relativeTime(activePopup.last_seen_at)}</div>
+              {activePopup.last_battery_pct != null ? (
+                <div>🔋 {activePopup.last_battery_pct}%</div>
+              ) : null}
+              {activePopup.last_speed_kph != null && Number(activePopup.last_speed_kph) > 1 ? (
+                <div>💨 {Math.round(Number(activePopup.last_speed_kph))} km/h</div>
+              ) : null}
+            </div>
+          </div>
+        </OverlayView>
+      ) : null}
+    </>
+  );
+}

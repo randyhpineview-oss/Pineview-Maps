@@ -711,6 +711,41 @@ export const api = {
     setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
     return { filename: suggestedName, size: blob.size };
   },
+
+  // ── Devices (truck tracking via OwnTracks) ──
+  // Read endpoint (any logged-in role) — used by the map's TrucksLayer.
+  // `includeInactive` is admin-only on the UI side; the backend allows
+  // it for any role but only the Devices admin tab exposes it.
+  listDevices({ includeInactive = false } = {}) {
+    const params = new URLSearchParams();
+    if (includeInactive) params.set('include_inactive', 'true');
+    const query = params.toString();
+    return request(`/api/devices${query ? `?${query}` : ''}`);
+  },
+  // Local users (integer IDs) for the DeviceAdmin "assigned employee"
+  // dropdown. NOT the same shape as `listUsers()` — that one returns
+  // Supabase admin records with string UUID ids, which won't satisfy the
+  // FK on devices.assigned_user_id.
+  listAssignableDeviceUsers() {
+    return request('/api/admin/devices/assignable-users');
+  },
+  // Admin-only CRUD. Create returns `{ device, raw_token }` — raw_token is
+  // ONLY in this response (and the rotate response) so DeviceAdmin must
+  // capture it immediately for the OwnTracks paste flow.
+  createDevice(payload) {
+    return request('/api/admin/devices', { method: 'POST', body: payload });
+  },
+  updateDevice(deviceId, payload) {
+    return request(`/api/admin/devices/${deviceId}`, { method: 'PATCH', body: payload });
+  },
+  rotateDeviceToken(deviceId) {
+    return request(`/api/admin/devices/${deviceId}/rotate-token`, { method: 'POST' });
+  },
+  // Soft-disable by default; pass `{ hard: true }` to actually drop the row.
+  deleteDevice(deviceId, { hard = false } = {}) {
+    const query = hard ? '?hard=true' : '';
+    return request(`/api/admin/devices/${deviceId}${query}`, { method: 'DELETE' });
+  },
 };
 
 // Build a URLSearchParams from the report params object, skipping
