@@ -1,309 +1,197 @@
 # Backup & Restore — Pineview Maps
 
-This document is the **single source of truth** for protecting Pineview Maps
-data and for rebuilding the app from scratch if everything is lost.
+Quick reference for how Pineview Maps' data is protected and how to
+recover from various disasters.
 
-If you are reading this because something has gone wrong, jump to
-[Disaster recovery — rebuild from zero](#disaster-recovery--rebuild-from-zero).
+---
+
+## TL;DR
+
+✅ **The database is automatically backed up by Supabase Pro** —
+daily snapshots with 7-day retention, plus point-in-time recovery to
+any second in the last 7 days. No manual setup, no maintenance.
+Verify anytime at:
+**Supabase Dashboard → your project → Database → Backups**.
+
+⚠️ **The remaining gap is your secrets and API keys.** If you lose
+access to your Render or Vercel account, you cannot rebuild the app
+even with the database intact. **Do [Step 1](#step-1--back-up-your-secrets-the-only-real-gap) once, today.** It takes ~10 minutes.
 
 ---
 
 ## What is at risk
 
-| Asset                     | Where it lives                  | Replaceable?           |
-| ------------------------- | ------------------------------- | ---------------------- |
-| App source code           | GitHub: `randyhpineview-oss/Pineview-Maps` | Yes (already on GitHub) |
-| **Database** (pins, sites, users, lease sheets, T&M tickets) | Supabase Postgres | **No — irreplaceable** |
-| PDFs + photos             | Dropbox (`/Pineview Maps`, `/<YYYY> Spray Records`) | Yes — Dropbox versioning |
-| Backend env vars          | Render dashboard                | No — must be re-entered |
-| Frontend env vars         | Vercel dashboard                | No — must be re-entered |
-| Google Maps API key       | Google Cloud Console            | Re-generatable          |
-| Dropbox refresh token     | Dropbox App Console             | Re-generatable          |
-
-**The database is the only piece that, if lost, cannot be reconstructed.**
-Everything below is about protecting it.
+| Asset                                          | Where it lives        | How it's protected                                                |
+| ---------------------------------------------- | --------------------- | ----------------------------------------------------------------- |
+| App source code                                | GitHub repo           | GitHub redundancy + your local clones                             |
+| **Database** (pins, sites, users, lease sheets, T&M tickets) | Supabase Postgres | Supabase Pro daily backups + PITR + restore-to-new-project |
+| PDFs + photos                                  | Dropbox               | Dropbox 30-day version history                                    |
+| **Backend env vars**                           | Render dashboard      | **Not backed up — see Step 1**                                    |
+| **Frontend env vars**                          | Vercel dashboard      | **Not backed up — see Step 1**                                    |
+| **Supabase / Dropbox / SMTP credentials**      | Various dashboards    | **Not backed up — see Step 1**                                    |
 
 ---
 
-## Automated daily backups (already set up)
+## Step 1 — Back up your secrets (the only real gap)
 
-The workflow at `.github/workflows/db-backup.yml` runs every day at
-**09:00 UTC** (≈ 02:00 Pacific) and produces two copies of the backup:
+The database is safe with Supabase Pro. The code is safe on GitHub.
+The Dropbox files are safe on Dropbox. **The one thing that is not
+backed up anywhere is the collection of passwords and API keys that
+glue them all together.** If you lose those, you cannot rebuild the
+app even with everything else intact.
 
-1. **GitHub Actions artifact** — 90-day retention, downloadable from
-   the Actions tab.
-2. **Permanent commit on the `backups` branch** of this repo — never
-   expires, browsable in the GitHub UI.
+### What to save
 
-You can also run it manually anytime:
-**GitHub → Actions → "Database Backup" → "Run workflow"**.
+Save all of the following into a **password manager** (1Password,
+Bitwarden, Apple Passwords, etc.). **Not** a plain text file or a
+sticky note.
 
-### One-time setup
+#### Account logins (with 2FA recovery codes)
 
-1. **Get the Supabase session-pooler connection string.**
-   - Supabase Dashboard → your project → **Connect** (top of page).
-   - Under **Connection string**, pick the **Session pooler** tab
-     (port `5432`). **Do not** use the Transaction pooler (port `6543`)
-     — `pg_dump` does not work there.
-   - The format is:
-     ```
-     postgres://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres
-     ```
-   - Replace `<password>` with the real DB password (find/reset under
-     **Project Settings → Database → Database password**).
+- Supabase
+- Render
+- Vercel
+- Dropbox
+- GitHub
+- Google (for the Maps API)
+- Your domain registrar (if you have a custom domain)
 
-2. **Add it as a repo secret.**
-   - GitHub → repo → **Settings → Secrets and variables → Actions →
-     New repository secret**.
-   - Name: `SUPABASE_DB_URL`
-   - Value: the full connection string from step 1.
+#### Supabase
 
-3. **Test the workflow.**
-   - GitHub → **Actions → "Database Backup" → Run workflow → Run workflow**.
-   - It should finish in under 2 minutes. Confirm:
-     - A green checkmark on the run.
-     - A `pineview-db-backup-…` artifact at the bottom of the run page.
-     - A new commit on the `backups` branch under `<YYYY>/<MM>/`.
+- Database password (Project Settings → Database → Database password)
+- The full session-pooler connection string
 
-### Where the backup lives
+#### From Render (backend service → Environment tab)
 
-- **Latest (last 90 days), fast download:**
-  GitHub → Actions → click any "Database Backup" run → scroll to
-  *Artifacts*.
-- **Long-term archive, permanent:**
-  GitHub → **branch dropdown → `backups` → `<YYYY>/<MM>/`**.
-  Or clone it locally:
-  ```powershell
-  git clone --branch backups --single-branch `
-    https://github.com/randyhpineview-oss/Pineview-Maps.git pineview-backups
-  ```
-
----
-
-## Manual one-off backup
-
-Useful before any risky operation (large import, schema migration, etc.).
-
-### Option A — Trigger the workflow manually
-
-GitHub → Actions → "Database Backup" → **Run workflow**. Done.
-
-### Option B — From your Windows machine
-
-Requires PostgreSQL client tools installed locally (`pg_dump.exe` on PATH).
-Easiest install: <https://www.postgresql.org/download/windows/>
-
-```powershell
-$env:PGPASSWORD = "<your-db-password>"
-$stamp = Get-Date -Format "yyyyMMddTHHmmssZ" -AsUTC
-pg_dump `
-  "postgres://postgres.<project-ref>@aws-0-<region>.pooler.supabase.com:5432/postgres" `
-  --no-owner --no-privileges --quote-all-identifiers --format=plain `
-  | gzip > "pineview-$stamp.sql.gz"
-```
-
-### Option C — From the Supabase Dashboard
-
-**Database → Backups → Download backup**. Free tier retains daily
-backups for 7 days; Pro retains longer + supports point-in-time
-recovery.
-
----
-
-## Restore a backup
-
-### Into the existing Supabase project (revert recent changes)
-
-> ⚠️ **This will overwrite the current database.** Take a fresh
-> backup first (run the workflow manually).
-
-1. Download the desired `pineview-<stamp>.sql.gz` from either the
-   Actions artifact or the `backups` branch.
-2. From a machine with `psql` installed:
-   ```powershell
-   $env:PGPASSWORD = "<your-db-password>"
-   gunzip -c pineview-<stamp>.sql.gz | psql `
-     "postgres://postgres.<project-ref>@aws-0-<region>.pooler.supabase.com:5432/postgres"
-   ```
-3. Watch for errors. The dump uses `--no-owner --no-privileges`, so it
-   should replay cleanly into a Supabase project regardless of role
-   ownership.
-
-### Into a brand-new Supabase project (full recovery)
-
-See [Disaster recovery — rebuild from zero](#disaster-recovery--rebuild-from-zero).
-
----
-
-## Other things worth backing up
-
-The workflow only covers the database. For full peace of mind also save:
-
-### Secrets / environment variables
-
-Export from each platform once, then store in a password manager
-(1Password / Bitwarden) or an encrypted file. Without these, the app
-cannot be rebuilt.
-
-- **Render** (backend) → Service → **Environment** tab. Copy each var.
-- **Vercel** (frontend) → Project → **Settings → Environment Variables**.
-- **Local** → contents of `backend/.env` and `frontend/.env`.
-
-Minimum set to capture:
+Copy each of these values:
 
 ```
-# Backend (Render)
 DATABASE_URL
 SUPABASE_URL
 SUPABASE_ANON_KEY
 SUPABASE_SERVICE_ROLE_KEY
 ALLOWED_ORIGINS
-SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASSWORD / SMTP_FROM_NAME / SMTP_FROM_EMAIL
+SMTP_HOST
+SMTP_PORT
+SMTP_USER
+SMTP_PASSWORD
+SMTP_FROM_NAME
+SMTP_FROM_EMAIL
 FRONTEND_URL
 DROPBOX_REFRESH_TOKEN
 DROPBOX_APP_KEY
 DROPBOX_APP_SECRET
+```
 
-# Frontend (Vercel)
+#### From Vercel (project → Settings → Environment Variables)
+
+```
 VITE_API_BASE_URL
 VITE_GOOGLE_MAPS_API_KEY
 VITE_SUPABASE_URL
 VITE_SUPABASE_ANON_KEY
 ```
 
-### Schema migration SQL files
+#### Local files
 
-Already in git, but worth knowing where they are — needed when
-rebuilding a fresh Supabase project before restoring data:
+Save copies of these as secure notes in your password manager:
 
-- `database/enable_realtime.sql`
-- `database/herbicide_lease_sheet_setup.sql`
-- `backend/*.sql` (all `*_migration.sql` files — apply in chronological
-  order based on filename)
+- `backend/.env` (if you have one)
+- `frontend/.env` (if you have one)
+- `frontend/.env.production`
 
-### Dropbox files
+### How to do it
 
-Dropbox already keeps 30 days of version history. For longer:
-- Enable **Dropbox Rewind** (paid).
-- Or mirror with `rclone` to another cloud:
-  ```
-  rclone sync dropbox:/ b2:pineview-archive/ --fast-list
-  ```
+1. Open your password manager and create a new "Secure Note" called
+   **Pineview Maps — Production Secrets**.
+2. For each Render env var, click the eye icon to reveal it, copy
+   the value, and paste it in the note as `KEY=value`.
+3. Repeat for Vercel.
+4. Add the account login section.
+5. Save.
 
-### Source code redundancy
-
-Already on GitHub. Optional extras:
-- Add a second git remote (private GitLab / Bitbucket) and push there
-  occasionally.
-- Periodic `git clone --mirror` to an external drive.
+**Re-do this any time you rotate a password or add a new env var.**
 
 ---
 
-## Disaster recovery — rebuild from zero
+## Restore scenarios
 
-You are here because **everything is gone**: Supabase project deleted,
-Render service deleted, Vercel project deleted, laptop lost. You have:
+### Scenario A — Roll back the database to an earlier point
 
-- The GitHub repo (and the `backups` branch within it).
-- The secrets export from your password manager.
-- Your Google / Dropbox / Supabase / Render / Vercel account logins.
+Use this if data was accidentally deleted, corrupted, or a bad import
+broke things.
 
-Time to back online: **~30 minutes**.
+1. **Supabase Dashboard → Database → Backups**.
+2. Pick the right tab:
+   - **Scheduled backups** — restore to the start of any of the last
+     ~7 days (what you saw in your screenshot).
+   - **Point in time** — restore to any specific *second* in the last
+     7 days. Use this if you know roughly when the bad change
+     happened.
+3. Click **Restore** next to your chosen point.
+4. ⚠️ **Restoring overwrites the current database.** If the current
+   state contains anything you might still want, click **Create
+   backup now** first (top of the same page) so you can roll forward
+   again if needed.
 
-### Step 1 — Clone the code
+### Scenario B — Current project is broken, restore into a fresh one
 
-```powershell
-git clone https://github.com/randyhpineview-oss/Pineview-Maps.git
-git clone --branch backups --single-branch `
-  https://github.com/randyhpineview-oss/Pineview-Maps.git Pineview-Maps-backups
-```
+Use this if the project itself is corrupted, you got compromised, or
+support tells you to start over.
 
-### Step 2 — Create a fresh Supabase project
+1. **Supabase Dashboard → Database → Backups → "Restore to new
+   project"** tab.
+2. Pick the backup, name the new project, click **Restore**.
+3. Wait for it to provision (~2 min).
+4. Open the new project, get its new connection details (Connect
+   button at top → copy URL + keys).
+5. Update env vars in **Render** (backend) and **Vercel** (frontend)
+   to point at the new project. Specifically:
+   - Render: `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
+     `SUPABASE_SERVICE_ROLE_KEY`.
+   - Vercel: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`.
+6. Trigger a redeploy on Render and Vercel.
+7. Smoke test: log in, confirm pins render, generate a test PDF.
 
-1. <https://supabase.com/dashboard> → **New project**.
-2. Pick a strong DB password. **Save it in your password manager.**
-3. Wait for provisioning (~2 min).
+### Scenario C — Total catastrophic loss (everything gone)
 
-### Step 3 — Apply the schema
+Lost the Supabase account, Render service, Vercel project, AND your
+laptop. You have your password manager and your GitHub login.
 
-The pg_dump backup includes schema **and** data, so for the simple
-case you can skip straight to step 4 and let `psql` rebuild
-everything. If the dump fails (e.g. because of a missing extension),
-apply the SQL files manually first via the Supabase SQL editor:
+With the current setup (Supabase Pro only, no off-platform backup),
+**the most recent database state is unrecoverable** if you've also
+lost Supabase account access. This is the trade-off you accepted by
+not setting up the off-platform GitHub Action backup.
 
-1. SQL editor → New query → paste `database/enable_realtime.sql` → Run.
-2. Repeat for `database/herbicide_lease_sheet_setup.sql`.
-3. Apply each `backend/*_migration.sql` in order of filename
-   (chronological).
+What you *can* recover:
 
-### Step 4 — Restore the latest backup
+- **Source code** — clone from GitHub, deploy to a new Render +
+  Vercel.
+- **File attachments (PDFs, photos)** — still on Dropbox (separate
+  account).
+- **A fresh empty database** — create new Supabase project, run the
+  schema SQL files from `database/` and `backend/*_migration.sql`.
+- **Old data manually re-imported** — if you have a recent KML
+  export of pins, you can import it via the admin panel.
 
-Find the most recent `.sql.gz` in `Pineview-Maps-backups/<YYYY>/<MM>/`.
-
-```powershell
-$env:PGPASSWORD = "<new-db-password>"
-gunzip -c Pineview-Maps-backups/2026/05/pineview-<latest>.sql.gz | psql `
-  "postgres://postgres.<new-project-ref>@aws-0-<region>.pooler.supabase.com:5432/postgres"
-```
-
-Verify in the Supabase Table editor that `sites`, `users`,
-`herbicide_lease_sheets`, etc. all have rows.
-
-### Step 5 — Rebuild deployments
-
-1. **Render (backend):**
-   - New → **Web Service** → connect the GitHub repo.
-   - Build command: `pip install -r backend/requirements.txt`
-   - Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-     (run from `backend/` working dir).
-   - Add all backend env vars from your password manager. **Update
-     `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`,
-     and `DATABASE_URL` to the new project's values.**
-
-2. **Vercel (frontend):**
-   - New project → import the GitHub repo, root directory `frontend`.
-   - Framework preset: Vite.
-   - Add frontend env vars. **Update `VITE_API_BASE_URL` to the new
-     Render URL and Supabase vars to the new project.**
-
-3. **Update the `backups` workflow secret:**
-   - Repo → Settings → Secrets → update `SUPABASE_DB_URL` to point at
-     the new project (new project ref + new password).
-   - Run the workflow manually to confirm it works against the new DB.
-
-### Step 6 — Reconnect Dropbox
-
-If the Dropbox app credentials still work, you're done. If they were
-also lost:
-1. <https://www.dropbox.com/developers/apps> → create / inspect app.
-2. Generate a new refresh token (see `RENDER-FIX.md` if a guide
-   exists, or follow Dropbox's OAuth2 docs).
-3. Update `DROPBOX_REFRESH_TOKEN`, `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`
-   on Render. Restart the service.
-
-### Step 7 — Smoke test
-
-1. Visit the new Vercel URL. Log in as admin.
-2. Confirm pins render on the map.
-3. Open a herbicide lease sheet → generate PDF → confirm it appears in
-   Dropbox.
-4. From a worker account, change a pin status → confirm it syncs in
-   real time to another browser.
-
-If all four pass, the app is fully restored.
+If this risk concerns you, you can re-add the off-platform backup
+workflow at any time. It was previously committed at `9ea5dbb` —
+ask Cascade to "restore the GitHub Action backup workflow" and it
+will recreate it.
 
 ---
 
-## Maintenance
+## Maintenance checklist
 
-- **Quarterly:** download one backup and dry-run a restore into a
-  throwaway local Postgres or a free Supabase project. A backup that
-  has never been restored is not really a backup.
-- **After schema changes:** trigger a manual backup right after
-  applying any migration, in addition to the daily one.
-- **Annually:** rotate the Supabase DB password and update the
-  `SUPABASE_DB_URL` secret.
-- **Watch the size of the `backups` branch.** For this app, daily
-  dumps should compress to small enough that years of history fit
-  comfortably in a single repo. If it ever balloons past ~1 GB,
-  consider pruning the oldest year into a separate archive repo.
+- **Today:** Step 1 — secrets to password manager. (Most important.)
+- **Quarterly:** Verify Supabase backups are still listed by visiting
+  **Database → Backups**. Should show ~7 daily entries.
+- **Before any risky operation** (large import, schema migration,
+  bulk delete): click **"Create backup now"** in Supabase to make a
+  fresh restore point on top of the daily ones.
+- **After rotating any password or API key:** update your password
+  manager the same day.
+- **Annually:** dry-run a restore. Use Scenario B's
+  *"Restore to new project"* feature into a throwaway free project,
+  confirm pins render, then delete the throwaway. A backup that has
+  never been tested is not really a backup.
