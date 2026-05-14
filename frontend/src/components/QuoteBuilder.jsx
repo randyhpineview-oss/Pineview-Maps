@@ -239,12 +239,6 @@ const S = {
     gridTemplateColumns: 'minmax(160px, 2fr) 70px 100px 90px 90px 78px',
     gap: '6px', alignItems: 'center',
   },
-  lineRowGridMix: {
-    display: 'grid',
-    // When mix-categories is on, the row gains a leading Category dropdown.
-    gridTemplateColumns: '140px minmax(140px, 2fr) 70px 100px 90px 90px 78px',
-    gap: '6px', alignItems: 'center',
-  },
   th: {
     fontSize: '0.7rem', color: '#9ab1d6', fontWeight: 600,
     textTransform: 'uppercase', letterSpacing: '0.04em',
@@ -394,13 +388,20 @@ export default function QuoteBuilder({
   const [area, setArea] = useState('');
   const [projectDescription, setProjectDescription] = useState('');
   const [quoteDate, setQuoteDate] = useState(() => localISODate());
-  const [mixCategories, setMixCategories] = useState(false);
-  const [primaryCategoryId, setPrimaryCategoryId] = useState('');
   const [taxEnabled, setTaxEnabled] = useState(false);
   const [taxLabel, setTaxLabel] = useState(DEFAULT_TAX_LABEL);
   const [taxRate, setTaxRate] = useState(String(DEFAULT_TAX_RATE));
   const [quoteNotes, setQuoteNotes] = useState('');
   const [lineItems, setLineItems] = useState([]);
+  // Section list — UI-only ordering for the category groups inside the
+  // line-items card. Each section locks to a single category. Lines live
+  // flat in `lineItems` (with their own `category_id`); `sections` only
+  // controls render order and lets empty sections exist transiently
+  // (newly-added section before any lines have been pushed into it).
+  // Persisted indirectly: when a quote is submitted/duplicated the
+  // sections collapse into the implicit category order embedded in
+  // `line_items`, which is reconstructed on load.
+  const [sections, setSections] = useState([]);  // [{ uid, categoryId }]
 
   // Submit / preview / confirmation state
   const [submitting, setSubmitting] = useState(false);
@@ -428,13 +429,12 @@ export default function QuoteBuilder({
     setArea('');
     setProjectDescription('');
     setQuoteDate(localISODate());
-    setMixCategories(false);
-    setPrimaryCategoryId('');
     setTaxEnabled(false);
     setTaxLabel(DEFAULT_TAX_LABEL);
     setTaxRate(String(DEFAULT_TAX_RATE));
     setQuoteNotes('');
     setLineItems([]);
+    setSections([]);
     setSubmittedQuote(null);
     setSubmitError('');
     setPreviewBase64('');
@@ -489,13 +489,6 @@ export default function QuoteBuilder({
     [catalog],
   );
 
-  // When the user has picked a primary category in single mode, this is
-  // the list shown in every line item's Item dropdown.
-  const primaryCategory = useMemo(
-    () => activeCategories.find((c) => String(c.id) === String(primaryCategoryId)) || null,
-    [activeCategories, primaryCategoryId],
-  );
-
   // Total math (live) — runs on every keystroke since these are pennies.
   const totals = useMemo(
     () => computeQuoteTotals({
@@ -506,49 +499,166 @@ export default function QuoteBuilder({
     [lineItems, taxEnabled, taxRate],
   );
 
+  // Per-section subtotals — keyed by category_id and used by the
+  // CategorySection footer in the form. Note rows still don't count.
+  const sectionSubtotals = useMemo(() => {
+    const out = new Map();
+    for (const li of lineItems) {
+      if (!li || li.kind === LINE_KIND_NOTE) continue;
+      const key = li.category_id != null ? String(li.category_id) : '';
+      const prev = out.get(key) || 0;
+      out.set(key, prev + (Number(li.subtotal) || 0));
+    }
+    // Round each section subtotal to 2dp at the end so we don't carry
+    // floating-point creep into the on-screen formatter.
+    for (const [k, v] of out.entries()) {
+      out.set(k, Math.round(v * 100) / 100);
+    }
+    return out;
+  }, [lineItems]);
+
   // ── Line item mutation helpers ────────────────────────────────────────
-  const updateLine = useCallback((idx, patch) => {
-    setLineItems((prev) => prev.map((line, i) => {
-      if (i !== idx) return line;
+  // Lines live flat in `lineItems` and are keyed by `_uid`. Mutations
+  // happen via _uid lookup rather than positional index because section
+  // reordering can shuffle absolute indices out from under us.
+  const updateLine = useCallback((uid, patch) => {
+    setLineItems((prev) => prev.map((line) => {
+      if (line._uid !== uid) return line;
       const next = { ...line, ...patch };
       next.subtotal = computeLineSubtotal(next);
       return next;
     }));
   }, []);
 
-  const removeLine = useCallback((idx) => {
-    setLineItems((prev) => prev.filter((_, i) => i !== idx));
+  const removeLine = useCallback((uid) => {
+    setLineItems((prev) => prev.filter((line) => line._uid !== uid));
   }, []);
 
-  // Reorder a line by `delta` (+1 = down, -1 = up). Out-of-range moves
-  // are no-ops so the LineItemRow can disable the ↑/↓ buttons at the
-  // edges and we don't have to repeat the bounds check at each call site.
-  const moveLine = useCallback((idx, delta) => {
+  // Reorder a line within its section. `delta` is +1 (down) or -1 (up).
+  // We restrict moves to within-section so a customer's quote doesn't
+  // accidentally change which category a line belongs to via reordering.
+  const moveLine = useCallback((uid, delta) => {
     setLineItems((prev) => {
-      const target = idx + delta;
-      if (idx < 0 || idx >= prev.length) return prev;
-      if (target < 0 || target >= prev.length) return prev;
+      const idx = prev.findIndex((l) => l._uid === uid);
+      if (idx < 0) return prev;
+      const line = prev[idx];
+      const sectionKey = line.category_id != null ? String(line.category_id) : '';
+      // Build the list of indices in the same section, in order.
+      const sectionIndices = prev
+        .map((l, i) => ({ i, key: l.category_id != null ? String(l.category_id) : '' }))
+        .filter((x) => x.key === sectionKey)
+        .map((x) => x.i);
+      const posInSection = sectionIndices.indexOf(idx);
+      const targetPosInSection = posInSection + delta;
+      if (targetPosInSection < 0 || targetPosInSection >= sectionIndices.length) return prev;
+      const targetIdx = sectionIndices[targetPosInSection];
       const next = prev.slice();
       const [row] = next.splice(idx, 1);
-      next.splice(target, 0, row);
+      // After splicing out idx, both up and down moves want to insert at
+      // `targetIdx`: when moving down (targetIdx > idx) the swap target's
+      // new position is targetIdx - 1, so inserting at targetIdx lands
+      // the moved row *after* it; when moving up (targetIdx < idx) the
+      // swap target hasn't shifted, so inserting at targetIdx lands the
+      // moved row *before* it. Either way: just splice at targetIdx.
+      next.splice(targetIdx, 0, row);
       return next;
     });
   }, []);
 
-  const addLine = useCallback((kind) => {
-    setLineItems((prev) => {
-      const seedCategory = !mixCategories && primaryCategory
-        ? { category_id: primaryCategory.id, category_name: primaryCategory.name }
-        : {};
-      return [...prev, emptyLine(kind, seedCategory)];
+  // ── Section helpers ────────────────────────────────────────────────────
+  // Add a new (empty) category section to the bottom of the stack.
+  // No-op if the categoryId is already in the stack — see the dropdown's
+  // "already used" markers; allowing duplicates feels like a footgun.
+  const addSection = useCallback((categoryId) => {
+    if (!categoryId) return;
+    setSections((prev) => {
+      if (prev.some((s) => String(s.categoryId) === String(categoryId))) return prev;
+      return [...prev, { uid: makeUid(), categoryId: Number(categoryId) }];
     });
-  }, [mixCategories, primaryCategory]);
+  }, []);
+
+  const removeSection = useCallback((uid) => {
+    setSections((prev) => {
+      const target = prev.find((s) => s.uid === uid);
+      if (!target) return prev;
+      // Remove every line whose category_id matches this section.
+      setLineItems((lines) => lines.filter((l) => String(l.category_id) !== String(target.categoryId)));
+      return prev.filter((s) => s.uid !== uid);
+    });
+  }, []);
+
+  // Move a section up/down. Lines are kept flat in `lineItems` but their
+  // visual order on the form (and on the PDF) follows the section order
+  // when we render — so reordering sections is a pure-`sections` op AND
+  // a re-shuffle of the flat `lineItems` so the underlying array reflects
+  // the new on-screen order (relevant for the submit payload + duplicate).
+  const moveSection = useCallback((uid, delta) => {
+    setSections((prev) => {
+      const idx = prev.findIndex((s) => s.uid === uid);
+      if (idx < 0) return prev;
+      const target = idx + delta;
+      if (target < 0 || target >= prev.length) return prev;
+      const next = prev.slice();
+      const [row] = next.splice(idx, 1);
+      next.splice(target, 0, row);
+      // Reorder flat lineItems so its physical order matches the new
+      // section order. Group lines by category_id, then concat in new
+      // section order. Lines whose category isn't in `sections` (legacy
+      // / orphaned) stay at the end in their original relative order.
+      setLineItems((lines) => {
+        const buckets = new Map();
+        const orphans = [];
+        for (const l of lines) {
+          const key = String(l.category_id ?? '');
+          if (next.some((s) => String(s.categoryId) === key)) {
+            if (!buckets.has(key)) buckets.set(key, []);
+            buckets.get(key).push(l);
+          } else {
+            orphans.push(l);
+          }
+        }
+        const out = [];
+        for (const s of next) {
+          out.push(...(buckets.get(String(s.categoryId)) || []));
+        }
+        out.push(...orphans);
+        return out;
+      });
+      return next;
+    });
+  }, []);
+
+  // Add a line of `kind` to the section identified by `categoryId`.
+  // The line is appended after the last line currently in that section
+  // so the order matches the section header.
+  const addLineToSection = useCallback((categoryId, kind) => {
+    if (categoryId == null) return;
+    const cat = activeCategories.find((c) => String(c.id) === String(categoryId));
+    setLineItems((prev) => {
+      const seed = {
+        category_id: Number(categoryId),
+        category_name: cat?.name || null,
+      };
+      const newLine = emptyLine(kind, seed);
+      // Find the last line that belongs to this section; insert after it.
+      let lastIdx = -1;
+      prev.forEach((l, i) => {
+        if (String(l.category_id) === String(categoryId)) lastIdx = i;
+      });
+      if (lastIdx < 0) return [...prev, newLine];
+      const next = prev.slice();
+      next.splice(lastIdx + 1, 0, newLine);
+      return next;
+    });
+  }, [activeCategories]);
 
   // When the user picks a catalog item on a line, hydrate the row from
-  // catalog defaults — unit, rate, and (if present) default markup.
-  const selectCatalogItem = useCallback((idx, itemId) => {
+  // catalog defaults — unit, rate, and (if present) default markup. The
+  // line keeps its existing `category_id` (the section's category); we
+  // only swap in description/unit/rate/markup metadata for the chosen item.
+  const selectCatalogItem = useCallback((uid, itemId) => {
     if (!itemId) {
-      updateLine(idx, {
+      updateLine(uid, {
         item_id: null,
         description: '',
         unit: '',
@@ -559,24 +669,14 @@ export default function QuoteBuilder({
       });
       return;
     }
-    // Search across the row's effective category (mix mode = the row's
-    // own category; single mode = the primary category) — falls back to
-    // a full-catalog search so a saved-but-then-recategorized item still
-    // hydrates.
     let item = null;
-    let cat = null;
-    const search = (categories) => {
-      for (const c of categories) {
-        const found = (c.items || []).find((it) => String(it.id) === String(itemId));
-        if (found) { item = found; cat = c; return; }
-      }
-    };
-    search(activeCategories);
+    for (const c of activeCategories) {
+      const found = (c.items || []).find((it) => String(it.id) === String(itemId));
+      if (found) { item = found; break; }
+    }
     if (!item) return;
-    updateLine(idx, {
+    updateLine(uid, {
       item_id: item.id,
-      category_id: cat.id,
-      category_name: cat.name,
       description: item.name,
       unit: item.unit || '',
       rate: item.rate != null ? String(item.rate) : '',
@@ -588,13 +688,16 @@ export default function QuoteBuilder({
   }, [activeCategories, updateLine]);
 
   // ── Build the submit / PDF payload from current state ─────────────────
+  // `mix_categories` stays in the payload for backend compatibility (the
+  // Pydantic schema still requires it) but is now hardcoded to true —
+  // every quote is implicitly multi-section-capable, and the PDF
+  // generator no longer consults this flag for layout decisions.
   const buildQuoteForPdf = useCallback((quoteNumber) => ({
     quote_number: quoteNumber || 'Q###### (pending)',
     quote_date: quoteDate,
     client,
     area,
     project_description: projectDescription,
-    mix_categories: mixCategories,
     tax_enabled: taxEnabled,
     tax_label: taxLabel,
     tax_rate: taxEnabled ? Number(taxRate) || 0 : null,
@@ -604,7 +707,7 @@ export default function QuoteBuilder({
       subtotal: computeLineSubtotal(li),
     })),
   }), [
-    quoteDate, client, area, projectDescription, mixCategories,
+    quoteDate, client, area, projectDescription,
     taxEnabled, taxLabel, taxRate, quoteNotes, lineItems,
   ]);
 
@@ -613,7 +716,7 @@ export default function QuoteBuilder({
     area: (area || '').trim() || null,
     project_description: projectDescription || null,
     quote_date: quoteDate,
-    mix_categories: mixCategories,
+    mix_categories: true,
     tax_enabled: taxEnabled,
     tax_label: taxEnabled ? (taxLabel || DEFAULT_TAX_LABEL) : null,
     tax_rate: taxEnabled ? Number(taxRate) || 0 : null,
@@ -635,7 +738,7 @@ export default function QuoteBuilder({
       subtotal: computeLineSubtotal(li),
     })),
   }), [
-    client, area, projectDescription, quoteDate, mixCategories,
+    client, area, projectDescription, quoteDate,
     taxEnabled, taxLabel, taxRate, quoteNotes, lineItems,
   ]);
 
@@ -751,25 +854,33 @@ export default function QuoteBuilder({
       setArea(full.area || '');
       setProjectDescription(full.project_description || '');
       setQuoteDate(localISODate());  // new date, not the original
-      setMixCategories(!!full.mix_categories);
       setTaxEnabled(!!full.tax_enabled);
       setTaxLabel(full.tax_label || DEFAULT_TAX_LABEL);
       setTaxRate(full.tax_rate != null ? String(full.tax_rate) : String(DEFAULT_TAX_RATE));
       setQuoteNotes(full.notes || '');
-      // If single mode and we can guess a primary category from the first
-      // priced line, seed it so the dropdown filters correctly.
-      let inferredPrimary = '';
-      if (!full.mix_categories) {
-        const firstPriced = (full.line_items_json || []).find((li) => li?.kind !== 'note');
-        if (firstPriced?.category_id) inferredPrimary = String(firstPriced.category_id);
-      }
-      setPrimaryCategoryId(inferredPrimary);
       const lines = (full.line_items_json || []).map((li) => ({
         ...emptyLine(li.kind || LINE_KIND_CATALOG),
         ...li,
         _uid: makeUid(),
       })).map((li) => ({ ...li, subtotal: computeLineSubtotal(li) }));
       setLineItems(lines);
+      // Rebuild sections by walking the (already-ordered) line array and
+      // recording each unique category_id the first time it's seen. Old
+      // single-category quotes collapse to one section; old mix-mode
+      // quotes get one section per category in their original order.
+      // Empty sections are NOT preserved (no lines = nothing to derive
+      // them from), which is the right behavior — Duplicate clones what
+      // was actually on the saved PDF.
+      const seen = new Set();
+      const rebuiltSections = [];
+      for (const li of lines) {
+        if (li.category_id == null) continue;
+        const key = String(li.category_id);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        rebuiltSections.push({ uid: makeUid(), categoryId: Number(li.category_id) });
+      }
+      setSections(rebuiltSections);
       setSubmittedQuote(null);
       // CRITICAL: drop any cached peek from the previous quote in this
       // session. Without this, peekQuoteNumberCached() short-circuits on
@@ -851,20 +962,23 @@ export default function QuoteBuilder({
           area={area} setArea={setArea}
           projectDescription={projectDescription} setProjectDescription={setProjectDescription}
           quoteDate={quoteDate} setQuoteDate={setQuoteDate}
-          mixCategories={mixCategories} setMixCategories={setMixCategories}
-          primaryCategoryId={primaryCategoryId} setPrimaryCategoryId={setPrimaryCategoryId}
           taxEnabled={taxEnabled} setTaxEnabled={setTaxEnabled}
           taxLabel={taxLabel} setTaxLabel={setTaxLabel}
           taxRate={taxRate} setTaxRate={setTaxRate}
           quoteNotes={quoteNotes} setQuoteNotes={setQuoteNotes}
+          // section + line state
+          sections={sections}
           lineItems={lineItems}
-          // line item handlers
-          addLine={addLine} updateLine={updateLine} removeLine={removeLine} moveLine={moveLine}
+          sectionSubtotals={sectionSubtotals}
+          // section handlers
+          addSection={addSection} removeSection={removeSection} moveSection={moveSection}
+          // line handlers (now keyed by uid, not idx)
+          addLineToSection={addLineToSection}
+          updateLine={updateLine} removeLine={removeLine} moveLine={moveLine}
           selectCatalogItem={selectCatalogItem}
           // catalog
           catalog={catalog}
           activeCategories={activeCategories}
-          primaryCategory={primaryCategory}
           catalogLoading={catalogLoading}
           catalogError={catalogError}
           onReloadCatalog={loadCatalog}
@@ -938,17 +1052,52 @@ export default function QuoteBuilder({
 function NewQuoteTab(props) {
   const {
     client, setClient, area, setArea, projectDescription, setProjectDescription,
-    quoteDate, setQuoteDate, mixCategories, setMixCategories,
-    primaryCategoryId, setPrimaryCategoryId,
+    quoteDate, setQuoteDate,
     taxEnabled, setTaxEnabled, taxLabel, setTaxLabel, taxRate, setTaxRate,
-    quoteNotes, setQuoteNotes, lineItems,
-    addLine, updateLine, removeLine, moveLine, selectCatalogItem,
-    catalog, activeCategories, primaryCategory, catalogLoading, catalogError, onReloadCatalog,
+    quoteNotes, setQuoteNotes,
+    sections, lineItems, sectionSubtotals,
+    addSection, removeSection, moveSection,
+    addLineToSection, updateLine, removeLine, moveLine, selectCatalogItem,
+    activeCategories, catalogLoading, catalogError, onReloadCatalog,
     clients, areas, totals,
     submitting, submitError, submittedQuote, peekedQuoteNumber,
     previewOpen, previewBase64, setPreviewOpen,
     onPreview, onSubmit, onReset, online, isMobile,
   } = props;
+  const { confirm } = useDialog();
+
+  // Holds the value of the "+ Add another category" picker before it's
+  // committed via the Add button. Local to this tab so the parent state
+  // stays scoped to actually-saved sections.
+  const [pendingNewSectionId, setPendingNewSectionId] = useState('');
+
+  // Categories that aren't already represented as a section — used to
+  // populate the "+ Add another category" dropdown.
+  const availableCategoriesForNewSection = useMemo(() => {
+    const used = new Set((sections || []).map((s) => String(s.categoryId)));
+    return (activeCategories || []).filter((c) => !used.has(String(c.id)));
+  }, [activeCategories, sections]);
+
+  const handleAddSection = () => {
+    if (!pendingNewSectionId) return;
+    addSection(pendingNewSectionId);
+    setPendingNewSectionId('');
+  };
+
+  const handleRemoveSection = async (section) => {
+    const cat = activeCategories.find((c) => String(c.id) === String(section.categoryId));
+    const linesInSection = lineItems.filter((l) => String(l.category_id) === String(section.categoryId));
+    if (linesInSection.length > 0) {
+      const ok = await confirm({
+        title: 'Remove section',
+        message: `Remove the "${cat?.name || 'category'}" section and its ${linesInSection.length} line${linesInSection.length === 1 ? '' : 's'}?`,
+        severity: 'danger',
+        okLabel: 'Remove',
+      });
+      if (!ok) return;
+    }
+    removeSection(section.uid);
+  };
 
   return (
     <>
@@ -1052,139 +1201,85 @@ function NewQuoteTab(props) {
           </div>
         </section>
 
-        {/* Mode toggle + primary category (when not mixed) */}
-        <section style={S.card}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            <h3 style={{ ...S.sectionTitle, marginBottom: 0 }}>Categories</h3>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={mixCategories}
-                onChange={(e) => setMixCategories(e.target.checked)}
-                style={{ width: '16px', height: '16px', cursor: 'pointer' }}
-              />
-              <span style={{ fontSize: '0.85rem' }}>Mix categories on this quote</span>
-            </label>
-          </div>
-          {!mixCategories ? (
-            <div style={{ marginTop: '10px', maxWidth: '420px' }}>
-              <label style={S.label}>Primary category</label>
-              <select
-                style={S.input}
-                value={primaryCategoryId}
-                onChange={(e) => setPrimaryCategoryId(e.target.value)}
-                disabled={catalogLoading || activeCategories.length === 0}
-              >
-                <option value="">{catalogLoading ? 'Loading…' : 'Select a category…'}</option>
-                {activeCategories.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-              {primaryCategory?.notes ? (
-                <div style={{ fontSize: '0.75rem', color: '#9ab1d6', marginTop: '6px' }}>
-                  {primaryCategory.notes}
-                </div>
-              ) : null}
-            </div>
-          ) : (
-            <div style={{ fontSize: '0.78rem', color: '#9ab1d6', marginTop: '8px' }}>
-              Each line picks its own category. Catalog notes from every used
-              category land on the PDF footer.
-            </div>
-          )}
-        </section>
-
-        {/* Line items */}
+        {/* Line items — now sectioned by category. Each category section
+            owns its lines + a per-section subtotal. The PDF mirrors this
+            layout. There used to be a separate "Categories" card with a
+            mix/primary toggle here; sections are the only mode now. */}
         <section style={S.card}>
           <h3 style={S.sectionTitle}>Line Items</h3>
-          {!mixCategories && !primaryCategoryId ? (
-            <div style={{ fontSize: '0.85rem', color: '#9ab1d6', padding: '10px 0' }}>
-              Pick a primary category above to start adding line items, or check <strong>Mix categories</strong>.
+          {sections.length === 0 ? (
+            <div style={{ fontSize: '0.85rem', color: '#9ab1d6', padding: '10px 0 14px' }}>
+              No category sections yet. Pick a category below to start the first one.
             </div>
           ) : (
-            <>
-              {/* Column headers — hidden on mobile (each card has its own
-                  inline labels). On desktop the header bar uses the same
-                  grid columns as the row so headings sit above their data. */}
-              {!isMobile ? (
-                <div style={{
-                  ...(mixCategories ? S.lineRowGridMix : S.lineRowGrid),
-                  paddingBottom: '6px', borderBottom: '1px solid rgba(143,182,255,0.12)', marginBottom: '6px',
-                }}>
-                  {mixCategories ? <div style={S.th}>Category</div> : null}
-                  <div style={S.th}>Item / Description</div>
-                  <div style={{ ...S.th, textAlign: 'right' }}>Qty</div>
-                  <div style={S.th}>Unit</div>
-                  <div style={{ ...S.th, textAlign: 'right' }}>Rate</div>
-                  <div style={{ ...S.th, textAlign: 'right' }}>Subtotal</div>
-                  <div />
-                </div>
-              ) : null}
-              {lineItems.length === 0 ? (
-                <div style={{ fontSize: '0.85rem', color: '#9ab1d6', padding: '10px 0' }}>
-                  No line items yet. Use the buttons below to add catalog rows,
-                  custom one-off rows, or notes.
-                </div>
-              ) : (
-                lineItems.map((line, idx) => (
-                  <LineItemRow
-                    key={line._uid}
-                    idx={idx}
-                    line={line}
-                    mixCategories={mixCategories}
-                    primaryCategory={primaryCategory}
-                    activeCategories={activeCategories}
-                    isMobile={isMobile}
-                    onUpdate={(patch) => updateLine(idx, patch)}
-                    onRemove={() => removeLine(idx)}
-                    onMoveUp={idx > 0 ? () => moveLine(idx, -1) : null}
-                    onMoveDown={idx < lineItems.length - 1 ? () => moveLine(idx, 1) : null}
-                    onSelectCatalogItem={(itemId) => selectCatalogItem(idx, itemId)}
-                    onSaveCustomToCatalog={async ({ categoryId, defaultMarkupPct, defaultMarkupLabel }) => {
-                      try {
-                        const created = await api.createQuoteItem({
-                          category_id: Number(categoryId),
-                          name: line.description?.trim() || 'Custom',
-                          unit: line.unit || '',
-                          rate: Number(line.rate) || 0,
-                          default_markup_pct: defaultMarkupPct,
-                          default_markup_label: defaultMarkupLabel || null,
-                          sort_order: 9999,
-                        });
-                        await onReloadCatalog();
-                        updateLine(idx, {
-                          kind: LINE_KIND_CATALOG,
-                          item_id: created.id,
-                          category_id: created.category_id,
-                          category_name: activeCategories.find((c) => c.id === created.category_id)?.name || null,
-                        });
-                      } catch (err) {
-                        // eslint-disable-next-line no-alert
-                        alert(`Save to catalog failed: ${err?.message || 'unknown error'}`);
-                      }
-                    }}
-                  />
-                ))
-              )}
-              {/* Add-row buttons */}
-              <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }}>
-                <button
-                  type="button"
-                  onClick={() => addLine(LINE_KIND_CATALOG)}
-                  style={S.secondary}
-                  disabled={!mixCategories && !primaryCategoryId}
-                >
-                  + Add catalog line
-                </button>
-                <button type="button" onClick={() => addLine(LINE_KIND_CUSTOM)} style={S.secondary}>
-                  + Add custom line
-                </button>
-                <button type="button" onClick={() => addLine(LINE_KIND_NOTE)} style={S.secondary}>
-                  + Add note
-                </button>
-              </div>
-            </>
+            sections.map((section, sectionIdx) => {
+              const cat = activeCategories.find((c) => String(c.id) === String(section.categoryId));
+              const sectionLines = lineItems.filter((l) => String(l.category_id) === String(section.categoryId));
+              return (
+                <CategorySection
+                  key={section.uid}
+                  section={section}
+                  category={cat}
+                  lines={sectionLines}
+                  subtotal={sectionSubtotals.get(String(section.categoryId)) || 0}
+                  isMobile={isMobile}
+                  isFirst={sectionIdx === 0}
+                  isLast={sectionIdx === sections.length - 1}
+                  onMoveUp={() => moveSection(section.uid, -1)}
+                  onMoveDown={() => moveSection(section.uid, 1)}
+                  onRemove={() => handleRemoveSection(section)}
+                  onAddLine={(kind) => addLineToSection(section.categoryId, kind)}
+                  // Line-row plumbing
+                  activeCategories={activeCategories}
+                  totalLineCount={lineItems.length}
+                  updateLine={updateLine}
+                  removeLine={removeLine}
+                  moveLine={moveLine}
+                  selectCatalogItem={selectCatalogItem}
+                  onReloadCatalog={onReloadCatalog}
+                />
+              );
+            })
           )}
+
+          {/* "+ Add another category section" — picker + add button at the
+              bottom of the line-items card. Disabled when every active
+              category is already represented as a section. */}
+          <div style={{
+            display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap',
+            marginTop: sections.length > 0 ? '12px' : '0',
+            paddingTop: sections.length > 0 ? '12px' : '0',
+            borderTop: sections.length > 0 ? '1px solid rgba(143,182,255,0.12)' : 'none',
+          }}>
+            <label style={{ ...S.label, marginBottom: 0 }}>
+              {sections.length === 0 ? 'Pick a category' : '+ Add another category'}
+            </label>
+            <select
+              style={{ ...S.inputSm, minWidth: '180px', width: 'auto' }}
+              value={pendingNewSectionId}
+              onChange={(e) => setPendingNewSectionId(e.target.value)}
+              disabled={catalogLoading || availableCategoriesForNewSection.length === 0}
+            >
+              <option value="">
+                {catalogLoading
+                  ? 'Loading…'
+                  : availableCategoriesForNewSection.length === 0
+                    ? 'All categories already added'
+                    : 'Select a category…'}
+              </option>
+              {availableCategoriesForNewSection.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              style={{ ...S.secondary, opacity: pendingNewSectionId ? 1 : 0.5 }}
+              disabled={!pendingNewSectionId}
+              onClick={handleAddSection}
+            >
+              Add section
+            </button>
+          </div>
         </section>
 
         {/* Tax */}
@@ -1275,15 +1370,156 @@ function NewQuoteTab(props) {
   );
 }
 
+// ── Sub-component: one category section in the New Quote tab ──────────────
+// Renders a single category's lines as their own card-within-the-card,
+// with the section header (category name + ↑ ↓ Remove), column header
+// (desktop only), the line rows, the per-section subtotal, and the
+// per-section "+ Add catalog/custom/note line" buttons. Lines are
+// addressed by their `_uid`.
+function CategorySection({
+  category, lines, subtotal,
+  isMobile, isFirst, isLast,
+  onMoveUp, onMoveDown, onRemove, onAddLine,
+  activeCategories,
+  updateLine, removeLine, moveLine, selectCatalogItem, onReloadCatalog,
+}) {
+  const sectionWrapperStyle = {
+    background: 'rgba(20,30,55,0.45)',
+    border: '1px solid rgba(143,182,255,0.14)',
+    borderRadius: '10px',
+    padding: isMobile ? '10px' : '12px',
+    marginTop: isFirst ? 0 : '12px',
+  };
+
+  // ↑/↓ disabled at edges; same low-opacity treatment as the LineItemRow
+  // buttons so the layout doesn't jitter as sections are added/removed.
+  const upStyle = { ...S.iconBtn, opacity: !isFirst ? 1 : 0.3, cursor: !isFirst ? 'pointer' : 'not-allowed' };
+  const downStyle = { ...S.iconBtn, opacity: !isLast ? 1 : 0.3, cursor: !isLast ? 'pointer' : 'not-allowed' };
+
+  return (
+    <div style={sectionWrapperStyle}>
+      {/* Section header strip */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: '8px',
+        paddingBottom: '8px', marginBottom: '8px',
+        borderBottom: '1px solid rgba(143,182,255,0.12)',
+        flexWrap: 'wrap',
+      }}>
+        <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>
+          {category?.name || 'Unknown category'}
+        </span>
+        {category?.notes ? (
+          <span style={{ fontSize: '0.72rem', color: '#9ab1d6' }}>
+            · {category.notes}
+          </span>
+        ) : null}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '4px' }}>
+          <button type="button" onClick={!isFirst ? onMoveUp : undefined} disabled={isFirst} style={upStyle} aria-label="Move section up" title="Move section up">↑</button>
+          <button type="button" onClick={!isLast ? onMoveDown : undefined} disabled={isLast} style={downStyle} aria-label="Move section down" title="Move section down">↓</button>
+          <button type="button" onClick={onRemove} style={{ ...S.iconBtn, color: '#fca5a5' }} aria-label="Remove section">Remove</button>
+        </div>
+      </div>
+
+      {/* Desktop column headers — match the row grid below. Hidden on
+          mobile because each LineItemRow card carries inline labels. */}
+      {!isMobile && lines.length > 0 ? (
+        <div style={{
+          ...S.lineRowGrid,
+          paddingBottom: '6px', borderBottom: '1px solid rgba(143,182,255,0.08)', marginBottom: '6px',
+        }}>
+          <div style={S.th}>Item / Description</div>
+          <div style={{ ...S.th, textAlign: 'right' }}>Qty</div>
+          <div style={S.th}>Unit</div>
+          <div style={{ ...S.th, textAlign: 'right' }}>Rate</div>
+          <div style={{ ...S.th, textAlign: 'right' }}>Subtotal</div>
+          <div />
+        </div>
+      ) : null}
+
+      {/* Lines belonging to this section */}
+      {lines.length === 0 ? (
+        <div style={{ fontSize: '0.82rem', color: '#9ab1d6', padding: '6px 0 10px' }}>
+          No lines in this section yet. Use the buttons below to add catalog
+          items, a custom one-off line, or a note.
+        </div>
+      ) : (
+        lines.map((line, posInSection) => (
+          <LineItemRow
+            key={line._uid}
+            line={line}
+            sectionCategory={category}
+            activeCategories={activeCategories}
+            isMobile={isMobile}
+            onUpdate={(patch) => updateLine(line._uid, patch)}
+            onRemove={() => removeLine(line._uid)}
+            onMoveUp={posInSection > 0 ? () => moveLine(line._uid, -1) : null}
+            onMoveDown={posInSection < lines.length - 1 ? () => moveLine(line._uid, 1) : null}
+            onSelectCatalogItem={(itemId) => selectCatalogItem(line._uid, itemId)}
+            onSaveCustomToCatalog={async ({ categoryId, defaultMarkupPct, defaultMarkupLabel }) => {
+              try {
+                const created = await api.createQuoteItem({
+                  category_id: Number(categoryId),
+                  name: line.description?.trim() || 'Custom',
+                  unit: line.unit || '',
+                  rate: Number(line.rate) || 0,
+                  default_markup_pct: defaultMarkupPct,
+                  default_markup_label: defaultMarkupLabel || null,
+                  sort_order: 9999,
+                });
+                await onReloadCatalog();
+                updateLine(line._uid, {
+                  kind: LINE_KIND_CATALOG,
+                  item_id: created.id,
+                  // Keep this line's category_id pointed at the section's
+                  // category — Save-to-catalog only affects what catalog
+                  // bucket the new item lives in, not which section the
+                  // line belongs to on the current quote.
+                });
+              } catch (err) {
+                // eslint-disable-next-line no-alert
+                alert(`Save to catalog failed: ${err?.message || 'unknown error'}`);
+              }
+            }}
+          />
+        ))
+      )}
+
+      {/* Per-section add buttons */}
+      <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }}>
+        <button type="button" onClick={() => onAddLine(LINE_KIND_CATALOG)} style={S.secondary}>
+          + Add catalog line
+        </button>
+        <button type="button" onClick={() => onAddLine(LINE_KIND_CUSTOM)} style={S.secondary}>
+          + Add custom line
+        </button>
+        <button type="button" onClick={() => onAddLine(LINE_KIND_NOTE)} style={S.secondary}>
+          + Add note
+        </button>
+      </div>
+
+      {/* Per-section subtotal — right-aligned strip below the add buttons.
+          Mirrors the on-PDF "(Category) subtotal $X" line. */}
+      <div style={{
+        display: 'flex', justifyContent: 'flex-end', alignItems: 'baseline',
+        gap: '12px', marginTop: '12px', paddingTop: '8px',
+        borderTop: '1px solid rgba(143,182,255,0.10)',
+        fontSize: '0.85rem',
+      }}>
+        <span style={{ color: '#9ab1d6' }}>{category?.name || 'Section'} subtotal</span>
+        <strong style={{ fontVariantNumeric: 'tabular-nums', minWidth: '90px', textAlign: 'right' }}>
+          {formatMoney(subtotal)}
+        </strong>
+      </div>
+    </div>
+  );
+}
+
 // ── Sub-component: single line-item row ───────────────────────────────────
-function LineItemRow({ idx, line, mixCategories, primaryCategory, activeCategories, isMobile, onUpdate, onRemove, onMoveUp, onMoveDown, onSelectCatalogItem, onSaveCustomToCatalog }) {
-  // Effective category for this row in single mode = primary, in mixed = row's own.
-  const rowCategory = useMemo(() => {
-    if (mixCategories) {
-      return activeCategories.find((c) => String(c.id) === String(line.category_id)) || null;
-    }
-    return primaryCategory;
-  }, [mixCategories, line.category_id, primaryCategory, activeCategories]);
+function LineItemRow({ line, sectionCategory, activeCategories, isMobile, onUpdate, onRemove, onMoveUp, onMoveDown, onSelectCatalogItem, onSaveCustomToCatalog }) {
+  // The row's effective category is the parent CategorySection's category.
+  // The line's `category_id` should already match this; the prop is what
+  // we trust for the items dropdown.
+  const rowCategory = sectionCategory;
 
   const availableItems = useMemo(
     () => (rowCategory?.items || []).filter((i) => i.is_active !== false),
@@ -1347,29 +1583,10 @@ function LineItemRow({ idx, line, mixCategories, primaryCategory, activeCategori
   // ── Catalog / custom row ──
   const isCustom = line.kind === LINE_KIND_CUSTOM;
 
-  // Shared category dropdown — same in both layouts but wrapped with a
-  // label on mobile so the user knows what the dropdown is for without
-  // a column header.
-  const categorySelect = mixCategories ? (
-    <select
-      style={S.inputSm}
-      value={line.category_id || ''}
-      onChange={(e) => {
-        const newCatId = e.target.value ? Number(e.target.value) : null;
-        const newCat = activeCategories.find((c) => c.id === newCatId) || null;
-        onUpdate({
-          category_id: newCatId,
-          category_name: newCat?.name || null,
-          item_id: null,
-        });
-      }}
-    >
-      <option value="">— Category —</option>
-      {activeCategories.map((c) => (
-        <option key={c.id} value={c.id}>{c.name}</option>
-      ))}
-    </select>
-  ) : null;
+  // The per-line category dropdown that used to live here is gone —
+  // a line's category is determined by which CategorySection it's
+  // rendered under, and section ordering owns category ordering on
+  // the PDF.
 
   // Shared item dropdown / custom description input. Same JSX in both
   // layouts; the wrapper around it differs (grid cell vs labeled card).
@@ -1410,7 +1627,7 @@ function LineItemRow({ idx, line, mixCategories, primaryCategory, activeCategori
   const markupNeeded = (line.markup_pct != null && Number(line.markup_pct) !== 0) || line.markup_enabled || isCustom;
   const markupBlock = markupNeeded ? (
     <div style={{
-      ...(isMobile ? {} : { gridColumn: mixCategories ? '2 / -1' : '1 / -1' }),
+      ...(isMobile ? {} : { gridColumn: '1 / -1' }),
       display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap',
       paddingLeft: '4px', paddingTop: '2px',
     }}>
@@ -1519,12 +1736,6 @@ function LineItemRow({ idx, line, mixCategories, primaryCategory, activeCategori
     const downStyle = { ...S.iconBtn, opacity: onMoveDown ? 1 : 0.3, cursor: onMoveDown ? 'pointer' : 'not-allowed' };
     return (
       <div style={S.lineItemCardMobile}>
-        {mixCategories ? (
-          <div>
-            <label style={S.label}>Category</label>
-            {categorySelect}
-          </div>
-        ) : null}
         <div>
           <label style={S.label}>{isCustom ? 'Description' : 'Item'}</label>
           {itemControl}
@@ -1589,10 +1800,7 @@ function LineItemRow({ idx, line, mixCategories, primaryCategory, activeCategori
 
   // ── Desktop ≥ 641px: dense grid row that mirrors the column header. ──
   return (
-    <div style={{ ...(mixCategories ? S.lineRowGridMix : S.lineRowGrid), padding: '6px 0' }}>
-      {/* Per-line category (mixed mode only) */}
-      {categorySelect}
-
+    <div style={{ ...S.lineRowGrid, padding: '6px 0' }}>
       {/* Item dropdown (catalog) OR description input (custom) */}
       {itemControl}
 

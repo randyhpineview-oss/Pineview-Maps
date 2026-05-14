@@ -77,10 +77,16 @@ export function computeQuoteTotals({ lineItems = [], taxEnabled = false, taxRate
  * Generate a Quote PDF.
  *
  * @param {object} quote - { quote_number, quote_date, client, area, project_description,
- *                            mix_categories, tax_enabled, tax_label, tax_rate, notes,
- *                            line_items: [{ kind, category_name?, description, unit,
- *                                           qty, rate, markup_enabled, markup_pct,
- *                                           markup_label, subtotal }] }
+ *                            tax_enabled, tax_label, tax_rate, notes,
+ *                            line_items: [{ kind, category_id, category_name,
+ *                                           description, unit, qty, rate,
+ *                                           markup_enabled, markup_pct, markup_label,
+ *                                           subtotal }] }
+ *   Lines are grouped by category_id in first-appearance order. Each group
+ *   gets a category header + per-category subtotal in the rendered PDF.
+ *   `markup_enabled` / `markup_pct` still factor into the printed Subtotal
+ *   column but the customer-facing `(cost +pct%)` label is no longer drawn.
+ *
  * Returns { blob, base64 }.
  */
 export async function generateQuotePdf(quote) {
@@ -144,17 +150,22 @@ export async function generateQuotePdf(quote) {
 
   y += 6;
 
-  // ── Line items table ──
-  // Columns: Description (flex, left) | Qty (center) | Unit (center) | Rate (center) | Subtotal (center)
-  // When `mix_categories`, we also surface the Category as a sub-line under
-  // the description. Note rows render as a single full-width italic row.
-  // Subtotal widened from 80 → 90 to keep dollar amounts off the right edge.
+  // ── Line items, grouped by category ──
+  // Lines with the same `category_id` render together under a category
+  // header (e.g. "Hydroseeding") and finish with a per-category subtotal.
+  // The customer-facing `(cost +10%)` markup label and the per-line
+  // `— Category` annotation that older quotes used are both gone — the
+  // category is communicated by the section header above the rows, and
+  // the markup math still rolls into the printed Rate × Qty subtotal.
+  // Subtotal column widened from 80 → 90 to keep dollar amounts off the
+  // right edge.
   const colSubW = 90;
   const colRateW = 70;
   const colUnitW = 60;
   const colQtyW = 50;
   const colDescW = contentW - colQtyW - colUnitW - colRateW - colSubW;
   const headerH = 20;
+  const sectionHeaderH = 22;
 
   // X-coordinate of the *center* of each non-description column. Used by
   // both the header and the body so the column heading sits directly
@@ -164,7 +175,32 @@ export async function generateQuotePdf(quote) {
   const rateCenterX = marginL + colDescW + colQtyW + colUnitW + colRateW / 2;
   const subCenterX = marginL + colDescW + colQtyW + colUnitW + colRateW + colSubW / 2;
 
-  // Drawing the table header is wrapped in a closure so we can call it
+  // Bottom reserve = 80pt: the footer text is at pageH-36, so this
+  // leaves ~44pt clearance for tall multi-line rows + the footer caps
+  // (avoids the overlap risk we'd have at e.g. pageH-60).
+  const reserveY = pageH - 80;
+
+  const drawCategoryHeader = (name) => {
+    // Tinted full-width band with the category name. Slightly taller and
+    // a different fill than the column-header band so they read as
+    // distinct strata.
+    doc.setDrawColor(80);
+    doc.setFillColor(218, 230, 246);
+    doc.rect(marginL, y, contentW, sectionHeaderH, 'F');
+    doc.setLineWidth(0.5);
+    doc.rect(marginL, y, contentW, sectionHeaderH);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.setTextColor(30, 60, 100);
+    doc.text(name || 'Category', marginL + 6, y + 15);
+    doc.setTextColor(0);
+    y += sectionHeaderH;
+    doc.setDrawColor(180);
+    doc.setLineWidth(0.3);
+    doc.setFont('helvetica', 'normal');
+  };
+
+  // Drawing the column header is wrapped in a closure so we can call it
   // again after a page break — otherwise rows on page 2+ would float
   // without any column labels.
   const drawTableHeader = () => {
@@ -187,90 +223,135 @@ export async function generateQuotePdf(quote) {
     doc.setFont('helvetica', 'normal');
   };
 
-  drawTableHeader();
-
-  const items = Array.isArray(quote.line_items) ? quote.line_items : [];
-  // `redrawHeader` flag controls whether the table column header gets
-  // repeated on the new page. Inside the row loop we want it; for the
-  // totals block / quote notes we don't (they aren't tabular).
-  // Bottom reserve = 80pt: the footer text is at pageH-36, so this
-  // leaves ~44pt clearance for tall multi-line rows + the footer caps
-  // (avoids the overlap risk we'd have at e.g. pageH-60).
+  // `redrawHeader` flag controls whether the column header gets repeated
+  // on the new page. Inside the per-row loop we want it; for the totals
+  // block / quote notes we don't (they aren't tabular). When `redrawHeader`
+  // also fires after a page break we redraw the *current* category header
+  // first so the customer never sees orphan rows on page 2 with no
+  // category label.
+  let currentCategoryName = '';
   const newPageIfNeeded = (needed, { redrawHeader = false } = {}) => {
-    if (y + needed > pageH - 80) {
+    if (y + needed > reserveY) {
       doc.addPage();
       y = 36;
-      if (redrawHeader) drawTableHeader();
+      if (redrawHeader) {
+        if (currentCategoryName) drawCategoryHeader(currentCategoryName);
+        drawTableHeader();
+      }
     }
   };
 
-  for (const line of items) {
-    if (!line) continue;
-    const kind = line.kind || 'catalog';
+  // Group lines by category_id in first-appearance order. Lines without
+  // a category_id (defensive — shouldn't happen with the new
+  // section-based UI but old quotes might) get bundled under '' which
+  // renders as an "Other" header.
+  const items = Array.isArray(quote.line_items) ? quote.line_items : [];
+  const groupOrder = [];
+  const groupMap = new Map(); // key = String(category_id ?? ''), value = { name, lines }
+  for (const li of items) {
+    if (!li) continue;
+    const key = li.category_id != null ? String(li.category_id) : '';
+    if (!groupMap.has(key)) {
+      const name = li.category_name || (key === '' ? 'Other' : '');
+      groupMap.set(key, { name, lines: [] });
+      groupOrder.push(key);
+    }
+    groupMap.get(key).lines.push(li);
+  }
 
-    if (kind === 'note') {
-      const noteText = String(line.description || '').trim();
-      if (!noteText) continue;
-      doc.setFont('helvetica', 'italic');
-      doc.setFontSize(9);
-      const lines = doc.splitTextToSize(noteText, contentW - 8);
-      const rowH = Math.max(18, lines.length * 12 + 6);
+  for (const key of groupOrder) {
+    const group = groupMap.get(key);
+    if (!group || group.lines.length === 0) continue;
+
+    // Don't strand a category header at the very bottom of a page. If
+    // there's not enough room for header + col-header + at least one
+    // average row, push the header onto the next page.
+    newPageIfNeeded(sectionHeaderH + headerH + 24);
+    currentCategoryName = group.name;
+    drawCategoryHeader(group.name);
+    drawTableHeader();
+
+    let groupSubtotal = 0;
+
+    for (const line of group.lines) {
+      if (!line) continue;
+      const kind = line.kind || 'catalog';
+
+      if (kind === 'note') {
+        const noteText = String(line.description || '').trim();
+        if (!noteText) continue;
+        doc.setFont('helvetica', 'italic');
+        doc.setFontSize(9);
+        const lines = doc.splitTextToSize(noteText, contentW - 8);
+        const rowH = Math.max(18, lines.length * 12 + 6);
+        newPageIfNeeded(rowH, { redrawHeader: true });
+        doc.rect(marginL, y, contentW, rowH);
+        doc.text(lines, marginL + 4, y + 13);
+        y += rowH;
+        continue;
+      }
+
+      // Priced row (catalog or custom). The markup `(label +pct%)` and
+      // category sub-lines are deliberately omitted — markup math still
+      // applies to the subtotal column, just not surfaced to the client.
+      const descBase = line.description || '';
+      const wrappedDesc = doc.splitTextToSize(descBase || '', colDescW - 8);
+      const rowH = Math.max(18, wrappedDesc.length * 11 + 6);
       newPageIfNeeded(rowH, { redrawHeader: true });
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      // Cell outlines (single rect spanning all columns + verticals for grid feel)
       doc.rect(marginL, y, contentW, rowH);
-      doc.text(lines, marginL + 4, y + 13);
+      let vx = marginL + colDescW;
+      doc.line(vx, y, vx, y + rowH); vx += colQtyW;
+      doc.line(vx, y, vx, y + rowH); vx += colUnitW;
+      doc.line(vx, y, vx, y + rowH); vx += colRateW;
+      doc.line(vx, y, vx, y + rowH);
+
+      // Description (multi-line, left-aligned)
+      doc.text(wrappedDesc, marginL + 4, y + 12);
+
+      // Numeric / unit cells — all centered so the value sits directly
+      // beneath its centered column heading. Decimal-alignment on currency
+      // is sacrificed for visual cleanliness; the per-line subtotals are
+      // bold so they still scan vertically.
+      const numY = y + 13;
+      const qtyText = line.qty != null && line.qty !== '' ? formatNumber(line.qty, 4) : '';
+      const unitText = String(line.unit || '');
+      const rateText = line.rate != null && line.rate !== '' ? formatMoney(line.rate) : '';
+      const lineSub = Number(line.subtotal ?? computeLineSubtotal(line)) || 0;
+      groupSubtotal += lineSub;
+      const subText = formatMoney(lineSub);
+
+      doc.text(qtyText,  qtyCenterX,  numY, { align: 'center' });
+      doc.text(unitText, unitCenterX, numY, { align: 'center' });
+      doc.text(rateText, rateCenterX, numY, { align: 'center' });
+      doc.setFont('helvetica', 'bold');
+      doc.text(subText,  subCenterX,  numY, { align: 'center' });
+      doc.setFont('helvetica', 'normal');
+
       y += rowH;
-      continue;
     }
 
-    // Priced row (catalog or custom).
-    const descBase = line.description || '';
-    const descLines = [];
-    if (descBase) descLines.push(descBase);
-    if (line.markup_enabled && Number(line.markup_pct) > 0) {
-      const mkLabel = line.markup_label ? `${line.markup_label} ` : '';
-      descLines.push(`(${mkLabel}+${formatNumber(line.markup_pct, 2)}%)`);
-    }
-    if (quote.mix_categories && line.category_name) {
-      descLines.push(`— ${line.category_name}`);
-    }
-    const wrappedDesc = doc.splitTextToSize(descLines.join('  '), colDescW - 8);
-    const rowH = Math.max(18, wrappedDesc.length * 11 + 6);
-    newPageIfNeeded(rowH, { redrawHeader: true });
-
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9);
-    // Cell outlines (single rect spanning all columns + verticals for grid feel)
-    doc.rect(marginL, y, contentW, rowH);
-    let vx = marginL + colDescW;
-    doc.line(vx, y, vx, y + rowH); vx += colQtyW;
-    doc.line(vx, y, vx, y + rowH); vx += colUnitW;
-    doc.line(vx, y, vx, y + rowH); vx += colRateW;
-    doc.line(vx, y, vx, y + rowH);
-
-    // Description (multi-line, left-aligned)
-    doc.text(wrappedDesc, marginL + 4, y + 12);
-
-    // Numeric / unit cells — all centered so the value sits directly
-    // beneath its centered column heading. Decimal-alignment on currency
-    // is sacrificed for visual cleanliness; the per-line subtotals are
-    // bold so they still scan vertically.
-    const numY = y + 13;
-    const qtyText = line.qty != null && line.qty !== '' ? formatNumber(line.qty, 4) : '';
-    const unitText = String(line.unit || '');
-    const rateText = line.rate != null && line.rate !== '' ? formatMoney(line.rate) : '';
-    const subText = formatMoney(line.subtotal ?? computeLineSubtotal(line));
-
-    doc.text(qtyText,  qtyCenterX,  numY, { align: 'center' });
-    doc.text(unitText, unitCenterX, numY, { align: 'center' });
-    doc.text(rateText, rateCenterX, numY, { align: 'center' });
+    // Per-category subtotal — right-aligned strip below the last row,
+    // with breathing room from the next section's category header.
+    newPageIfNeeded(22);
     doc.setFont('helvetica', 'bold');
-    doc.text(subText,  subCenterX,  numY, { align: 'center' });
+    doc.setFontSize(10);
+    const subLabel = `${group.name || 'Category'} subtotal`;
+    doc.text(subLabel, subCenterX - colSubW / 2 - 4, y + 12, { align: 'right' });
+    doc.text(formatMoney(Math.round(groupSubtotal * 100) / 100), pageW - marginR - 4, y + 12, { align: 'right' });
     doc.setFont('helvetica', 'normal');
-
-    y += rowH;
+    y += 18;
+    // Spacer between category groups so each block reads as its own zone.
+    y += 6;
   }
 
   // ── Totals block (right-aligned, similar to TM ticket footer) ──
+  // Grand total is the sum across every category — same arithmetic as
+  // before, just re-derived from the flat line_items array.
+  currentCategoryName = '';
   const totals = computeQuoteTotals({
     lineItems: items,
     taxEnabled: !!quote.tax_enabled,
