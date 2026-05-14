@@ -948,9 +948,24 @@ export default function QuoteBuilder({
         >
           Settings
         </button>
-        <button type="button" onClick={onClose} style={S.closeBtn} aria-label="Close quote builder">
-          ✕ Close
-        </button>
+        {/* Close button — context-aware. From Settings, "← Done" returns
+            to the New Quote tab so closing the settings panel doesn't
+            also kick the user back out to the map. From New Quote / Recent,
+            "✕ Close" exits the entire builder overlay (back to the map). */}
+        {activeTab === TAB_SETTINGS ? (
+          <button
+            type="button"
+            onClick={() => setActiveTab(TAB_NEW)}
+            style={S.closeBtn}
+            aria-label="Close settings and return to New Quote"
+          >
+            ← Done
+          </button>
+        ) : (
+          <button type="button" onClick={onClose} style={S.closeBtn} aria-label="Close quote builder">
+            ✕ Close
+          </button>
+        )}
       </div>
 
       {/* Body — render the active tab. Footer (when relevant) is rendered
