@@ -43,6 +43,13 @@ CREATE TABLE IF NOT EXISTS calendar_tasks (
     -- trail survives multiple consecutive misses. NULL means the task has
     -- never been rolled (task_date is still the originally chosen date).
     original_task_date     DATE,
+    -- Optional time-of-day window. Both NULL = the task is all-day; the
+    -- frontend renders it as a chip on the daygrid. start_time set =
+    -- timed task (FullCalendar shows it on the timeGrid views at the
+    -- right slot). end_time is optional even when start_time is set; if
+    -- absent we treat the task as a 1-hour block for rendering only.
+    start_time             TIME,
+    end_time               TIME,
     task_text              TEXT NOT NULL,
     priority               VARCHAR(16) NOT NULL DEFAULT 'normal'
                               CHECK (priority IN ('important', 'attention', 'normal')),
@@ -126,6 +133,12 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     -- Nullable for single-day events. When set, FullCalendar renders the
     -- event as a multi-day bar spanning [event_date, end_date].
     end_date               DATE,
+    -- Optional time window. Same semantics as calendar_tasks.start_time:
+    -- both NULL = all-day event, start_time set = timed event. For
+    -- multi-day events the time pair applies to event_date (start) and
+    -- end_date (end) — the typical "conference runs 9am Mon to 4pm Wed".
+    start_time             TIME,
+    end_time               TIME,
     title                  VARCHAR(255) NOT NULL,
     location               VARCHAR(255),
     notes                  TEXT,
@@ -204,6 +217,19 @@ CREATE TRIGGER calendar_bids_updated_at
     BEFORE UPDATE ON calendar_bids
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
+
+
+-- ── 4b. Idempotent ADD COLUMN IF NOT EXISTS for existing databases ─────────
+-- The CREATE TABLE blocks above only run on a fresh install. For projects
+-- that already ran this migration before the optional time-of-day columns
+-- were added, these ALTERs bring them up to date. ADD COLUMN IF NOT EXISTS
+-- is a no-op when the column already exists, so re-running the whole file
+-- stays safe.
+
+ALTER TABLE calendar_tasks  ADD COLUMN IF NOT EXISTS start_time TIME;
+ALTER TABLE calendar_tasks  ADD COLUMN IF NOT EXISTS end_time   TIME;
+ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS start_time TIME;
+ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS end_time   TIME;
 
 
 -- ── 5. Realtime: REPLICA IDENTITY FULL + supabase_realtime publication ─────

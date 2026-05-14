@@ -551,55 +551,44 @@ export default function AdminPanel({
           <LookupManager cachedLookups={cachedLookups} onLookupsChanged={onLookupsChanged} />
         </CollapsibleSection>
 
-        {/* Reports Dashboard + Quote Builder live at the bottom of the
-            panel because they're the buttons admins reach for least often
-            (vs. Pending / Recent Deletes / User Management above). Both
-            are admin/office-only — worker sessions never mount this
-            panel at all — and both lazy-load their target overlay on
-            tap (ReportsDashboard.jsx / QuoteBuilder.jsx). */}
-        {onOpenReports ? (
-          <div className="site-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <div>
-              <strong>📊 Reports Dashboard</strong>
-              <div className="small-text">Generate custom CSV reports — daily, weekly, or annual.</div>
-            </div>
-            <button
-              className="primary-button"
-              type="button"
-              onClick={onOpenReports}
-            >
-              Open Reports
-            </button>
-          </div>
-        ) : null}
-        {onOpenQuotes ? (
-          <div className="site-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <div>
-              <strong>📝 Quote Builder</strong>
-              <div className="small-text">Build quotes from the 2026 rate catalog — Hydroseeding, Herbicide, Drone.</div>
-            </div>
-            <button
-              className="primary-button"
-              type="button"
-              onClick={onOpenQuotes}
-            >
-              Open Quotes
-            </button>
-          </div>
-        ) : null}
-        {onOpenCalendar ? (
-          <div className="site-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <div>
-              <strong>📅 Calendar</strong>
-              <div className="small-text">Daily tasks, contacts, upcoming events, and bid postings.</div>
-            </div>
-            <button
-              className="primary-button"
-              type="button"
-              onClick={onOpenCalendar}
-            >
-              Open Calendar
-            </button>
+        {/* Tools row — Reports / Quotes / Calendar collapsed into a single
+            compact site-row to save vertical space. All three are admin/
+            office-only and lazy-load their target overlay on tap. The
+            tooltips on each button preserve the long-form descriptions
+            that previously lived in dedicated cards. */}
+        {(onOpenReports || onOpenQuotes || onOpenCalendar) ? (
+          <div className="site-row" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <strong style={{ marginRight: '0.25rem' }}>Tools</strong>
+            {onOpenReports ? (
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={onOpenReports}
+                title="Generate custom CSV reports — daily, weekly, or annual."
+              >
+                📊 Reports
+              </button>
+            ) : null}
+            {onOpenQuotes ? (
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={onOpenQuotes}
+                title="Build quotes from the 2026 rate catalog — Hydroseeding, Herbicide, Drone."
+              >
+                📝 Quotes
+              </button>
+            ) : null}
+            {onOpenCalendar ? (
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={onOpenCalendar}
+                title="Daily tasks, contacts, upcoming events, and bid postings."
+              >
+                📅 Calendar
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>

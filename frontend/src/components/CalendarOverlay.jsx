@@ -172,18 +172,49 @@ function addOneDay(isoDate) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// Postgres TIME columns serialize as "HH:MM:SS"; <input type="time"> wants
+// "HH:MM". Slice safely (returns the input unchanged if it doesn't match).
+function stripSeconds(t) {
+  if (!t || typeof t !== 'string') return t;
+  return t.length >= 5 ? t.slice(0, 5) : t;
+}
+
+// Pretty-print a "HH:MM(:SS)" string like "9:30 AM". Returns '' for blanks.
+function formatTime(t) {
+  if (!t || typeof t !== 'string') return '';
+  const [hStr, mStr] = t.split(':');
+  const h = Number(hStr);
+  const m = Number(mStr || '0');
+  if (Number.isNaN(h) || Number.isNaN(m)) return t;
+  const period = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(m).padStart(2, '0')} ${period}`;
+}
+
 // Merge tasks + events + bids (with closing_date) into FullCalendar's
 // event-source shape. Bids without closing_date are rendered separately in
 // the "no date" bar above the grid — they're excluded here on purpose.
+//
+// Time-of-day handling: if a task/event has start_time set, we promote it
+// from an all-day chip to a timed event so it positions correctly on the
+// timeGrid views (timeGridWeek / timeGridDay). end_time is optional —
+// when absent we default to a 1-hour slot for rendering only (the DB
+// still stores NULL).
 function bundleToEvents(bundle) {
   const out = [];
   for (const t of bundle.tasks || []) {
     const color = t.is_completed ? COMPLETED_COLOR : priorityColor(t.priority);
+    const hasTime = Boolean(t.start_time);
+    const start = hasTime ? `${t.task_date}T${stripSeconds(t.start_time)}` : t.task_date;
+    const end = hasTime
+      ? (t.end_time ? `${t.task_date}T${stripSeconds(t.end_time)}` : undefined)
+      : undefined;
     out.push({
       id: `task-${t.id}`,
       title: t.task_text,
-      start: t.task_date,
-      allDay: true,
+      start,
+      end,
+      allDay: !hasTime,
       backgroundColor: color,
       borderColor: color,
       textColor: '#fff',
@@ -194,13 +225,26 @@ function bundleToEvents(bundle) {
     });
   }
   for (const e of bundle.events || []) {
+    const hasTime = Boolean(e.start_time);
+    let start;
+    let end;
+    if (hasTime) {
+      start = `${e.event_date}T${stripSeconds(e.start_time)}`;
+      // For timed multi-day events (end_date set), the end-time anchors to
+      // end_date. For single-day timed events, end_time anchors to event_date.
+      const endDateStr = e.end_date || e.event_date;
+      end = e.end_time ? `${endDateStr}T${stripSeconds(e.end_time)}` : undefined;
+    } else {
+      start = e.event_date;
+      // FullCalendar treats `end` as exclusive for all-day events.
+      end = e.end_date ? addOneDay(e.end_date) : undefined;
+    }
     out.push({
       id: `event-${e.id}`,
       title: e.title,
-      start: e.event_date,
-      // FullCalendar treats `end` as exclusive for all-day events.
-      end: e.end_date ? addOneDay(e.end_date) : undefined,
-      allDay: true,
+      start,
+      end,
+      allDay: !hasTime,
       backgroundColor: EVENT_COLOR,
       borderColor: EVENT_COLOR,
       textColor: '#fff',
@@ -274,6 +318,14 @@ function AddPickerModal({ onPick, onClose, defaultDate }) {
 
 function TaskFormModal({ initial, users, onSubmit, onClose, onDelete, busy }) {
   const [taskDate, setTaskDate] = useState(initial?.task_date || todayISO());
+  // The DB column is TIME → Pydantic gives us "HH:MM:SS"; <input type="time">
+  // round-trips "HH:MM" cleanly so we slice to that for the form value.
+  const [startTime, setStartTime] = useState(stripSeconds(initial?.start_time) || '');
+  const [endTime, setEndTime] = useState(stripSeconds(initial?.end_time) || '');
+  // Default to all-day on a fresh task; on edit, infer from whether the
+  // existing row has a start_time set so reopening the modal doesn't
+  // silently drop the time on save.
+  const [allDay, setAllDay] = useState(!initial?.start_time);
   const [taskText, setTaskText] = useState(initial?.task_text || '');
   const [priority, setPriority] = useState(initial?.priority || 'normal');
   const [assignedUserId, setAssignedUserId] = useState(initial?.assigned_user_id ?? '');
@@ -283,6 +335,10 @@ function TaskFormModal({ initial, users, onSubmit, onClose, onDelete, busy }) {
     if (!taskText.trim()) return;
     await onSubmit({
       task_date: taskDate,
+      // Send explicit nulls when toggling back to all-day so PATCH clears
+      // any previously-saved time window.
+      start_time: allDay ? null : (startTime || null),
+      end_time: allDay ? null : (endTime || null),
       task_text: taskText.trim(),
       priority,
       assigned_user_id: assignedUserId === '' ? null : Number(assignedUserId),
@@ -309,6 +365,20 @@ function TaskFormModal({ initial, users, onSubmit, onClose, onDelete, busy }) {
         <Field label="Date">
           <input type="date" value={taskDate} onChange={(e) => setTaskDate(e.target.value)} style={S.input} required />
         </Field>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.85rem', color: '#c9d6ee', cursor: 'pointer' }}>
+          <input type="checkbox" checked={allDay} onChange={(e) => setAllDay(e.target.checked)} />
+          All day
+        </label>
+        {!allDay ? (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <Field label="Start time">
+              <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} style={S.input} />
+            </Field>
+            <Field label="End time (optional)">
+              <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} style={S.input} />
+            </Field>
+          </div>
+        ) : null}
         <Field label="Task">
           <textarea
             value={taskText}
@@ -341,6 +411,9 @@ function TaskFormModal({ initial, users, onSubmit, onClose, onDelete, busy }) {
 function EventFormModal({ initial, onSubmit, onClose, onDelete, busy }) {
   const [eventDate, setEventDate] = useState(initial?.event_date || todayISO());
   const [endDate, setEndDate] = useState(initial?.end_date || '');
+  const [startTime, setStartTime] = useState(stripSeconds(initial?.start_time) || '');
+  const [endTime, setEndTime] = useState(stripSeconds(initial?.end_time) || '');
+  const [allDay, setAllDay] = useState(!initial?.start_time);
   const [title, setTitle] = useState(initial?.title || '');
   const [location, setLocation] = useState(initial?.location || '');
   const [notes, setNotes] = useState(initial?.notes || '');
@@ -352,6 +425,8 @@ function EventFormModal({ initial, onSubmit, onClose, onDelete, busy }) {
     await onSubmit({
       event_date: eventDate,
       end_date: endDate || null,
+      start_time: allDay ? null : (startTime || null),
+      end_time: allDay ? null : (endTime || null),
       title: title.trim(),
       location: location.trim() || null,
       notes: notes.trim() || null,
@@ -387,6 +462,20 @@ function EventFormModal({ initial, onSubmit, onClose, onDelete, busy }) {
             <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} min={eventDate} style={S.input} />
           </Field>
         </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.85rem', color: '#c9d6ee', cursor: 'pointer' }}>
+          <input type="checkbox" checked={allDay} onChange={(e) => setAllDay(e.target.checked)} />
+          All day
+        </label>
+        {!allDay ? (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <Field label="Start time">
+              <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} style={S.input} />
+            </Field>
+            <Field label="End time (optional)">
+              <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} style={S.input} />
+            </Field>
+          </div>
+        ) : null}
         <Field label="Location"><input value={location} onChange={(e) => setLocation(e.target.value)} style={S.input} /></Field>
         <Field label="URL"><input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" style={S.input} /></Field>
         <Field label="Notes">
@@ -497,6 +586,9 @@ function ItemDetailModal({ item, onEdit, onDelete, onToggleComplete, onDismissBi
         </div>
         <div style={{ fontSize: '0.85rem', color: '#c9d6ee' }}>
           Date: {formatDate(raw.task_date)}
+          {raw.start_time ? (
+            <span> · {formatTime(raw.start_time)}{raw.end_time ? ` – ${formatTime(raw.end_time)}` : ''}</span>
+          ) : null}
           {raw.original_task_date && raw.original_task_date !== raw.task_date ? (
             <span title={`Originally for ${formatDate(raw.original_task_date)}`}> · ↻ rolled from {formatDate(raw.original_task_date)}</span>
           ) : null}
@@ -528,6 +620,9 @@ function ItemDetailModal({ item, onEdit, onDelete, onToggleComplete, onDismissBi
         <strong style={{ fontSize: '1.05rem' }}>{raw.title}</strong>
         <div style={{ fontSize: '0.85rem', color: '#c9d6ee' }}>
           {raw.end_date ? `${formatDate(raw.event_date)} – ${formatDate(raw.end_date)}` : formatDate(raw.event_date)}
+          {raw.start_time ? (
+            <span> · {formatTime(raw.start_time)}{raw.end_time ? ` – ${formatTime(raw.end_time)}` : ''}</span>
+          ) : null}
         </div>
         {raw.location ? <div style={{ fontSize: '0.85rem' }}>📍 {raw.location}</div> : null}
         {raw.url ? (
@@ -1090,6 +1185,13 @@ export default function CalendarOverlay({ onClose, clients = [], currentUser }) 
     const isCompleted = isTask && ext.raw.is_completed;
     const wasRolled = isTask && ext.raw.original_task_date && ext.raw.original_task_date !== ext.raw.task_date;
     const creatorName = ext?.raw?.created_by_name;
+    // Show a leading time label only on daygrid views (the timeGrid views
+    // already position the event at the right vertical slot, so adding a
+    // duplicated time string would just clutter the chip).
+    const isDayGrid = arg.view?.type?.startsWith('dayGrid');
+    const timeLabel = isDayGrid && (isTask || isEvent) && ext.raw.start_time
+      ? formatTime(ext.raw.start_time)
+      : '';
     return (
       <div style={{
         display: 'flex', alignItems: 'center', gap: 4, width: '100%',
@@ -1097,6 +1199,11 @@ export default function CalendarOverlay({ onClose, clients = [], currentUser }) 
         opacity: isCompleted ? 0.7 : 1,
         fontSize: '0.78rem', lineHeight: 1.2,
       }}>
+        {timeLabel ? (
+          <span style={{ fontWeight: 700, opacity: 0.85, flex: '0 0 auto' }}>
+            {timeLabel}
+          </span>
+        ) : null}
         <span style={{
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
         }}>

@@ -8,7 +8,7 @@ rest of the schema. Mirrors the audit / soft-delete pattern from
 from __future__ import annotations
 
 import enum
-from datetime import datetime
+from datetime import datetime, time
 
 from sqlalchemy import (
     Boolean,
@@ -19,6 +19,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    Time,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -54,6 +55,10 @@ class CalendarTask(Base):
     # "↻ originally for <date>" badge so an admin can see what's been
     # carrying over for days.
     original_task_date: Mapped[datetime | None] = mapped_column(Date, nullable=True)
+    # Optional time-of-day window. Both NULL = all-day task; start_time set
+    # promotes the task to a timed event on FullCalendar's timeGrid views.
+    start_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    end_time: Mapped[time | None] = mapped_column(Time, nullable=True)
     task_text: Mapped[str] = mapped_column(Text, nullable=False)
     priority: Mapped[str] = mapped_column(
         String(16), nullable=False, default=CalendarTaskPriority.normal.value
@@ -136,6 +141,9 @@ class CalendarEvent(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     event_date: Mapped[datetime] = mapped_column(Date, nullable=False, index=True)
     end_date: Mapped[datetime | None] = mapped_column(Date, nullable=True)
+    # Optional time window mirroring CalendarTask.start_time/end_time.
+    start_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    end_time: Mapped[time | None] = mapped_column(Time, nullable=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     location: Mapped[str | None] = mapped_column(String(255), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -224,6 +224,8 @@ def create_task(
 ) -> CalendarTaskRead:
     task = CalendarTask(
         task_date=payload.task_date,
+        start_time=payload.start_time,
+        end_time=payload.end_time,
         task_text=payload.task_text.strip(),
         priority=payload.priority.value,
         assigned_user_id=payload.assigned_user_id,

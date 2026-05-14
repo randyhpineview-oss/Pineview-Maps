@@ -7,7 +7,7 @@ Read schemas expose denormalized name snapshots (`created_by_name`,
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -32,6 +32,10 @@ class UserLite(BaseModel):
 
 class CalendarTaskBase(BaseModel):
     task_date: date
+    # Optional time-of-day window. Both None = all-day; start_time set =
+    # timed task that renders on FullCalendar's timeGrid views.
+    start_time: time | None = None
+    end_time: time | None = None
     task_text: str = Field(min_length=1, max_length=2000)
     priority: CalendarTaskPriority = CalendarTaskPriority.normal
     assigned_user_id: int | None = None
@@ -44,6 +48,10 @@ class CalendarTaskCreate(CalendarTaskBase):
 class CalendarTaskUpdate(BaseModel):
     # All optional — PATCH semantics. Pass only the fields you're changing.
     task_date: date | None = None
+    # Note: pass `start_time: null` explicitly to clear an existing time
+    # window. The route's exclude_unset=True keeps absence from clobbering.
+    start_time: time | None = None
+    end_time: time | None = None
     task_text: str | None = Field(default=None, min_length=1, max_length=2000)
     priority: CalendarTaskPriority | None = None
     assigned_user_id: int | None = None
@@ -58,6 +66,8 @@ class CalendarTaskRead(BaseModel):
     id: int
     task_date: date
     original_task_date: date | None
+    start_time: time | None
+    end_time: time | None
     task_text: str
     priority: CalendarTaskPriority
     assigned_user_id: int | None
@@ -126,6 +136,10 @@ class CalendarContactRead(BaseModel):
 class CalendarEventBase(BaseModel):
     event_date: date
     end_date: date | None = None
+    # Optional time window. Same semantics as CalendarTaskBase.start_time:
+    # both None = all-day; both set = timed event spanning that range.
+    start_time: time | None = None
+    end_time: time | None = None
     title: str = Field(min_length=1, max_length=255)
     location: str | None = Field(default=None, max_length=255)
     notes: str | None = None
@@ -139,6 +153,8 @@ class CalendarEventCreate(CalendarEventBase):
 class CalendarEventUpdate(BaseModel):
     event_date: date | None = None
     end_date: date | None = None
+    start_time: time | None = None
+    end_time: time | None = None
     title: str | None = Field(default=None, min_length=1, max_length=255)
     location: str | None = Field(default=None, max_length=255)
     notes: str | None = None
@@ -151,6 +167,8 @@ class CalendarEventRead(BaseModel):
     id: int
     event_date: date
     end_date: date | None
+    start_time: time | None
+    end_time: time | None
     title: str
     location: str | None
     notes: str | None
