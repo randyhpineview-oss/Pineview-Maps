@@ -1,0 +1,169 @@
+name: Database Backup
+
+# Daily encrypted-at-rest backup of the Supabase Postgres database.
+#
+# Outputs:
+#   1. GitHub Actions artifact (retention: 90 days) — easy to download from
+#      the Actions tab in the GitHub UI.
+#   2. Commit on the orphan `backups` branch of this repo — permanent
+#      retention, browsable + cloneable, never garbage-collected.
+#
+# Required repo secret:
+#   SUPABASE_DB_URL — Supabase session-pooler connection string, e.g.
+#     postgres://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres
+#   (use port 5432 = session pooler; pg_dump does NOT work on the
+#    transaction pooler at port 6543)
+#
+# See docs/BACKUP_AND_RESTORE.md for full setup + restore instructions.
+
+on:
+  schedule:
+    # 09:00 UTC daily = 02:00 PT (PDT) / 01:00 PT (PST)
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+
+# Allow the workflow to push to the backups branch
+permissions:
+  contents: write
+
+# Prevent concurrent runs from racing on the backups branch
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Dump and archive
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Install PostgreSQL 17 client
+        # Use the PGDG repo so we get a pg_dump new enough for any
+        # Supabase Postgres major version (15 / 16 / 17). pg_dump must
+        # be >= the server's major version, so we always grab the latest.
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          pg_dump --version
+
+      - name: Compute timestamp
+        id: ts
+        run: |
+          STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          YEAR=$(date -u +%Y)
+          MONTH=$(date -u +%m)
+          echo "stamp=$STAMP" >> "$GITHUB_OUTPUT"
+          echo "year=$YEAR"   >> "$GITHUB_OUTPUT"
+          echo "month=$MONTH" >> "$GITHUB_OUTPUT"
+          echo "file=pineview-${STAMP}.sql.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Dump database
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DB_URL:-}" ]; then
+            echo "::error::SUPABASE_DB_URL secret is not set. See docs/BACKUP_AND_RESTORE.md"
+            exit 1
+          fi
+          mkdir -p /tmp/backup
+          # --no-owner / --no-privileges: dump is portable to a fresh
+          # Supabase project where the `postgres` role doesn't match.
+          # --format=plain + gzip: human-inspectable, restores with `psql`.
+          # --quote-all-identifiers: safer round-trip for reserved words.
+          pg_dump "$DB_URL" \
+            --no-owner \
+            --no-privileges \
+            --quote-all-identifiers \
+            --format=plain \
+            | gzip -9 > "/tmp/backup/${{ steps.ts.outputs.file }}"
+          ls -lh /tmp/backup/
+          # Sanity-check: dump should be non-trivial (> 1 KB after gzip)
+          SIZE=$(stat -c%s "/tmp/backup/${{ steps.ts.outputs.file }}")
+          if [ "$SIZE" -lt 1024 ]; then
+            echo "::error::Backup file is suspiciously small (${SIZE} bytes)."
+            exit 1
+          fi
+          echo "Backup size: ${SIZE} bytes"
+
+      - name: Upload artifact (90-day retention)
+        uses: actions/upload-artifact@v4
+        with:
+          name: pineview-db-backup-${{ steps.ts.outputs.stamp }}
+          path: /tmp/backup/${{ steps.ts.outputs.file }}
+          retention-days: 90
+          if-no-files-found: error
+          compression-level: 0  # already gzipped
+
+      - name: Push to permanent `backups` branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          REPO_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+          WORK=/tmp/backups-repo
+          rm -rf "$WORK"
+
+          git config --global user.name  "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git ls-remote --exit-code --heads "$REPO_URL" backups >/dev/null 2>&1; then
+            echo "backups branch exists — cloning"
+            git clone --branch backups --single-branch --depth 50 "$REPO_URL" "$WORK"
+          else
+            echo "backups branch does not exist — initializing orphan branch"
+            git clone --depth 1 "$REPO_URL" "$WORK"
+            cd "$WORK"
+            git checkout --orphan backups
+            git rm -rf . >/dev/null 2>&1 || true
+            {
+              echo "# Pineview Maps — Database Backups"
+              echo ""
+              echo "Automated daily pg_dump backups of the Supabase Postgres database."
+              echo "**Do not delete this branch.** It is the long-term archive."
+              echo ""
+              echo "## Layout"
+              echo ""
+              echo "    <YYYY>/<MM>/pineview-<UTC-timestamp>.sql.gz"
+              echo ""
+              echo "## Restore"
+              echo ""
+              echo "See \`docs/BACKUP_AND_RESTORE.md\` on the \`main\` branch."
+              echo ""
+              echo "## Source"
+              echo ""
+              echo "Generated by \`.github/workflows/db-backup.yml\`."
+            } > README.md
+            git add README.md
+            git commit -m "Initialize backups branch"
+            cd -
+          fi
+
+          DEST_DIR="$WORK/${{ steps.ts.outputs.year }}/${{ steps.ts.outputs.month }}"
+          mkdir -p "$DEST_DIR"
+          cp "/tmp/backup/${{ steps.ts.outputs.file }}" "$DEST_DIR/"
+
+          cd "$WORK"
+          git add "${{ steps.ts.outputs.year }}/"
+          if git diff --cached --quiet; then
+            echo "No new backup to commit (file already present?)"
+            exit 0
+          fi
+          git commit -m "Backup ${{ steps.ts.outputs.stamp }}"
+          # Push; retry once on the off chance another run pushed first
+          git push origin backups || (git pull --rebase origin backups && git push origin backups)
+
+      - name: Summary
+        run: |
+          echo "### Backup complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- File: \`${{ steps.ts.outputs.file }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Artifact retention: 90 days (Actions tab)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Permanent copy: [\`backups\` branch](../../tree/backups/${{ steps.ts.outputs.year }}/${{ steps.ts.outputs.month }})" >> "$GITHUB_STEP_SUMMARY"
