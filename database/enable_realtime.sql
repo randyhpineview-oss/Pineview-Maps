@@ -40,6 +40,12 @@
 --   • applicators
 --   • noxious_weeds
 --   • location_types
+--
+-- Calendar (admin/office only):
+--   • calendar_tasks
+--   • calendar_contacts
+--   • calendar_events
+--   • calendar_bids
 -- ============================================================================
 
 
@@ -67,6 +73,16 @@ ALTER TABLE public.herbicides             REPLICA IDENTITY FULL;
 ALTER TABLE public.applicators            REPLICA IDENTITY FULL;
 ALTER TABLE public.noxious_weeds          REPLICA IDENTITY FULL;
 ALTER TABLE public.location_types         REPLICA IDENTITY FULL;
+
+-- Calendar tables. These are created by database/calendar_setup.sql; wrapped
+-- in DO blocks so this script doesn't fail when run on a project that hasn't
+-- applied the calendar migration yet.
+DO $$ BEGIN
+  ALTER TABLE public.calendar_tasks    REPLICA IDENTITY FULL;
+  ALTER TABLE public.calendar_contacts REPLICA IDENTITY FULL;
+  ALTER TABLE public.calendar_events   REPLICA IDENTITY FULL;
+  ALTER TABLE public.calendar_bids     REPLICA IDENTITY FULL;
+EXCEPTION WHEN undefined_table THEN NULL; END $$;
 
 
 -- ── Step 2 of 2: Add tables to the supabase_realtime publication ────────────
@@ -128,10 +144,32 @@ DO $$ BEGIN
   ALTER PUBLICATION supabase_realtime ADD TABLE public.location_types;
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.calendar_tasks;
+EXCEPTION WHEN duplicate_object THEN NULL;
+         WHEN undefined_table THEN NULL; END $$;
+
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.calendar_contacts;
+EXCEPTION WHEN duplicate_object THEN NULL;
+         WHEN undefined_table THEN NULL; END $$;
+
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.calendar_events;
+EXCEPTION WHEN duplicate_object THEN NULL;
+         WHEN undefined_table THEN NULL; END $$;
+
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.calendar_bids;
+EXCEPTION WHEN duplicate_object THEN NULL;
+         WHEN undefined_table THEN NULL; END $$;
+
 
 -- ── Verification query ──────────────────────────────────────────────────────
--- Run this AFTER the above to confirm all twelve tables are now part of
--- the realtime publication. You should see exactly 12 rows.
+-- Run this AFTER the above to confirm all tables are now part of the
+-- realtime publication. You should see 12 rows on a project that hasn't
+-- applied the calendar migration, or 16 rows once calendar_setup.sql has
+-- run.
 --
 -- SELECT schemaname, tablename
 --   FROM pg_publication_tables

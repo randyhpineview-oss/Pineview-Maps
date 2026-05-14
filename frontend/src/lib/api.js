@@ -430,6 +430,91 @@ export const api = {
     return request(`/api/lookups/location-types/${id}`, { method: 'DELETE' });
   },
 
+  // ── Calendar (admin/office only) ──
+  // Single round-trip on overlay open: tasks/events/bids scoped to the
+  // visible window, contacts + user list returned in full.
+  getCalendarBundle({ from, to, createdBy, includeCompleted = true, includeDismissed = false } = {}) {
+    const params = new URLSearchParams();
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    if (createdBy != null && createdBy !== '') params.set('created_by', String(createdBy));
+    if (!includeCompleted) params.set('include_completed', 'false');
+    if (includeDismissed) params.set('include_dismissed', 'true');
+    const query = params.toString();
+    return request(`/api/calendar/bundle${query ? `?${query}` : ''}`);
+  },
+  // Tasks
+  listCalendarTasks({ from, to, createdBy, includeCompleted = true } = {}) {
+    const params = new URLSearchParams();
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    if (createdBy != null && createdBy !== '') params.set('created_by', String(createdBy));
+    if (!includeCompleted) params.set('include_completed', 'false');
+    const query = params.toString();
+    return request(`/api/calendar/tasks${query ? `?${query}` : ''}`);
+  },
+  createCalendarTask(payload) {
+    return request('/api/calendar/tasks', { method: 'POST', body: payload });
+  },
+  updateCalendarTask(taskId, payload) {
+    return request(`/api/calendar/tasks/${taskId}`, { method: 'PATCH', body: payload });
+  },
+  deleteCalendarTask(taskId) {
+    return request(`/api/calendar/tasks/${taskId}`, { method: 'DELETE' });
+  },
+  // Roll-forward is idempotent — safe to call once per overlay open (the UI
+  // gates by a localStorage stamp so we don't hit it on every click).
+  rollForwardCalendarTasks() {
+    return request('/api/calendar/tasks/roll-forward', { method: 'POST' });
+  },
+  // Contacts
+  listCalendarContacts() {
+    return request('/api/calendar/contacts');
+  },
+  createCalendarContact(payload) {
+    return request('/api/calendar/contacts', { method: 'POST', body: payload });
+  },
+  updateCalendarContact(contactId, payload) {
+    return request(`/api/calendar/contacts/${contactId}`, { method: 'PATCH', body: payload });
+  },
+  deleteCalendarContact(contactId) {
+    return request(`/api/calendar/contacts/${contactId}`, { method: 'DELETE' });
+  },
+  // Events
+  listCalendarEvents({ from, to, createdBy } = {}) {
+    const params = new URLSearchParams();
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    if (createdBy != null && createdBy !== '') params.set('created_by', String(createdBy));
+    const query = params.toString();
+    return request(`/api/calendar/events${query ? `?${query}` : ''}`);
+  },
+  createCalendarEvent(payload) {
+    return request('/api/calendar/events', { method: 'POST', body: payload });
+  },
+  updateCalendarEvent(eventId, payload) {
+    return request(`/api/calendar/events/${eventId}`, { method: 'PATCH', body: payload });
+  },
+  deleteCalendarEvent(eventId) {
+    return request(`/api/calendar/events/${eventId}`, { method: 'DELETE' });
+  },
+  // Bids
+  listCalendarBids({ includeDismissed = false } = {}) {
+    const params = new URLSearchParams();
+    if (includeDismissed) params.set('include_dismissed', 'true');
+    const query = params.toString();
+    return request(`/api/calendar/bids${query ? `?${query}` : ''}`);
+  },
+  createCalendarBid(payload) {
+    return request('/api/calendar/bids', { method: 'POST', body: payload });
+  },
+  updateCalendarBid(bidId, payload) {
+    return request(`/api/calendar/bids/${bidId}`, { method: 'PATCH', body: payload });
+  },
+  deleteCalendarBid(bidId) {
+    return request(`/api/calendar/bids/${bidId}`, { method: 'DELETE' });
+  },
+
   // ── Time & Materials tickets ──
   listOpenTMTickets(filters) {
     const params = new URLSearchParams();

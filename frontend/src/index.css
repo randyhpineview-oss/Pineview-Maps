@@ -1104,3 +1104,99 @@ button[title="Open keyboard shortcuts"],
    `transform: translateX`), which showed up as a visible "dance / zoom"
    of the whole Forms screen on phones. The bar fill alone gives enough
    feedback. */
+
+
+/* ───── Calendar overlay (FullCalendar dark-theme overrides) ─────
+   FullCalendar ships a sensible default stylesheet (imported by
+   @fullcalendar/react). Everything here is a *scoped* override so it only
+   takes effect inside the .calendar-overlay container — other parts of
+   the app are untouched. The Pineview palette is `#0b1220` page bg,
+   `#0f172a` panel bg, `#e5eefb` text, `#60a5fa` accent. */
+.calendar-overlay .fc {
+  color: #e5eefb;
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+  --fc-border-color: rgba(143, 182, 255, 0.16);
+  --fc-page-bg-color: #0f172a;
+  --fc-neutral-bg-color: rgba(143, 182, 255, 0.05);
+  --fc-list-event-hover-bg-color: rgba(96, 165, 250, 0.12);
+  --fc-today-bg-color: rgba(96, 165, 250, 0.10);
+  --fc-event-text-color: #fff;
+  --fc-now-indicator-color: #f59e0b;
+  --fc-button-bg-color: #1e293b;
+  --fc-button-border-color: rgba(143, 182, 255, 0.18);
+  --fc-button-hover-bg-color: #243349;
+  --fc-button-hover-border-color: rgba(143, 182, 255, 0.3);
+  --fc-button-active-bg-color: #2563eb;
+  --fc-button-active-border-color: #2563eb;
+  --fc-button-text-color: #e5eefb;
+}
+.calendar-overlay .fc .fc-toolbar-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #e5eefb;
+}
+.calendar-overlay .fc .fc-button {
+  font-size: 0.82rem;
+  text-transform: none;
+  border-radius: 8px;
+  padding: 6px 12px;
+}
+.calendar-overlay .fc .fc-button:focus,
+.calendar-overlay .fc .fc-button-primary:focus {
+  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.35);
+}
+.calendar-overlay .fc .fc-col-header-cell {
+  background: rgba(143, 182, 255, 0.05);
+  color: #9ab1d6;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 6px 0;
+}
+.calendar-overlay .fc .fc-daygrid-day-number,
+.calendar-overlay .fc .fc-list-day-text,
+.calendar-overlay .fc .fc-list-day-side-text {
+  color: #c9d6ee;
+  text-decoration: none;
+}
+.calendar-overlay .fc .fc-daygrid-day.fc-day-today .fc-daygrid-day-number {
+  color: #60a5fa;
+  font-weight: 700;
+}
+.calendar-overlay .fc .fc-list-day-cushion {
+  background: rgba(143, 182, 255, 0.06);
+}
+.calendar-overlay .fc .fc-list-empty {
+  background: transparent;
+  color: #9ab1d6;
+}
+.calendar-overlay .fc-event {
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 1px 4px;
+}
+.calendar-overlay .fc-daygrid-event-dot {
+  display: none;
+}
+.calendar-overlay .fc .fc-popover {
+  background: #0f172a;
+  border: 1px solid rgba(143, 182, 255, 0.18);
+  color: #e5eefb;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+.calendar-overlay .fc .fc-popover-header {
+  background: #111c33;
+  color: #e5eefb;
+}
+
+/* Mobile: compress padding and font sizes so the grid still works on phones. */
+@media (max-width: 768px) {
+  .calendar-overlay .fc .fc-toolbar {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .calendar-overlay .fc .fc-toolbar-title { font-size: 0.95rem; }
+  .calendar-overlay .fc .fc-button { padding: 4px 10px; font-size: 0.78rem; }
+  .calendar-overlay .fc .fc-daygrid-day-number { font-size: 0.78rem; }
+}

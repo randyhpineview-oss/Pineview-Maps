@@ -112,6 +112,10 @@ export default function AdminPanel({
   // Opens the full-page Quote Builder overlay. Same admin/office gating
   // as Reports — only rendered when a handler is supplied.
   onOpenQuotes,
+  // Opens the full-page Calendar overlay (tasks/events/bids/contacts).
+  // Same admin/office gating as Reports/Quotes — only rendered when a
+  // handler is supplied. CalendarOverlay.jsx is lazy-loaded on tap.
+  onOpenCalendar,
   // Soft-deleted quotes (same Recent Deletes pattern as lease sheets / TM).
   deletedQuotes = [],
   onRestoreQuote,
@@ -580,6 +584,21 @@ export default function AdminPanel({
               onClick={onOpenQuotes}
             >
               Open Quotes
+            </button>
+          </div>
+        ) : null}
+        {onOpenCalendar ? (
+          <div className="site-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <div>
+              <strong>📅 Calendar</strong>
+              <div className="small-text">Daily tasks, contacts, upcoming events, and bid postings.</div>
+            </div>
+            <button
+              className="primary-button"
+              type="button"
+              onClick={onOpenCalendar}
+            >
+              Open Calendar
             </button>
           </div>
         ) : null}

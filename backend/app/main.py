@@ -25,7 +25,14 @@ from app.lookup_routes import router as lookup_router
 from app.reports_routes import router as reports_router
 from app.quote_rates_routes import router as quote_rates_router
 from app.quotes_routes import router as quotes_router
+from app.calendar_routes import router as calendar_router
 from app.pipeline_models import Pipeline, SprayRecord  # noqa: F401 — ensure tables are registered
+from app.calendar_models import (  # noqa: F401 — ensure tables are registered
+    CalendarBid,
+    CalendarContact,
+    CalendarEvent,
+    CalendarTask,
+)
 from app.models import (
     ApprovalState,
     PinType,
@@ -120,6 +127,7 @@ app.include_router(time_materials_router)
 app.include_router(reports_router)
 app.include_router(quote_rates_router)
 app.include_router(quotes_router)
+app.include_router(calendar_router)
 
 
 # Global exception handler. Logs the full traceback server-side and
@@ -168,6 +176,25 @@ def startup_event() -> None:
             print("[STARTUP] Pipeline and SiteSprayRecord tables ensured")
         except Exception as e:
             print(f"Warning: Could not create pipeline tables: {e}")
+        # Create calendar tables if they don't exist. The full migration
+        # (indexes, REPLICA IDENTITY, supabase_realtime publication) lives in
+        # database/calendar_setup.sql; this fallback covers the case where the
+        # API ships before that SQL is run, so basic CRUD still works (just
+        # without Realtime push until the SQL migration is applied).
+        try:
+            Base.metadata.create_all(
+                bind=engine,
+                tables=[
+                    CalendarTask.__table__,
+                    CalendarContact.__table__,
+                    CalendarEvent.__table__,
+                    CalendarBid.__table__,
+                ],
+                checkfirst=True,
+            )
+            print("[STARTUP] Calendar tables ensured")
+        except Exception as e:
+            print(f"Warning: Could not create calendar tables: {e}")
         # Run column migrations on Postgres too
         try:
             _migrate_add_columns()

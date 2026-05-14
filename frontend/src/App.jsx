@@ -82,6 +82,10 @@ const ReportsDashboard = lazy(() => import('./components/ReportsDashboard'));
 // Quote Builder is same deal — admin/office only, chunk fetched on demand
 // when the user taps "Open Quotes" in AdminPanel. Workers never download it.
 const QuoteBuilder = lazy(() => import('./components/QuoteBuilder'));
+// Calendar overlay (tasks/events/bids/contacts) — admin/office only, lazy
+// because it pulls in @fullcalendar/* (~150 KB gzipped). Workers and
+// admins who never open the Calendar never download the chunk.
+const CalendarOverlay = lazy(() => import('./components/CalendarOverlay'));
 
 const DEFAULT_FILTERS = { search: '', client: '', area: '', status: '', approval_state: '' };
 const DEFAULT_LAYERS = { lsd: true, water: true, quad_access: true, reclaimed: true, pipelines: true };
@@ -668,6 +672,10 @@ export default function App() {
   // the user clicks Generate/Download.
   const [showReportsDashboard, setShowReportsDashboard] = useState(false);
   const [showQuoteBuilder, setShowQuoteBuilder] = useState(false);
+  // Calendar overlay (admin/office) — same on-demand pattern as the two
+  // above. Closes automatically if `roleCanAdmin` flips false (View as
+  // Worker) thanks to the render-time guard further down.
+  const [showCalendar, setShowCalendar] = useState(false);
   // Token bumped by the poll loop whenever sync-status reports
   // `tm_tickets_last_updated` has moved. FormsPanel listens to it and
   // re-fetches its Open / Recently Submitted T&M lists so users see
@@ -5893,6 +5901,7 @@ export default function App() {
               // appearing if an admin flips on "View as Worker".
               onOpenReports={roleCanAdmin ? () => setShowReportsDashboard(true) : undefined}
               onOpenQuotes={roleCanAdmin ? () => setShowQuoteBuilder(true) : undefined}
+              onOpenCalendar={roleCanAdmin ? () => setShowCalendar(true) : undefined}
               deletedQuotes={deletedQuotes}
               onRestoreQuote={handleRestoreQuote}
               onDeleteQuotePermanent={handleDeleteQuotePermanent}
@@ -5929,6 +5938,23 @@ export default function App() {
             onQuotesChanged={loadDeletedQuotes}
             clients={clients}
             areas={areas}
+          />
+        </Suspense>
+      ) : null}
+
+      {/* ── Calendar overlay (admin/office full-page) ──
+          Lazy-mounted, opens its own Supabase Realtime channel on mount
+          for live tasks/events/bids/contacts sync across office devices,
+          and tears it down on close. Guarded by roleCanAdmin so flipping
+          "View as Worker" force-closes the overlay. `clients` is passed
+          so the contacts drawer's "client" autocomplete reuses the same
+          list as the rest of the app. */}
+      {showCalendar && roleCanAdmin ? (
+        <Suspense fallback={null}>
+          <CalendarOverlay
+            onClose={() => setShowCalendar(false)}
+            clients={clients}
+            currentUser={user}
           />
         </Suspense>
       ) : null}
