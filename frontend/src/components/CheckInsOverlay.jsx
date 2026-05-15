@@ -3,10 +3,14 @@
  *
  * Lazy-loaded from App.jsx, opened from AdminPanel Tools row. Four tabs:
  *
- *   1. Overview  (default)  Slack-style grid of EmployeeStatusCards.
- *                           Anyone with an active shift OR a truck.
- *   2. Active               Per-shift detail tiles for current active
- *                           shifts (heavier admin controls).
+ *   1. Active    (default)  Per-shift detail tiles for the workers who
+ *                           are currently in the field. Heaviest admin
+ *                           controls live here (force check-in, end
+ *                           shift) which is why it leads.
+ *   2. Overview             Same rich Active-style cards, plus a
+ *                           slimmer card per truck-assigned worker who
+ *                           hasn't started a shift yet. Shows everyone
+ *                           the office needs to keep eyes on today.
  *   3. History              Date picker + compact rows. Click a row to
  *                           expand into the shift_changes audit timeline.
  *   4. Settings             Office alert recipients (primary + extras),
@@ -18,15 +22,17 @@
  */
 import { lazy, Suspense, useState } from 'react';
 
-import OverviewTab from './OverviewTab';
+// ActiveTab is the default landing tab so we eager-import it; everything
+// else stays lazy so the dashboard's initial JS chunk stays slim.
+import ActiveTab from './CheckInsTabs/ActiveTab';
 
-const ActiveTab = lazy(() => import('./CheckInsTabs/ActiveTab'));
+const OverviewTab = lazy(() => import('./OverviewTab'));
 const HistoryTab = lazy(() => import('./CheckInsTabs/HistoryTab'));
 const SettingsTab = lazy(() => import('./CheckInsTabs/SettingsTab'));
 
 const TABS = [
-  { id: 'overview', label: 'Overview' },
   { id: 'active',   label: 'Active' },
+  { id: 'overview', label: 'Overview' },
   { id: 'history',  label: 'History' },
   { id: 'settings', label: 'Settings' },
 ];
@@ -70,7 +76,7 @@ const S = {
 };
 
 export default function CheckInsOverlay({ onClose, isAdmin = true }) {
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState('active');
 
   return (
     <div style={S.overlay}>
@@ -94,19 +100,19 @@ export default function CheckInsOverlay({ onClose, isAdmin = true }) {
         </button>
       </header>
       <main style={S.body}>
-        {activeTab === 'overview' ? <OverviewTab isAdmin={isAdmin} /> : null}
-        {activeTab === 'active' ? (
-          <Suspense fallback={<div style={{ padding: 24, color: '#6b7280' }}>Loading…</div>}>
-            <ActiveTab isAdmin={isAdmin} />
+        {activeTab === 'active' ? <ActiveTab isAdmin={isAdmin} /> : null}
+        {activeTab === 'overview' ? (
+          <Suspense fallback={<div style={{ padding: 24, color: '#9ab1d6' }}>Loading…</div>}>
+            <OverviewTab isAdmin={isAdmin} />
           </Suspense>
         ) : null}
         {activeTab === 'history' ? (
-          <Suspense fallback={<div style={{ padding: 24, color: '#6b7280' }}>Loading…</div>}>
+          <Suspense fallback={<div style={{ padding: 24, color: '#9ab1d6' }}>Loading…</div>}>
             <HistoryTab />
           </Suspense>
         ) : null}
         {activeTab === 'settings' ? (
-          <Suspense fallback={<div style={{ padding: 24, color: '#6b7280' }}>Loading…</div>}>
+          <Suspense fallback={<div style={{ padding: 24, color: '#9ab1d6' }}>Loading…</div>}>
             <SettingsTab />
           </Suspense>
         ) : null}

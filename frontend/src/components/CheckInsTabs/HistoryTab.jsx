@@ -31,21 +31,16 @@ function fmtTime(iso) {
 export default function HistoryTab() {
   const [dateStr, setDateStr] = useState(todayLocalISO());
   const [rows, setRows] = useState([]);
-  const [users, setUsers] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // Backend embeds user_name + crew_members on every history row, so no
+  // separate users lookup is needed.
   const fetchHistory = useCallback(async (d) => {
     setLoading(true);
     try {
-      const [shiftRows, crewCandidates] = await Promise.all([
-        api.listAdminShifts({ dateStr: d }),
-        api.listCheckinCrewCandidates().catch(() => []),
-      ]);
+      const shiftRows = await api.listAdminShifts({ dateStr: d });
       setRows(Array.isArray(shiftRows) ? shiftRows : []);
-      const map = {};
-      (crewCandidates || []).forEach((u) => { map[u.id] = u; });
-      setUsers(map);
       setError(null);
     } catch (err) {
       setError(err.message || String(err));
@@ -98,16 +93,22 @@ export default function HistoryTab() {
             </thead>
             <tbody>
               {rows.map((s) => {
-                // Prefer backend-embedded name; fall back to crew-lookup
-                // map (now workers-only); finally numeric.
-                const user = users[s.user_id];
-                const name = s.user_name || user?.name || `User #${s.user_id}`;
-                const crewNames = (s.crew_user_ids || []).map((id) => users[id]?.name || `#${id}`).join(', ');
+                // Backend embeds both the lead's name and every crew
+                // teammate, so the rendering is a straight read.
+                const name = s.user_name || `User #${s.user_id}`;
+                const crewMembers = Array.isArray(s.crew_members) ? s.crew_members : [];
+                const crewIds = Array.isArray(s.crew_user_ids) ? s.crew_user_ids : [];
+                const crewNames = (
+                  crewMembers.length
+                    ? crewMembers.map((m) => m.name)
+                    : crewIds.map((id) => `#${id}`)
+                ).join(', ');
+                const crewCount = crewMembers.length || crewIds.length;
                 return (
                   <tr key={s.id} style={{ borderTop: `1px solid ${t.divider}` }}>
                     <td style={td()}>{name}</td>
                     <td style={td()}>
-                      {s.mode === 'off' ? 'Off' : s.mode === 'crew' ? `Crew (${(s.crew_user_ids || []).length + 1})` : 'Alone'}
+                      {s.mode === 'off' ? 'Off' : s.mode === 'crew' ? `Crew (${crewCount + 1})` : 'Alone'}
                     </td>
                     <td style={td()} title={crewNames}>{crewNames || (s.crew_freeform ? '+ freeform' : '')}</td>
                     <td style={td()}>{fmtTime(s.started_at)}</td>

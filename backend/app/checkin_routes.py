@@ -174,7 +174,11 @@ def _local_day_window(d: Optional[date] = None) -> tuple[datetime, datetime]:
     return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
 
 
-def _serialize_shift(shift: Shift, user: Optional[User] = None) -> dict:
+def _serialize_shift(
+    shift: Shift,
+    user: Optional[User] = None,
+    users_by_id: Optional[dict[int, User]] = None,
+) -> dict:
     """Return the shift as the JSON shape the frontend expects.
 
     When ``user`` is supplied, ``user_name`` and ``user_email`` are
@@ -182,12 +186,31 @@ def _serialize_shift(shift: Shift, user: Optional[User] = None) -> dict:
     (which used to fall back to "User #N" for admins on shift, since
     the crew-candidates endpoint excludes the caller AND filters to
     workers-only).
+
+    When ``users_by_id`` is supplied, every crew member id is resolved
+    into a ``{id, name, email}`` object inside ``crew_members``. This
+    lets the Overview / Active / History dashboards show each crew
+    member by name (the user's "show me who's in this crew" ask)
+    without any extra fetch. Missing ids are skipped silently so a
+    deleted crew teammate doesn't blow up the response.
     """
     next_deadline = _aware(shift.next_deadline_at)
     now = _now()
     minutes_to = None
     if next_deadline is not None:
         minutes_to = (next_deadline - now).total_seconds() / 60.0
+    crew_ids = list(shift.crew_user_ids or [])
+    crew_members: list[dict] = []
+    if users_by_id is not None:
+        for cid in crew_ids:
+            cu = users_by_id.get(cid)
+            if cu is None:
+                continue
+            crew_members.append({
+                "id": cu.id,
+                "name": cu.name,
+                "email": cu.email,
+            })
     return {
         "id": shift.id,
         "user_id": shift.user_id,
@@ -195,7 +218,8 @@ def _serialize_shift(shift: Shift, user: Optional[User] = None) -> dict:
         "user_email": user.email if user is not None else None,
         "device_id": shift.device_id,
         "mode": shift.mode,
-        "crew_user_ids": list(shift.crew_user_ids or []),
+        "crew_user_ids": crew_ids,
+        "crew_members": crew_members,
         "crew_freeform": shift.crew_freeform or "",
         "started_at": _aware(shift.started_at),
         "ended_at": _aware(shift.ended_at),
@@ -299,6 +323,20 @@ def _fanout_push(
 # ──────────────────────────────────────────────────────────────────────
 
 
+class CrewMemberRead(BaseModel):
+    """One resolved crew teammate, embedded inside ShiftRead.crew_members.
+
+    Lets the dashboard print "Crew: Joe, Mark, Sarah" with mini avatars
+    without a second roundtrip to the assignable-users endpoint, and
+    survives admins removing the teammate's account later (the shift
+    JSON keeps a snapshot of the name at fetch time).
+    """
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    email: Optional[str] = None
+
+
 class ShiftRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -313,6 +351,11 @@ class ShiftRead(BaseModel):
     device_id: Optional[int] = None
     mode: str
     crew_user_ids: list[int] = []
+    # Resolved crew teammates (one row per id in crew_user_ids that the
+    # server could still find in `users`). Always present on the admin
+    # dashboard endpoints; may be empty on the worker self-serve ones
+    # because we don't bother to resolve there.
+    crew_members: list[CrewMemberRead] = []
     crew_freeform: str = ""
     started_at: datetime
     ended_at: Optional[datetime] = None
@@ -844,7 +887,16 @@ def get_overview(db: Session = Depends(get_db)) -> list[OverviewEntry]:
     if not user_ids:
         return []
 
-    users = db.query(User).filter(User.id.in_(user_ids)).all()
+    # Widen the user lookup to also include every crew teammate so the
+    # serializer can embed their names into ShiftRead.crew_members. A
+    # crew teammate doesn't necessarily have their own shift today, so
+    # they won't already be in user_ids.
+    lookup_ids: set[int] = set(user_ids)
+    for sh in shift_by_user.values():
+        for cid in (sh.crew_user_ids or []):
+            lookup_ids.add(cid)
+
+    users = db.query(User).filter(User.id.in_(lookup_ids)).all()
     user_by_id = {u.id: u for u in users}
 
     out: list[OverviewEntry] = []
@@ -854,7 +906,10 @@ def get_overview(db: Session = Depends(get_db)) -> list[OverviewEntry]:
             continue
         shift = shift_by_user.get(uid)
         truck = truck_by_user.get(uid)
-        shift_serial = _serialize_shift(shift, user=user) if shift else None
+        shift_serial = (
+            _serialize_shift(shift, user=user, users_by_id=user_by_id)
+            if shift else None
+        )
         # Tier: if there's a live shift, use compliance tier.
         # Else 'idle' (truck-assigned but not started).
         tier_value = shift_serial["status_tier"] if shift_serial else "idle"
@@ -893,9 +948,17 @@ def list_active_shifts(db: Session = Depends(get_db)) -> list[ShiftRead]:
         resolved = _resolve_shift_state(db, s)
         if resolved.ended_at is None:
             resolved_rows.append(resolved)
-    user_map = _users_by_id(db, [s.user_id for s in resolved_rows])
+    # Collect lead + crew ids in a single batch so ShiftRead.crew_members
+    # gets resolved names without N+1 queries.
+    all_ids: list[int] = []
+    for s in resolved_rows:
+        all_ids.append(s.user_id)
+        all_ids.extend(s.crew_user_ids or [])
+    user_map = _users_by_id(db, all_ids)
     return [
-        ShiftRead(**_serialize_shift(s, user=user_map.get(s.user_id)))
+        ShiftRead(**_serialize_shift(
+            s, user=user_map.get(s.user_id), users_by_id=user_map,
+        ))
         for s in resolved_rows
     ]
 
@@ -926,9 +989,17 @@ def list_shifts_by_date(
         .order_by(Shift.started_at.desc())
         .all()
     )
-    user_map = _users_by_id(db, [s.user_id for s in rows])
+    # Same batch-fetch pattern as list_active_shifts: include crew ids
+    # so the History tab can render crew member names per row.
+    all_ids: list[int] = []
+    for s in rows:
+        all_ids.append(s.user_id)
+        all_ids.extend(s.crew_user_ids or [])
+    user_map = _users_by_id(db, all_ids)
     return [
-        ShiftRead(**_serialize_shift(s, user=user_map.get(s.user_id)))
+        ShiftRead(**_serialize_shift(
+            s, user=user_map.get(s.user_id), users_by_id=user_map,
+        ))
         for s in rows
     ]
 

@@ -1,17 +1,16 @@
 /**
  * Overview tab of the admin Check-ins Dashboard.
  *
- * Slack-style responsive grid of EmployeeStatusCards. Shows anyone with
- * an active shift today OR anyone currently assigned to an active truck.
+ * Renders the same rich per-shift cards as the Active tab (avatar,
+ * status pill, mode, crew tree, deadlines, force/end buttons), plus
+ * a slimmer "Not started yet" card for truck-assigned workers who
+ * haven't tapped Start. The user asked for "make Overview look like
+ * Active because that shows the names", so the two tabs share the
+ * same card design -- Active hides idle entries while Overview
+ * includes them.
  *
- * Responsive sizing strategy (matches the plan):
- *   - CSS Grid with auto-fit + minmax handles the cols-per-row axis
- *     naturally: ~6 on a 1440 px desktop, 4 at 1024 px, 3 at 768 px,
- *     2 at 420 px. No JS for this axis.
- *   - JS handles the headcount axis: a ResizeObserver measures the
- *     container's available height and sets --card-min-height so cards
- *     squish vertically when there are many users, then stop at a
- *     legibility floor of ~110 px (any further and the grid scrolls).
+ * Layout: CSS Grid with auto-fit + minmax(300px, 1fr). No JS for
+ * sizing -- the cards reflow naturally on resize.
  *
  * Data freshness:
  *   - Initial fetch on mount.
@@ -25,17 +24,31 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { api } from '../lib/api';
 import { supabase } from '../lib/supabaseClient';
-import EmployeeStatusCard from './EmployeeStatusCard';
+import { hashToHslColor, initials } from '../lib/avatarColor';
+import { tier as computeTier, tierColors, tierLabel, formatCountdown } from '../lib/compliance';
 import { t } from '../lib/checkinTheme';
 
 const POLL_MS = 60_000;
 const REFETCH_DEBOUNCE_MS = 500;
 
+function fmtTime(iso) {
+  if (!iso) return '—';
+  try { return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); } catch { return '—'; }
+}
+function fmtRelative(iso) {
+  if (!iso) return '—';
+  const ms = Date.now() - new Date(iso).getTime();
+  const min = Math.round(ms / 60_000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min} min ago`;
+  const hr = Math.round(min / 60);
+  return `${hr} h ago`;
+}
+
 export default function OverviewTab({ isAdmin = false }) {
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [selected, setSelected] = useState(null); // expanded card
 
   const refetchTimerRef = useRef(null);
   const pollTimerRef = useRef(null);
@@ -52,7 +65,7 @@ export default function OverviewTab({ isAdmin = false }) {
     }
   }, []);
 
-  // Debounced refetch — used by Realtime + 60 s poll.
+  // Debounced refetch -- used by Realtime + 60 s poll.
   const scheduleRefetch = useCallback(() => {
     if (refetchTimerRef.current) clearTimeout(refetchTimerRef.current);
     refetchTimerRef.current = setTimeout(() => {
@@ -86,45 +99,28 @@ export default function OverviewTab({ isAdmin = false }) {
   }, [scheduleRefetch]);
 
   // Local 30 s tick so green->yellow transitions visually without
-  // waiting for the next poll/realtime event. We just force a re-render
-  // by bumping a counter; the cards recompute tier from current time
-  // via React.memo's equality check (deadline doesn't change but
-  // status_tier does, which the card re-renders on).
+  // waiting for the next poll/realtime event. Updater is named `prev`
+  // (not `t`) so it doesn't shadow the imported theme module.
   const [, setTick] = useState(0);
   useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 30_000);
+    const id = setInterval(() => setTick((prev) => prev + 1), 30_000);
     return () => clearInterval(id);
   }, []);
 
   // Server-side sort is already correct (red->yellow->blue->green->idle->off).
-  // Memo so we don't re-sort on every tick.
   const visible = useMemo(() => entries, [entries]);
 
-  const handleCardClick = (entry) => {
-    setSelected((cur) => (cur && cur.user_id === entry.user_id ? null : entry));
+  const handleEnd = async (entry) => {
+    if (!entry?.shift) return;
+    if (!window.confirm(`End ${entry.display_name}'s shift now?`)) return;
+    try { await api.adminEndShift(entry.shift.id); await fetchOverview(); }
+    catch (err) { setError(err.message || String(err)); }
   };
-
-  const handleAdminEndShift = async () => {
-    if (!selected || !selected.shift) return;
-    if (!window.confirm(`End ${selected.display_name}'s shift now?`)) return;
-    try {
-      await api.adminEndShift(selected.shift.id);
-      await fetchOverview();
-      setSelected(null);
-    } catch (err) {
-      setError(err.message || String(err));
-    }
-  };
-
-  const handleAdminForceCheckin = async () => {
-    if (!selected || !selected.shift) return;
-    if (!window.confirm(`Force a check-in for ${selected.display_name}? This counts as a safety override.`)) return;
-    try {
-      await api.adminForceCheckin(selected.shift.id, {});
-      await fetchOverview();
-    } catch (err) {
-      setError(err.message || String(err));
-    }
+  const handleForce = async (entry) => {
+    if (!entry?.shift) return;
+    if (!window.confirm(`Force a check-in for ${entry.display_name}? This counts as a safety override.`)) return;
+    try { await api.adminForceCheckin(entry.shift.id, {}); await fetchOverview(); }
+    catch (err) { setError(err.message || String(err)); }
   };
 
   if (loading) {
@@ -150,89 +146,148 @@ export default function OverviewTab({ isAdmin = false }) {
         </div>
       ) : null}
 
-      <div className="overview-grid">
+      {/* Cards match the Active-tab card style exactly (per the user's
+          "make Overview look like Active because that shows the names"
+          ask), with the extension that we also render entries that have
+          no shift yet -- those are truck-assigned workers who haven't
+          tapped Start. */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12 }}>
         {visible.map((entry) => (
-          <EmployeeStatusCard
+          <OverviewCard
             key={entry.user_id}
             entry={entry}
-            onClick={handleCardClick}
             isAdmin={isAdmin}
+            onForce={() => handleForce(entry)}
+            onEnd={() => handleEnd(entry)}
           />
         ))}
       </div>
-
-      {/* Detail expansion (full-width row below the grid) */}
-      {selected ? (
-        <div className="overview-detail-panel">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <h3 style={{ margin: 0, fontSize: 16, color: t.text }}>{selected.display_name}</h3>
-            <button
-              type="button"
-              onClick={() => setSelected(null)}
-              style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 22, color: t.textMuted }}
-              aria-label="Close detail"
-            >
-              ×
-            </button>
-          </div>
-          <DetailBody entry={selected} />
-          {isAdmin && selected.shift && !selected.shift.ended_at ? (
-            <div style={{ marginTop: 16, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                onClick={handleAdminForceCheckin}
-                style={{
-                  padding: '8px 14px', background: '#2563eb', color: '#fff',
-                  border: 'none', borderRadius: 6, fontSize: 13, cursor: 'pointer', fontWeight: 600,
-                }}
-              >
-                Force check-in
-              </button>
-              <button
-                type="button"
-                onClick={handleAdminEndShift}
-                style={{
-                  padding: '8px 14px', background: '#dc2626', color: '#fff',
-                  border: 'none', borderRadius: 6, fontSize: 13, cursor: 'pointer', fontWeight: 600,
-                }}
-              >
-                End shift
-              </button>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
     </div>
   );
 }
 
-function DetailBody({ entry }) {
+/**
+ * One per-entry card. Two layouts:
+ *   - With a shift: full Active-style card with crew tree.
+ *   - Without a shift (truck-assigned only): compact "Not started yet"
+ *     card so admins can still see the worker exists for the day.
+ */
+function OverviewCard({ entry, isAdmin, onForce, onEnd }) {
   const s = entry.shift;
+  const tier = s ? computeTier(s, new Date()) : 'idle';
+  const colors = tierColors(tier);
+  const av = hashToHslColor(entry.avatar_seed || entry.display_name);
+
   if (!s) {
+    // No shift today, just a truck assignment. Render a slimmer card.
     return (
-      <div style={{ fontSize: 14, color: t.textSubtle, lineHeight: 1.6 }}>
-        <div>Role: {entry.role}</div>
-        {entry.truck_label ? <div>Assigned truck: <strong style={{ color: t.text }}>{entry.truck_label}</strong></div> : null}
-        <div style={{ marginTop: 8, color: t.textMuted }}>No shift started today.</div>
+      <div style={{
+        background: t.cardBg, borderRadius: 10, padding: 14,
+        border: `2px solid ${colors.accent}`,
+        boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
+        color: t.text,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+          <span style={{
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            width: 36, height: 36, borderRadius: '50%',
+            background: av.bg, color: av.fg, fontWeight: 600, fontSize: 13,
+          }}>{initials(entry.display_name)}</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 600, fontSize: 15, color: t.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.display_name}</div>
+            <div style={{ fontSize: 11, color: t.textMuted }}>{entry.role}</div>
+          </div>
+          <span style={{
+            background: colors.bg, color: colors.fg, padding: '3px 8px',
+            borderRadius: 999, fontSize: 11, fontWeight: 600,
+          }}>{tierLabel(tier)}</span>
+        </div>
+        {entry.truck_label ? (
+          <div style={{ fontSize: 13, color: t.textSubtle }}>
+            <strong style={{ color: t.text }}>Truck:</strong> {entry.truck_label}
+          </div>
+        ) : null}
+        <div style={{ fontSize: 12, color: t.textMuted, marginTop: 6 }}>
+          No shift started yet today.
+        </div>
       </div>
     );
   }
-  const fmt = (iso) => (iso ? new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—');
-  const crewCount = Array.isArray(s.crew_user_ids) ? s.crew_user_ids.length : 0;
+
+  // Active-shift card. Identical visual to ActiveTab cards.
+  const crewMembers = Array.isArray(s.crew_members) ? s.crew_members : [];
+  const crewCount = crewMembers.length
+    || (Array.isArray(s.crew_user_ids) ? s.crew_user_ids.length : 0);
   return (
-    <div style={{ fontSize: 14, color: t.textSubtle, lineHeight: 1.6 }}>
-      <div>Started: {fmt(s.started_at)}</div>
-      <div>Mode: <strong style={{ color: t.text }}>{s.mode === 'crew' ? `Crew of ${crewCount + 1}` : 'Alone'}</strong></div>
-      <div>Last check-in: {fmt(s.last_checkin_at)}</div>
-      <div>Next deadline: {fmt(s.next_deadline_at)}</div>
-      {s.crew_freeform ? (
-        <div style={{ marginTop: 6 }}>
-          <span style={{ color: t.textMuted, fontSize: 12 }}>Extra crew (free-text):</span>
-          <div style={{ whiteSpace: 'pre-wrap', marginTop: 2, fontSize: 13, color: t.text }}>{s.crew_freeform}</div>
+    <div style={{
+      background: t.cardBg, borderRadius: 10, padding: 14,
+      border: `2px solid ${colors.accent}`,
+      boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
+      color: t.text,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+        <span style={{
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          width: 36, height: 36, borderRadius: '50%',
+          background: av.bg, color: av.fg, fontWeight: 600, fontSize: 13,
+        }}>{initials(entry.display_name)}</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: 15, color: t.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.display_name}</div>
+          <div style={{ fontSize: 11, color: t.textMuted }}>Started {fmtTime(s.started_at)}</div>
+        </div>
+        <span style={{
+          background: colors.bg, color: colors.fg, padding: '3px 8px',
+          borderRadius: 999, fontSize: 11, fontWeight: 600,
+        }}>{tierLabel(tier)}</span>
+      </div>
+      <div style={{ fontSize: 13, color: t.textSubtle, marginBottom: 4 }}>
+        <strong style={{ color: t.text }}>Mode:</strong> {s.mode === 'crew' ? `Crew of ${crewCount + 1}` : 'Alone'}
+      </div>
+      {/* Crew tree under the lead -- the user's "I want to see who is in
+          this crew" request, rendered as mini-avatar rows. */}
+      {crewMembers.length ? (
+        <div style={{ marginBottom: 6 }}>
+          <div style={{ fontSize: 13, color: t.text, fontWeight: 600, marginBottom: 4 }}>Crew</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingLeft: 8, borderLeft: `2px solid ${t.divider}` }}>
+            {crewMembers.map((m) => {
+              const mav = hashToHslColor(m.email || m.name);
+              return (
+                <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    width: 22, height: 22, borderRadius: '50%',
+                    background: mav.bg, color: mav.fg, fontWeight: 600, fontSize: 10,
+                  }}>{initials(m.name)}</span>
+                  <span style={{ fontSize: 13, color: t.textSubtle }}>{m.name}</span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       ) : null}
+      {s.crew_freeform ? (
+        <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 4, whiteSpace: 'pre-wrap' }}>+ {s.crew_freeform}</div>
+      ) : null}
+      <div style={{ fontSize: 13, color: t.textSubtle, marginBottom: 4 }}>
+        <strong style={{ color: t.text }}>Last check-in:</strong> {fmtRelative(s.last_checkin_at)}
+      </div>
+      <div style={{ fontSize: 13, color: t.textSubtle }}>
+        <strong style={{ color: t.text }}>Next deadline:</strong> {fmtTime(s.next_deadline_at)} ({formatCountdown(s, new Date()) || '—'})
+      </div>
       {entry.truck_label ? (
-        <div style={{ marginTop: 6 }}>Truck: <strong style={{ color: t.text }}>{entry.truck_label}</strong></div>
+        <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>🚚 {entry.truck_label}</div>
+      ) : null}
+      {isAdmin ? (
+        <div style={{ marginTop: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <button type="button" onClick={onForce} style={{
+            padding: '6px 10px', background: t.accentStrong, color: t.textOnAccent, border: 'none',
+            borderRadius: 6, fontSize: 12, cursor: 'pointer', fontWeight: 600,
+          }}>Force check-in</button>
+          <button type="button" onClick={onEnd} style={{
+            padding: '6px 10px', background: t.dangerStrong, color: t.textOnAccent, border: 'none',
+            borderRadius: 6, fontSize: 12, cursor: 'pointer', fontWeight: 600,
+          }}>End shift</button>
+        </div>
       ) : null}
     </div>
   );
