@@ -22,6 +22,8 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 
+import { hashToHslColor, initials } from '../lib/avatarColor';
+
 import { api } from '../lib/api';
 import { formatCountdown, shouldForceOverlay, tier as computeTier, tierColors, tierLabel } from '../lib/compliance';
 import {
@@ -136,6 +138,7 @@ export default function MyCheckInsOverlay({
   isOnline = true,
   onShiftChanged,
   initialData = null,
+  currentUserId = null,
 }) {
   const [tick, setTick] = useState(0);
   const [shift, setShift] = useState(initialData?.shift || null);
@@ -158,6 +161,19 @@ export default function MyCheckInsOverlay({
 
   // Notification prefs accordion.
   const [showPrefs, setShowPrefs] = useState(false);
+
+  // Are we viewing someone else's shift as a crew member?
+  const isCrewMember = useMemo(
+    () => !!(shift && currentUserId && shift.user_id !== currentUserId),
+    [shift, currentUserId]
+  );
+  // The lead's name is embedded in crew_members on the shift object.
+  const leadName = useMemo(() => {
+    if (!shift) return '';
+    if (shift.user_name) return shift.user_name;
+    const lead = (shift.crew_members || []).find((m) => m.id === shift.user_id);
+    return lead?.name || `User #${shift.user_id}`;
+  }, [shift]);
 
   // 1-second tick for the live countdown.
   useEffect(() => {
@@ -182,6 +198,17 @@ export default function MyCheckInsOverlay({
           setEditCrewFreeform(data.shift.crew_freeform || '');
         }
         setLoading(false);
+        // If the user is on someone else's crew and hasn't registered
+        // push yet, auto-subscribe so they get deadline alerts too.
+        // Best-effort -- happens once when the overlay opens.
+        if (data.shift && currentUserId && data.shift.user_id !== currentUserId) {
+          try {
+            if (pushSupported()) {
+              await requestNotificationPermission();
+              ensurePushSubscribed().catch(() => { /* non-fatal */ });
+            }
+          } catch { /* non-fatal */ }
+        }
       } catch (err) {
         if (!cancelled) {
           setError(err.message || String(err));
@@ -310,7 +337,8 @@ export default function MyCheckInsOverlay({
 
   const handleEnd = async () => {
     if (!shift) return;
-    if (!window.confirm('End your shift now?')) return;
+    const who = isCrewMember ? `${leadName}'s crew shift` : 'your shift';
+    if (!window.confirm(`End ${who} now?`)) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -356,7 +384,9 @@ export default function MyCheckInsOverlay({
       ? 'You\'re offline'
       : force
         ? tier === 'red' ? 'OVERDUE — please check in' : 'Check-in due'
-        : 'On shift'
+        : isCrewMember
+          ? `On ${leadName}'s crew`
+          : 'On shift'
     : 'Start your shift';
 
   return (
@@ -531,6 +561,36 @@ export default function MyCheckInsOverlay({
                 </span>
               ) : null}
             </div>
+            {/* Crew tree — visible to lead and crew members alike so
+                everyone knows who they can ask to check in for them. */}
+            {shift.mode === 'crew' && (shift.crew_members || []).length ? (
+              <div style={{ marginTop: 8, paddingLeft: 8, borderLeft: '2px solid rgba(143,182,255,0.18)' }}>
+                <div style={{ fontSize: 12, color: '#9ab1d6', fontWeight: 600, marginBottom: 4 }}>Crew</div>
+                {(() => {
+                  // Lead first, then crewmates.
+                  const lead = (shift.crew_members || []).find((m) => m.id === shift.user_id);
+                  const mates = (shift.crew_members || []).filter((m) => m.id !== shift.user_id);
+                  const all = lead ? [lead, ...mates] : mates;
+                  return all.map((m) => {
+                    const av = hashToHslColor(m.email || m.name);
+                    return (
+                      <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                        <span style={{
+                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                          width: 18, height: 18, borderRadius: '50%',
+                          background: av.bg, color: av.fg, fontWeight: 600, fontSize: 9,
+                        }}>{initials(m.name)}</span>
+                        <span style={{ fontSize: 12, color: '#c9d6ee' }}>
+                          {m.name}
+                          {m.id === shift.user_id ? ' (lead)' : ''}
+                          {m.id === currentUserId ? ' (you)' : ''}
+                        </span>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            ) : null}
 
             {/* Edit panel (collapsed by default) */}
             <div style={{ marginTop: 16 }}>
@@ -594,7 +654,11 @@ export default function MyCheckInsOverlay({
                     <div key={c.id} style={S.timelineRow}>
                       <span>{formatTime(c.created_at)}</span>
                       <span style={{ color: '#9ab1d6', fontSize: 12 }}>
-                        {c.recorded_by_user_id ? '(admin recorded)' : 'I\'m OK'}
+                        {c.recorded_by_user_id
+                        ? '(admin recorded)'
+                        : c.user_id === currentUserId
+                          ? "I'm OK"
+                          : 'Crew check-in'}
                       </span>
                     </div>
                   ))}

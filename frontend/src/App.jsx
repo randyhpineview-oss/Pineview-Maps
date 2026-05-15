@@ -6249,6 +6249,7 @@ export default function App() {
           <MyCheckInsOverlay
             force={forceCheckinOverlay}
             isOnline={isOnline}
+            currentUserId={user?.id}
             onClose={() => {
               setShowMyCheckins(false);
               // Forced overlays only close via successful check-in (or

@@ -43,7 +43,8 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, cast, or_, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user, require_roles
@@ -136,8 +137,13 @@ def _resolve_shift_state(db: Session, shift: Shift) -> Shift:
 
 
 def _get_active_shift(db: Session, user_id: int) -> Optional[Shift]:
-    """Return the user's currently-active shift (after lazy auto-end check),
-    or None if they're not on shift."""
+    """Return the user's currently-active LEAD shift (after lazy auto-end
+    check), or None if they're not the lead on any active shift.
+
+    Only matches shifts where the user is the lead (``shift.user_id ==
+    user_id``). For the "am I on shift today as a lead OR as a crew
+    teammate" question, use :func:`_get_user_today_shift` instead.
+    """
     rows = (
         db.query(Shift)
         .filter(Shift.user_id == user_id, Shift.ended_at.is_(None))
@@ -145,6 +151,65 @@ def _get_active_shift(db: Session, user_id: int) -> Optional[Shift]:
         .all()
     )
     for row in rows:
+        resolved = _resolve_shift_state(db, row)
+        if resolved.ended_at is None:
+            return resolved
+    return None
+
+
+def _get_user_today_shift(db: Session, user_id: int) -> Optional[Shift]:
+    """Return the active shift this user is participating in today.
+
+    Matches either:
+      * the user is the lead (``shift.user_id == user_id``), or
+      * the user is in the lead's ``crew_user_ids`` JSON list.
+
+    Crew teammates and the lead share equal ownership: any of them can
+    check in, end the shift, edit composition, or be the target of push
+    alerts. This is the core helper that makes "I told Mark to check in
+    for me, and Mark's tap counted as our crew check-in" work.
+
+    Crew match: Postgres supports the ``@>`` JSONB containment operator
+    for an efficient indexed query; SQLite (used by tests) doesn't, so
+    we fall back to scanning active shifts in Python. Either way the
+    output is the single Shift the user is currently on, or None.
+    """
+    # First the cheap path: are they the lead on an active shift?
+    own = _get_active_shift(db, user_id)
+    if own is not None:
+        return own
+
+    # Then the crew-membership path. Try the JSONB-native query first.
+    dialect = db.bind.dialect.name if db.bind is not None else ""
+    candidates: list[Shift] = []
+    if dialect == "postgresql":
+        try:
+            candidates = (
+                db.query(Shift)
+                .filter(
+                    Shift.ended_at.is_(None),
+                    Shift.crew_user_ids.op("@>")(cast([user_id], JSONB)),
+                )
+                .order_by(Shift.started_at.desc())
+                .all()
+            )
+        except Exception:
+            # Fall through to the Python-side scan if the operator
+            # blows up (e.g. weird column type from an old migration).
+            candidates = []
+    if not candidates:
+        active = (
+            db.query(Shift)
+            .filter(Shift.ended_at.is_(None))
+            .order_by(Shift.started_at.desc())
+            .all()
+        )
+        candidates = [
+            s for s in active
+            if user_id in (s.crew_user_ids or [])
+        ]
+
+    for row in candidates:
         resolved = _resolve_shift_state(db, row)
         if resolved.ended_at is None:
             return resolved
@@ -511,18 +576,23 @@ def get_today(
     Used by ``MyCheckInsOverlay`` on mount. The shift is auto-ended
     lazily on read if midnight passed or stale 14 h.
     """
-    shift = _get_active_shift(db, current_user.id)
+    shift = _get_user_today_shift(db, current_user.id)
     start, end = _local_day_window()
-    checkins_q = (
-        db.query(Checkin)
-        .filter(
-            Checkin.user_id == current_user.id,
-            Checkin.created_at >= start,
-            Checkin.created_at < end,
+    # Checkins: show ALL check-ins on this shared shift so any crew
+    # member can see the team's history, not just their own taps.
+    if shift:
+        checkins_q = (
+            db.query(Checkin)
+            .filter(
+                Checkin.shift_id == shift.id,
+                Checkin.created_at >= start,
+                Checkin.created_at < end,
+            )
+            .order_by(Checkin.created_at.desc())
+            .all()
         )
-        .order_by(Checkin.created_at.desc())
-        .all()
-    )
+    else:
+        checkins_q = []
     return TodayResponse(
         shift=ShiftRead(**_serialize_shift(shift)) if shift else None,
         checkins=[CheckinRead(**_serialize_checkin(c)) for c in checkins_q],
@@ -541,11 +611,19 @@ def start_shift(
     AND is_active, if exactly one match. Stores the choice in
     user_profiles.last_mode / last_crew_user_ids for next-time defaults.
     """
-    existing = _get_active_shift(db, current_user.id)
-    if existing is not None:
+    # A user can start their own shift UNLESS they are already on
+    # someone else's crew (shared ownership). We block that because
+    # being in two active crews at once is ambiguous for alerts.
+    existing_as_crew = _get_user_today_shift(db, current_user.id)
+    if existing_as_crew is not None:
+        if existing_as_crew.user_id == current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="You already have an active shift. End it before starting a new one.",
+            )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="You already have an active shift. End it before starting a new one.",
+            detail="You are already part of an active crew. Leave that crew before starting your own shift.",
         )
     now = _now()
     next_deadline = compute_next_deadline(mode=payload.mode, started_at=now)
@@ -587,9 +665,13 @@ def end_shift(
     shift = db.query(Shift).filter(Shift.id == shift_id).first()
     if shift is None:
         raise HTTPException(status_code=404, detail="Shift not found")
-    if shift.user_id != current_user.id and current_user.role not in (
-        RoleEnum.admin,
-        RoleEnum.office,
+    # Shared ownership: any crew member can end the shift, not just the
+    # lead. Admins/office can also end anyone's shift.
+    crew_ids = set(shift.crew_user_ids or [])
+    if (
+        shift.user_id != current_user.id
+        and current_user.id not in crew_ids
+        and current_user.role not in (RoleEnum.admin, RoleEnum.office)
     ):
         raise HTTPException(status_code=403, detail="Not your shift")
     if shift.ended_at is None:
@@ -616,9 +698,12 @@ def patch_composition(
     shift = db.query(Shift).filter(Shift.id == shift_id).first()
     if shift is None:
         raise HTTPException(status_code=404, detail="Shift not found")
-    if shift.user_id != current_user.id and current_user.role not in (
-        RoleEnum.admin,
-        RoleEnum.office,
+    # Shared ownership: any crew member can edit composition.
+    crew_ids = set(shift.crew_user_ids or [])
+    if (
+        shift.user_id != current_user.id
+        and current_user.id not in crew_ids
+        and current_user.role not in (RoleEnum.admin, RoleEnum.office)
     ):
         raise HTTPException(status_code=403, detail="Not your shift")
     if shift.ended_at is not None:
@@ -675,11 +760,11 @@ def create_checkin(
     Returns 400 if no active shift (worker tried to check in without
     starting one).
     """
-    shift = _get_active_shift(db, current_user.id)
+    shift = _get_user_today_shift(db, current_user.id)
     if shift is None:
         raise HTTPException(
             status_code=400,
-            detail="No active shift. Start a shift before checking in.",
+            detail="No active shift. Start a shift (or join a crew) before checking in.",
         )
     now = _now()
     checkin = Checkin(
@@ -1386,12 +1471,16 @@ def scan_checkins(
             continue
         minutes_overdue = (now - deadline).total_seconds() / 60.0
 
-        # Resolve worker target once.
+        # Resolve worker target + crew mates once per shift.
         worker_row = (
             db.query(User).filter(User.id == resolved.user_id).first()
         )
         if worker_row is None:
             continue
+        crew_user_map = _users_by_id(
+            db, list(resolved.crew_user_ids or [])
+        )
+        crew_targets = list(crew_user_map.values())
 
         # -- Worker alerts ------------------------------------------------
         for spec in WORKER_ALERTS:
@@ -1401,6 +1490,7 @@ def scan_checkins(
                     db,
                     shift=resolved,
                     user=worker_row,
+                    crew_users=crew_targets,
                     kind=spec.kind,
                     urgent=spec.urgent,
                     minutes_overdue=int(minutes_overdue),
@@ -1413,6 +1503,7 @@ def scan_checkins(
                     db,
                     shift=resolved,
                     user=worker_row,
+                    crew_users=crew_targets,
                     kind=repeat_kind,
                     urgent=True,
                     minutes_overdue=int(minutes_overdue),
@@ -1453,12 +1544,20 @@ def _send_worker_alert(
     *,
     shift: Shift,
     user: User,
+    crew_users: list[User] = [],
     kind: str,
     urgent: bool,
     minutes_overdue: int,
     response: ScanResponse,
 ) -> None:
-    """Push + (optional) email to the worker for a single alert kind."""
+    """Push + (optional) email to the lead AND every crew member.
+
+    The alert ledger (``checkin_alerts``) logs once per shift per kind,
+    not per recipient — the threshold was crossed once regardless of
+    how many people get notified. Crew members receive the same push /
+    email as the lead so any of them can tap "I'm OK" on behalf of the
+    crew (the user's "I told Mark to check in for me" scenario).
+    """
     deadline = _aware(shift.next_deadline_at) or _now()
     title_map = {
         "worker_t-15": "Check-in due in 15 minutes",
@@ -1472,63 +1571,75 @@ def _send_worker_alert(
         else "Open Pineview Maps and tap I'm OK."
     )
 
-    # Push (always attempted if subscriptions exist).
-    sent_any = False
-    try:
-        endpoints = _fanout_push(
-            db,
-            user_id=user.id,
-            title=title,
-            body=body_for_push,
-            urgent=urgent,
-            shift_id=shift.id,
-        )
-        if endpoints:
-            sent_any = True
-            _log_alert(
+    def _push_to(u: User) -> int:
+        """Return number of endpoints successfully delivered."""
+        try:
+            eps = _fanout_push(
                 db,
+                user_id=u.id,
+                title=title,
+                body=body_for_push,
+                urgent=urgent,
                 shift_id=shift.id,
-                kind=kind,
-                due_at=deadline,
-                channel="push",
-                recipient=str(user.id),
             )
-            response.worker_alerts_sent += 1
-    except Exception as exc:
-        logger.warning("Worker push for shift %s kind %s failed: %s", shift.id, kind, exc)
-        response.errors += 1
+            return len(eps) if eps else 0
+        except Exception as exc:
+            logger.warning(
+                "Worker push for shift %s kind %s user %s failed: %s",
+                shift.id, kind, u.id, exc,
+            )
+            response.errors += 1
+            return 0
 
-    # Email (only if worker opted in).
-    email_target = _resolve_notify_email(db, user)
-    if email_target:
+    def _email_to(u: User) -> bool:
+        target = _resolve_notify_email(db, u)
+        if not target:
+            return False
         try:
             _run_sync_email(
                 send_checkin_reminder_email(
-                    email_target,
-                    worker_name=user.name,
+                    target,
+                    worker_name=u.name,
                     kind=kind,
                     due_at=deadline,
                 )
             )
-            _log_alert(
-                db,
-                shift_id=shift.id,
-                kind=kind + "__email",
-                due_at=deadline,
-                channel="email",
-                recipient=email_target,
-            )
-            sent_any = True
+            return True
         except Exception as exc:
             logger.warning(
-                "Worker email for shift %s kind %s failed: %s", shift.id, kind, exc
+                "Worker email for shift %s kind %s user %s failed: %s",
+                shift.id, kind, u.id, exc,
             )
             response.errors += 1
+            return False
 
-    # If neither channel was available (no push subs + email off),
-    # still log a "skipped" row against the kind so the scanner doesn't
-    # retry the same threshold every minute.
-    if not sent_any and not _alert_exists(db, shift.id, kind):
+    # -- Lead ----------------------------------------------------------
+    sent_any = False
+    if _push_to(user):
+        sent_any = True
+        response.worker_alerts_sent += 1
+    if _email_to(user):
+        sent_any = True
+
+    # -- Crew members --------------------------------------------------
+    for crew in crew_users:
+        if _push_to(crew):
+            sent_any = True
+            response.worker_alerts_sent += 1
+        if _email_to(crew):
+            sent_any = True
+
+    # Log once per shift per kind so the scanner doesn't retry.
+    if sent_any:
+        _log_alert(
+            db,
+            shift_id=shift.id,
+            kind=kind,
+            due_at=deadline,
+            channel="push",
+            recipient=str(user.id),
+        )
+    elif not _alert_exists(db, shift.id, kind):
         _log_alert(
             db,
             shift_id=shift.id,
