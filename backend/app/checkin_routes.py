@@ -710,21 +710,26 @@ def list_crew_candidates(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[AssignableUserRead]:
-    """Field workers (role=worker) other than the calling user.
+    """Every other active user on the account, regardless of role.
 
-    Drives the crew picker on the StartShift form. Office and admin
-    accounts are deliberately excluded -- a "crew" is a field crew, and
-    seeding the picker with role-placeholder accounts (e.g. "Pineview
-    Office", "Pineview Admin") just confused workers. Admins who actually
-    do field work can switch their role to ``worker`` to appear here.
+    Drives the crew picker on the StartShift form. The picker includes
+    workers, office, and admin users because admins and office staff
+    routinely join field crews -- restricting to ``role=worker`` would
+    hide those legitimate crewmates. The caller is excluded because
+    you can't crew with yourself. Inactive (soft-deleted) users are
+    excluded so abandoned accounts don't pollute the list.
+
+    If a generic name like "Pineview Worker" appears here, that's a
+    real `users` row that should be renamed or deleted in the User
+    admin panel -- this endpoint just surfaces what's in the table.
     """
-    rows = (
-        db.query(User)
-        .filter(User.role == RoleEnum.worker)
-        .filter(User.id != current_user.id)
-        .order_by(User.name.asc())
-        .all()
-    )
+    query = db.query(User).filter(User.id != current_user.id)
+    # `is_active` only exists if the User model defines it. Avoid a
+    # hard reference so this works against legacy schemas without it.
+    is_active_col = getattr(User, "is_active", None)
+    if is_active_col is not None:
+        query = query.filter(is_active_col.is_(True))
+    rows = query.order_by(User.name.asc()).all()
     return [
         AssignableUserRead(id=u.id, name=u.name, email=u.email, role=u.role.value)
         for u in rows

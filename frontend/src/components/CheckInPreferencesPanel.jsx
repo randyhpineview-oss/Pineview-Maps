@@ -207,7 +207,7 @@ export default function CheckInPreferencesPanel({ onClose, embedded = false }) {
           </p>
         ) : (
           <p style={{ marginTop: 6, fontSize: 12, color: t.textMuted, lineHeight: 1.4 }}>
-            Recommended. Plays default OS sound + vibrates on lock screen even when the app is closed.
+            On by default. Plays the OS sound + vibrates on the lock screen even when the app is closed. Turn off only if you really don't want to be pinged.
           </p>
         )}
       </section>

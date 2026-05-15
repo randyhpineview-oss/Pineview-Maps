@@ -2709,7 +2709,6 @@ export default function App() {
       return undefined;
     }
     loadActiveShift();
-    if (!supabase) return undefined;
     let debounceTimer = null;
     const scheduleRefresh = () => {
       if (debounceTimer) clearTimeout(debounceTimer);
@@ -2718,14 +2717,33 @@ export default function App() {
         loadActiveShift();
       }, 400);
     };
-    const channel = supabase
-      .channel(`my-checkin-${user.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'shifts' }, scheduleRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'checkins' }, scheduleRefresh)
-      .subscribe();
+    // iPad/iOS-PWA safety net: iOS aggressively freezes service
+    // workers + drops websockets while the app is backgrounded, so
+    // the Supabase Realtime channel below is unreliable on tablets.
+    // When the worker comes back to the tab/app, force a refetch so
+    // the topbar countdown can't stay stale -- this is what made the
+    // "have to close+reopen the iPad app to see the timer" bug
+    // possible in the first place.
+    const onFocus = () => scheduleRefresh();
+    const onVisibility = () => { if (!document.hidden) scheduleRefresh(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+
+    let channel = null;
+    if (supabase) {
+      channel = supabase
+        .channel(`my-checkin-${user.id}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'shifts' }, scheduleRefresh)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'checkins' }, scheduleRefresh)
+        .subscribe();
+    }
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
-      try { supabase.removeChannel(channel); } catch { /* ignore */ }
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+      if (channel) {
+        try { supabase.removeChannel(channel); } catch { /* ignore */ }
+      }
     };
   }, [user?.id, loadActiveShift]);
 
@@ -6239,6 +6257,14 @@ export default function App() {
               // it by also clearing the force flag so a stale offline
               // dismiss doesn't sit on top forever.
               setForceCheckinOverlay(false);
+            }}
+            // Immediately mirror the worker's own shift mutations into
+            // our state so the topbar countdown updates without waiting
+            // for Supabase Realtime -- iOS PWAs frequently drop the
+            // websocket while backgrounded, which is why workers used to
+            // have to close+reopen the iPad app to see the timer.
+            onShiftChanged={(next) => {
+              setActiveShift(next && !next.ended_at && next.mode !== 'off' ? next : null);
             }}
           />
         </Suspense>

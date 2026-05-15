@@ -95,8 +95,7 @@ export default function CrewPicker({
       >
         {users.length === 0 ? (
           <span style={{ fontSize: 13, color: '#9ab1d6' }}>
-            No other workers to choose from — ask an admin to add field
-            workers in the Users panel, then refresh.
+            No other users on this account yet.
           </span>
         ) : (
           users.map((u) => {

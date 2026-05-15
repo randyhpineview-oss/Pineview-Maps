@@ -24,6 +24,11 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { api } from '../lib/api';
 import { formatCountdown, shouldForceOverlay, tier as computeTier, tierColors, tierLabel } from '../lib/compliance';
+import {
+  ensurePushSubscribed,
+  pushSupported,
+  requestNotificationPermission,
+} from '../lib/pushClient';
 import CrewPicker from './CrewPicker';
 import CheckInPreferencesPanel from './CheckInPreferencesPanel';
 
@@ -129,6 +134,7 @@ export default function MyCheckInsOverlay({
   onClose,
   force = false,
   isOnline = true,
+  onShiftChanged,
   initialData = null,
 }) {
   const [tick, setTick] = useState(0);
@@ -228,6 +234,26 @@ export default function MyCheckInsOverlay({
       setEditMode(created.mode === 'crew' ? 'crew' : 'alone');
       setEditCrewUserIds(created.crew_user_ids || []);
       setEditCrewFreeform(created.crew_freeform || '');
+      // Tell the parent immediately so the topbar countdown lights up
+      // without waiting for Supabase Realtime -- iOS PWAs frequently
+      // drop the websocket while backgrounded, which is the root cause
+      // of the "have to close+reopen to see the timer" bug.
+      if (onShiftChanged) onShiftChanged(created);
+      // Push is on-by-default for workers: ask for OS permission and
+      // register the subscription right after the shift starts so the
+      // worker doesn't have to dig into prefs. Best-effort -- if they
+      // decline the prompt the shift still proceeds and they can flip
+      // push back on later from the Notification preferences accordion.
+      try {
+        if (pushSupported()) {
+          await requestNotificationPermission();
+          ensurePushSubscribed().catch(() => { /* non-fatal */ });
+        }
+      } catch { /* non-fatal */ }
+      // Close the overlay so the worker lands back on the dashboard
+      // with the top-bar countdown live. Without this the overlay just
+      // re-renders into "active shift" view, which feels stuck.
+      if (onClose) onClose();
     } catch (err) {
       setError(err.message || String(err));
     } finally {
@@ -265,6 +291,10 @@ export default function MyCheckInsOverlay({
       try {
         const data = await api.getMyTodayCheckin();
         setShift(data.shift || null);
+        // Bubble up so the topbar countdown pill picks up the new
+        // deadline immediately (Realtime would otherwise be the only
+        // signal, and that's unreliable on iPad).
+        if (onShiftChanged) onShiftChanged(data.shift || null);
       } catch {
         /* ignore -- the local tick will catch up */
       }
@@ -286,6 +316,7 @@ export default function MyCheckInsOverlay({
     try {
       const ended = await api.endShift(shift.id);
       setShift(ended);
+      if (onShiftChanged) onShiftChanged(ended);
       if (onClose) onClose();
     } catch (err) {
       setError(err.message || String(err));
@@ -310,6 +341,7 @@ export default function MyCheckInsOverlay({
         crewFreeform: editCrewFreeform,
       });
       setShift(updated);
+      if (onShiftChanged) onShiftChanged(updated);
       setEditing(false);
     } catch (err) {
       setError(err.message || String(err));
@@ -428,7 +460,8 @@ export default function MyCheckInsOverlay({
                   if (!window.confirm('Mark today as your day off?')) return;
                   setSubmitting(true);
                   try {
-                    await api.startShift({ mode: 'off', crewUserIds: [], crewFreeform: '', notes });
+                    const offShift = await api.startShift({ mode: 'off', crewUserIds: [], crewFreeform: '', notes });
+                    if (onShiftChanged) onShiftChanged(offShift);
                     if (onClose) onClose();
                   } catch (err) {
                     setError(err.message || String(err));
