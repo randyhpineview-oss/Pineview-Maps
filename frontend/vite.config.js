@@ -110,6 +110,17 @@ export default defineConfig({
     //   is the right answer for those. Letting /api/* fall through to
     //   the network preserves the current online/offline detection.
     VitePWA({
+      // injectManifest mode (Phase 2): we author our own SW at
+      // src/sw-push.js so we can add `push` + `notificationclick`
+      // handlers. The plugin still injects the precache manifest
+      // (via the self.__WB_MANIFEST token inside sw-push.js) so
+      // the offline app-shell behaviour from the prior generateSW
+      // setup is preserved 1:1. skipWaiting / clientsClaim are
+      // implemented in the SW file itself so the existing
+      // "Update Now" prompt-to-update flow keeps working.
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw-push.js',
       registerType: 'prompt',
       injectRegister: 'auto',
       // The `manifest.webmanifest` already exists at /public — let the
@@ -125,7 +136,7 @@ export default defineConfig({
         'icon-512.png',
         'logo.png',
       ],
-      workbox: {
+      injectManifest: {
         // Precache the JS/CSS/HTML produced by the build. `.mjs` is
         // critical: pdfjs-dist ships its worker as
         // `pdf.worker-<hash>.mjs` (~2 MB), and without it the lease-sheet
@@ -135,38 +146,9 @@ export default defineConfig({
         // dependency upgrade could silently introduce one.
         globPatterns: ['**/*.{js,mjs,css,html,svg,png,ico,webp,wasm}'],
         // Map-tile chunks aren't matched (they're loaded at runtime
-        // from Google's CDN, not bundled). The pdf.worker.mjs at ~2 MB
-        // is the largest precached asset; bumped the cap to 6 MB so
-        // a slightly larger build doesn't silently start dropping it.
+        // from Google's CDN, not bundled). pdf.worker.mjs at ~2 MB is
+        // the largest precached asset; the 6 MB cap leaves headroom.
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024, // 6 MB
-        navigateFallback: '/index.html',
-        // /api/* is excluded from the navigation fallback so a 404 from
-        // an API hit doesn't accidentally resolve to the SPA shell.
-        navigateFallbackDenylist: [/^\/api\//],
-        // Keep the new SW in `waiting` until the user explicitly opts
-        // in via the "Update Now" topbar affordance — see the
-        // `swUpdateAvailable` detection block in App.jsx. With these
-        // both false, an in-flight lease-sheet submission won't be
-        // stepped on by a mid-session page reload from a deploy.
-        skipWaiting: false,
-        clientsClaim: false,
-        runtimeCaching: [
-          // Google Fonts CSS — small, infrequently changing.
-          {
-            urlPattern: /^https:\/\/fonts\.googleapis\.com\//,
-            handler: 'StaleWhileRevalidate',
-            options: { cacheName: 'gfonts-css' },
-          },
-          // Google Fonts files — long-lived, cache-first OK.
-          {
-            urlPattern: /^https:\/\/fonts\.gstatic\.com\//,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'gfonts-files',
-              expiration: { maxEntries: 30, maxAgeSeconds: 60 * 60 * 24 * 365 },
-            },
-          },
-        ],
       },
       devOptions: {
         // Disable the SW in dev — Vite HMR + a controlling SW makes

@@ -1,0 +1,137 @@
+/**
+ * History tab — past shifts filtered by date.
+ *
+ * Date picker (default = today, local Vancouver). Compact one-row per
+ * shift with: user · mode · crew · started→ended · check-in count · max
+ * overdue marker. Server returns shifts active during the chosen day
+ * (started_at < end_of_day AND (ended_at IS NULL OR ended_at >= start)).
+ */
+import { useCallback, useEffect, useState } from 'react';
+
+import { api } from '../../lib/api';
+
+function todayLocalISO() {
+  // Local YYYY-MM-DD for the Vancouver-tz default. Using the browser's
+  // local time is "good enough" here because the worker and admin are
+  // typically in the same TZ; the backend interprets the date string in
+  // America/Vancouver anyway.
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function fmtTime(iso) {
+  if (!iso) return '—';
+  try { return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); } catch { return '—'; }
+}
+
+export default function HistoryTab() {
+  const [dateStr, setDateStr] = useState(todayLocalISO());
+  const [rows, setRows] = useState([]);
+  const [users, setUsers] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const fetchHistory = useCallback(async (d) => {
+    setLoading(true);
+    try {
+      const [shiftRows, crewCandidates] = await Promise.all([
+        api.listAdminShifts({ dateStr: d }),
+        api.listCheckinCrewCandidates().catch(() => []),
+      ]);
+      setRows(Array.isArray(shiftRows) ? shiftRows : []);
+      const map = {};
+      (crewCandidates || []).forEach((u) => { map[u.id] = u; });
+      setUsers(map);
+      setError(null);
+    } catch (err) {
+      setError(err.message || String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchHistory(dateStr); }, [dateStr, fetchHistory]);
+
+  return (
+    <div className="history-tab-root">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+        <label style={{ fontSize: 13, color: '#374151' }}>Date:</label>
+        <input
+          type="date"
+          value={dateStr}
+          onChange={(e) => setDateStr(e.target.value)}
+          style={{
+            padding: '6px 10px', border: '1px solid #d1d5db',
+            borderRadius: 6, fontSize: 13,
+          }}
+        />
+        <button type="button" onClick={() => setDateStr(todayLocalISO())} style={{
+          padding: '6px 10px', background: '#f3f4f6', border: '1px solid #d1d5db',
+          borderRadius: 6, fontSize: 13, cursor: 'pointer',
+        }}>Today</button>
+        <span style={{ flex: 1 }} />
+        <span style={{ fontSize: 13, color: '#6b7280' }}>{rows.length} shift{rows.length === 1 ? '' : 's'}</span>
+      </div>
+
+      {error ? <div style={{ padding: 8, background: '#fef2f2', color: '#991b1b', borderRadius: 6, fontSize: 13, marginBottom: 10 }}>{error}</div> : null}
+
+      {loading ? (
+        <div style={{ padding: 24, color: '#6b7280' }}>Loading…</div>
+      ) : rows.length === 0 ? (
+        <div style={{ padding: 24, textAlign: 'center', color: '#6b7280' }}>No shifts on this date.</div>
+      ) : (
+        <div style={{ background: '#fff', borderRadius: 10, overflow: 'hidden', border: '1px solid #e5e7eb' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead style={{ background: '#f9fafb' }}>
+              <tr>
+                <th style={th()}>User</th>
+                <th style={th()}>Mode</th>
+                <th style={th()}>Crew</th>
+                <th style={th()}>Started</th>
+                <th style={th()}>Ended</th>
+                <th style={th()}>End reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((s) => {
+                const user = users[s.user_id];
+                const name = user?.name || `User #${s.user_id}`;
+                const crewNames = (s.crew_user_ids || []).map((id) => users[id]?.name || `#${id}`).join(', ');
+                return (
+                  <tr key={s.id} style={{ borderTop: '1px solid #f3f4f6' }}>
+                    <td style={td()}>{name}</td>
+                    <td style={td()}>
+                      {s.mode === 'off' ? 'Off' : s.mode === 'crew' ? `Crew (${(s.crew_user_ids || []).length + 1})` : 'Alone'}
+                    </td>
+                    <td style={td()} title={crewNames}>{crewNames || (s.crew_freeform ? '+ freeform' : '')}</td>
+                    <td style={td()}>{fmtTime(s.started_at)}</td>
+                    <td style={td()}>{s.ended_at ? fmtTime(s.ended_at) : <em style={{ color: '#16a34a' }}>still active</em>}</td>
+                    <td style={td()}>
+                      {s.auto_end_reason ? (
+                        <span style={{
+                          fontSize: 11, padding: '2px 6px', borderRadius: 999,
+                          background: s.auto_end_reason === 'admin_override' ? '#fef2f2' : '#f3f4f6',
+                          color: s.auto_end_reason === 'admin_override' ? '#991b1b' : '#374151',
+                        }}>{s.auto_end_reason}</span>
+                      ) : ''}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function th() {
+  return { textAlign: 'left', padding: '8px 10px', fontWeight: 600, color: '#374151', fontSize: 12 };
+}
+function td() {
+  return { padding: '8px 10px', color: '#374151', verticalAlign: 'top' };
+}

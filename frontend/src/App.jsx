@@ -9,7 +9,10 @@ import MapView from './components/MapView';
 import SignupPage from './components/SignupPage';
 import PipelineDetailSheet from './components/PipelineDetailSheet';
 import SiteDetailSheet from './components/SiteDetailSheet';
+import CheckinCountdown from './components/CheckinCountdown';
 import { api } from './lib/api';
+import { shouldForceOverlay } from './lib/compliance';
+import { ensurePushSubscribed, notificationPermission, pushSupported } from './lib/pushClient';
 import { requestWithUploadProgress } from './lib/xhrUpload';
 import { nearestFraction } from './lib/mapUtils';
 import { generateLeaseSheetPdf } from './lib/pdfGenerator';
@@ -86,6 +89,14 @@ const QuoteBuilder = lazy(() => import('./components/QuoteBuilder'));
 // because it pulls in @fullcalendar/* (~150 KB gzipped). Workers and
 // admins who never open the Calendar never download the chunk.
 const CalendarOverlay = lazy(() => import('./components/CalendarOverlay'));
+// Personal check-in overlay (every signed-in user). Lazy so workers
+// only download the bundle when they actually tap the menu item / the
+// forced overlay triggers. Used for: avatar-menu "🛟 Check-ins" entry
+// point, the forced T-5 overlay, and the soft-banner Start now flow.
+const MyCheckInsOverlay = lazy(() => import('./components/MyCheckInsOverlay'));
+// Admin/office Check-ins Dashboard (Overview / Active / History /
+// Settings tabs). Same lazy/admin pattern as ReportsDashboard etc.
+const CheckInsOverlay = lazy(() => import('./components/CheckInsOverlay'));
 
 const DEFAULT_FILTERS = { search: '', client: '', area: '', status: '', approval_state: '' };
 const DEFAULT_LAYERS = { lsd: true, water: true, quad_access: true, reclaimed: true, pipelines: true, trucks: true };
@@ -681,6 +692,30 @@ export default function App() {
   // above. Closes automatically if `roleCanAdmin` flips false (View as
   // Worker) thanks to the render-time guard further down.
   const [showCalendar, setShowCalendar] = useState(false);
+  // ── Check-ins (Phase 2 unified) ─────────────────────────────────
+  // Personal overlay open state. Triggered from:
+  //   - Avatar popover "🛟 Check-ins" item (all roles)
+  //   - Topbar countdown click
+  //   - Soft morning banner "Start now" tap
+  //   - SW notificationclick -> postMessage('open-checkin')
+  const [showMyCheckins, setShowMyCheckins] = useState(false);
+  // Admin dashboard overlay (Overview / Active / History / Settings).
+  // Same role gating as Calendar/Reports/Quotes via roleCanAdmin guard.
+  const [showCheckinsDashboard, setShowCheckinsDashboard] = useState(false);
+  // The calling user's currently-active shift (or null). Loaded after
+  // auth + refreshed via Realtime + after every POST /api/checkins.
+  // Drives the topbar countdown, the forced overlay logic, and the
+  // soft morning banner. Setting to null when the shift ends.
+  const [activeShift, setActiveShift] = useState(null);
+  // Forced-overlay state. When true, MyCheckInsOverlay renders in
+  // force=true mode (no close, only I'm OK or End shift to dismiss).
+  // Toggled by an effect that watches active shift + 30 s tick +
+  // visibility/focus events. Suppressed for 60 s after a successful
+  // check-in (handled inside shouldForceOverlay()).
+  const [forceCheckinOverlay, setForceCheckinOverlay] = useState(false);
+  // Soft morning banner dismissed flag. Persisted to localStorage with
+  // today's date string so it re-appears tomorrow.
+  const [softBannerDismissed, setSoftBannerDismissed] = useState(false);
   // Token bumped by the poll loop whenever sync-status reports
   // `tm_tickets_last_updated` has moved. FormsPanel listens to it and
   // re-fetches its Open / Recently Submitted T&M lists so users see
@@ -2649,6 +2684,127 @@ export default function App() {
   // admin-only state writes inside handlers but reading the latest value
   // via closure is fine because we re-create on user change anyway.
   }, [user?.id, roleCanAdmin, isOnline]);
+
+  // ── Check-ins: load active shift + subscribe to own shifts/checkins ──
+  // Drives the topbar countdown, the forced overlay, and the soft
+  // banner. Fetches once on login, then keeps the local copy fresh
+  // via Realtime on `shifts` + `checkins`. No polling fallback --
+  // the topbar countdown's local 1 s tick covers the deadline math
+  // and Realtime is the source of truth for shift state changes.
+  const loadActiveShift = useCallback(async () => {
+    if (!user?.id) return;
+    try {
+      const data = await api.getMyTodayCheckin();
+      setActiveShift(data?.shift && !data.shift.ended_at ? data.shift : null);
+    } catch (err) {
+      // Don't crash the app shell if the backend isn't ready yet
+      // (e.g. fresh deploy before /api/checkins/me/today exists).
+      console.warn('[checkin] loadActiveShift failed:', err);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setActiveShift(null);
+      return undefined;
+    }
+    loadActiveShift();
+    if (!supabase) return undefined;
+    let debounceTimer = null;
+    const scheduleRefresh = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        loadActiveShift();
+      }, 400);
+    };
+    const channel = supabase
+      .channel(`my-checkin-${user.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shifts' }, scheduleRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'checkins' }, scheduleRefresh)
+      .subscribe();
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      try { supabase.removeChannel(channel); } catch { /* ignore */ }
+    };
+  }, [user?.id, loadActiveShift]);
+
+  // ── Forced overlay watcher ────────────────────────────────────────
+  // Recomputes shouldForceOverlay() every 30 s + on focus / visibility
+  // change. The tick interval is intentionally coarse -- the countdown
+  // pill's 1 s tick handles the smooth visual, this only flips the
+  // *blocking* overlay on/off so we don't pay re-render cost on every
+  // second when there's no state change to apply.
+  useEffect(() => {
+    const recompute = () => {
+      setForceCheckinOverlay(shouldForceOverlay(activeShift, new Date()));
+    };
+    recompute();
+    const id = setInterval(recompute, 30_000);
+    const onFocus = () => recompute();
+    const onVis = () => { if (!document.hidden) recompute(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [activeShift?.id, activeShift?.next_deadline_at, activeShift?.last_checkin_at, activeShift?.ended_at]);
+
+  // ── Service worker message listener (open-checkin) ────────────────
+  // When the worker taps a push notification, the SW's
+  // notificationclick handler postMessages {type:'open-checkin'} into
+  // whichever app tab is open. Catch that here and flip the personal
+  // overlay open.
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !navigator.serviceWorker) return undefined;
+    const onMessage = (event) => {
+      if (event?.data?.type === 'open-checkin') {
+        setShowMyCheckins(true);
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', onMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', onMessage);
+  }, []);
+
+  // ── Auto-subscribe to push on login (if prefs allow) ──────────────
+  // The user_profile.notify_push flag defaults to true, but we still
+  // verify the OS notification permission was granted -- if it's
+  // default/denied, the user has to grant it explicitly via the
+  // prefs panel. iOS PWA + 16.4+ also gates this via pushSupported().
+  useEffect(() => {
+    if (!user?.id) return;
+    if (!pushSupported() || notificationPermission() !== 'granted') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const prefs = await api.getMyCheckinPrefs();
+        if (cancelled) return;
+        if (prefs?.notify_push) {
+          await ensurePushSubscribed();
+        }
+      } catch (err) {
+        console.warn('[checkin] auto push-subscribe skipped:', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user?.id]);
+
+  // ── Soft morning banner: hydrate dismiss flag from localStorage ──
+  // The flag is stored as the local YYYY-MM-DD it was dismissed on.
+  // If the stored date is older than today, we treat it as not
+  // dismissed so the banner reappears the next day.
+  useEffect(() => {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      const stored = localStorage.getItem('checkinSoftBannerDismissed');
+      const today = new Date().toISOString().slice(0, 10);
+      setSoftBannerDismissed(stored === today);
+    } catch {
+      /* ignore -- private mode etc. */
+    }
+  }, []);
 
   const visibleSites = useMemo(() => {
     const normalizedSearch = filters.search.trim().toLowerCase();
@@ -4785,6 +4941,14 @@ export default function App() {
       {/* ── Top bar ── */}
       <header className="topbar">
         <span className="topbar-title">Pineview Maps</span>
+        {/* Live check-in countdown — visible on every screen size, between
+            the title and the right-side status badges. Renders null when
+            the user has no active shift today, so the slot stays clean
+            for non-check-in workflows. Click opens MyCheckInsOverlay. */}
+        <CheckinCountdown
+          shift={activeShift}
+          onOpen={() => setShowMyCheckins(true)}
+        />
         <div className="topbar-right">
           <span className={`badge ${isOnline ? 'online' : 'offline'}`}>{isOnline ? 'Online' : 'Offline'}</span>
           {/* Realtime status badge intentionally removed — the Online/Offline
@@ -4984,6 +5148,19 @@ export default function App() {
                     <span className="topbar-account-name-sub">Viewing as Worker</span>
                   ) : null}
                 </div>
+                {/* 🛟 Check-ins — visible to every signed-in user. Opens
+                    the personal MyCheckInsOverlay (start-shift form if no
+                    active shift, status panel if active). Admins have a
+                    separate "Check-ins Dashboard" entry in the AdminPanel
+                    Tools row for the office monitoring view. */}
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="topbar-account-item"
+                  onClick={() => { setAccountMenuOpen(false); setShowMyCheckins(true); }}
+                >
+                  🛟 Check-ins
+                </button>
                 {actualCanAdmin ? (
                   <button
                     type="button"
@@ -5037,6 +5214,43 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {/* ── Soft morning check-in banner ────────────────────────────
+          Subtle prompt to start a shift on first map load each day.
+          Only shows when the user has NO active shift AND hasn't
+          dismissed it today. Workers can always start later from the
+          avatar-menu "🛟 Check-ins" entry; the banner is just a nudge. */}
+      {user && !activeShift && !softBannerDismissed && !forceCheckinOverlay ? (
+        <div className="soft-checkin-banner" role="status">
+          <span className="soft-checkin-banner-icon" aria-hidden>🛟</span>
+          <span className="soft-checkin-banner-text">
+            You haven't started a shift today.
+          </span>
+          <button
+            type="button"
+            className="soft-checkin-banner-cta"
+            onClick={() => setShowMyCheckins(true)}
+          >
+            Start now
+          </button>
+          <button
+            type="button"
+            className="soft-checkin-banner-dismiss"
+            onClick={() => {
+              try {
+                localStorage.setItem(
+                  'checkinSoftBannerDismissed',
+                  new Date().toISOString().slice(0, 10),
+                );
+              } catch { /* ignore */ }
+              setSoftBannerDismissed(true);
+            }}
+            aria-label="Dismiss for today"
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
 
       {/* ── Main area: map is always behind ── */}
       <main className="main-area">
@@ -5943,6 +6157,10 @@ export default function App() {
               onOpenReports={roleCanAdmin ? () => setShowReportsDashboard(true) : undefined}
               onOpenQuotes={roleCanAdmin ? () => setShowQuoteBuilder(true) : undefined}
               onOpenCalendar={roleCanAdmin ? () => setShowCalendar(true) : undefined}
+              // Check-ins Dashboard (Overview / Active / History / Settings).
+              // Admin/office only — workers manage their own shift via the
+              // avatar-menu "🛟 Check-ins" item which opens MyCheckInsOverlay.
+              onOpenCheckins={roleCanAdmin ? () => setShowCheckinsDashboard(true) : undefined}
               deletedQuotes={deletedQuotes}
               onRestoreQuote={handleRestoreQuote}
               onDeleteQuotePermanent={handleDeleteQuotePermanent}
@@ -5996,6 +6214,44 @@ export default function App() {
             onClose={() => setShowCalendar(false)}
             clients={clients}
             currentUser={user}
+          />
+        </Suspense>
+      ) : null}
+
+      {/* ── My Check-ins (personal overlay) ────────────────────────────
+          Open whenever the user explicitly invokes it (avatar menu /
+          topbar countdown click / soft-banner / SW notificationclick)
+          OR the forced-overlay effect has flipped on (T-5 + no recent
+          check-in). The two flags are OR'd so a worker can manually
+          open the overlay while it would also have been forced -- the
+          forced-mode rendering (force={forceCheckinOverlay}) just
+          strips the close button when true. */}
+      {(showMyCheckins || forceCheckinOverlay) && user ? (
+        <Suspense fallback={null}>
+          <MyCheckInsOverlay
+            force={forceCheckinOverlay}
+            isOnline={isOnline}
+            onClose={() => {
+              setShowMyCheckins(false);
+              // Forced overlays only close via successful check-in (or
+              // End shift, or Dismiss-while-offline). The overlay
+              // itself calls onClose after those actions -- we honour
+              // it by also clearing the force flag so a stale offline
+              // dismiss doesn't sit on top forever.
+              setForceCheckinOverlay(false);
+            }}
+          />
+        </Suspense>
+      ) : null}
+
+      {/* ── Check-ins Dashboard (admin/office full-page overlay) ──
+          Lazy chunk, opens its own Realtime subscription. Closes if
+          roleCanAdmin flips false (View as Worker). */}
+      {showCheckinsDashboard && roleCanAdmin ? (
+        <Suspense fallback={null}>
+          <CheckInsOverlay
+            onClose={() => setShowCheckinsDashboard(false)}
+            isAdmin={actualCanAdmin}
           />
         </Suspense>
       ) : null}

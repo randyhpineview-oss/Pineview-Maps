@@ -1200,3 +1200,194 @@ button[title="Open keyboard shortcuts"],
   .calendar-overlay .fc .fc-button { padding: 4px 10px; font-size: 0.78rem; }
   .calendar-overlay .fc .fc-daygrid-day-number { font-size: 0.78rem; }
 }
+
+/* ─────────────────────────────────────────────────────────────────
+   Check-ins (Phase 2 unified) — topbar countdown, soft banner,
+   responsive Overview grid, employee status cards.
+   ───────────────────────────────────────────────────────────────── */
+
+/* Topbar countdown pill. Sits between the .topbar-title and
+   .topbar-right slots. Background + text colour are set inline by
+   the CheckinCountdown component from tierColors() so the pill flips
+   green->yellow->red without a class swap. */
+.topbar-checkin-countdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  /* Soft shadow lifts the pill above the topbar gradient so the colour
+     reads clearly against the dark background. */
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  /* Smooth tier transitions so the eye catches the change without
+     being jarring. */
+  transition: background-color 200ms ease, color 200ms ease;
+}
+.topbar-checkin-countdown:hover { filter: brightness(1.08); }
+.topbar-checkin-countdown:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+}
+/* Narrow viewport: shorter format (1h47m), smaller font. The
+   CheckinCountdown component drops the seconds in this mode. */
+@media (max-width: 360px) {
+  .topbar-checkin-countdown {
+    font-size: 0.72rem;
+    padding: 0.22rem 0.55rem;
+  }
+}
+
+/* Soft morning banner. Renders between the topbar and the main map
+   area when the worker has no active shift and hasn't dismissed it
+   today. Single row, wraps on narrow viewports. */
+.soft-checkin-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  padding: 0.55rem 1rem;
+  background: linear-gradient(90deg, #fff7ed, #fef3c7);
+  color: #92400e;
+  border-bottom: 1px solid #fde68a;
+  font-size: 0.85rem;
+  z-index: 25;
+}
+.soft-checkin-banner-icon {
+  font-size: 1rem;
+  line-height: 1;
+}
+.soft-checkin-banner-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.soft-checkin-banner-cta {
+  background: #2563eb;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 0.3rem 0.9rem;
+  font-weight: 600;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.soft-checkin-banner-cta:hover { background: #1d4ed8; }
+.soft-checkin-banner-dismiss {
+  background: transparent;
+  border: 1px solid #d97706;
+  color: #92400e;
+  border-radius: 6px;
+  padding: 0.28rem 0.75rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+.soft-checkin-banner-dismiss:hover { background: rgba(217, 119, 6, 0.08); }
+
+/* Overview tab — responsive avatar grid.
+   - auto-fit + minmax handles the cols-per-row axis naturally
+   - --card-min sets the card width floor; default 160px stays legible
+   - gap keeps cards visually distinct without crowding */
+.overview-tab-root { padding: 4px; }
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--card-min, 160px), 1fr));
+  gap: 12px;
+  align-content: start;
+}
+@media (max-width: 480px) {
+  .overview-grid { --card-min: 140px; gap: 10px; }
+}
+
+.overview-detail-panel {
+  margin-top: 16px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+}
+
+/* Employee status card. Border colour is set inline from the tier
+   accent so it reads at a glance which cards need attention. */
+.employee-status-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  background: #ffffff;
+  border-radius: 10px;
+  border: 2px solid #e5e7eb;
+  padding: 12px 10px;
+  cursor: pointer;
+  transition: transform 100ms ease, box-shadow 100ms ease;
+  min-height: 130px;
+  text-align: center;
+}
+.employee-status-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.06);
+}
+.employee-status-card:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+.employee-status-card-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.5px;
+}
+.employee-status-card-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.employee-status-card-pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+.employee-status-card-subline {
+  font-size: 11px;
+  color: #6b7280;
+  line-height: 1.3;
+}
+.employee-status-card-truck {
+  font-size: 10px;
+  color: #9ca3af;
+  margin-top: 2px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Preferences panel (CheckInPreferencesPanel) when embedded inside
+   MyCheckInsOverlay. embedded variant just drops the outer chrome
+   so it sits cleanly inside a parent card. */
+.checkin-prefs-panel.embedded { padding: 0; }
+.checkin-prefs-panel:not(.embedded) {
+  padding: 16px 18px;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  max-width: 460px;
+}

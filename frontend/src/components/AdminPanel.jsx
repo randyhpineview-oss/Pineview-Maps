@@ -117,6 +117,10 @@ export default function AdminPanel({
   // Same admin/office gating as Reports/Quotes — only rendered when a
   // handler is supplied. CalendarOverlay.jsx is lazy-loaded on tap.
   onOpenCalendar,
+  // Opens the Check-ins Dashboard (Overview / Active / History /
+  // Settings tabs). Admin/office only — workers use the avatar-menu
+  // "🛟 Check-ins" item for their own personal page.
+  onOpenCheckins,
   // Soft-deleted quotes (same Recent Deletes pattern as lease sheets / TM).
   deletedQuotes = [],
   onRestoreQuote,
@@ -566,7 +570,7 @@ export default function AdminPanel({
             office-only and lazy-load their target overlay on tap. The
             tooltips on each button preserve the long-form descriptions
             that previously lived in dedicated cards. */}
-        {(onOpenReports || onOpenQuotes || onOpenCalendar) ? (
+        {(onOpenReports || onOpenQuotes || onOpenCalendar || onOpenCheckins) ? (
           <div className="site-row" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
             <strong style={{ marginRight: '0.25rem' }}>Tools</strong>
             {onOpenReports ? (
@@ -587,6 +591,16 @@ export default function AdminPanel({
                 title="Build quotes from the 2026 rate catalog — Hydroseeding, Herbicide, Drone."
               >
                 📝 Quotes
+              </button>
+            ) : null}
+            {onOpenCheckins ? (
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={onOpenCheckins}
+                title="Live worker check-in dashboard — Overview, Active, History, and Settings (recipient list)."
+              >
+                🛟 Check-ins Dashboard
               </button>
             ) : null}
             {onOpenCalendar ? (

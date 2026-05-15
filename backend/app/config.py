@@ -50,6 +50,29 @@ class Settings(BaseSettings):
     # Rotate by updating the env var on Render; any printed QR stops working.
     signup_invite_secret: str = ""
 
+    # ── Lone-worker check-ins (Phase 2 unified) ─────────────────────────
+    # VAPID keypair for Web Push. Generate once with:
+    #   python -c "from pywebpush import webpush; print(webpush.WebPusher.generate_keys())"
+    # Public half is exposed to the frontend via GET /api/push/vapid-public-key.
+    # Private half NEVER leaves the server -- it's used by pywebpush to
+    # sign each push payload. Contact email is required by the Web Push
+    # spec (servers may reject pushes without a valid mailto: subject).
+    vapid_public_key: str = ""
+    vapid_private_key: str = ""
+    vapid_contact_email: str = ""
+
+    # Bearer token GitHub Actions sends with POST /api/checkins/scan.
+    # Same pattern as BID_SCAN_SECRET. Leave empty in dev to disable
+    # the scan endpoint (returns 503). Rotate by updating the env var
+    # on Render AND the GitHub Actions secret simultaneously.
+    checkin_scan_secret: str = ""
+
+    # Optional seed for the primary office alert recipient. If set AND
+    # no office_alert_recipients row with is_primary=TRUE exists, the
+    # scan endpoint auto-creates one on first run. Admin can edit it
+    # afterwards from the Settings tab. Unset = admin must set via UI.
+    office_primary_email: str = ""
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

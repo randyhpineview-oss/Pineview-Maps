@@ -1,0 +1,66 @@
+name: Check-in Scan
+
+# Drives the every-minute scan of active shifts so the backend can fire
+# worker/office reminders the moment a threshold is crossed. Mirrors
+# the existing keep-alive.yml pattern but with shared-secret auth
+# instead of an unauthenticated /health hit.
+#
+# Setup:
+#   1. Render env var `CHECKIN_SCAN_SECRET` set to a random 32+ byte string.
+#   2. GitHub repo secret of the same name with the same value.
+#   3. Optional repo secret `BACKEND_URL` if it differs from the
+#      default Render URL (kept aligned with keep-alive.yml).
+#
+# The scan endpoint is idempotent (checkin_alerts ledger), so an
+# occasional missed minute -- or a doubled run -- does not double-send.
+
+on:
+  schedule:
+    # Every 5 minutes. GitHub Actions cron runs at most every 5 min
+    # (often slower during platform load). The scan endpoint logic
+    # uses minutes_overdue + 0.5 >= threshold so a delayed run still
+    # fires the right alerts when it lands -- a T+3 alert that lands
+    # at T+7 is fine because the scanner checks "is this shift >= the
+    # threshold AND no row in checkin_alerts yet". Net effect on the
+    # worker: notifications may be up to ~5 min later than the exact
+    # threshold (e.g. T+3 overdue alert may arrive at T+7). For lone-
+    # worker safety this is well within acceptable bounds.
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+# Only one scan in flight at a time. If a prior run is still going
+# (Render cold start, etc.), skip the new one instead of stacking.
+concurrency:
+  group: checkin-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: POST /api/checkins/scan
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL || 'https://pineview-maps.onrender.com' }}
+          CHECKIN_SCAN_SECRET: ${{ secrets.CHECKIN_SCAN_SECRET }}
+        run: |
+          if [ -z "${CHECKIN_SCAN_SECRET}" ]; then
+            echo "::warning::CHECKIN_SCAN_SECRET not set as a GitHub Actions secret; skipping."
+            exit 0
+          fi
+          # --fail makes curl exit non-zero on HTTP errors so the
+          # Action step is red when the scan fails (lets us see it
+          # in the workflow tab). --silent suppresses progress bars
+          # in logs; --show-error still prints the error body on fail.
+          # Retry x3 with backoff for transient Render warm-up.
+          curl --fail --silent --show-error \
+               --connect-timeout 10 \
+               --max-time 60 \
+               --retry 3 \
+               --retry-delay 5 \
+               --retry-connrefused \
+               -X POST \
+               -H "Authorization: Bearer ${CHECKIN_SCAN_SECRET}" \
+               -H "Content-Type: application/json" \
+               "${BACKEND_URL}/api/checkins/scan"

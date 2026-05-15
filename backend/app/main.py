@@ -31,6 +31,11 @@ from app.devices_routes import (
     admin_router as devices_admin_router,
     ingest_router as devices_ingest_router,
 )
+from app.checkin_routes import (
+    me_router as checkin_me_router,
+    admin_router as checkin_admin_router,
+    cron_router as checkin_cron_router,
+)
 from app.pipeline_models import Pipeline, SprayRecord  # noqa: F401 — ensure tables are registered
 from app.calendar_models import (  # noqa: F401 — ensure tables are registered
     CalendarBid,
@@ -39,6 +44,15 @@ from app.calendar_models import (  # noqa: F401 — ensure tables are registered
     CalendarTask,
 )
 from app.device_models import Device, DevicePing  # noqa: F401 — ensure tables are registered
+from app.checkin_models import (  # noqa: F401 — ensure tables are registered
+    Checkin,
+    CheckinAlert,
+    OfficeAlertRecipient,
+    PushSubscription,
+    Shift,
+    ShiftChange,
+    UserProfile,
+)
 from app.models import (
     ApprovalState,
     PinType,
@@ -141,6 +155,13 @@ app.include_router(calendar_router)
 app.include_router(devices_read_router)
 app.include_router(devices_admin_router)
 app.include_router(devices_ingest_router)
+# Three check-in routers, audience-separated like devices:
+#   - me:    /api/checkins/me/*, /api/shifts/*, /api/checkins, /api/push/* (any role)
+#   - admin: /api/admin/checkin-* (admin/office)
+#   - cron:  /api/checkins/scan (bearer secret, GitHub Actions)
+app.include_router(checkin_me_router)
+app.include_router(checkin_admin_router)
+app.include_router(checkin_cron_router)
 
 
 # Global exception handler. Logs the full traceback server-side and
@@ -225,6 +246,29 @@ def startup_event() -> None:
             print("[STARTUP] Devices tables ensured")
         except Exception as e:
             print(f"Warning: Could not create devices tables: {e}")
+        # Create check-in tables if they don't exist. The full migration
+        # (REPLICA IDENTITY, supabase_realtime publication, partial unique
+        # index on office_alert_recipients.is_primary) lives in
+        # database/checkins_setup.sql; this fallback covers the case where
+        # the API ships before that SQL is run, so basic CRUD still works
+        # (just without Realtime push or DB-level primary uniqueness).
+        try:
+            Base.metadata.create_all(
+                bind=engine,
+                tables=[
+                    UserProfile.__table__,
+                    Shift.__table__,
+                    Checkin.__table__,
+                    ShiftChange.__table__,
+                    PushSubscription.__table__,
+                    CheckinAlert.__table__,
+                    OfficeAlertRecipient.__table__,
+                ],
+                checkfirst=True,
+            )
+            print("[STARTUP] Check-in tables ensured")
+        except Exception as e:
+            print(f"Warning: Could not create check-in tables: {e}")
         # Run column migrations on Postgres too
         try:
             _migrate_add_columns()
@@ -255,7 +299,7 @@ def startup_event() -> None:
 # Format: an opaque-but-meaningful string. Date-prefix + initial keeps
 # bumps obvious in git blame. The exact value doesn't matter as long as
 # it differs from any prior committed value.
-_MIGRATION_VERSION = "2026-05-14-devices"
+_MIGRATION_VERSION = "2026-05-15-checkins"
 
 
 def _migrate_add_columns() -> None:

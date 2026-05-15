@@ -746,6 +746,144 @@ export const api = {
     const query = hard ? '?hard=true' : '';
     return request(`/api/admin/devices/${deviceId}${query}`, { method: 'DELETE' });
   },
+
+  // ── Check-ins (Phase 2 unified) ────────────────────────────────────
+  // Worker self-service: any signed-in user can call these endpoints
+  // against their own shift / preferences / push subscriptions.
+
+  // Today's shift state + check-ins for the calling user. Mount-time
+  // fetch for MyCheckInsOverlay.
+  getMyTodayCheckin() {
+    return request('/api/checkins/me/today');
+  },
+  // Start a new shift. Errors with 409 if one is already active.
+  startShift({ mode, crewUserIds = [], crewFreeform = '', notes = '' }) {
+    return request('/api/shifts/start', {
+      method: 'POST',
+      body: {
+        mode,
+        crew_user_ids: crewUserIds,
+        crew_freeform: crewFreeform,
+        notes,
+      },
+    });
+  },
+  // End your own shift (idempotent on already-ended). Admins can end
+  // any user's shift via this same endpoint thanks to the role check
+  // on the backend.
+  endShift(shiftId) {
+    return request(`/api/shifts/${shiftId}/end`, { method: 'POST' });
+  },
+  // Mid-shift mode / crew edit. Backend writes a shift_changes audit
+  // row and recomputes next_deadline_at sooner-only.
+  patchShiftComposition(shiftId, { mode, crewUserIds = [], crewFreeform = '' }) {
+    return request(`/api/shifts/${shiftId}/composition`, {
+      method: 'PATCH',
+      body: {
+        mode,
+        crew_user_ids: crewUserIds,
+        crew_freeform: crewFreeform,
+      },
+    });
+  },
+  // Record an "I'm OK" check-in. lat/lon/accuracy are optional -- a
+  // worker without geolocation can still tap I'm OK and we record the
+  // time only.
+  createCheckin({ lat, lon, accuracyM, notes } = {}) {
+    return request('/api/checkins', {
+      method: 'POST',
+      body: {
+        lat: lat ?? null,
+        lon: lon ?? null,
+        accuracy_m: accuracyM ?? null,
+        notes: notes ?? null,
+      },
+    });
+  },
+  // Notification prefs for the calling user (push/email toggles + email
+  // override). Returns the auth email too so the prefs panel can offer
+  // "Use my login email" as a one-tap option.
+  getMyCheckinPrefs() {
+    return request('/api/checkins/me/preferences');
+  },
+  updateMyCheckinPrefs(payload) {
+    return request('/api/checkins/me/preferences', { method: 'PUT', body: payload });
+  },
+  // Crew picker source: every active user except the caller.
+  listCheckinCrewCandidates() {
+    return request('/api/checkins/me/assignable-users');
+  },
+
+  // ── Push subscription (any signed-in user) ─────────────────────────
+  // Used by pushClient.js. Backend returns the public VAPID key needed
+  // by pushManager.subscribe(). Empty string = push not configured;
+  // frontend hides the toggle.
+  getVapidPublicKey() {
+    return request('/api/push/vapid-public-key');
+  },
+  subscribePush(payload) {
+    return request('/api/push/subscribe', { method: 'POST', body: payload });
+  },
+  unsubscribePush(endpoint) {
+    return request('/api/push/subscribe', {
+      method: 'DELETE',
+      body: { endpoint },
+    });
+  },
+
+  // ── Admin / office (CheckInsOverlay tabs) ──────────────────────────
+  // Single-round-trip data source for the Overview tab.
+  getCheckinOverview() {
+    return request('/api/admin/checkin-overview');
+  },
+  // Per-shift detail for the Active tab.
+  listAdminActiveShifts() {
+    return request('/api/admin/shifts/active');
+  },
+  // History tab. dateStr is YYYY-MM-DD in local Vancouver time; omitted
+  // = today.
+  listAdminShifts({ dateStr } = {}) {
+    const q = dateStr ? `?date=${encodeURIComponent(dateStr)}` : '';
+    return request(`/api/admin/shifts${q}`);
+  },
+  adminEndShift(shiftId) {
+    return request(`/api/admin/shifts/${shiftId}/end`, { method: 'POST' });
+  },
+  adminForceCheckin(shiftId, payload = {}) {
+    return request(`/api/admin/shifts/${shiftId}/checkin`, {
+      method: 'POST',
+      body: payload,
+    });
+  },
+
+  // Office alert recipient list (Settings tab). Primary is managed via
+  // a separate /primary endpoint so the always-on contract is explicit.
+  listAlertRecipients() {
+    return request('/api/admin/checkin-recipients');
+  },
+  addAlertRecipient({ email, displayName, isActive = true }) {
+    return request('/api/admin/checkin-recipients', {
+      method: 'POST',
+      body: { email, display_name: displayName || null, is_active: isActive },
+    });
+  },
+  updateAlertRecipient(id, { email, displayName, isActive } = {}) {
+    const body = {};
+    if (email !== undefined) body.email = email;
+    if (displayName !== undefined) body.display_name = displayName;
+    if (isActive !== undefined) body.is_active = isActive;
+    return request(`/api/admin/checkin-recipients/${id}`, { method: 'PUT', body });
+  },
+  deleteAlertRecipient(id) {
+    return request(`/api/admin/checkin-recipients/${id}`, { method: 'DELETE' });
+  },
+  // Idempotent set-or-update of the always-on primary office email.
+  upsertPrimaryRecipient({ email, displayName }) {
+    return request('/api/admin/checkin-recipients/primary', {
+      method: 'POST',
+      body: { email, display_name: displayName || null },
+    });
+  },
 };
 
 // Build a URLSearchParams from the report params object, skipping

@@ -1,0 +1,156 @@
+"""Web Push delivery via pywebpush.
+
+One public helper -- ``send_push(subscription, payload)`` -- that signs
+a JSON payload with the configured VAPID keypair and POSTs it to the
+push endpoint registered by the worker's browser.
+
+Failure handling:
+  * 404 / 410   -> subscription is dead (worker uninstalled the PWA or
+                   cleared site data). Delete the row and continue.
+  * Other 4xx   -> log + raise. Likely a misconfiguration (wrong VAPID
+                   key, bad payload format) that wants attention.
+  * 5xx / net   -> log + raise. The scan endpoint catches and records
+                   the failure in ``checkin_alerts.error`` so we can
+                   see *which* push failed when triaging.
+
+pywebpush is pure-Python so this works on Render without native build
+deps. The library handles the AES-128-GCM encryption + the VAPID JWT
+signing internally.
+"""
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from typing import Optional
+
+from pywebpush import WebPushException, webpush  # type: ignore[import-untyped]
+from sqlalchemy.orm import Session
+
+from app.checkin_models import PushSubscription
+from app.config import get_settings
+from app.log_util import get_logger
+
+settings = get_settings()
+logger = get_logger(__name__)
+
+
+@dataclass
+class PushPayload:
+    """JSON payload posted to the SW.
+
+    Mirrors the keys the ``push`` handler in ``frontend/src/sw-push.js``
+    reads. Keep field names + meaning aligned with that file.
+    """
+
+    title: str
+    body: str
+    # Notification ``tag`` -- repeat alerts replace prior ones in the
+    # OS tray when the tag matches. Default 'checkin' so every alert
+    # is the same single notification visually (with renotify:true
+    # making sure it still pings/vibrates each time).
+    tag: str = "checkin"
+    # Sets requireInteraction:true in the SW -- notification stays on
+    # screen until tapped, doesn't auto-dismiss. Reserved for overdue
+    # alerts (T+3 and beyond) per the cadence spec.
+    urgent: bool = False
+    # URL the notificationclick handler navigates to. Default '/'
+    # opens the app shell; the SW posts a message to focus any open
+    # tab onto the MyCheckIns overlay.
+    url: str = "/"
+    # Shift id (for traceability + possible "open this shift" deep
+    # link). Optional -- frontend treats it as informational.
+    shift_id: Optional[int] = None
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "title": self.title,
+                "body": self.body,
+                "tag": self.tag,
+                "urgent": self.urgent,
+                "url": self.url,
+                "shiftId": self.shift_id,
+            }
+        )
+
+
+def push_configured() -> bool:
+    """True iff the VAPID keypair is set. Caller treats False as a no-op."""
+    return bool(
+        settings.vapid_private_key
+        and settings.vapid_public_key
+        and settings.vapid_contact_email
+    )
+
+
+def send_push(
+    db: Session,
+    subscription: PushSubscription,
+    payload: PushPayload,
+    *,
+    ttl: int = 60 * 60,
+) -> None:
+    """POST an encrypted payload to a single subscription endpoint.
+
+    Args:
+        db:           SQLAlchemy session (needed for the 404/410
+                      cleanup path).
+        subscription: ORM row from ``push_subscriptions``.
+        payload:      The notification payload.
+        ttl:          Time-to-live in seconds. Default 1 h -- a push
+                      that can't be delivered within an hour is stale
+                      (worker probably checked in via another device).
+
+    Raises ``WebPushException`` on non-recoverable errors so the caller
+    can record the failure. Returns normally on success or on the
+    expired-subscription cleanup path.
+    """
+    if not push_configured():
+        logger.warning("send_push called but VAPID config missing -- skipping")
+        return
+
+    vapid_claims = {"sub": f"mailto:{settings.vapid_contact_email}"}
+    sub_info = {
+        "endpoint": subscription.endpoint,
+        "keys": {
+            "p256dh": subscription.p256dh,
+            "auth": subscription.auth,
+        },
+    }
+    try:
+        webpush(
+            subscription_info=sub_info,
+            data=payload.to_json(),
+            vapid_private_key=settings.vapid_private_key,
+            vapid_claims=vapid_claims,
+            ttl=ttl,
+        )
+    except WebPushException as exc:
+        # pywebpush stuffs the upstream HTTP response on .response so
+        # we can distinguish "subscription is dead" from "everything
+        # else" without a string-match.
+        status_code = getattr(exc.response, "status_code", None)
+        if status_code in (404, 410):
+            logger.info(
+                "Push endpoint %s returned %s -- deleting subscription %s",
+                _short(subscription.endpoint),
+                status_code,
+                subscription.id,
+            )
+            db.delete(subscription)
+            db.commit()
+            return
+        logger.warning(
+            "Push to subscription %s failed (status=%s): %s",
+            subscription.id,
+            status_code,
+            exc,
+        )
+        raise
+
+
+def _short(endpoint: str, *, n: int = 40) -> str:
+    """Truncate an endpoint URL for log output (they're long opaque tokens)."""
+    if len(endpoint) <= n:
+        return endpoint
+    return endpoint[: n - 1] + "…"
