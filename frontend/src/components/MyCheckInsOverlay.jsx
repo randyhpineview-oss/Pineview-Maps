@@ -181,6 +181,21 @@ export default function MyCheckInsOverlay({
     return () => clearInterval(id);
   }, []);
 
+  // Clear crew selections when switching from crew back to alone.
+  useEffect(() => {
+    if (mode === 'alone') {
+      setCrewUserIds([]);
+      setCrewFreeform('');
+    }
+  }, [mode]);
+
+  useEffect(() => {
+    if (editMode === 'alone') {
+      setEditCrewUserIds([]);
+      setEditCrewFreeform('');
+    }
+  }, [editMode]);
+
   // Initial fetch.
   useEffect(() => {
     if (initialData) return undefined;
