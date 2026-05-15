@@ -42,10 +42,11 @@ const S = {
   card: {
     width: '100%',
     maxWidth: 520,
-    background: '#ffffff',
-    color: '#111827',
+    background: '#0f172a',
+    color: '#e5eefb',
+    border: '1px solid rgba(143, 182, 255, 0.16)',
     borderRadius: 12,
-    boxShadow: '0 20px 50px rgba(0,0,0,0.4)',
+    boxShadow: '0 20px 50px rgba(0,0,0,0.55)',
     padding: '20px 22px 24px 22px',
     fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
   },
@@ -54,7 +55,7 @@ const S = {
     border: 'none',
     fontSize: 22,
     cursor: 'pointer',
-    color: '#6b7280',
+    color: '#9ab1d6',
     padding: 4,
     lineHeight: 1,
   },
@@ -72,9 +73,9 @@ const S = {
   }),
   ghostBtn: {
     padding: '10px 16px',
-    background: '#f3f4f6',
-    color: '#374151',
-    border: '1px solid #d1d5db',
+    background: 'transparent',
+    color: '#e5eefb',
+    border: '1px solid rgba(143, 182, 255, 0.18)',
     borderRadius: 8,
     fontSize: 14,
     cursor: 'pointer',
@@ -92,17 +93,17 @@ const S = {
   modeBtn: (selected) => ({
     flex: 1,
     padding: '14px 12px',
-    border: selected ? '2px solid #2563eb' : '1px solid #d1d5db',
-    background: selected ? '#eff6ff' : '#fff',
-    color: selected ? '#1d4ed8' : '#374151',
+    border: selected ? '2px solid #60a5fa' : '1px solid rgba(143, 182, 255, 0.18)',
+    background: selected ? 'rgba(96, 165, 250, 0.12)' : 'transparent',
+    color: selected ? '#60a5fa' : '#e5eefb',
     borderRadius: 10,
     cursor: 'pointer',
     fontSize: 14,
     fontWeight: selected ? 700 : 500,
     textAlign: 'center',
   }),
-  sectionTitle: { margin: '18px 0 8px 0', fontSize: 13, color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 },
-  timelineRow: { padding: '6px 0', borderBottom: '1px solid #f3f4f6', fontSize: 13, color: '#374151', display: 'flex', justifyContent: 'space-between' },
+  sectionTitle: { margin: '18px 0 8px 0', fontSize: 13, color: '#9ab1d6', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 },
+  timelineRow: { padding: '6px 0', borderBottom: '1px solid rgba(143, 182, 255, 0.08)', fontSize: 13, color: '#c9d6ee', display: 'flex', justifyContent: 'space-between' },
 };
 
 function formatTime(iso) {
@@ -339,9 +340,9 @@ export default function MyCheckInsOverlay({
       <div style={S.card} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
           <div>
-            <h2 style={{ margin: 0, fontSize: 18, color: '#111827' }}>🛟 {headerLabel}</h2>
+            <h2 style={{ margin: 0, fontSize: 18, color: '#e5eefb' }}>🛟 {headerLabel}</h2>
             {shift?.started_at ? (
-              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
+              <div style={{ fontSize: 12, color: '#9ab1d6', marginTop: 2 }}>
                 Started {formatTime(shift.started_at)}
               </div>
             ) : null}
@@ -352,25 +353,25 @@ export default function MyCheckInsOverlay({
         </div>
 
         {loading ? (
-          <div style={{ padding: '20px 0', fontSize: 14, color: '#6b7280' }}>Loading…</div>
+          <div style={{ padding: '20px 0', fontSize: 14, color: '#9ab1d6' }}>Loading…</div>
         ) : null}
 
         {/* ── No active shift -> Start form ──────────────────────────── */}
         {!loading && !shift ? (
           <>
-            <p style={{ margin: '0 0 14px 0', fontSize: 14, color: '#374151', lineHeight: 1.5 }}>
+            <p style={{ margin: '0 0 14px 0', fontSize: 14, color: '#c9d6ee', lineHeight: 1.5 }}>
               You don't have a shift today yet. Pick how you're working and we'll start your check-in clock.
             </p>
             <div style={{ display: 'flex', gap: 8 }}>
               <button type="button" style={S.modeBtn(mode === 'alone')} onClick={() => setMode('alone')}>
                 <div style={{ fontSize: 18, marginBottom: 2 }}>🧍</div>
                 Working alone
-                <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 400 }}>Check in every 2 h</div>
+                <div style={{ fontSize: 11, color: '#9ab1d6', fontWeight: 400 }}>Check in every 2 h</div>
               </button>
               <button type="button" style={S.modeBtn(mode === 'crew')} onClick={() => setMode('crew')}>
                 <div style={{ fontSize: 18, marginBottom: 2 }}>👥</div>
                 With a crew
-                <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 400 }}>Check in every 4 h</div>
+                <div style={{ fontSize: 11, color: '#9ab1d6', fontWeight: 400 }}>Check in every 4 h</div>
               </button>
             </div>
             {mode === 'crew' ? (
@@ -386,7 +387,7 @@ export default function MyCheckInsOverlay({
               </div>
             ) : null}
             <div style={{ marginTop: 14 }}>
-              <label style={{ fontSize: 13, color: '#374151', fontWeight: 500, display: 'block', marginBottom: 4 }}>
+              <label style={{ fontSize: 13, color: '#c9d6ee', fontWeight: 500, display: 'block', marginBottom: 4 }}>
                 Notes (optional)
               </label>
               <input
@@ -397,14 +398,16 @@ export default function MyCheckInsOverlay({
                 style={{
                   width: '100%',
                   padding: '8px 10px',
-                  border: '1px solid #d1d5db',
+                  background: 'rgba(143, 182, 255, 0.06)',
+                  color: '#e5eefb',
+                  border: '1px solid rgba(143, 182, 255, 0.18)',
                   borderRadius: 6,
                   fontSize: 13,
                 }}
               />
             </div>
             {error ? (
-              <div style={{ marginTop: 12, padding: 8, background: '#fef2f2', color: '#991b1b', borderRadius: 6, fontSize: 13 }}>
+              <div style={{ marginTop: 12, padding: 8, background: 'rgba(239, 68, 68, 0.10)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.35)', borderRadius: 6, fontSize: 13 }}>
                 {error}
               </div>
             ) : null}
@@ -434,7 +437,7 @@ export default function MyCheckInsOverlay({
                   }
                 }}
                 style={{
-                  background: 'transparent', border: 'none', color: '#9ca3af',
+                  background: 'transparent', border: 'none', color: '#9ab1d6',
                   fontSize: 12, cursor: 'pointer', textDecoration: 'underline',
                 }}
               >
@@ -471,7 +474,7 @@ export default function MyCheckInsOverlay({
             </div>
 
             {!isOnline ? (
-              <div style={{ padding: 12, background: '#fff7ed', color: '#9a3412', borderRadius: 8, marginBottom: 12, fontSize: 13, lineHeight: 1.5 }}>
+              <div style={{ padding: 12, background: 'rgba(251, 191, 36, 0.10)', color: '#fbbf24', border: '1px solid rgba(251, 191, 36, 0.35)', borderRadius: 8, marginBottom: 12, fontSize: 13, lineHeight: 1.5 }}>
                 <strong>You're offline.</strong> Get cell or WiFi service, then tap I'm OK to record your check-in.
               </div>
             ) : (
@@ -486,11 +489,11 @@ export default function MyCheckInsOverlay({
             )}
 
             {/* Mode + crew summary */}
-            <div style={{ marginTop: 14, fontSize: 13, color: '#374151' }}>
-              <strong>Mode:</strong>{' '}
+            <div style={{ marginTop: 14, fontSize: 13, color: '#c9d6ee' }}>
+              <strong style={{ color: '#e5eefb' }}>Mode:</strong>{' '}
               {shift.mode === 'alone' ? 'Working alone (2 h)' : 'With a crew (4 h)'}
               {shift.last_checkin_at ? (
-                <span style={{ marginLeft: 10, color: '#6b7280' }}>
+                <span style={{ marginLeft: 10, color: '#9ab1d6' }}>
                   · last check-in {formatRelative(shift.last_checkin_at)}
                 </span>
               ) : null}
@@ -503,14 +506,14 @@ export default function MyCheckInsOverlay({
                   type="button"
                   onClick={() => setEditing(true)}
                   style={{
-                    background: 'transparent', border: 'none', color: '#2563eb',
+                    background: 'transparent', border: 'none', color: '#60a5fa',
                     cursor: 'pointer', fontSize: 13, padding: 0, textDecoration: 'underline',
                   }}
                 >
                   Edit crew / mode
                 </button>
               ) : (
-                <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 12 }}>
+                <div style={{ border: '1px solid rgba(143, 182, 255, 0.16)', borderRadius: 8, padding: 12, background: 'rgba(143, 182, 255, 0.04)' }}>
                   <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                     <button
                       type="button"
@@ -541,7 +544,7 @@ export default function MyCheckInsOverlay({
                     <button type="button" style={S.ghostBtn} onClick={() => setEditing(false)} disabled={submitting}>
                       Cancel
                     </button>
-                    <button type="button" style={{ ...S.ghostBtn, background: '#2563eb', color: '#fff', borderColor: '#2563eb', fontWeight: 600 }} onClick={handleCompositionSave} disabled={submitting}>
+                    <button type="button" style={{ ...S.ghostBtn, background: '#2563eb', color: '#fff', border: '1px solid #2563eb', fontWeight: 600 }} onClick={handleCompositionSave} disabled={submitting}>
                       Save
                     </button>
                   </div>
@@ -557,7 +560,7 @@ export default function MyCheckInsOverlay({
                   {checkins.slice(0, 8).map((c) => (
                     <div key={c.id} style={S.timelineRow}>
                       <span>{formatTime(c.created_at)}</span>
-                      <span style={{ color: '#9ca3af', fontSize: 12 }}>
+                      <span style={{ color: '#9ab1d6', fontSize: 12 }}>
                         {c.recorded_by_user_id ? '(admin recorded)' : 'I\'m OK'}
                       </span>
                     </div>
@@ -572,21 +575,21 @@ export default function MyCheckInsOverlay({
                 type="button"
                 onClick={() => setShowPrefs((s) => !s)}
                 style={{
-                  background: 'transparent', border: 'none', color: '#6b7280',
+                  background: 'transparent', border: 'none', color: '#9ab1d6',
                   cursor: 'pointer', fontSize: 12, padding: 0, textDecoration: 'underline',
                 }}
               >
                 {showPrefs ? '▾ Hide' : '▸ Notification preferences'}
               </button>
               {showPrefs ? (
-                <div style={{ marginTop: 10, padding: 12, border: '1px solid #e5e7eb', borderRadius: 8 }}>
+                <div style={{ marginTop: 10, padding: 12, border: '1px solid rgba(143, 182, 255, 0.16)', borderRadius: 8, background: 'rgba(143, 182, 255, 0.04)' }}>
                   <CheckInPreferencesPanel embedded />
                 </div>
               ) : null}
             </div>
 
             {error ? (
-              <div style={{ marginTop: 12, padding: 8, background: '#fef2f2', color: '#991b1b', borderRadius: 6, fontSize: 13 }}>
+              <div style={{ marginTop: 12, padding: 8, background: 'rgba(239, 68, 68, 0.10)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.35)', borderRadius: 6, fontSize: 13 }}>
                 {error}
               </div>
             ) : null}
@@ -615,7 +618,7 @@ export default function MyCheckInsOverlay({
         {/* ── Shift ended (or off) -> just summary + close ─────────── */}
         {!loading && shift && (shift.ended_at || shift.mode === 'off') ? (
           <div>
-            <p style={{ fontSize: 14, color: '#374151', lineHeight: 1.5 }}>
+            <p style={{ fontSize: 14, color: '#c9d6ee', lineHeight: 1.5 }}>
               {shift.mode === 'off'
                 ? 'Marked as your day off — no check-ins required today.'
                 : `Shift ended at ${formatTime(shift.ended_at)}${shift.auto_end_reason ? ` (${shift.auto_end_reason})` : ''}.`}

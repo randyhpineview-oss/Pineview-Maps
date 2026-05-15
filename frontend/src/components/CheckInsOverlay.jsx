@@ -64,8 +64,8 @@ const S = {
     flex: 1,
     overflowY: 'auto',
     padding: '16px 18px',
-    background: '#f9fafb',
-    color: '#111827',
+    background: '#0b1220',
+    color: '#e5eefb',
   },
 };
 

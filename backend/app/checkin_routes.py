@@ -174,8 +174,15 @@ def _local_day_window(d: Optional[date] = None) -> tuple[datetime, datetime]:
     return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
 
 
-def _serialize_shift(shift: Shift) -> dict:
-    """Return the shift as the JSON shape the frontend expects."""
+def _serialize_shift(shift: Shift, user: Optional[User] = None) -> dict:
+    """Return the shift as the JSON shape the frontend expects.
+
+    When ``user`` is supplied, ``user_name`` and ``user_email`` are
+    embedded so the dashboard doesn't have to do a separate lookup
+    (which used to fall back to "User #N" for admins on shift, since
+    the crew-candidates endpoint excludes the caller AND filters to
+    workers-only).
+    """
     next_deadline = _aware(shift.next_deadline_at)
     now = _now()
     minutes_to = None
@@ -184,6 +191,8 @@ def _serialize_shift(shift: Shift) -> dict:
     return {
         "id": shift.id,
         "user_id": shift.user_id,
+        "user_name": user.name if user is not None else None,
+        "user_email": user.email if user is not None else None,
         "device_id": shift.device_id,
         "mode": shift.mode,
         "crew_user_ids": list(shift.crew_user_ids or []),
@@ -198,6 +207,17 @@ def _serialize_shift(shift: Shift) -> dict:
         "status_tier": compute_tier(shift, now=now),
         "notes": shift.notes or "",
     }
+
+
+def _users_by_id(db: Session, user_ids: list[int]) -> dict[int, User]:
+    """Batch-fetch users keyed by id. Used by the admin endpoints to
+    embed names into shift JSON without N+1 queries.
+    """
+    ids = [uid for uid in {*user_ids} if uid is not None]
+    if not ids:
+        return {}
+    rows = db.query(User).filter(User.id.in_(ids)).all()
+    return {u.id: u for u in rows}
 
 
 def _serialize_checkin(c: Checkin) -> dict:
@@ -283,6 +303,13 @@ class ShiftRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     user_id: int
+    # Embedded by the admin list endpoints so the dashboard doesn't have to
+    # do a separate lookup (the crew-candidates endpoint excludes the
+    # caller AND filters to workers, so admin-on-shift used to render as
+    # "User #N"). May be None for self-serve worker endpoints that don't
+    # bother to resolve them.
+    user_name: Optional[str] = None
+    user_email: Optional[str] = None
     device_id: Optional[int] = None
     mode: str
     crew_user_ids: list[int] = []
@@ -683,9 +710,17 @@ def list_crew_candidates(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[AssignableUserRead]:
-    """Every active user except the calling user. Drives the crew picker."""
+    """Field workers (role=worker) other than the calling user.
+
+    Drives the crew picker on the StartShift form. Office and admin
+    accounts are deliberately excluded -- a "crew" is a field crew, and
+    seeding the picker with role-placeholder accounts (e.g. "Pineview
+    Office", "Pineview Admin") just confused workers. Admins who actually
+    do field work can switch their role to ``worker`` to appear here.
+    """
     rows = (
         db.query(User)
+        .filter(User.role == RoleEnum.worker)
         .filter(User.id != current_user.id)
         .order_by(User.name.asc())
         .all()
@@ -814,7 +849,7 @@ def get_overview(db: Session = Depends(get_db)) -> list[OverviewEntry]:
             continue
         shift = shift_by_user.get(uid)
         truck = truck_by_user.get(uid)
-        shift_serial = _serialize_shift(shift) if shift else None
+        shift_serial = _serialize_shift(shift, user=user) if shift else None
         # Tier: if there's a live shift, use compliance tier.
         # Else 'idle' (truck-assigned but not started).
         tier_value = shift_serial["status_tier"] if shift_serial else "idle"
@@ -842,14 +877,22 @@ def get_overview(db: Session = Depends(get_db)) -> list[OverviewEntry]:
 
 @admin_router.get("/api/admin/shifts/active", response_model=list[ShiftRead])
 def list_active_shifts(db: Session = Depends(get_db)) -> list[ShiftRead]:
-    """All active shifts (after lazy auto-end). Drives the Active tab."""
+    """All active shifts (after lazy auto-end). Drives the Active tab.
+
+    Embeds ``user_name`` / ``user_email`` so the dashboard renders real
+    names instead of "User #N".
+    """
     rows = db.query(Shift).filter(Shift.ended_at.is_(None)).all()
-    out = []
+    resolved_rows = []
     for s in rows:
         resolved = _resolve_shift_state(db, s)
         if resolved.ended_at is None:
-            out.append(ShiftRead(**_serialize_shift(resolved)))
-    return out
+            resolved_rows.append(resolved)
+    user_map = _users_by_id(db, [s.user_id for s in resolved_rows])
+    return [
+        ShiftRead(**_serialize_shift(s, user=user_map.get(s.user_id)))
+        for s in resolved_rows
+    ]
 
 
 @admin_router.get("/api/admin/shifts", response_model=list[ShiftRead])
@@ -857,7 +900,10 @@ def list_shifts_by_date(
     date_str: Optional[str] = Query(None, alias="date"),
     db: Session = Depends(get_db),
 ) -> list[ShiftRead]:
-    """History tab: shifts active during the given local-Vancouver date."""
+    """History tab: shifts active during the given local-Vancouver date.
+
+    See ``list_active_shifts`` for the user_name embedding rationale.
+    """
     target = None
     if date_str:
         try:
@@ -875,7 +921,11 @@ def list_shifts_by_date(
         .order_by(Shift.started_at.desc())
         .all()
     )
-    return [ShiftRead(**_serialize_shift(s)) for s in rows]
+    user_map = _users_by_id(db, [s.user_id for s in rows])
+    return [
+        ShiftRead(**_serialize_shift(s, user=user_map.get(s.user_id)))
+        for s in rows
+    ]
 
 
 @admin_router.post("/api/admin/shifts/{shift_id}/end", response_model=ShiftRead)

@@ -74,11 +74,11 @@ export default function CrewPicker({
   };
 
   if (loading) {
-    return <div style={{ fontSize: 13, color: '#6b7280' }}>Loading crew options…</div>;
+    return <div style={{ fontSize: 13, color: '#9ab1d6' }}>Loading crew options…</div>;
   }
   if (error) {
     return (
-      <div style={{ fontSize: 13, color: '#dc2626' }}>
+      <div style={{ fontSize: 13, color: '#ef4444' }}>
         Couldn't load crew list: {error}
       </div>
     );
@@ -86,7 +86,7 @@ export default function CrewPicker({
 
   return (
     <div className="crew-picker">
-      <div style={{ fontSize: 13, color: '#374151', marginBottom: 6, fontWeight: 500 }}>
+      <div style={{ fontSize: 13, color: '#c9d6ee', marginBottom: 6, fontWeight: 500 }}>
         Tap to add/remove crew members:
       </div>
       <div
@@ -94,8 +94,9 @@ export default function CrewPicker({
         style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}
       >
         {users.length === 0 ? (
-          <span style={{ fontSize: 13, color: '#9ca3af' }}>
-            No other users on this account yet.
+          <span style={{ fontSize: 13, color: '#9ab1d6' }}>
+            No other workers to choose from — ask an admin to add field
+            workers in the Users panel, then refresh.
           </span>
         ) : (
           users.map((u) => {
@@ -113,12 +114,12 @@ export default function CrewPicker({
                   alignItems: 'center',
                   gap: 6,
                   padding: '5px 10px 5px 5px',
-                  border: isSel ? '2px solid #2563eb' : '1px solid #d1d5db',
+                  border: isSel ? '2px solid #60a5fa' : '1px solid rgba(143, 182, 255, 0.18)',
                   borderRadius: 999,
-                  background: isSel ? '#eff6ff' : '#ffffff',
+                  background: isSel ? 'rgba(96, 165, 250, 0.12)' : 'transparent',
                   cursor: disabled ? 'default' : 'pointer',
                   fontSize: 13,
-                  color: isSel ? '#1d4ed8' : '#374151',
+                  color: isSel ? '#60a5fa' : '#e5eefb',
                   fontWeight: isSel ? 600 : 400,
                 }}
               >
@@ -150,7 +151,7 @@ export default function CrewPicker({
       <div style={{ marginTop: 12 }}>
         <label
           htmlFor="crew-freeform"
-          style={{ fontSize: 13, color: '#374151', fontWeight: 500, display: 'block', marginBottom: 4 }}
+          style={{ fontSize: 13, color: '#c9d6ee', fontWeight: 500, display: 'block', marginBottom: 4 }}
         >
           Anyone not on this list? (one per line — optional)
         </label>
@@ -164,12 +165,13 @@ export default function CrewPicker({
           style={{
             width: '100%',
             padding: '8px 10px',
-            border: '1px solid #d1d5db',
+            color: '#e5eefb',
+            border: '1px solid rgba(143, 182, 255, 0.18)',
             borderRadius: 6,
             fontSize: 13,
             fontFamily: 'inherit',
             resize: 'vertical',
-            background: disabled ? '#f9fafb' : '#fff',
+            background: disabled ? 'rgba(143, 182, 255, 0.04)' : 'rgba(143, 182, 255, 0.06)',
           }}
         />
       </div>

@@ -27,6 +27,7 @@ import {
   requestNotificationPermission,
   unsubscribePush,
 } from '../lib/pushClient';
+import { t } from '../lib/checkinTheme';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -165,7 +166,7 @@ export default function CheckInPreferencesPanel({ onClose, embedded = false }) {
     <div className={embedded ? 'checkin-prefs-panel embedded' : 'checkin-prefs-panel'}>
       {!embedded ? (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-          <h3 style={{ margin: 0, fontSize: 16 }}>Notification preferences</h3>
+          <h3 style={{ margin: 0, fontSize: 16, color: t.text }}>Notification preferences</h3>
           {onClose ? (
             <button
               type="button"
@@ -173,7 +174,7 @@ export default function CheckInPreferencesPanel({ onClose, embedded = false }) {
               aria-label="Close"
               style={{
                 background: 'transparent', border: 'none', cursor: 'pointer',
-                color: '#6b7280', fontSize: 20, padding: 4,
+                color: t.textMuted, fontSize: 20, padding: 4,
               }}
             >
               ×
@@ -193,19 +194,19 @@ export default function CheckInPreferencesPanel({ onClose, embedded = false }) {
             disabled={!supported || saving}
             onChange={(e) => togglePush(e.target.checked)}
           />
-          <span style={{ fontWeight: 600, color: '#111827' }}>Push notifications</span>
+          <span style={{ fontWeight: 600, color: t.text }}>Push notifications</span>
           {permission === 'granted' ? (
-            <span style={{ fontSize: 12, color: '#16a34a' }}>(allowed)</span>
+            <span style={{ fontSize: 12, color: t.success }}>(allowed)</span>
           ) : permission === 'denied' ? (
-            <span style={{ fontSize: 12, color: '#dc2626' }}>(blocked in OS settings)</span>
+            <span style={{ fontSize: 12, color: t.danger }}>(blocked in OS settings)</span>
           ) : null}
         </label>
         {!supported ? (
-          <p style={{ marginTop: 6, fontSize: 13, color: '#b45309', lineHeight: 1.4 }}>
+          <p style={{ marginTop: 6, fontSize: 13, color: t.warning, lineHeight: 1.4 }}>
             <strong>iPhone users:</strong> Open this site in Safari, tap Share → <em>Add to Home Screen</em>, then open the app from your home screen and enable push here. iOS 16.4 or later required.
           </p>
         ) : (
-          <p style={{ marginTop: 6, fontSize: 12, color: '#6b7280', lineHeight: 1.4 }}>
+          <p style={{ marginTop: 6, fontSize: 12, color: t.textMuted, lineHeight: 1.4 }}>
             Recommended. Plays default OS sound + vibrates on lock screen even when the app is closed.
           </p>
         )}
@@ -220,12 +221,12 @@ export default function CheckInPreferencesPanel({ onClose, embedded = false }) {
             disabled={saving}
             onChange={(e) => toggleEmail(e.target.checked)}
           />
-          <span style={{ fontWeight: 600, color: '#111827' }}>Email notifications</span>
-          <span style={{ fontSize: 12, color: '#6b7280' }}>(optional — push usually does the job)</span>
+          <span style={{ fontWeight: 600, color: t.text }}>Email notifications</span>
+          <span style={{ fontSize: 12, color: t.textMuted }}>(optional — push usually does the job)</span>
         </label>
         {prefs.notify_email ? (
-          <div style={{ marginTop: 10, marginLeft: 26, paddingLeft: 12, borderLeft: '2px solid #e5e7eb' }}>
-            <div style={{ fontSize: 13, color: '#374151', marginBottom: 6, fontWeight: 500 }}>
+          <div style={{ marginTop: 10, marginLeft: 26, paddingLeft: 12, borderLeft: `2px solid ${t.border}` }}>
+            <div style={{ fontSize: 13, color: t.textSubtle, marginBottom: 6, fontWeight: 500 }}>
               Send check-in emails to:
             </div>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 6 }}>
@@ -237,8 +238,8 @@ export default function CheckInPreferencesPanel({ onClose, embedded = false }) {
                 onChange={() => onEmailModeChange('login')}
                 disabled={saving}
               />
-              <span style={{ fontSize: 13 }}>
-                Use my login email — <strong>{prefs.auth_email || '(unknown)'}</strong>
+              <span style={{ fontSize: 13, color: t.textSubtle }}>
+                Use my login email — <strong style={{ color: t.text }}>{prefs.auth_email || '(unknown)'}</strong>
               </span>
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 6 }}>
@@ -250,7 +251,7 @@ export default function CheckInPreferencesPanel({ onClose, embedded = false }) {
                 onChange={() => onEmailModeChange('custom')}
                 disabled={saving}
               />
-              <span style={{ fontSize: 13 }}>Use a different email</span>
+              <span style={{ fontSize: 13, color: t.textSubtle }}>Use a different email</span>
             </label>
             {emailMode === 'custom' ? (
               <input
@@ -263,7 +264,9 @@ export default function CheckInPreferencesPanel({ onClose, embedded = false }) {
                 style={{
                   marginLeft: 22,
                   padding: '6px 10px',
-                  border: '1px solid #d1d5db',
+                  background: t.cardBgRaised,
+                  color: t.text,
+                  border: `1px solid ${t.border}`,
                   borderRadius: 6,
                   fontSize: 13,
                   width: '90%',
@@ -276,12 +279,12 @@ export default function CheckInPreferencesPanel({ onClose, embedded = false }) {
       </section>
 
       {error ? (
-        <div style={{ marginTop: 10, padding: 8, background: '#fef2f2', color: '#991b1b', borderRadius: 6, fontSize: 13 }}>
+        <div style={{ marginTop: 10, padding: 8, background: t.dangerBg, color: t.danger, border: `1px solid ${t.dangerBorder}`, borderRadius: 6, fontSize: 13 }}>
           {error}
         </div>
       ) : null}
       {okMsg ? (
-        <div style={{ marginTop: 10, padding: 8, background: '#ecfdf5', color: '#065f46', borderRadius: 6, fontSize: 13 }}>
+        <div style={{ marginTop: 10, padding: 8, background: t.successBg, color: t.success, border: `1px solid ${t.successBorder}`, borderRadius: 6, fontSize: 13 }}>
           {okMsg}
         </div>
       ) : null}

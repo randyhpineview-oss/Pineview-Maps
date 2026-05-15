@@ -12,6 +12,7 @@ import { api } from '../../lib/api';
 import { supabase } from '../../lib/supabaseClient';
 import { hashToHslColor, initials } from '../../lib/avatarColor';
 import { tier as computeTier, tierColors, tierLabel, formatCountdown } from '../../lib/compliance';
+import { t } from '../../lib/checkinTheme';
 
 const POLL_MS = 60_000;
 const REFETCH_DEBOUNCE_MS = 500;
@@ -88,14 +89,16 @@ export default function ActiveTab({ isAdmin = true }) {
     return () => { try { supabase.removeChannel(channel); } catch { /* ignore */ } };
   }, [scheduleRefetch]);
 
-  // 30 s local tick for tier transitions.
+  // 30 s local tick for tier transitions. Note we name the updater
+  // arg `prev` (not `t`) so it doesn't shadow the imported theme module.
   useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 30_000);
+    const id = setInterval(() => setTick((prev) => prev + 1), 30_000);
     return () => clearInterval(id);
   }, []);
 
   const handleEnd = async (s) => {
-    if (!window.confirm(`End shift for user #${s.user_id}?`)) return;
+    const who = s.user_name || users[s.user_id]?.name || `user #${s.user_id}`;
+    if (!window.confirm(`End shift for ${who}?`)) return;
     try { await api.adminEndShift(s.id); await fetchAll(); }
     catch (err) { setError(err.message || String(err)); }
   };
@@ -105,28 +108,33 @@ export default function ActiveTab({ isAdmin = true }) {
     catch (err) { setError(err.message || String(err)); }
   };
 
-  if (loading) return <div style={{ padding: 24, color: '#6b7280' }}>Loading active shifts…</div>;
-  if (error && shifts.length === 0) return <div style={{ padding: 24, color: '#dc2626' }}>{error}</div>;
+  if (loading) return <div style={{ padding: 24, color: t.textMuted }}>Loading active shifts…</div>;
+  if (error && shifts.length === 0) return <div style={{ padding: 24, color: t.danger }}>{error}</div>;
   if (shifts.length === 0) {
-    return <div style={{ padding: 24, textAlign: 'center', color: '#6b7280' }}>No active shifts right now.</div>;
+    return <div style={{ padding: 24, textAlign: 'center', color: t.textMuted }}>No active shifts right now.</div>;
   }
 
   return (
     <div className="active-tab-root">
-      {error ? <div style={{ padding: 8, background: '#fef2f2', color: '#991b1b', borderRadius: 6, fontSize: 13, marginBottom: 10 }}>{error}</div> : null}
+      {error ? <div style={{ padding: 8, background: t.dangerBg, color: t.danger, border: `1px solid ${t.dangerBorder}`, borderRadius: 6, fontSize: 13, marginBottom: 10 }}>{error}</div> : null}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12 }}>
         {shifts.map((s) => {
+          // Prefer the backend-embedded user_name (admin lists now ship
+          // it). Fall back to the legacy crew-candidates lookup, then
+          // finally to a numeric placeholder.
           const user = users[s.user_id];
-          const name = user?.name || `User #${s.user_id}`;
+          const name = s.user_name || user?.name || `User #${s.user_id}`;
+          const email = s.user_email || user?.email || '';
           const tier = computeTier(s, new Date());
           const colors = tierColors(tier);
-          const av = hashToHslColor(user?.email || name);
+          const av = hashToHslColor(email || name);
           const crewNames = (s.crew_user_ids || []).map((id) => users[id]?.name || `#${id}`);
           return (
             <div key={s.id} style={{
-              background: '#fff', borderRadius: 10, padding: 14,
+              background: t.cardBg, borderRadius: 10, padding: 14,
               border: `2px solid ${colors.accent}`,
-              boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
+              color: t.text,
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
                 <span style={{
@@ -135,39 +143,39 @@ export default function ActiveTab({ isAdmin = true }) {
                   background: av.bg, color: av.fg, fontWeight: 600, fontSize: 13,
                 }}>{initials(name)}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 15, color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
-                  <div style={{ fontSize: 11, color: '#6b7280' }}>Started {fmtTime(s.started_at)}</div>
+                  <div style={{ fontWeight: 600, fontSize: 15, color: t.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
+                  <div style={{ fontSize: 11, color: t.textMuted }}>Started {fmtTime(s.started_at)}</div>
                 </div>
                 <span style={{
                   background: colors.bg, color: colors.fg, padding: '3px 8px',
                   borderRadius: 999, fontSize: 11, fontWeight: 600,
                 }}>{tierLabel(tier)}</span>
               </div>
-              <div style={{ fontSize: 13, color: '#374151', marginBottom: 4 }}>
-                <strong>Mode:</strong> {s.mode === 'crew' ? `Crew of ${crewNames.length + 1}` : 'Alone'}
+              <div style={{ fontSize: 13, color: t.textSubtle, marginBottom: 4 }}>
+                <strong style={{ color: t.text }}>Mode:</strong> {s.mode === 'crew' ? `Crew of ${crewNames.length + 1}` : 'Alone'}
               </div>
               {crewNames.length ? (
-                <div style={{ fontSize: 13, color: '#374151', marginBottom: 4 }}>
-                  <strong>Crew:</strong> {crewNames.join(', ')}
+                <div style={{ fontSize: 13, color: t.textSubtle, marginBottom: 4 }}>
+                  <strong style={{ color: t.text }}>Crew:</strong> {crewNames.join(', ')}
                 </div>
               ) : null}
               {s.crew_freeform ? (
-                <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4, whiteSpace: 'pre-wrap' }}>+ {s.crew_freeform}</div>
+                <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 4, whiteSpace: 'pre-wrap' }}>+ {s.crew_freeform}</div>
               ) : null}
-              <div style={{ fontSize: 13, color: '#374151', marginBottom: 4 }}>
-                <strong>Last check-in:</strong> {fmtRelative(s.last_checkin_at)}
+              <div style={{ fontSize: 13, color: t.textSubtle, marginBottom: 4 }}>
+                <strong style={{ color: t.text }}>Last check-in:</strong> {fmtRelative(s.last_checkin_at)}
               </div>
-              <div style={{ fontSize: 13, color: '#374151' }}>
-                <strong>Next deadline:</strong> {fmtTime(s.next_deadline_at)} ({formatCountdown(s, new Date()) || '—'})
+              <div style={{ fontSize: 13, color: t.textSubtle }}>
+                <strong style={{ color: t.text }}>Next deadline:</strong> {fmtTime(s.next_deadline_at)} ({formatCountdown(s, new Date()) || '—'})
               </div>
               {isAdmin ? (
                 <div style={{ marginTop: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   <button type="button" onClick={() => handleForce(s)} style={{
-                    padding: '6px 10px', background: '#2563eb', color: '#fff', border: 'none',
+                    padding: '6px 10px', background: t.accentStrong, color: t.textOnAccent, border: 'none',
                     borderRadius: 6, fontSize: 12, cursor: 'pointer', fontWeight: 600,
                   }}>Force check-in</button>
                   <button type="button" onClick={() => handleEnd(s)} style={{
-                    padding: '6px 10px', background: '#dc2626', color: '#fff', border: 'none',
+                    padding: '6px 10px', background: t.dangerStrong, color: t.textOnAccent, border: 'none',
                     borderRadius: 6, fontSize: 12, cursor: 'pointer', fontWeight: 600,
                   }}>End shift</button>
                 </div>

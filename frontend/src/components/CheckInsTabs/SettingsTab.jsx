@@ -12,6 +12,14 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { api } from '../../lib/api';
+import {
+  t,
+  card,
+  inp,
+  btnPrimary,
+  btnGhost,
+  btnDangerSm,
+} from '../../lib/checkinTheme';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -128,24 +136,24 @@ export default function SettingsTab() {
     }
   };
 
-  if (loading) return <div style={{ padding: 24, color: '#6b7280' }}>Loading…</div>;
+  if (loading) return <div style={{ padding: 24, color: t.textMuted }}>Loading…</div>;
 
   return (
     <div style={{ maxWidth: 760 }}>
       {error ? (
-        <div style={{ padding: 10, background: '#fef2f2', color: '#991b1b', borderRadius: 6, fontSize: 13, marginBottom: 14 }}>{error}</div>
+        <div style={{ padding: 10, background: t.dangerBg, color: t.danger, border: `1px solid ${t.dangerBorder}`, borderRadius: 6, fontSize: 13, marginBottom: 14 }}>{error}</div>
       ) : null}
 
       {/* ─── Primary office email ─────────────────────────────────── */}
       <section style={card()}>
-        <h3 style={{ margin: '0 0 8px 0', fontSize: 15 }}>🏢 Primary office email <span style={{ fontSize: 12, color: '#16a34a', fontWeight: 500 }}>(always active)</span></h3>
-        <p style={{ margin: '0 0 10px 0', fontSize: 13, color: '#6b7280', lineHeight: 1.5 }}>
+        <h3 style={{ margin: '0 0 8px 0', fontSize: 15, color: t.text }}>🏢 Primary office email <span style={{ fontSize: 12, color: t.success, fontWeight: 500 }}>(always active)</span></h3>
+        <p style={{ margin: '0 0 10px 0', fontSize: 13, color: t.textMuted, lineHeight: 1.5 }}>
           This address receives every overdue alert and cannot be disabled or deleted — only edited.
         </p>
 
         {!primary && !primaryEditing ? (
-          <div style={{ background: '#fffbeb', border: '1px solid #fde68a', padding: 12, borderRadius: 8, marginBottom: 10 }}>
-            <div style={{ fontWeight: 600, color: '#92400e', fontSize: 13, marginBottom: 6 }}>
+          <div style={{ background: t.warningBg, border: `1px solid ${t.warningBorder}`, padding: 12, borderRadius: 8, marginBottom: 10 }}>
+            <div style={{ fontWeight: 600, color: t.warning, fontSize: 13, marginBottom: 6 }}>
               Set the office email that always gets overdue alerts:
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -169,10 +177,10 @@ export default function SettingsTab() {
         ) : null}
 
         {primary && !primaryEditing ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 10, background: '#ecfdf5', borderRadius: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 10, background: t.successBg, border: `1px solid ${t.successBorder}`, borderRadius: 6 }}>
             <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 600, fontSize: 14, color: '#065f46' }}>{primary.email}</div>
-              {primary.display_name ? <div style={{ fontSize: 12, color: '#047857' }}>{primary.display_name}</div> : null}
+              <div style={{ fontWeight: 600, fontSize: 14, color: t.success }}>{primary.email}</div>
+              {primary.display_name ? <div style={{ fontSize: 12, color: t.successBorder }}>{primary.display_name}</div> : null}
             </div>
             <button type="button" onClick={beginEditPrimary} style={btnGhost()}>Edit</button>
           </div>
@@ -203,19 +211,19 @@ export default function SettingsTab() {
 
       {/* ─── Additional recipients ────────────────────────────────── */}
       <section style={card()}>
-        <h3 style={{ margin: '0 0 8px 0', fontSize: 15 }}>Additional recipients</h3>
-        <p style={{ margin: '0 0 10px 0', fontSize: 13, color: '#6b7280', lineHeight: 1.5 }}>
+        <h3 style={{ margin: '0 0 8px 0', fontSize: 15, color: t.text }}>Additional recipients</h3>
+        <p style={{ margin: '0 0 10px 0', fontSize: 13, color: t.textMuted, lineHeight: 1.5 }}>
           Admins, dispatchers, anyone else who should get the alert email. Untick to silence temporarily without deleting.
         </p>
 
         {others.length === 0 ? (
-          <div style={{ padding: 12, background: '#f9fafb', borderRadius: 6, fontSize: 13, color: '#6b7280', textAlign: 'center' }}>
+          <div style={{ padding: 12, background: t.cardBgRaised, border: `1px solid ${t.borderSoft}`, borderRadius: 6, fontSize: 13, color: t.textMuted, textAlign: 'center' }}>
             No additional recipients yet.
           </div>
         ) : (
-          <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6, overflow: 'hidden' }}>
+          <div style={{ background: t.cardBgRaised, border: `1px solid ${t.border}`, borderRadius: 6, overflow: 'hidden' }}>
             {others.map((r) => (
-              <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderBottom: '1px solid #f3f4f6' }}>
+              <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderBottom: `1px solid ${t.divider}` }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, cursor: 'pointer', minWidth: 0 }}>
                   <input
                     type="checkbox"
@@ -224,8 +232,8 @@ export default function SettingsTab() {
                     disabled={busy}
                   />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 14, color: r.is_active ? '#111827' : '#9ca3af', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.email}</div>
-                    {r.display_name ? <div style={{ fontSize: 12, color: '#6b7280' }}>{r.display_name}</div> : null}
+                    <div style={{ fontSize: 14, color: r.is_active ? t.text : t.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.email}</div>
+                    {r.display_name ? <div style={{ fontSize: 12, color: t.textMuted }}>{r.display_name}</div> : null}
                   </div>
                 </label>
                 <button type="button" onClick={() => handleDelete(r)} disabled={busy} style={btnDangerSm()}>Remove</button>
@@ -263,13 +271,13 @@ export default function SettingsTab() {
 
       {/* ─── Cadence preview ──────────────────────────────────────── */}
       <section style={card()}>
-        <h3 style={{ margin: '0 0 8px 0', fontSize: 15 }}>Alert cadence (read-only)</h3>
-        <p style={{ margin: '0 0 10px 0', fontSize: 13, color: '#6b7280', lineHeight: 1.5 }}>
+        <h3 style={{ margin: '0 0 8px 0', fontSize: 15, color: t.text }}>Alert cadence (read-only)</h3>
+        <p style={{ margin: '0 0 10px 0', fontSize: 13, color: t.textMuted, lineHeight: 1.5 }}>
           When each kind of alert fires, measured from the worker's next check-in deadline.
         </p>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
-            <tr style={{ background: '#f9fafb' }}>
+            <tr style={{ background: t.cardBgRaised }}>
               <th style={th()}>When</th>
               <th style={th()}>Who</th>
               <th style={th()}>Channel</th>
@@ -284,7 +292,7 @@ export default function SettingsTab() {
               ['T+30 min',        'Office', 'Email (standard tone)'],
               ['T+60 min',        'Office', 'Email (🚨 URGENT tone)'],
             ].map(([when, who, ch]) => (
-              <tr key={when} style={{ borderTop: '1px solid #f3f4f6' }}>
+              <tr key={when} style={{ borderTop: `1px solid ${t.divider}` }}>
                 <td style={td()}>{when}</td>
                 <td style={td()}>{who}</td>
                 <td style={td()}>{ch}</td>
@@ -297,36 +305,9 @@ export default function SettingsTab() {
   );
 }
 
-function card() {
-  return { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: 16, marginBottom: 14 };
-}
-function inp(extra = {}) {
-  return {
-    padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6,
-    fontSize: 13, minWidth: 0, ...extra,
-  };
-}
-function btnPrimary() {
-  return {
-    padding: '6px 14px', background: '#2563eb', color: '#fff', border: 'none',
-    borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer',
-  };
-}
-function btnGhost() {
-  return {
-    padding: '6px 12px', background: '#f3f4f6', color: '#374151',
-    border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, cursor: 'pointer',
-  };
-}
-function btnDangerSm() {
-  return {
-    padding: '4px 10px', background: '#fef2f2', color: '#991b1b',
-    border: '1px solid #fecaca', borderRadius: 6, fontSize: 12, cursor: 'pointer',
-  };
-}
 function th() {
-  return { textAlign: 'left', padding: '6px 10px', fontWeight: 600, color: '#374151', fontSize: 12 };
+  return { textAlign: 'left', padding: '6px 10px', fontWeight: 600, color: t.textMuted, fontSize: 12 };
 }
 function td() {
-  return { padding: '6px 10px', color: '#374151' };
+  return { padding: '6px 10px', color: t.textSubtle };
 }

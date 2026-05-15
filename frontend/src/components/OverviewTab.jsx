@@ -26,6 +26,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { supabase } from '../lib/supabaseClient';
 import EmployeeStatusCard from './EmployeeStatusCard';
+import { t } from '../lib/checkinTheme';
 
 const POLL_MS = 60_000;
 const REFETCH_DEBOUNCE_MS = 500;
@@ -127,15 +128,15 @@ export default function OverviewTab({ isAdmin = false }) {
   };
 
   if (loading) {
-    return <div style={{ padding: 24, fontSize: 14, color: '#6b7280' }}>Loading…</div>;
+    return <div style={{ padding: 24, fontSize: 14, color: t.textMuted }}>Loading…</div>;
   }
   if (error && entries.length === 0) {
-    return <div style={{ padding: 24, fontSize: 14, color: '#dc2626' }}>{error}</div>;
+    return <div style={{ padding: 24, fontSize: 14, color: t.danger }}>{error}</div>;
   }
   if (visible.length === 0) {
     return (
-      <div style={{ padding: 24, textAlign: 'center', color: '#6b7280' }}>
-        <div style={{ fontSize: 16, marginBottom: 6 }}>No active shifts or truck assignments today.</div>
+      <div style={{ padding: 24, textAlign: 'center', color: t.textMuted }}>
+        <div style={{ fontSize: 16, marginBottom: 6, color: t.text }}>No active shifts or truck assignments today.</div>
         <div style={{ fontSize: 13 }}>Assign a truck in DeviceAdmin or wait for a worker to start their shift.</div>
       </div>
     );
@@ -144,7 +145,7 @@ export default function OverviewTab({ isAdmin = false }) {
   return (
     <div className="overview-tab-root">
       {error ? (
-        <div style={{ padding: 8, background: '#fef2f2', color: '#991b1b', borderRadius: 6, fontSize: 13, marginBottom: 10 }}>
+        <div style={{ padding: 8, background: t.dangerBg, color: t.danger, border: `1px solid ${t.dangerBorder}`, borderRadius: 6, fontSize: 13, marginBottom: 10 }}>
           {error}
         </div>
       ) : null}
@@ -164,11 +165,11 @@ export default function OverviewTab({ isAdmin = false }) {
       {selected ? (
         <div className="overview-detail-panel">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <h3 style={{ margin: 0, fontSize: 16 }}>{selected.display_name}</h3>
+            <h3 style={{ margin: 0, fontSize: 16, color: t.text }}>{selected.display_name}</h3>
             <button
               type="button"
               onClick={() => setSelected(null)}
-              style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 22, color: '#6b7280' }}
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 22, color: t.textMuted }}
               aria-label="Close detail"
             >
               ×
@@ -209,29 +210,29 @@ function DetailBody({ entry }) {
   const s = entry.shift;
   if (!s) {
     return (
-      <div style={{ fontSize: 14, color: '#374151', lineHeight: 1.6 }}>
+      <div style={{ fontSize: 14, color: t.textSubtle, lineHeight: 1.6 }}>
         <div>Role: {entry.role}</div>
-        {entry.truck_label ? <div>Assigned truck: <strong>{entry.truck_label}</strong></div> : null}
-        <div style={{ marginTop: 8, color: '#9ca3af' }}>No shift started today.</div>
+        {entry.truck_label ? <div>Assigned truck: <strong style={{ color: t.text }}>{entry.truck_label}</strong></div> : null}
+        <div style={{ marginTop: 8, color: t.textMuted }}>No shift started today.</div>
       </div>
     );
   }
   const fmt = (iso) => (iso ? new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—');
   const crewCount = Array.isArray(s.crew_user_ids) ? s.crew_user_ids.length : 0;
   return (
-    <div style={{ fontSize: 14, color: '#374151', lineHeight: 1.6 }}>
+    <div style={{ fontSize: 14, color: t.textSubtle, lineHeight: 1.6 }}>
       <div>Started: {fmt(s.started_at)}</div>
-      <div>Mode: <strong>{s.mode === 'crew' ? `Crew of ${crewCount + 1}` : 'Alone'}</strong></div>
+      <div>Mode: <strong style={{ color: t.text }}>{s.mode === 'crew' ? `Crew of ${crewCount + 1}` : 'Alone'}</strong></div>
       <div>Last check-in: {fmt(s.last_checkin_at)}</div>
       <div>Next deadline: {fmt(s.next_deadline_at)}</div>
       {s.crew_freeform ? (
         <div style={{ marginTop: 6 }}>
-          <span style={{ color: '#6b7280', fontSize: 12 }}>Extra crew (free-text):</span>
-          <div style={{ whiteSpace: 'pre-wrap', marginTop: 2, fontSize: 13 }}>{s.crew_freeform}</div>
+          <span style={{ color: t.textMuted, fontSize: 12 }}>Extra crew (free-text):</span>
+          <div style={{ whiteSpace: 'pre-wrap', marginTop: 2, fontSize: 13, color: t.text }}>{s.crew_freeform}</div>
         </div>
       ) : null}
       {entry.truck_label ? (
-        <div style={{ marginTop: 6 }}>Truck: <strong>{entry.truck_label}</strong></div>
+        <div style={{ marginTop: 6 }}>Truck: <strong style={{ color: t.text }}>{entry.truck_label}</strong></div>
       ) : null}
     </div>
   );

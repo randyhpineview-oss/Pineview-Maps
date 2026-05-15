@@ -1306,35 +1306,39 @@ button[title="Open keyboard shortcuts"],
 
 .overview-detail-panel {
   margin-top: 16px;
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: #0f172a;
+  border: 1px solid rgba(143, 182, 255, 0.16);
   border-radius: 10px;
   padding: 16px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  color: #e5eefb;
 }
 
 /* Employee status card. Border colour is set inline from the tier
-   accent so it reads at a glance which cards need attention. */
+   accent so it reads at a glance which cards need attention. Dark
+   surface to match the rest of the app -- earlier light cards made the
+   dashboard look like a different application. */
 .employee-status-card {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  background: #ffffff;
+  background: #0f172a;
   border-radius: 10px;
-  border: 2px solid #e5e7eb;
+  border: 2px solid rgba(143, 182, 255, 0.16);
   padding: 12px 10px;
   cursor: pointer;
   transition: transform 100ms ease, box-shadow 100ms ease;
   min-height: 130px;
   text-align: center;
+  color: #e5eefb;
 }
 .employee-status-card:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
 }
 .employee-status-card:focus-visible {
-  outline: 2px solid #2563eb;
+  outline: 2px solid #60a5fa;
   outline-offset: 2px;
 }
 .employee-status-card-avatar {
@@ -1351,7 +1355,7 @@ button[title="Open keyboard shortcuts"],
 .employee-status-card-name {
   font-size: 13px;
   font-weight: 600;
-  color: #111827;
+  color: #e5eefb;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1367,12 +1371,12 @@ button[title="Open keyboard shortcuts"],
 }
 .employee-status-card-subline {
   font-size: 11px;
-  color: #6b7280;
+  color: #9ab1d6;
   line-height: 1.3;
 }
 .employee-status-card-truck {
   font-size: 10px;
-  color: #9ca3af;
+  color: #c9d6ee;
   margin-top: 2px;
   max-width: 100%;
   overflow: hidden;
@@ -1383,11 +1387,13 @@ button[title="Open keyboard shortcuts"],
 /* Preferences panel (CheckInPreferencesPanel) when embedded inside
    MyCheckInsOverlay. embedded variant just drops the outer chrome
    so it sits cleanly inside a parent card. */
-.checkin-prefs-panel.embedded { padding: 0; }
+.checkin-prefs-panel.embedded { padding: 0; color: #e5eefb; }
 .checkin-prefs-panel:not(.embedded) {
   padding: 16px 18px;
-  background: #fff;
+  background: #0f172a;
+  color: #e5eefb;
+  border: 1px solid rgba(143, 182, 255, 0.16);
   border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   max-width: 460px;
 }
