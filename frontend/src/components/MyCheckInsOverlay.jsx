@@ -266,6 +266,11 @@ export default function MyCheckInsOverlay({
     setSubmitting(true);
     setError(null);
     try {
+      // If they previously marked today as off, end that shift first so
+      // the backend's "already active" guard doesn't 409.
+      if (shift && shift.mode === 'off' && !shift.ended_at) {
+        await api.endShift(shift.id);
+      }
       const created = await api.startShift({
         mode,
         crewUserIds: mode === 'crew' ? crewUserIds : [],
@@ -395,13 +400,15 @@ export default function MyCheckInsOverlay({
 
   // ─── Render ────────────────────────────────────────────────────────
   const headerLabel = shift
-    ? force && !isOnline
-      ? 'You\'re offline'
-      : force
-        ? tier === 'red' ? 'OVERDUE — please check in' : 'Check-in due'
-        : isCrewMember
-          ? `On ${leadName}'s crew`
-          : 'On shift'
+    ? shift.mode === 'off' && !shift.ended_at
+      ? 'Start your shift'
+      : force && !isOnline
+        ? 'You\'re offline'
+        : force
+          ? tier === 'red' ? 'OVERDUE — please check in' : 'Check-in due'
+          : isCrewMember
+            ? `On ${leadName}'s crew`
+            : 'On shift'
     : 'Start your shift';
 
   return (
@@ -433,8 +440,8 @@ export default function MyCheckInsOverlay({
           <div style={{ padding: '20px 0', fontSize: 14, color: '#9ab1d6' }}>Loading…</div>
         ) : null}
 
-        {/* ── No active shift -> Start form ──────────────────────────── */}
-        {!loading && !shift ? (
+        {/* ── No active shift OR active off shift -> Start form ──────── */}
+        {!loading && (!shift || (shift.mode === 'off' && !shift.ended_at)) ? (
           <>
             <p style={{ margin: '0 0 14px 0', fontSize: 14, color: '#c9d6ee', lineHeight: 1.5 }}>
               You don't have a shift today yet. Pick how you're working and we'll start your check-in clock.
@@ -498,30 +505,32 @@ export default function MyCheckInsOverlay({
                 {submitting ? 'Starting…' : 'Start shift'}
               </button>
             </div>
-            <div style={{ marginTop: 12, textAlign: 'center' }}>
-              <button
-                type="button"
-                onClick={async () => {
-                  if (!window.confirm('Mark today as your day off?')) return;
-                  setSubmitting(true);
-                  try {
-                    const offShift = await api.startShift({ mode: 'off', crewUserIds: [], crewFreeform: '', notes });
-                    if (onShiftChanged) onShiftChanged(offShift);
-                    if (onClose) onClose();
-                  } catch (err) {
-                    setError(err.message || String(err));
-                  } finally {
-                    setSubmitting(false);
-                  }
-                }}
-                style={{
-                  background: 'transparent', border: 'none', color: '#9ab1d6',
-                  fontSize: 12, cursor: 'pointer', textDecoration: 'underline',
-                }}
-              >
-                I'm off today (skip check-ins)
-              </button>
-            </div>
+            {!shift ? (
+              <div style={{ marginTop: 12, textAlign: 'center' }}>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!window.confirm('Mark today as your day off?')) return;
+                    setSubmitting(true);
+                    try {
+                      const offShift = await api.startShift({ mode: 'off', crewUserIds: [], crewFreeform: '', notes });
+                      if (onShiftChanged) onShiftChanged(offShift);
+                      if (onClose) onClose();
+                    } catch (err) {
+                      setError(err.message || String(err));
+                    } finally {
+                      setSubmitting(false);
+                    }
+                  }}
+                  style={{
+                    background: 'transparent', border: 'none', color: '#9ab1d6',
+                    fontSize: 12, cursor: 'pointer', textDecoration: 'underline',
+                  }}
+                >
+                  I'm off today (skip check-ins)
+                </button>
+              </div>
+            ) : null}
           </>
         ) : null}
 
@@ -727,8 +736,8 @@ export default function MyCheckInsOverlay({
           </>
         ) : null}
 
-        {/* ── Shift ended (or off) -> just summary + close ─────────── */}
-        {!loading && shift && (shift.ended_at || shift.mode === 'off') ? (
+        {/* ── Shift ended -> just summary + close ────────────────── */}
+        {!loading && shift && shift.ended_at ? (
           <div>
             <p style={{ fontSize: 14, color: '#c9d6ee', lineHeight: 1.5 }}>
               {shift.mode === 'off'
