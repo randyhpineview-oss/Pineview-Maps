@@ -1207,9 +1207,10 @@ button[title="Open keyboard shortcuts"],
    ───────────────────────────────────────────────────────────────── */
 
 /* Topbar countdown pill. Sits between the .topbar-title and
-   .topbar-right slots. Background + text colour are set inline by
+   .topbar-right slots. Border + text colour are set inline by
    the CheckinCountdown component from tierColors() so the pill flips
-   green->yellow->red without a class swap. */
+   green->yellow->red without a class swap. Background is transparent
+   so it blends into the topbar — only the outline changes colour. */
 .topbar-checkin-countdown {
   display: inline-flex;
   align-items: center;
@@ -1219,16 +1220,15 @@ button[title="Open keyboard shortcuts"],
   font-weight: 600;
   padding: 0.3rem 0.7rem;
   border-radius: 999px;
-  border: none;
   cursor: pointer;
   white-space: nowrap;
   flex-shrink: 0;
-  /* Soft shadow lifts the pill above the topbar gradient so the colour
+  /* Soft shadow lifts the pill above the topbar gradient so the outline
      reads clearly against the dark background. */
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
   /* Smooth tier transitions so the eye catches the change without
      being jarring. */
-  transition: background-color 200ms ease, color 200ms ease;
+  transition: border-color 200ms ease, color 200ms ease;
 }
 .topbar-checkin-countdown:hover { filter: brightness(1.08); }
 .topbar-checkin-countdown:focus-visible {

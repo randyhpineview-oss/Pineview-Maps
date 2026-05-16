@@ -68,7 +68,8 @@ export default function CheckinCountdown({ shift, onOpen }) {
       aria-label={`Open check-in. ${label} to next deadline.`}
       title="Open Check-ins"
       style={{
-        background: colors.bg,
+        background: 'transparent',
+        border: `1.5px solid ${colors.bg}`,
         color: colors.fg,
       }}
     >
