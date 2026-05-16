@@ -1216,9 +1216,9 @@ button[title="Open keyboard shortcuts"],
   align-items: center;
   gap: 0.25rem;
   font-variant-numeric: tabular-nums;
-  font-size: 0.8rem;
+  font-size: 0.72rem;
   font-weight: 600;
-  padding: 0.3rem 0.7rem;
+  padding: 0.22rem 0.55rem;
   border-radius: 999px;
   cursor: pointer;
   white-space: nowrap;
@@ -1235,15 +1235,6 @@ button[title="Open keyboard shortcuts"],
   outline: 2px solid #60a5fa;
   outline-offset: 2px;
 }
-/* Narrow viewport: shorter format (1h47m), smaller font. The
-   CheckinCountdown component drops the seconds in this mode. */
-@media (max-width: 360px) {
-  .topbar-checkin-countdown {
-    font-size: 0.72rem;
-    padding: 0.22rem 0.55rem;
-  }
-}
-
 /* Soft morning banner. Renders between the topbar and the main map
    area when the worker has no active shift and hasn't dismissed it
    today. Single row, wraps on narrow viewports. */
