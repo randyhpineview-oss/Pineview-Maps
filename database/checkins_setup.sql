@@ -293,3 +293,32 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 --    AND tablename IN ('user_profiles','shifts','checkins','shift_changes',
 --                      'office_alert_recipients')
 --  ORDER BY tablename;
+
+
+-- -- Supabase pg_cron scan schedule ----------------------------------------
+-- This replaces the GitHub Actions cron. Requires:
+--   1. Supabase Pro (or higher) for pg_cron + pg_net extensions
+--   2. pg_net enabled in Dashboard → Database → Extensions
+--   3. Replace YOUR_BACKEND_URL and YOUR_CHECKIN_SCAN_SECRET below
+--
+-- SELECT cron.schedule(
+--   'checkin-scan-every-5-min',
+--   '*/5 * * * *',
+--   $$
+--     SELECT net.http_post(
+--       url    := 'https://YOUR_BACKEND_URL/api/checkins/scan',
+--       body   := '{}',
+--       headers:= jsonb_build_object(
+--         'Authorization', 'Bearer YOUR_CHECKIN_SCAN_SECRET',
+--         'Content-Type',  'application/json'
+--       ),
+--       timeout_milliseconds := 30000
+--     );
+--   $$
+-- );
+--
+-- To verify the job is scheduled:
+--   SELECT * FROM cron.job WHERE jobname = 'checkin-scan-every-5-min';
+--
+-- To unschedule:
+--   SELECT cron.unschedule('checkin-scan-every-5-min');

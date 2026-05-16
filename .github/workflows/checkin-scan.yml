@@ -15,17 +15,8 @@ name: Check-in Scan
 # occasional missed minute -- or a doubled run -- does not double-send.
 
 on:
-  schedule:
-    # Every 5 minutes. GitHub Actions cron runs at most every 5 min
-    # (often slower during platform load). The scan endpoint logic
-    # uses minutes_overdue + 0.5 >= threshold so a delayed run still
-    # fires the right alerts when it lands -- a T+3 alert that lands
-    # at T+7 is fine because the scanner checks "is this shift >= the
-    # threshold AND no row in checkin_alerts yet". Net effect on the
-    # worker: notifications may be up to ~5 min later than the exact
-    # threshold (e.g. T+3 overdue alert may arrive at T+7). For lone-
-    # worker safety this is well within acceptable bounds.
-    - cron: '*/5 * * * *'
+  # Auto-schedule removed — scan is now driven by Supabase pg_cron.
+  # Keep workflow_dispatch as a manual fallback for emergencies.
   workflow_dispatch:
 
 # Only one scan in flight at a time. If a prior run is still going
