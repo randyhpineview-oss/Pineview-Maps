@@ -869,6 +869,10 @@ export default function FormsPanel({
                           okLabel: 'Delete',
                         }))) return;
                         await deleteLeaseSheetDraft(d.id);
+                        // Best-effort cleanup of the draft's Dropbox photo
+                        // backup folder. Never blocks the UI or surfaces
+                        // errors — local delete already succeeded.
+                        try { api.deleteDraftPhotos(d.id); } catch { /* non-fatal */ }
                         setDrafts((prev) => prev.filter((x) => x.id !== d.id));
                         onRequestDraftsRefresh?.();
                       }}

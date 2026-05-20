@@ -366,6 +366,36 @@ export const api = {
     if (!imageUrl) throw new Error('No image URL provided.');
     return request('/api/proxy-photo', { method: 'POST', body: { url: imageUrl } });
   },
+
+  /**
+   * Back up a single draft photo to Dropbox. Best-effort safety net against
+   * iOS Safari's IndexedDB quota wiping out the local base64 copy. Returns
+   * { url } — store this in the draft so the resume path can fetch the
+   * photo back via `proxyPhoto` if IDB lost it.
+   */
+  async uploadDraftPhoto(draftId, index, base64Data, mime) {
+    if (!draftId || base64Data == null) throw new Error('Missing draft photo payload');
+    return request('/api/lease-sheet-drafts/photo', {
+      method: 'POST',
+      body: { draft_id: String(draftId), index: Number(index), data: base64Data, type: mime || null },
+    });
+  },
+
+  /**
+   * Best-effort delete of a draft's Dropbox photo folder. Called when a
+   * worker deletes a local draft. Never throws — failure is non-fatal.
+   */
+  async deleteDraftPhotos(draftId) {
+    if (!draftId) return { ok: false };
+    try {
+      return await request('/api/lease-sheet-drafts/photo/delete', {
+        method: 'POST',
+        body: { draft_id: String(draftId) },
+      });
+    } catch {
+      return { ok: false };
+    }
+  },
   bulkResetPipelines(payload) {
     return request('/api/admin/pipelines/bulk-reset', { method: 'POST', body: payload });
   },

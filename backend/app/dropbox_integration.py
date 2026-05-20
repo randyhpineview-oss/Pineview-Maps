@@ -161,6 +161,24 @@ def upload_pdf_to_dropbox(pdf_content: bytes, file_path: str) -> Optional[str]:
         return None
 
 
+def build_draft_photo_path(user_id: str, draft_id: str, index: int) -> str:
+    """Path for a draft photo backup:
+    /Pineview Maps/Drafts/{user_id}/{draft_id}/{index}.jpg
+    """
+    return f"/Pineview Maps/Drafts/{_safe_name(user_id)}/{_safe_name(draft_id)}/{int(index)}.jpg"
+
+
+def delete_dropbox_path(file_path: str) -> bool:
+    """Best-effort delete of a Dropbox file or folder. Returns True on success."""
+    try:
+        dbx = get_dropbox_client()
+        dbx.files_delete_v2(file_path)
+        return True
+    except Exception as e:
+        logger.warning("delete_dropbox_path failed for %s: %s", file_path, type(e).__name__)
+        return False
+
+
 def upload_photo_to_dropbox(photo_content: bytes, file_path: str) -> Optional[str]:
     """Upload a photo to Dropbox at the given path and return the shared link."""
     try:

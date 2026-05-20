@@ -2417,6 +2417,59 @@ class PhotoProxyRequest(BaseModel):
     url: str
 
 
+class DraftPhotoUploadRequest(BaseModel):
+    draft_id: str
+    index: int
+    data: str       # base64 (no data: prefix)
+    type: str | None = None
+
+
+class DraftPhotoDeleteRequest(BaseModel):
+    draft_id: str
+
+
+@app.post("/api/lease-sheet-drafts/photo")
+def upload_draft_photo(
+    payload: DraftPhotoUploadRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Best-effort backup of a lease-sheet draft photo to Dropbox.
+
+    Used as a safety net against iOS Safari IndexedDB quota issues: workers'
+    photos sometimes don't survive a draft round-trip on iPhone, so we stash
+    a copy in Dropbox keyed by (user_id, draft_id, index). On draft restore
+    the frontend falls back to fetching from this URL via proxy-photo if the
+    local IndexedDB copy is gone. Folder is cleaned up when the draft is
+    deleted (see DELETE endpoint below)."""
+    import base64
+    from app.dropbox_integration import upload_photo_to_dropbox, build_draft_photo_path
+
+    try:
+        photo_bytes = base64.b64decode(payload.data)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid base64 data")
+
+    path = build_draft_photo_path(str(current_user.id), payload.draft_id, payload.index)
+    url = upload_photo_to_dropbox(photo_bytes, path)
+    if not url:
+        raise HTTPException(status_code=502, detail="Dropbox upload failed")
+    return {"url": url}
+
+
+@app.post("/api/lease-sheet-drafts/photo/delete")
+def delete_draft_photos(
+    payload: DraftPhotoDeleteRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Best-effort cleanup of a draft's Dropbox photo folder. Called when a
+    worker deletes a draft locally. Failure is non-fatal."""
+    from app.dropbox_integration import delete_dropbox_path, _safe_name
+
+    folder = f"/Pineview Maps/Drafts/{_safe_name(str(current_user.id))}/{_safe_name(payload.draft_id)}"
+    ok = delete_dropbox_path(folder)
+    return {"ok": ok}
+
+
 @app.post("/api/proxy-photo")
 async def proxy_photo(
     payload: PhotoProxyRequest,

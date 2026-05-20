@@ -195,28 +195,53 @@ export default function HerbicideLeaseSheet({
       initializedRef.current = true;
       if (draft.form) setForm(draft.form);
       if (Array.isArray(draft.photos) && draft.photos.length > 0) {
-        // Normalize each photo so it always has a renderable `preview` and
-        // an `existingBase64` blob for the eventual submit. Older drafts (or
-        // partially-serialized photos) may be missing one or the other; this
-        // restores both fields from whichever the saved object happens to
-        // carry. Without this, photos saved before the data-URL preview was
-        // standardized would show blank slots on resume.
-        const restored = draft.photos
-          .filter((p) => p && (p.preview || p.existingBase64?.data || p.data))
-          .map((p) => {
-            const b64 = p.existingBase64?.data || p.data || null;
-            const mime = p.existingBase64?.type || p.type || 'image/jpeg';
-            const dataUrl = b64 ? `data:${mime};base64,${b64}` : null;
-            return {
-              file: null,
-              preview: p.preview && p.preview.startsWith('data:')
-                ? p.preview
-                : (dataUrl || p.preview || null),
-              existingBase64: b64 ? { data: b64, type: mime } : (p.existingBase64 || null),
-            };
-          })
-          .filter((p) => p.preview); // drop anything we still can't render
-        setPhotos(restored);
+        // Normalize photos defensively: a draft may carry any combination
+        // of {existingBase64, preview data-URL, top-level data, Dropbox
+        // backup url}. We try local bytes first, then fall back to the
+        // Dropbox URL via the photo proxy. Last-resort: drop the slot.
+        const norm = draft.photos.map((p) => {
+          if (!p) return null;
+          const b64 = p.existingBase64?.data || p.data || null;
+          const mime = p.existingBase64?.type || p.type || 'image/jpeg';
+          const localDataUrl = b64
+            ? `data:${mime};base64,${b64}`
+            : (typeof p.preview === 'string' && p.preview.startsWith('data:') ? p.preview : null);
+          return {
+            file: null,
+            preview: localDataUrl, // may be null — Dropbox fallback below
+            existingBase64: b64 ? { data: b64, type: mime } : null,
+            url: p.url || null,
+          };
+        }).filter(Boolean);
+        setPhotos(norm.filter((p) => p.preview || p.url));
+
+        // Async Dropbox fallback for any slot missing local bytes. Runs in
+        // the background so the form opens immediately; photos pop in once
+        // proxied. Failures are silent (slot stays blank, user can re-add).
+        const needsFetch = norm
+          .map((p, i) => ({ p, i }))
+          .filter(({ p }) => !p.preview && p.url);
+        if (needsFetch.length > 0) {
+          (async () => {
+            for (const { p, i } of needsFetch) {
+              try {
+                const { data, type } = await api.proxyPhoto(p.url);
+                const dataUrl = `data:${type};base64,${data}`;
+                setPhotos((prev) => {
+                  const next = [...prev];
+                  if (next[i]) {
+                    next[i] = {
+                      ...next[i],
+                      preview: dataUrl,
+                      existingBase64: { data, type },
+                    };
+                  }
+                  return next;
+                });
+              } catch { /* leave slot empty */ }
+            }
+          })();
+        }
       }
       if (draft.ticketNumber) setTicketNumber(draft.ticketNumber);
       if (draft.id) setDraftId(draft.id);
@@ -784,9 +809,13 @@ export default function HerbicideLeaseSheet({
 
       await onSubmit(payload);
 
-      // Delete local draft on successful submit
+      // Delete local draft on successful submit, plus best-effort cleanup
+      // of the Dropbox photo backup folder so abandoned backups don't pile
+      // up. Failure is non-fatal — the lease sheet has already been
+      // submitted and queued.
       if (draftId) {
         try { await deleteLeaseSheetDraft(draftId); } catch { /* ignore */ }
+        try { api.deleteDraftPhotos(draftId); } catch { /* ignore */ }
       }
     } catch (err) {
       await alert({
@@ -798,51 +827,70 @@ export default function HerbicideLeaseSheet({
     }
   };
 
-  // Save current form state as a device-local draft
+  // Save current form state as a device-local draft. Photos are stored in
+  // IndexedDB as compact {data, type, url} blobs (one copy of the bytes —
+  // we don't double-store a data-URL `preview`, which previously bloated
+  // iOS Safari's IDB quota and caused photos to silently drop on resume).
+  // We also push each photo to Dropbox (best-effort) as a safety net: if
+  // IDB ever loses the local copy, the resume path falls back to fetching
+  // the Dropbox URL via the photo proxy.
   const handleSaveDraft = async () => {
     setIsSavingDraft(true);
     try {
-      // Convert any file-based photos to base64 so they survive a reload
-      const photoPromises = photos.filter(p => p && (p.file || (p.existingBase64?.data) || p.preview)).map(async (p) => {
-        // Already serialized (has base64 blob) — re-emit with a guaranteed
-        // data-URL `preview` so the resume path always has something to
-        // render, even if the prior `preview` was a stale blob URL.
+      // Normalize each photo to {data, type, url?} — one copy of the bytes.
+      const photoPromises = photos.filter(p => p && (p.file || p.existingBase64?.data || (typeof p.preview === 'string' && p.preview.startsWith('data:')) || p.url)).map(async (p) => {
         if (p.existingBase64?.data) {
           return {
-            file: null,
-            preview: `data:${p.existingBase64.type || 'image/jpeg'};base64,${p.existingBase64.data}`,
-            existingBase64: p.existingBase64,
+            data: p.existingBase64.data,
+            type: p.existingBase64.type || 'image/jpeg',
+            url: p.url || null,
           };
         }
-        if (p.preview?.startsWith('data:')) {
+        if (typeof p.preview === 'string' && p.preview.startsWith('data:')) {
           const [meta, b64] = p.preview.split(',');
           const mime = (meta.match(/data:(.*?);base64/) || [])[1] || 'image/jpeg';
-          return {
-            file: null,
-            preview: p.preview,
-            existingBase64: { data: b64, type: mime },
-          };
+          return { data: b64, type: mime, url: p.url || null };
         }
         if (p.file) {
           return new Promise((resolve) => {
             const reader = new FileReader();
             reader.onloadend = () => resolve({
-              file: null,
-              preview: reader.result,
-              existingBase64: {
-                data: reader.result.split(',')[1],
-                type: p.file.type || 'image/jpeg',
-              },
+              data: reader.result.split(',')[1],
+              type: p.file.type || 'image/jpeg',
+              url: p.url || null,
             });
             reader.readAsDataURL(p.file);
           });
         }
+        // Last-resort: photo lives only on Dropbox (no local bytes).
+        if (p.url) return { data: null, type: 'image/jpeg', url: p.url };
         return null;
       });
       const serializablePhotos = (await Promise.all(photoPromises)).filter(Boolean);
 
+      // Mint the draft id up-front so the Dropbox path can use it. We pass
+      // it back into saveLeaseSheetDraft so the IDB row keys match.
+      const ensuredDraftId = draftId || (
+        (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+      );
+
+      // Best-effort Dropbox backup. Don't await failures — draft must save
+      // even when offline. Successful uploads carry a `url` back into the
+      // saved photo so the resume path can recover if IDB drops the bytes.
+      if (window.navigator.onLine) {
+        try {
+          await Promise.all(serializablePhotos.map(async (p, i) => {
+            if (p.url || !p.data) return; // already backed up or nothing to upload
+            try {
+              const { url } = await api.uploadDraftPhoto(ensuredDraftId, i, p.data, p.type);
+              if (url) p.url = url;
+            } catch { /* non-fatal */ }
+          }));
+        } catch { /* non-fatal */ }
+      }
+
       const saved = await saveLeaseSheetDraft({
-        id: draftId || undefined,
+        id: ensuredDraftId,
         site_id: site?.id || null,
         pipeline_id: pipeline?.id || null,
         site_status: limitedRequiredFields ? 'issue_not_inspected' : (requireComments ? 'in_progress' : 'inspected'),
