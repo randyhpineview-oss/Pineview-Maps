@@ -194,7 +194,30 @@ export default function HerbicideLeaseSheet({
     if (draft && !initializedRef.current) {
       initializedRef.current = true;
       if (draft.form) setForm(draft.form);
-      if (draft.photos) setPhotos(draft.photos);
+      if (Array.isArray(draft.photos) && draft.photos.length > 0) {
+        // Normalize each photo so it always has a renderable `preview` and
+        // an `existingBase64` blob for the eventual submit. Older drafts (or
+        // partially-serialized photos) may be missing one or the other; this
+        // restores both fields from whichever the saved object happens to
+        // carry. Without this, photos saved before the data-URL preview was
+        // standardized would show blank slots on resume.
+        const restored = draft.photos
+          .filter((p) => p && (p.preview || p.existingBase64?.data || p.data))
+          .map((p) => {
+            const b64 = p.existingBase64?.data || p.data || null;
+            const mime = p.existingBase64?.type || p.type || 'image/jpeg';
+            const dataUrl = b64 ? `data:${mime};base64,${b64}` : null;
+            return {
+              file: null,
+              preview: p.preview && p.preview.startsWith('data:')
+                ? p.preview
+                : (dataUrl || p.preview || null),
+              existingBase64: b64 ? { data: b64, type: mime } : (p.existingBase64 || null),
+            };
+          })
+          .filter((p) => p.preview); // drop anything we still can't render
+        setPhotos(restored);
+      }
       if (draft.ticketNumber) setTicketNumber(draft.ticketNumber);
       if (draft.id) setDraftId(draft.id);
       return;
@@ -781,8 +804,25 @@ export default function HerbicideLeaseSheet({
     try {
       // Convert any file-based photos to base64 so they survive a reload
       const photoPromises = photos.filter(p => p && (p.file || (p.existingBase64?.data) || p.preview)).map(async (p) => {
-        if (p.existingBase64) return p;
-        if (p.preview?.startsWith('data:')) return p;
+        // Already serialized (has base64 blob) — re-emit with a guaranteed
+        // data-URL `preview` so the resume path always has something to
+        // render, even if the prior `preview` was a stale blob URL.
+        if (p.existingBase64?.data) {
+          return {
+            file: null,
+            preview: `data:${p.existingBase64.type || 'image/jpeg'};base64,${p.existingBase64.data}`,
+            existingBase64: p.existingBase64,
+          };
+        }
+        if (p.preview?.startsWith('data:')) {
+          const [meta, b64] = p.preview.split(',');
+          const mime = (meta.match(/data:(.*?);base64/) || [])[1] || 'image/jpeg';
+          return {
+            file: null,
+            preview: p.preview,
+            existingBase64: { data: b64, type: mime },
+          };
+        }
         if (p.file) {
           return new Promise((resolve) => {
             const reader = new FileReader();
@@ -797,9 +837,9 @@ export default function HerbicideLeaseSheet({
             reader.readAsDataURL(p.file);
           });
         }
-        return p;
+        return null;
       });
-      const serializablePhotos = await Promise.all(photoPromises);
+      const serializablePhotos = (await Promise.all(photoPromises)).filter(Boolean);
 
       const saved = await saveLeaseSheetDraft({
         id: draftId || undefined,
