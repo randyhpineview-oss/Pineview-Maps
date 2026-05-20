@@ -1784,6 +1784,47 @@ export default function App() {
     };
   }, []);
 
+  // ── End-of-day auto sign-out for worker accounts ───────────────────────
+  // Workers must sign in fresh each calendar day so they're never operating
+  // under another teammate's session left over from a shared device. We
+  // record the local date on every authenticated render and sign the worker
+  // out as soon as the local calendar day rolls over (or if a stale session
+  // from a previous day is detected on app load). Admin/office accounts are
+  // exempt — they routinely keep long-lived sessions on office machines.
+  useEffect(() => {
+    if (!user) return;
+    if (userRole !== 'worker') return;
+    const KEY = 'pv:workerSignInDay';
+    const today = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD, local tz
+    let stored = null;
+    try { stored = localStorage.getItem(KEY); } catch { /* ignore */ }
+    if (!stored) {
+      try { localStorage.setItem(KEY, today); } catch { /* ignore */ }
+      stored = today;
+    }
+    const checkRollover = () => {
+      const now = new Date().toLocaleDateString('en-CA');
+      let last = today;
+      try { last = localStorage.getItem(KEY) || today; } catch { /* ignore */ }
+      if (last && last !== now) {
+        try { localStorage.removeItem(KEY); } catch { /* ignore */ }
+        signOut().catch(() => { /* non-fatal */ });
+      }
+    };
+    if (stored !== today) {
+      try { localStorage.removeItem(KEY); } catch { /* ignore */ }
+      signOut().catch(() => { /* non-fatal */ });
+      return;
+    }
+    const interval = window.setInterval(checkRollover, 60_000);
+    const onVisible = () => { if (!document.hidden) checkRollover(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [user, userRole]);
+
   useEffect(() => {
     void refreshQueueCount();
     void refreshUploadQueue().then(() => {
@@ -3956,6 +3997,8 @@ export default function App() {
     setStandaloneLeaseSheet(false);
     setIsStandaloneMapPicking(false);
     setStandalonePickedLocation(null);
+    setResumingDraft(null);
+    setDraftsRefreshToken((x) => x + 1);
     setMessage('External lease sheet queued for upload.');
     processUploadQueue();
   }
@@ -3983,7 +4026,7 @@ export default function App() {
             standalone={true}
             isOpen={true}
             onSubmit={handleExternalLeaseSheetSubmit}
-            onCancel={handleStandaloneLeaseSheetCancel}
+            onCancel={() => { handleStandaloneLeaseSheetCancel(); setResumingDraft(null); }}
             cachedLookups={cachedLookups}
             clients={clients}
             areas={areas}
@@ -3992,6 +4035,8 @@ export default function App() {
             onRequestMapPick={handleRequestStandaloneMapPick}
             onCancelMapPick={handleCancelStandaloneMapPick}
             pickedLocation={standalonePickedLocation}
+            draft={resumingDraft}
+            onDraftSaved={() => { setDraftsRefreshToken((x) => x + 1); }}
           />
         </Suspense>
       </div>
@@ -5933,7 +5978,9 @@ export default function App() {
                 // When draft is null, the user needs to pick a site from the Map tab first.
                 if (draft) {
                   setResumingDraft(draft);
-                  // If draft has a site_id, try to focus it; otherwise open a generic overlay
+                  // If draft has a site_id, focus that site; otherwise open the
+                  // standalone (external) lease-sheet overlay so workers can
+                  // resume drafts that were started from "New lease sheet".
                   if (draft.site_id) {
                     const foundSite = sites.find((s) => s.id === draft.site_id);
                     if (foundSite) {
@@ -5950,7 +5997,9 @@ export default function App() {
                     );
                   } else {
                     setInspectionSite(null);
+                    setInspectionPipeline(null);
                     setInspectionSiteStatus('inspected');
+                    setStandaloneLeaseSheet(true);
                   }
                 } else {
                   setMessage('Select a site from the Map tab first, then tap "Mark as sprayed".');
