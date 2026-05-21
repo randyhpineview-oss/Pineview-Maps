@@ -951,6 +951,108 @@ def list_possible_duplicates(
     ]
 
 
+@router.get(
+    "/{primary_id}/merge-search",
+    response_model=list[TMDuplicateCandidateRead],
+    dependencies=[Depends(require_roles(RoleEnum.admin, RoleEnum.office))],
+)
+def search_merge_candidates(
+    primary_id: int,
+    q: Optional[str] = Query(None, description="Free-text query against ticket_number, client, area, created_by_name"),
+    limit: int = Query(20, ge=1, le=50),
+    db: Session = Depends(get_db),
+):
+    """Manual ticket picker for the "Merge with another ticket…" flow.
+
+    Complements ``list_possible_duplicates`` for the case where the auto
+    matcher misses (different worker on the same job, client/area string
+    drift, off-by-one date, etc.). Office/admin only.
+
+    Scope (always applied):
+      * not the primary ticket itself
+      * not soft-deleted
+      * not approved — the merge endpoint refuses approved tickets with
+        409 anyway, so excluding them here keeps the picker from offering
+        choices that would just error out on click
+
+    Free-text ``q`` (case-insensitive substring):
+      * matches against ``ticket_number``, ``client``, ``area``, OR
+        ``created_by_name``
+      * an empty / whitespace-only ``q`` returns the most recent
+        eligible tickets (default sort), which is also useful as the
+        "blank state" of the picker
+
+    Returns the same ``TMDuplicateCandidateRead`` shape as
+    ``/possible-duplicates`` so the frontend can pipe a click straight
+    into the existing merge handler with no extra plumbing.
+    """
+    # Verify primary exists + is in a mergeable state. This keeps the
+    # picker from offering merges into a soft-deleted/approved ticket.
+    primary = (
+        db.query(TimeMaterialsTicket)
+        .filter(TimeMaterialsTicket.id == primary_id)
+        .first()
+    )
+    if not primary or primary.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Primary ticket not found",
+        )
+    if primary.status == TMTicketStatus.approved:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Cannot merge into an approved ticket. "
+                "Unapprove this ticket first, then retry the search."
+            ),
+        )
+
+    query = (
+        db.query(TimeMaterialsTicket)
+        .options(joinedload(TimeMaterialsTicket.rows))
+        .filter(
+            TimeMaterialsTicket.id != primary_id,
+            TimeMaterialsTicket.deleted_at.is_(None),
+            TimeMaterialsTicket.status != TMTicketStatus.approved,
+        )
+    )
+
+    needle = (q or "").strip()
+    if needle:
+        # `%term%` substring match. Using `ilike` rather than `like` so
+        # the worker doesn't have to remember whether they capitalised
+        # the client name. The four columns OR'd together so a single
+        # input box covers the most common ways office identifies a
+        # ticket (number, client, area, who filed it).
+        pattern = f"%{needle}%"
+        query = query.filter(
+            or_(
+                TimeMaterialsTicket.ticket_number.ilike(pattern),
+                TimeMaterialsTicket.client.ilike(pattern),
+                TimeMaterialsTicket.area.ilike(pattern),
+                TimeMaterialsTicket.created_by_name.ilike(pattern),
+            )
+        )
+
+    candidates = (
+        query.order_by(TimeMaterialsTicket.created_at.desc()).limit(limit).all()
+    )
+    return [
+        TMDuplicateCandidateRead(
+            id=c.id,
+            ticket_number=c.ticket_number,
+            spray_date=c.spray_date,
+            client=c.client,
+            area=c.area,
+            created_by_name=c.created_by_name,
+            description_of_work=c.description_of_work,
+            status=c.status,
+            rows_count=len(c.rows or []),
+        )
+        for c in candidates
+    ]
+
+
 @router.post(
     "/{primary_id}/merge",
     response_model=TimeMaterialsTicketRead,

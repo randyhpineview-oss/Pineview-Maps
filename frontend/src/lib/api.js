@@ -586,6 +586,20 @@ export const api = {
   listTMDuplicateCandidates(ticketId) {
     return request(`/api/time-materials/${ticketId}/possible-duplicates`);
   },
+  // Manual merge picker: free-text search across ticket_number /
+  // client / area / created_by_name for the case where the auto-match
+  // misses (different worker, client/area string drift, off-by-one
+  // date, etc.). Office/admin only. `q` may be empty/whitespace —
+  // backend then returns the most recent eligible tickets so the
+  // picker has a usable blank state.
+  searchTMMergeCandidates(ticketId, { q = '', limit = 20 } = {}) {
+    const params = new URLSearchParams();
+    const needle = (q || '').trim();
+    if (needle) params.set('q', needle);
+    if (limit != null) params.set('limit', String(limit));
+    const qs = params.toString();
+    return request(`/api/time-materials/${ticketId}/merge-search${qs ? `?${qs}` : ''}`);
+  },
   // Admin merge tool: fold `sourceTicketId` into `primaryTicketId`
   // (re-points spray-record links + Sites Treated rows, sums office_data
   // qtys per label, soft-deletes the source). Returns the merged

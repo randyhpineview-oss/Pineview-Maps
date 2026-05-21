@@ -94,6 +94,15 @@ export default function TMTicketDetailSheet({
   // soft-deleted rows + this ticket. Empty = no banner shown.
   const [duplicateCandidates, setDuplicateCandidates] = useState([]);
   const [isMerging, setIsMerging] = useState(false);
+  // Manual merge picker (admin/office only). Opens when admin clicks
+  // the "Merge with another ticket…" link in the header. Independent
+  // of the auto-duplicate banner — admin can search ANY mergeable
+  // ticket here, not just same-(date/client/area/worker) ones. State
+  // is local to the sheet because the modal is rendered inline.
+  const [isMergePickerOpen, setIsMergePickerOpen] = useState(false);
+  const [mergeSearchQuery, setMergeSearchQuery] = useState('');
+  const [mergeSearchResults, setMergeSearchResults] = useState([]);
+  const [mergeSearchLoading, setMergeSearchLoading] = useState(false);
 
   // Load ticket — cache-first so the detail sheet opens offline (Fix #5).
   // Strategy:
@@ -248,6 +257,66 @@ export default function TMTicketDetailSheet({
     } finally {
       setIsMerging(false);
     }
+  };
+
+  // ── Manual merge picker ─────────────────────────────────────────
+  // Debounced search effect: refetches whenever the modal is open and
+  // the query changes. 250ms is enough to feel responsive without
+  // hammering the API on every keystroke. Skips entirely when closed.
+  useEffect(() => {
+    if (!isMergePickerOpen) return undefined;
+    if (!ticket?.id) return undefined;
+    let cancelled = false;
+    setMergeSearchLoading(true);
+    const handle = setTimeout(async () => {
+      try {
+        const results = await api.searchTMMergeCandidates(ticket.id, {
+          q: mergeSearchQuery,
+          limit: 30,
+        });
+        if (cancelled) return;
+        setMergeSearchResults(Array.isArray(results) ? results : []);
+      } catch (e) {
+        if (cancelled) return;
+        setMergeSearchResults([]);
+        // Surface auth/permission errors immediately rather than
+        // silently showing "no results" — the latter would be very
+        // confusing if the search just got 403'd by an expired session.
+        if (e?.status === 403 || e?.status === 409) {
+          await alert({
+            title: 'Cannot search',
+            message: String(e.message || 'Permission denied'),
+            severity: 'danger',
+          });
+          setIsMergePickerOpen(false);
+        }
+      } finally {
+        if (!cancelled) setMergeSearchLoading(false);
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [isMergePickerOpen, mergeSearchQuery, ticket?.id, alert]);
+
+  const openMergePicker = () => {
+    setMergeSearchQuery('');
+    setMergeSearchResults([]);
+    setIsMergePickerOpen(true);
+  };
+  const closeMergePicker = () => {
+    setIsMergePickerOpen(false);
+    setMergeSearchQuery('');
+    setMergeSearchResults([]);
+  };
+
+  // Wrapper around the shared merge handler that also closes the
+  // picker on success. We close BEFORE awaiting so the modal animation
+  // doesn't hold up the spinner / state refresh underneath.
+  const handleMergeFromPicker = async (candidate) => {
+    closeMergePicker();
+    await handleMergeFromCandidate(candidate);
   };
 
   // Rows including any pending edits and new manual rows — used both in the
@@ -864,6 +933,171 @@ export default function TMTicketDetailSheet({
               </button>
             </div>
           ))}
+          {/* Manual-picker fallback inside the banner: when the auto
+              suggestions don't include the ticket admin actually wants
+              to fold in (e.g. it was filed by a different worker).
+              Keeps the manual option visible alongside the auto ones. */}
+          <div style={{
+            paddingTop: '10px',
+            borderTop: '1px solid rgba(251,191,36,0.18)',
+            fontSize: '0.78rem', color: '#fde68a',
+          }}>
+            None of these the right one?{' '}
+            <button
+              type="button"
+              onClick={openMergePicker}
+              style={{
+                background: 'none', border: 'none', padding: 0,
+                color: '#60a5fa', textDecoration: 'underline',
+                cursor: 'pointer', fontSize: 'inherit', fontWeight: 500,
+              }}
+            >
+              Merge with a different ticket…
+            </button>
+          </div>
+        </div>
+      ) : canOfficeEdit ? (
+        // No auto-detected duplicate, but office/admin still gets a
+        // discreet link to the manual picker so they're never blocked
+        // when the auto-matcher misses (different worker, off-by-one
+        // date, client name typo, etc.).
+        <div style={{
+          marginBottom: '14px', fontSize: '0.78rem',
+          color: '#9ca3af', textAlign: 'right',
+        }}>
+          <button
+            type="button"
+            onClick={openMergePicker}
+            style={{
+              background: 'none', border: 'none', padding: 0,
+              color: '#60a5fa', textDecoration: 'underline',
+              cursor: 'pointer', fontSize: 'inherit', fontWeight: 500,
+            }}
+          >
+            Merge with another ticket…
+          </button>
+        </div>
+      ) : null}
+
+      {/* Merge-picker modal: free-text search across mergeable tickets.
+          Lives inline (not a separate component file) because it's
+          tightly coupled to the parent's merge handler + ticket state. */}
+      {isMergePickerOpen ? (
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget) closeMergePicker(); }}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 1000,
+            background: 'rgba(0,0,0,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '20px',
+          }}
+        >
+          <div style={{
+            width: '100%', maxWidth: '560px', maxHeight: '80vh',
+            background: '#0f172a', border: '1px solid #374151',
+            borderRadius: '10px', display: 'flex', flexDirection: 'column',
+            overflow: 'hidden',
+          }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '14px 18px', borderBottom: '1px solid #374151',
+            }}>
+              <div>
+                <div style={{ color: '#f9fafb', fontWeight: 600, fontSize: '1rem' }}>
+                  Merge into {ticket.ticket_number}
+                </div>
+                <div style={{ color: '#9ca3af', fontSize: '0.78rem', marginTop: 2 }}>
+                  Pick the ticket to fold into this one. Source will be soft-deleted.
+                </div>
+              </div>
+              <button
+                onClick={closeMergePicker}
+                style={{
+                  background: 'none', border: 'none', color: '#9ca3af',
+                  fontSize: '1.5rem', cursor: 'pointer', lineHeight: 1,
+                }}
+                aria-label="Close"
+              >×</button>
+            </div>
+            <div style={{ padding: '12px 18px' }}>
+              <input
+                autoFocus
+                type="text"
+                value={mergeSearchQuery}
+                onChange={(e) => setMergeSearchQuery(e.target.value)}
+                placeholder="Search ticket #, client, area, or worker name…"
+                style={{
+                  width: '100%', boxSizing: 'border-box',
+                  padding: '9px 12px', borderRadius: '6px',
+                  border: '1px solid #374151', backgroundColor: '#111827',
+                  color: '#f9fafb', fontSize: '0.9rem',
+                }}
+              />
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '0 18px 14px' }}>
+              {mergeSearchLoading ? (
+                <div style={{ color: '#9ca3af', fontSize: '0.85rem', padding: '8px 0' }}>
+                  Searching…
+                </div>
+              ) : mergeSearchResults.length === 0 ? (
+                <div style={{ color: '#9ca3af', fontSize: '0.85rem', padding: '8px 0' }}>
+                  {mergeSearchQuery.trim()
+                    ? `No mergeable tickets match "${mergeSearchQuery.trim()}".`
+                    : 'No mergeable tickets found.'}
+                </div>
+              ) : (
+                mergeSearchResults.map((c) => (
+                  <div
+                    key={c.id}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '10px',
+                      padding: '10px 0', borderTop: '1px solid #1f2937',
+                      fontSize: '0.85rem',
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ color: '#f9fafb', fontWeight: 500 }}>
+                        {c.ticket_number}
+                        <span style={{
+                          marginLeft: 8, fontSize: 11, padding: '1px 8px',
+                          borderRadius: 999, background: '#1f2937', color: '#9ca3af',
+                        }}>
+                          {c.status === 'submitted' ? 'pending' : c.status}
+                        </span>
+                      </div>
+                      <div style={{ color: '#9ca3af', fontSize: '0.78rem', marginTop: 2 }}>
+                        {c.spray_date} · {c.client || '—'} / {c.area || '—'}
+                        {c.created_by_name ? ` · ${c.created_by_name}` : ''}
+                      </div>
+                      <div style={{ color: '#6b7280', fontSize: '0.75rem', marginTop: 2 }}>
+                        {c.rows_count} site{c.rows_count === 1 ? '' : 's'}
+                        {c.description_of_work ? ` · ${c.description_of_work.slice(0, 80)}${c.description_of_work.length > 80 ? '…' : ''}` : ''}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleMergeFromPicker(c)}
+                      disabled={isMerging}
+                      style={{
+                        padding: '6px 12px',
+                        background: '#2563eb',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: '6px',
+                        fontSize: '0.8rem',
+                        fontWeight: 600,
+                        cursor: isMerging ? 'wait' : 'pointer',
+                        opacity: isMerging ? 0.6 : 1,
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      Merge
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </div>
       ) : null}
 
