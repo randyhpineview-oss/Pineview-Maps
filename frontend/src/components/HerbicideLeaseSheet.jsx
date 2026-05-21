@@ -490,20 +490,24 @@ export default function HerbicideLeaseSheet({
       return;
     }
     try {
-      // Build photo data URLs for embedding in PDF
+      // Build photo data URLs for embedding in PDF. FileReader is
+      // wrapped with both `onloadend` and `onerror` — without `onerror`
+      // a corrupted file silently hangs the await forever, leaving the
+      // worker on a frozen "Preview" button until they reload.
       const photoDataUrls = await Promise.all(
         photos.filter(p => p && (p.file || (p.existingBase64?.data) || p.preview)).map(p => {
           if (p.file) {
-            return new Promise(resolve => {
+            return new Promise((resolve, reject) => {
               const reader = new FileReader();
               reader.onloadend = () => resolve(reader.result);
+              reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
               reader.readAsDataURL(p.file);
             });
           }
           if (p.existingBase64?.data) {
-            return `data:${p.existingBase64.type || 'image/jpeg'};base64,${p.existingBase64.data}`;
+            return Promise.resolve(`data:${p.existingBase64.type || 'image/jpeg'};base64,${p.existingBase64.data}`);
           }
-          return p.preview;
+          return Promise.resolve(p.preview);
         })
       );
       const pdfData = {
@@ -624,12 +628,32 @@ export default function HerbicideLeaseSheet({
       // Convert photos to base64 once — used by both the PDF render below
       // (when we have a ticket) and the queued payload (always, so the
       // backend has the bytes to upload to Dropbox).
+      //
+      // For fresh photos (`p.file` set, `existingBase64` not yet built)
+      // we MUST run them through FileReader to get a real `data:` URL.
+      // Falling through to `p.preview` returned the blob: URL minted by
+      // URL.createObjectURL — fine for the in-form `<img>` tag, but
+      // jsPDF's `addImage` can't embed `blob:` URIs and the offline
+      // queue payload would carry a string that's invalid the moment
+      // the worker navigates away (blob URLs expire with their
+      // creating document). Mirror handlePreview's logic here.
       const photoDataUrls = await Promise.all(
-        photos.filter(p => p && (p.file || (p.existingBase64?.data) || p.preview)).map(async (p) => {
+        photos.filter(p => p && (p.file || (p.existingBase64?.data) || p.preview)).map((p) => {
           if (p.existingBase64?.data) {
-            return `data:${p.existingBase64.type || 'image/jpeg'};base64,${p.existingBase64.data}`;
+            return Promise.resolve(`data:${p.existingBase64.type || 'image/jpeg'};base64,${p.existingBase64.data}`);
           }
-          return p.preview;
+          if (p.file) {
+            return new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result);
+              reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
+              reader.readAsDataURL(p.file);
+            });
+          }
+          // Fallback: `preview` is a data: URL (from a draft restore)
+          // OR a https: URL (Dropbox proxy result). Both work in
+          // `<img>` and jsPDF.
+          return Promise.resolve(p.preview);
         })
       );
 

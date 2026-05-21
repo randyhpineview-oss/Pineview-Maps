@@ -23,16 +23,27 @@ async function loadLogo() {
 
 /**
  * Read EXIF orientation and return a correctly-oriented data URL.
+ *
+ * Why `img.decode()` instead of `img.onload`:
+ *   `onload` fires once the image's bytes are received, but does NOT
+ *   guarantee the image has been fully decoded into a pixel buffer.
+ *   On iOS Safari (and some Android browsers) calling `drawImage()`
+ *   between `onload` firing and decode completing can paint a blank
+ *   or partially-rendered canvas — which is exactly the bug workers
+ *   were hitting: photos missing from the PDF preview on the first
+ *   try, then "magically" appearing on retry once the bitmap was
+ *   already cached. `img.decode()` returns a Promise that resolves
+ *   only when the image is ready to paint, so `drawImage()` always
+ *   gets real pixels. We still keep an `onload` fallback for the
+ *   (now extremely rare) browser without `decode()` support.
  */
 function fixPhotoOrientation(dataUrl) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      // Draw to canvas at correct orientation
+  const drawAndResolve = (img, resolve) => {
+    try {
       const canvas = document.createElement('canvas');
       const maxDim = 800; // Reduce resolution for PDF embedding
-      let w = img.width;
-      let h = img.height;
+      let w = img.naturalWidth || img.width;
+      let h = img.naturalHeight || img.height;
       // Scale down
       if (w > maxDim || h > maxDim) {
         const ratio = Math.min(maxDim / w, maxDim / h);
@@ -44,9 +55,25 @@ function fixPhotoOrientation(dataUrl) {
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, w, h);
       resolve(canvas.toDataURL('image/jpeg', 0.85));
-    };
-    img.onerror = () => resolve(dataUrl);
+    } catch {
+      // Canvas tainted / draw error — fall back to the original URL
+      // so the PDF at least gets a chance to embed the source bytes
+      // directly (jsPDF can handle data URLs).
+      resolve(dataUrl);
+    }
+  };
+
+  return new Promise((resolve) => {
+    const img = new Image();
     img.src = dataUrl;
+    if (typeof img.decode === 'function') {
+      img.decode()
+        .then(() => drawAndResolve(img, resolve))
+        .catch(() => resolve(dataUrl));
+    } else {
+      img.onload = () => drawAndResolve(img, resolve);
+      img.onerror = () => resolve(dataUrl);
+    }
   });
 }
 
@@ -269,13 +296,26 @@ export async function generateLeaseSheetPdf(data, photoDataUrls = []) {
     const maxPhotoH = pageH - y - 30; // remaining space minus label
     const slotW = Math.min(halfW - 10, 250);
 
-    // Get actual image dimensions to preserve aspect ratio
+    // Get actual image dimensions to preserve aspect ratio. Same
+    // `decode()`-over-`onload` reasoning as `fixPhotoOrientation` above:
+    // on iOS Safari, `naturalWidth` / `naturalHeight` can read 0 if
+    // queried inside `onload` before the bitmap is decoded. Waiting
+    // for `decode()` guarantees real numbers, so the aspect-ratio math
+    // never collapses to a 1×N strip.
     const photoDims = await Promise.all(
-      fixedPhotos.slice(0, 2).map(src => new Promise(resolve => {
+      fixedPhotos.slice(0, 2).map(src => new Promise((resolve) => {
         const img = new Image();
-        img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
-        img.onerror = () => resolve({ w: 1, h: 1 });
         img.src = src;
+        const done = () => resolve({
+          w: img.naturalWidth || img.width || 1,
+          h: img.naturalHeight || img.height || 1,
+        });
+        if (typeof img.decode === 'function') {
+          img.decode().then(done).catch(() => resolve({ w: 1, h: 1 }));
+        } else {
+          img.onload = done;
+          img.onerror = () => resolve({ w: 1, h: 1 });
+        }
       }))
     );
 
