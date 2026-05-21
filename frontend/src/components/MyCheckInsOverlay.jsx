@@ -561,8 +561,25 @@ export default function MyCheckInsOverlay({
             </div>
 
             {!isOnline ? (
-              <div style={{ padding: 12, background: 'rgba(251, 191, 36, 0.10)', color: '#fbbf24', border: '1px solid rgba(251, 191, 36, 0.35)', borderRadius: 8, marginBottom: 12, fontSize: 13, lineHeight: 1.5 }}>
-                <strong>You're offline.</strong> Get cell or WiFi service, then tap I'm OK to record your check-in.
+              <div
+                style={{
+                  padding: 14,
+                  background: 'rgba(239, 68, 68, 0.12)',
+                  color: '#fca5a5',
+                  border: '2px solid rgba(239, 68, 68, 0.55)',
+                  borderRadius: 8,
+                  marginBottom: 12,
+                  fontSize: 14,
+                  lineHeight: 1.55,
+                }}
+              >
+                <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6, color: '#fecaca' }}>
+                  🚫 No service — your check-in CANNOT be recorded yet
+                </div>
+                <div>
+                  <strong>Find cell or WiFi service first</strong>, then come back and tap I'm OK.
+                  The office cannot see you as checked-in until this request reaches the server.
+                </div>
               </div>
             ) : (
               <button

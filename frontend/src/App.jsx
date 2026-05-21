@@ -13,6 +13,7 @@ import CheckinCountdown from './components/CheckinCountdown';
 import { api } from './lib/api';
 import { shouldForceOverlay } from './lib/compliance';
 import { ensurePushSubscribed, notificationPermission, pushSupported } from './lib/pushClient';
+import { scheduleLocalCheckinNotifications } from './lib/localCheckinNotifications';
 import { requestWithUploadProgress } from './lib/xhrUpload';
 import { nearestFraction } from './lib/mapUtils';
 import { generateLeaseSheetPdf } from './lib/pdfGenerator';
@@ -2810,6 +2811,24 @@ export default function App() {
       document.removeEventListener('visibilitychange', onVis);
     };
   }, [activeShift?.id, activeShift?.next_deadline_at, activeShift?.last_checkin_at, activeShift?.ended_at]);
+
+  // ── Local (device-clock) backup check-in notifications ───────────
+  // Belt-and-suspenders to the server-driven Web Push pipeline. Server
+  // push only fires when the device has internet (it has to reach
+  // Apple/FCM). A worker out of cell range would never hear a buzz,
+  // come back into service hours later, and discover the office had
+  // already escalated. This scheduler runs on the device's own clock
+  // and fires showNotification() at the same threshold beats (T+0,
+  // T+3, T+10, T+20, T+30, T+45, T+60) so the worker hears the alert
+  // even with zero connectivity. Both channels use tag='checkin' so
+  // when both fire, the OS tray collapses them into one notification.
+  useEffect(() => {
+    if (!activeShift) return undefined;
+    if (activeShift.ended_at) return undefined;
+    if (activeShift.mode === 'off') return undefined;
+    const stop = scheduleLocalCheckinNotifications(activeShift);
+    return stop;
+  }, [activeShift?.id, activeShift?.next_deadline_at, activeShift?.ended_at, activeShift?.mode]);
 
   // ── Service worker message listener (open-checkin) ────────────────
   // When the worker taps a push notification, the SW's
