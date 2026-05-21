@@ -177,6 +177,13 @@ export default function FormsPanel({
   // An effect below watches this and switches to In Progress →
   // Uploading so the worker lands on the details view.
   uploadTabSignal = 0,
+  // Per-row actions for stalled queue items. `onRetryQueueItem(id)`
+  // un-stalls a single entry and re-kicks processUploadQueue;
+  // `onDiscardQueueItem(id)` removes it from IndexedDB after a
+  // confirm dialog. Both are owned by App.jsx so the queue list
+  // refresh + processUploadQueue kick stay in one place.
+  onRetryQueueItem = null,
+  onDiscardQueueItem = null,
   clients = [],          // shared global client list from the map's pins
   areas = [],            // shared global area list from the map's pins
   // Optional helper from App.jsx — returns the area subset that
@@ -705,6 +712,16 @@ export default function FormsPanel({
                   // reads cleanly when 3–5 items are stacked.
                   const isActive = activeUploadItemId === item.id;
                   const pct = isActive ? uploadCurrentItemPercent : 0;
+                  // Stalled = auto-retry has given up on this item
+                  // (either burnt the MAX_ATTEMPTS budget or hit a
+                  // 400/422 validation failure). Render in a red-tinted
+                  // failure state with the captured error message and
+                  // explicit Retry / Discard buttons so the worker isn't
+                  // left staring at an invisible "Queued" forever.
+                  const isStalled = item.status === 'stalled';
+                  const isValidationStall = isStalled && (
+                    item.lastErrorStatus === 400 || item.lastErrorStatus === 422
+                  );
                   return (
                     <div
                       key={item.id}
@@ -712,11 +729,13 @@ export default function FormsPanel({
                       style={{
                         padding: '10px',
                         borderRadius: '6px',
-                        // Active row gets a stronger border + full opacity
-                        // so it visually separates from the queued rows
-                        // below it.
-                        opacity: isActive ? 1 : 0.85,
-                        border: isActive ? '1px solid #3b82f6' : undefined,
+                        opacity: isActive ? 1 : isStalled ? 1 : 0.85,
+                        border: isActive
+                          ? '1px solid #3b82f6'
+                          : isStalled
+                            ? '1px solid rgba(248, 113, 113, 0.55)'
+                            : undefined,
+                        background: isStalled ? 'rgba(248, 113, 113, 0.08)' : undefined,
                       }}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -724,14 +743,85 @@ export default function FormsPanel({
                           <div className="small-text" style={{ fontWeight: 600 }}>
                             {ticketNumber} — {sprayDate}
                           </div>
-                          <div className="small-text" style={{ color: '#9ca3af' }}>
-                            {typeLabel} • {isActive ? `Uploading ${pct}%` : 'Queued'}
+                          <div className="small-text" style={{ color: isStalled ? '#fca5a5' : '#9ca3af' }}>
+                            {typeLabel} • {
+                              isActive
+                                ? `Uploading ${pct}%`
+                                : isStalled
+                                  ? (isValidationStall ? '⚠ Failed (data issue)' : '⚠ Failed (network)')
+                                  : 'Queued'
+                            }
                           </div>
                         </div>
-                        <span className="pending-badge" style={{ background: '#3b82f6', fontSize: '0.65rem' }}>
-                          {isActive ? '⟳' : '⏳'}
+                        <span
+                          className="pending-badge"
+                          style={{
+                            background: isStalled ? '#dc2626' : '#3b82f6',
+                            fontSize: '0.65rem',
+                          }}
+                        >
+                          {isActive ? '⟳' : isStalled ? '⚠' : '⏳'}
                         </span>
                       </div>
+                      {/* Captured error + actions, only on stalled rows.
+                          Truncate the message so a multi-paragraph 5xx
+                          HTML body doesn't blow up the row height; the
+                          full text is still in IndexedDB / console for
+                          debugging. */}
+                      {isStalled ? (
+                        <>
+                          {item.lastErrorMessage ? (
+                            <div
+                              className="small-text"
+                              style={{
+                                color: '#fecaca',
+                                marginTop: '6px',
+                                fontFamily: 'ui-monospace, monospace',
+                                fontSize: '0.72rem',
+                                wordBreak: 'break-word',
+                              }}
+                            >
+                              {String(item.lastErrorMessage).slice(0, 200)}
+                            </div>
+                          ) : null}
+                          <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                            <button
+                              type="button"
+                              onClick={() => onRetryQueueItem?.(item.id)}
+                              disabled={!onRetryQueueItem}
+                              style={{
+                                padding: '5px 12px',
+                                background: '#2563eb',
+                                color: '#ffffff',
+                                border: 'none',
+                                borderRadius: '5px',
+                                fontSize: '0.78rem',
+                                fontWeight: 600,
+                                cursor: onRetryQueueItem ? 'pointer' : 'not-allowed',
+                              }}
+                            >
+                              Retry
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onDiscardQueueItem?.(item.id)}
+                              disabled={!onDiscardQueueItem}
+                              style={{
+                                padding: '5px 12px',
+                                background: 'transparent',
+                                color: '#fca5a5',
+                                border: '1px solid rgba(248,113,113,0.45)',
+                                borderRadius: '5px',
+                                fontSize: '0.78rem',
+                                fontWeight: 600,
+                                cursor: onDiscardQueueItem ? 'pointer' : 'not-allowed',
+                              }}
+                            >
+                              Discard
+                            </button>
+                          </div>
+                        </>
+                      ) : null}
                       {/* Per-ticket progress bar. Lives inside the row
                           (not the header) so the map stays clean on
                           mobile. The slot (8 px gap + 6 px bar) is

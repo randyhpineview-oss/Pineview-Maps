@@ -1767,6 +1767,47 @@ export default function App() {
     }
   }, [isRefreshing, refreshAllData, refreshQueueCount, refreshUploadQueue]);
 
+  // ── Per-item Retry / Discard from the Uploading tab ─────────────
+  // FormsPanel renders a Retry + Discard button on every stalled
+  // queue row. Both handlers route through here so we keep the
+  // IndexedDB writes + queue-list refresh + processUploadQueue kick
+  // in a single place; FormsPanel only ever sees the result via the
+  // re-fetched `uploadQueue` prop.
+  const handleRetryQueueItem = useCallback(async (itemId) => {
+    if (!itemId) return;
+    try {
+      await updateUploadEntry(itemId, { status: 'pending', attempts: 0 });
+    } catch (e) {
+      console.warn('[UPLOAD_QUEUE] Retry failed to update entry:', e?.message || e);
+      return;
+    }
+    await refreshUploadQueue();
+    try { processUploadQueueRef.current?.(); } catch { /* non-fatal */ }
+  }, [refreshUploadQueue]);
+
+  const handleDiscardQueueItem = useCallback(async (itemId) => {
+    if (!itemId) return;
+    const ok = await confirm({
+      title: 'Discard this upload?',
+      message: (
+        'This permanently removes the item from the upload queue. ' +
+        'If the lease sheet has already been re-submitted by another ' +
+        'route this is safe; otherwise, the data will be lost.'
+      ),
+      severity: 'danger',
+      okLabel: 'Discard',
+    });
+    if (!ok) return;
+    try {
+      await removeUploadEntry(itemId);
+    } catch (e) {
+      console.warn('[UPLOAD_QUEUE] Discard failed:', e?.message || e);
+      return;
+    }
+    await refreshUploadQueue();
+    await refreshQueueCount();
+  }, [confirm, refreshUploadQueue, refreshQueueCount]);
+
   // Ref-mirror of processUploadQueue so the auth-state-change listener
   // (whose useEffect runs once with [] deps) can call the latest version
   // without re-subscribing every time the callback identity updates. Used
@@ -6014,6 +6055,11 @@ export default function App() {
               activeUploadItemId={activeUploadItemId}
               uploadCurrentItemPercent={currentItemPercent}
               uploadTabSignal={uploadTabSignal}
+              // Per-row Retry / Discard for stalled queue items.
+              // Retry = un-stall this single entry and kick the queue;
+              // Discard = remove from IDB after a confirm dialog.
+              onRetryQueueItem={handleRetryQueueItem}
+              onDiscardQueueItem={handleDiscardQueueItem}
               clients={clients}
               areas={areas}
               // Same client→area narrowing helper used by every other

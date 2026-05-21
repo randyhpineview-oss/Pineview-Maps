@@ -788,6 +788,33 @@ export default function HerbicideLeaseSheet({
           : `${Date.now()}-${Math.random().toString(36).slice(2)}`
       );
 
+      // ── Pre-queue validation — mirror the backend Pydantic schema ──
+      // The upload queue treats 400/422 as a permanent failure (a
+      // payload that's structurally broken won't get any better with
+      // retries). Catching the same conditions here means the worker
+      // sees a clear "Spray date is missing" message NOW, while the
+      // form is still open and editable, instead of a silent stalled
+      // row in the Uploading list later. We deliberately keep this
+      // check tight: only the things the backend would actually
+      // reject, not a re-implementation of `requiredMissing`.
+      const sprayDateStr = String(form.date || '').trim();
+      if (!sprayDateStr || !/^\d{4}-\d{2}-\d{2}$/.test(sprayDateStr)) {
+        throw new Error(
+          'Spray date is missing or in the wrong format. ' +
+          'Please pick a date and try again.'
+        );
+      }
+      if (tm_link?.create === true && !String(tm_link.description_of_work || '').trim()) {
+        // The picker UI defaults to a blank description; the backend
+        // 422s if `create=true` lands without one. This shouldn't happen
+        // in practice (the picker enforces it) but we guard so a future
+        // form change can't silently regress it into a queue stall.
+        throw new Error(
+          'Cannot create a new T&M ticket without a description of work. ' +
+          'Pick an existing ticket or add a description.'
+        );
+      }
+
       const payload = {
         lease_sheet_data: {
           ...form,
