@@ -83,6 +83,24 @@ def push_configured() -> bool:
     )
 
 
+def vapid_sub_claim() -> str:
+    """Build the VAPID JWT ``sub`` claim from the configured contact email.
+
+    Tolerates both ``contact@example.com`` and ``mailto:contact@example.com``
+    in the env var so a stray ``mailto:`` prefix in VAPID_CONTACT_EMAIL
+    doesn't double up to ``mailto:mailto:...`` -- which Apple's Web Push
+    gateway rejects as "Bad JWT token" (403). RFC 8292 requires the sub
+    claim to be a valid mailto: or https: URI.
+    """
+    raw = (settings.vapid_contact_email or "").strip()
+    if not raw:
+        return ""
+    lowered = raw.lower()
+    if lowered.startswith("mailto:") or lowered.startswith("https:"):
+        return raw
+    return f"mailto:{raw}"
+
+
 def send_push(
     db: Session,
     subscription: PushSubscription,
@@ -109,7 +127,7 @@ def send_push(
         logger.warning("send_push called but VAPID config missing -- skipping")
         return
 
-    vapid_claims = {"sub": f"mailto:{settings.vapid_contact_email}"}
+    vapid_claims = {"sub": vapid_sub_claim()}
     sub_info = {
         "endpoint": subscription.endpoint,
         "keys": {

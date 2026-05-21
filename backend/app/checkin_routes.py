@@ -80,7 +80,7 @@ from app.email_service import (
 )
 from app.log_util import get_logger
 from app.models import RoleEnum, User
-from app.push_service import PushPayload, push_configured, send_push
+from app.push_service import PushPayload, push_configured, send_push, vapid_sub_claim
 
 settings = get_settings()
 logger = get_logger(__name__)
@@ -1321,6 +1321,13 @@ class VapidStatusResponse(BaseModel):
     keys_match: bool = False
     private_key_format: Optional[str] = None
     error: Optional[str] = None
+    # The actual ``sub`` claim that will be JWT-signed into each push.
+    # Must be a valid mailto: or https: URI per RFC 8292; Apple's Web
+    # Push gateway 403s on a malformed sub (e.g. ``mailto:mailto:...``
+    # caused by a doubled prefix in VAPID_CONTACT_EMAIL).
+    contact_email_raw: Optional[str] = None
+    computed_sub_claim: Optional[str] = None
+    sub_claim_valid: bool = False
 
 
 @admin_router.get(
@@ -1347,12 +1354,24 @@ def admin_vapid_status() -> VapidStatusResponse:
     priv = (settings.vapid_private_key or "").strip()
     contact = (settings.vapid_contact_email or "").strip()
 
+    computed_sub = vapid_sub_claim() if contact else ""
+    # Valid: exactly one 'mailto:' or 'https:' prefix, then non-empty body.
+    sub_valid = False
+    if computed_sub:
+        lower = computed_sub.lower()
+        if lower.startswith("mailto:") and "@" in computed_sub[7:] and not computed_sub[7:].lower().startswith("mailto:"):
+            sub_valid = True
+        elif lower.startswith("https:") and len(computed_sub) > 8:
+            sub_valid = True
     resp = VapidStatusResponse(
         public_key_set=bool(stored_pub),
         private_key_set=bool(priv),
         contact_email_set=bool(contact),
         stored_public_key=stored_pub if stored_pub else None,
         stored_public_length=len(stored_pub),
+        contact_email_raw=contact if contact else None,
+        computed_sub_claim=computed_sub if computed_sub else None,
+        sub_claim_valid=sub_valid,
     )
     if not stored_pub or not priv:
         resp.error = "VAPID public or private key is not configured."
@@ -1489,7 +1508,7 @@ def admin_test_push(
         url="/",
         shift_id=None,
     )
-    vapid_claims = {"sub": f"mailto:{settings.vapid_contact_email}"}
+    vapid_claims = {"sub": vapid_sub_claim()}
     for sub in subs:
         sub_id = sub.id
         ua = sub.user_agent

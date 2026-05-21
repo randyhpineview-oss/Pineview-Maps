@@ -356,41 +356,64 @@ export default function SettingsTab() {
             Verifying VAPID keypair…
           </div>
         ) : vapidStatus ? (
-          <div
-            style={{
-              padding: 12,
-              borderRadius: 6,
-              marginBottom: 12,
-              border: `1px solid ${vapidStatus.keys_match ? t.successBorder : t.dangerBorder}`,
-              background: vapidStatus.keys_match ? t.successBg : t.dangerBg,
-              color: vapidStatus.keys_match ? t.success : t.danger,
-              fontSize: 13,
-              lineHeight: 1.5,
-            }}
-          >
-            <div style={{ fontWeight: 700, marginBottom: 4 }}>
-              {vapidStatus.keys_match
-                ? '✅ VAPID keypair matches (backend can sign for this public key)'
-                : '❌ VAPID keypair MISMATCH — push will fail with 403 until fixed'}
-            </div>
-            {vapidStatus.error ? (
-              <div style={{ fontSize: 12, marginBottom: 6 }}>{vapidStatus.error}</div>
-            ) : null}
-            {!vapidStatus.keys_match && vapidStatus.stored_public_key && vapidStatus.derived_public_key ? (
-              <div style={{ fontSize: 11, fontFamily: 'monospace', marginTop: 6 }}>
-                <div><strong>Stored public key:</strong> {vapidStatus.stored_public_key}</div>
-                <div><strong>Derived from private:</strong> {vapidStatus.derived_public_key}</div>
-                <div style={{ marginTop: 6, fontFamily: 'inherit', fontSize: 12 }}>
-                  Generate a fresh matched pair and paste BOTH into Render env vars together.
+          (() => {
+            const allOk = vapidStatus.keys_match && vapidStatus.sub_claim_valid;
+            return (
+              <div
+                style={{
+                  padding: 12,
+                  borderRadius: 6,
+                  marginBottom: 12,
+                  border: `1px solid ${allOk ? t.successBorder : t.dangerBorder}`,
+                  background: allOk ? t.successBg : t.dangerBg,
+                  color: allOk ? t.success : t.danger,
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                }}
+              >
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                  {allOk
+                    ? '✅ VAPID config is healthy (keypair + JWT subject)'
+                    : '❌ VAPID config has a problem — push will fail until fixed'}
                 </div>
+                {vapidStatus.error ? (
+                  <div style={{ fontSize: 12, marginBottom: 6 }}>{vapidStatus.error}</div>
+                ) : null}
+                <div style={{ marginTop: 6, fontSize: 12 }}>
+                  <strong>Keypair match:</strong>{' '}
+                  {vapidStatus.keys_match ? '✅ matched' : '❌ mismatch'}
+                  {' · '}
+                  <strong>JWT sub claim:</strong>{' '}
+                  {vapidStatus.sub_claim_valid ? '✅ well-formed' : '❌ malformed'}
+                </div>
+                {vapidStatus.computed_sub_claim ? (
+                  <div style={{ fontSize: 11, color: t.textMuted, fontFamily: 'monospace', marginTop: 4, wordBreak: 'break-all' }}>
+                    sub = <code>{vapidStatus.computed_sub_claim}</code>
+                    {!vapidStatus.sub_claim_valid ? (
+                      <div style={{ marginTop: 6, fontFamily: 'inherit', fontSize: 12, color: t.danger }}>
+                        VAPID_CONTACT_EMAIL is malformed. Set it to a plain email
+                        address (e.g. <code>you@example.com</code>) — the backend
+                        will add the <code>mailto:</code> prefix automatically.
+                        A doubled <code>mailto:mailto:</code> is the most common
+                        cause and produces the 403 "Bad JWT" error from Apple.
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+                {!vapidStatus.keys_match && vapidStatus.stored_public_key && vapidStatus.derived_public_key ? (
+                  <div style={{ fontSize: 11, fontFamily: 'monospace', marginTop: 6 }}>
+                    <div><strong>Stored public key:</strong> {vapidStatus.stored_public_key}</div>
+                    <div><strong>Derived from private:</strong> {vapidStatus.derived_public_key}</div>
+                  </div>
+                ) : null}
+                {allOk && vapidStatus.stored_public_key ? (
+                  <div style={{ fontSize: 11, color: t.textMuted, fontFamily: 'monospace', wordBreak: 'break-all', marginTop: 4 }}>
+                    public key: {vapidStatus.stored_public_key}
+                  </div>
+                ) : null}
               </div>
-            ) : null}
-            {vapidStatus.keys_match && vapidStatus.stored_public_key ? (
-              <div style={{ fontSize: 11, color: t.textMuted, fontFamily: 'monospace', wordBreak: 'break-all' }}>
-                Public key: {vapidStatus.stored_public_key}
-              </div>
-            ) : null}
-          </div>
+            );
+          })()
         ) : null}
 
         <p style={{ margin: '0 0 12px 0', fontSize: 13, color: t.textMuted, lineHeight: 1.5 }}>
