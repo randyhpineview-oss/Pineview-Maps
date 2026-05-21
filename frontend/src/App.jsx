@@ -1702,13 +1702,56 @@ export default function App() {
 
   // Manual Refresh button handler. Always does the full path + queue resync
   // so "↻ Refresh" next to the Online indicator feels like a hard reset.
+  //
+  // Real-world scenario this also covers: worker had bad 5G, the queue
+  // burned through MAX_ATTEMPTS retries on timeouts/network errors and
+  // every item flipped to `status: 'stalled'`. The auto-retry path
+  // (`processUploadQueue`) skips stalled items at the top of its loop,
+  // so even after the worker reaches good Wi-Fi the queue sits there
+  // doing nothing. The manual refresh button is the explicit user
+  // signal to "try again now" — so we:
+  //   1. Re-queue every TRANSIENTLY-stalled item (network errors,
+  //      timeouts, 5xx) by flipping status back to 'pending' and
+  //      zeroing attempts. We deliberately leave 400/422 stalls alone
+  //      because those payloads are structurally broken and retrying
+  //      will just re-stall them on the same error.
+  //   2. Kick `processUploadQueue()` so the freshly-pending items run
+  //      immediately, instead of waiting for the next poll tick.
   const handleManualRefresh = useCallback(async () => {
     if (isRefreshing) return;
     setIsRefreshing(true);
     try {
       await refreshAllData();
       await refreshQueueCount();
+
+      // ── Un-stall transient queue failures so the upload loop will
+      //    pick them up again. Validation stalls (400/422) stay
+      //    stalled — only the user can fix those by editing the
+      //    record, and a bulk reset would just churn bandwidth.
+      try {
+        const items = await getUploadQueue();
+        const transientlyStalled = items.filter(
+          (it) => it.status === 'stalled'
+            && it.lastErrorStatus !== 400
+            && it.lastErrorStatus !== 422,
+        );
+        if (transientlyStalled.length > 0) {
+          await Promise.all(transientlyStalled.map((it) =>
+            updateUploadEntry(it.id, { status: 'pending', attempts: 0 })
+          ));
+          console.info('[UPLOAD_QUEUE] Manual refresh re-queued',
+            transientlyStalled.length, 'stalled item(s) for retry.');
+        }
+      } catch (e) {
+        console.warn('[UPLOAD_QUEUE] Re-queue on manual refresh failed (non-fatal):', e?.message || e);
+      }
+
       await refreshUploadQueue();
+
+      // Kick the queue. processUploadQueue is a no-op if already
+      // uploading or if navigator.onLine is false, so this is safe to
+      // call unconditionally.
+      try { processUploadQueueRef.current?.(); } catch { /* non-fatal */ }
     } finally {
       setIsRefreshing(false);
     }
