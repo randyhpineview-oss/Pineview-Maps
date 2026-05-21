@@ -89,6 +89,12 @@ export default function TMTicketDetailSheet({
   const [newRows, setNewRows] = useState([]);        // manual site rows not yet saved
   const [rowsToDelete, setRowsToDelete] = useState([]); // ids of saved manual rows to remove
 
+  // Possible-duplicate banner (admin/office only). Backend matches on
+  // (spray_date, client, area, created_by_user_id) and excludes
+  // soft-deleted rows + this ticket. Empty = no banner shown.
+  const [duplicateCandidates, setDuplicateCandidates] = useState([]);
+  const [isMerging, setIsMerging] = useState(false);
+
   // Load ticket — cache-first so the detail sheet opens offline (Fix #5).
   // Strategy:
   //   1. Hit IndexedDB first. If we have the ticket cached, render
@@ -158,6 +164,91 @@ export default function TMTicketDetailSheet({
     })();
     return () => { cancelled = true; };
   }, [ticketId]);
+
+  // ── Duplicate-candidates fetch (admin/office only) ──
+  // Runs after every successful ticket load (and again after a merge,
+  // since `ticket?.updated_at` flips when the merged ticket comes back).
+  // The endpoint is admin/office gated server-side; we skip the call
+  // entirely for workers so they don't get a 403 toast on every open.
+  useEffect(() => {
+    if (!canOfficeEdit) return undefined;
+    if (!ticket?.id) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const candidates = await api.listTMDuplicateCandidates(ticket.id);
+        if (cancelled) return;
+        setDuplicateCandidates(Array.isArray(candidates) ? candidates : []);
+      } catch {
+        // Silently swallow: the banner is a nice-to-have, not critical.
+        // A network blip shouldn't surface as a red error to office.
+        if (!cancelled) setDuplicateCandidates([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [ticket?.id, ticket?.updated_at, canOfficeEdit]);
+
+  // Confirm + run merge for a candidate. Source ticket gets folded into
+  // THIS ticket (current ticket = primary). On success the primary is
+  // refreshed in place from the response so the user sees the new rows
+  // / merged office_data without closing the sheet.
+  const handleMergeFromCandidate = async (candidate) => {
+    if (!ticket?.id || !candidate?.id) return;
+    const ok = await confirm({
+      title: `Merge ${candidate.ticket_number} into ${ticket.ticket_number}?`,
+      message: (
+        `This will move every "Sites Treated" row and lease-sheet link from ` +
+        `${candidate.ticket_number} into this ticket, and combine the office ` +
+        `quantities (truck hours, applicator hours, etc.) by summing them. ` +
+        `${candidate.ticket_number} will be archived (soft-deleted).\n\n` +
+        `This cannot be undone except by manually restoring ${candidate.ticket_number} ` +
+        `from the Deleted tickets list.`
+      ),
+      okLabel: 'Merge',
+    });
+    if (!ok) return;
+    setIsMerging(true);
+    try {
+      const merged = await api.mergeTMTicket(ticket.id, candidate.id);
+      // Refresh state in place using the same applyTicket-style logic
+      // that the load effect uses. Easier than refactoring it out for
+      // re-use: just push the merged result into setTicket and let the
+      // existing `useEffect` re-derive the form fields off the new
+      // ticket reference.
+      setTicket(merged);
+      setDescription(merged.description_of_work || '');
+      setClient(merged.client || '');
+      setArea(merged.area || '');
+      setPoNumber(merged.po_approval_number || '');
+      const seed = (merged.office_data?.lines && merged.office_data.lines.length)
+        ? merged.office_data.lines
+        : DEFAULT_OFFICE_LINES;
+      setOfficeLines(seed.map((l) => ({
+        label: migrateOfficeLineLabel(l.label || ''),
+        qty: l.qty ?? '',
+        rate: l.rate ?? '',
+      })));
+      setGstPercent(Number(merged.office_data?.gst_percent ?? 5));
+      // Clear any pending edits on the source side (rows that were
+      // pending deletion / edit on the primary stay; the merge only
+      // adds rows from source).
+      setRowsEdits({});
+      setNewRows([]);
+      setRowsToDelete([]);
+      try { await upsertTMTicket(merged); } catch { /* non-fatal cache refresh */ }
+      await alert({
+        message: `Merged ${candidate.ticket_number} into ${merged.ticket_number}.`,
+      });
+    } catch (e) {
+      await alert({
+        title: 'Merge failed',
+        message: String(e.message || 'Unknown error'),
+        severity: 'danger',
+      });
+    } finally {
+      setIsMerging(false);
+    }
+  };
 
   // Rows including any pending edits and new manual rows — used both in the
   // UI render and as the source of truth for derived auto-populated QTYs.
@@ -704,6 +795,75 @@ export default function TMTicketDetailSheet({
               border: '1px solid #374151', backgroundColor: '#111827', color: '#f9fafb',
             }}
           />
+        </div>
+      ) : null}
+
+      {/* Possible-duplicate banner (admin/office only). Surfaced when a
+          worker has 2+ tickets that match this one on (spray_date,
+          client, area, created_by_user_id). Each candidate gets a Merge
+          button that folds that ticket INTO this one. Hidden when no
+          candidates exist so the banner doesn't add noise to clean
+          tickets. */}
+      {canOfficeEdit && duplicateCandidates.length > 0 ? (
+        <div style={{
+          background: 'rgba(251, 191, 36, 0.10)',
+          border: '1px solid rgba(251, 191, 36, 0.35)',
+          borderRadius: '8px',
+          padding: '12px 14px',
+          marginBottom: '14px',
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: '6px',
+            fontSize: '0.9rem', fontWeight: 600, color: '#fbbf24',
+            marginBottom: '8px',
+          }}>
+            ⚠ Possible duplicate{duplicateCandidates.length === 1 ? '' : 's'} on the same job
+          </div>
+          <div style={{ fontSize: '0.8rem', color: '#fde68a', marginBottom: '10px', lineHeight: 1.4 }}>
+            Same worker · same date · same client/area. If these were filed by
+            mistake, click <strong>Merge</strong> to fold one into this ticket.
+          </div>
+          {duplicateCandidates.map((c) => (
+            <div key={c.id} style={{
+              display: 'flex', alignItems: 'center', gap: '10px',
+              padding: '8px 0', borderTop: '1px solid rgba(251,191,36,0.18)',
+              fontSize: '0.85rem',
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ color: '#f9fafb', fontWeight: 500 }}>
+                  {c.ticket_number}
+                  <span style={{
+                    marginLeft: 8, fontSize: 11, padding: '1px 8px',
+                    borderRadius: 999, background: '#1f2937', color: '#9ca3af',
+                  }}>
+                    {c.status === 'submitted' ? 'pending' : c.status}
+                  </span>
+                </div>
+                <div style={{ color: '#9ca3af', fontSize: '0.78rem', marginTop: 2 }}>
+                  {c.rows_count} site{c.rows_count === 1 ? '' : 's'}
+                  {c.description_of_work ? ` · ${c.description_of_work.slice(0, 80)}${c.description_of_work.length > 80 ? '…' : ''}` : ''}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleMergeFromCandidate(c)}
+                disabled={isMerging}
+                style={{
+                  padding: '6px 12px',
+                  background: '#2563eb',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  cursor: isMerging ? 'wait' : 'pointer',
+                  opacity: isMerging ? 0.6 : 1,
+                }}
+              >
+                {isMerging ? 'Merging…' : `Merge into ${ticket.ticket_number}`}
+              </button>
+            </div>
+          ))}
         </div>
       ) : null}
 

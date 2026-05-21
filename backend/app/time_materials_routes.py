@@ -11,6 +11,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import and_, or_, text
 from sqlalchemy.orm import Session, joinedload
 
@@ -727,6 +728,381 @@ def delete_ticket_permanent(
 
     db.delete(ticket)
     db.commit()
+
+
+# ── Duplicate detection + admin merge ───────────────────────────────
+#
+# Workers occasionally end up with two T&M tickets for the same
+# (spray_date, client, area, worker) when they submit one ticket
+# early, then file another herbicide lease sheet later in the same
+# day for the same job and can't reach the original ticket (it's
+# already in `submitted` or got created fresh). The lease-sheet
+# linker's "today's open tickets matching client/area" picker covers
+# the common path, but it only finds OPEN tickets — once a worker
+# hits Submit, the original is invisible to the picker and a fresh
+# ticket gets created.
+#
+# Auto-detection that PREVENTS duplicates is risky because there are
+# legitimate same-day duplicates (e.g. two crews working different
+# parts of one big lease at different times). So this is an opt-in
+# admin-side merge tool: admin sees a yellow banner on either ticket
+# when a candidate exists, clicks Merge, and the source ticket's
+# rows + spray-record links + office_data quantities are folded into
+# the primary in a single transaction.
+
+
+class TMDuplicateCandidateRead(BaseModel):
+    """A T&M ticket that *might* be a duplicate of another, surfaced
+    in the detail sheet so admin can decide whether to merge.
+
+    Match criteria (see ``list_possible_duplicates``):
+      * same ``spray_date`` (the lease-sheet day)
+      * same ``client``
+      * same ``area``
+      * same ``created_by_user_id`` (the worker)
+      * not soft-deleted
+      * not the ticket the admin is currently viewing
+    """
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    ticket_number: str
+    spray_date: date
+    client: str
+    area: str
+    created_by_name: str | None = None
+    description_of_work: str | None = None
+    status: TMTicketStatus
+    rows_count: int
+
+
+class TMMergeRequest(BaseModel):
+    """Body for POST /time-materials/{primary_id}/merge."""
+    source_ticket_id: int
+
+
+def _merge_office_data(
+    primary: dict | None,
+    source: dict | None,
+) -> dict | None:
+    """Combine two ticket office_data blobs by summing qty per label.
+
+    Strategy:
+      * Per label that exists in both: ``qty = primary.qty + source.qty``,
+        coercing missing/blank/non-numeric values to 0 (a missing qty is
+        functionally "didn't fill it in" — adding zero is the right
+        identity element).
+      * Per label only in source: append the line with its source qty +
+        rate, so admin sees the source's contribution in the merged
+        ticket without having to re-type it.
+      * ``rate`` is taken from primary when both have one; falls back
+        to source if primary's was None. Admin can always re-edit
+        afterwards.
+      * ``gst_percent`` from primary always wins (single tax rate per
+        ticket).
+
+    Returns the merged dict, or whichever side is non-None when only
+    one is populated, or None when both are empty.
+    """
+    if not primary and not source:
+        return None
+    if not source:
+        return primary
+    if not primary:
+        return source
+
+    def _to_float_or_zero(v):
+        if v is None or v == "":
+            return 0.0
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return 0.0
+
+    primary_lines = list(primary.get("lines") or [])
+    source_lines = list(source.get("lines") or [])
+
+    # Index primary lines by label so we can do label-keyed merging
+    # while preserving the primary's line order (admin will scan
+    # top-to-bottom and expects familiar layout).
+    primary_by_label: dict[str, dict] = {}
+    primary_order: list[str] = []
+    for line in primary_lines:
+        label = (line or {}).get("label") or ""
+        if not label or label in primary_by_label:
+            continue
+        primary_by_label[label] = line
+        primary_order.append(label)
+
+    source_by_label: dict[str, dict] = {}
+    for line in source_lines:
+        label = (line or {}).get("label") or ""
+        if label and label not in source_by_label:
+            source_by_label[label] = line
+
+    merged_lines: list[dict] = []
+    seen_labels: set[str] = set()
+
+    # Pass 1: walk primary's order, summing in any source qty for the
+    # same label.
+    for label in primary_order:
+        p_line = primary_by_label[label]
+        s_line = source_by_label.get(label)
+        merged_qty = _to_float_or_zero(p_line.get("qty"))
+        if s_line is not None:
+            merged_qty += _to_float_or_zero(s_line.get("qty"))
+        # Prefer primary's rate, fall back to source if primary's was
+        # blank — that way admin doesn't lose a price the source had
+        # already set.
+        rate = p_line.get("rate")
+        if rate in (None, "") and s_line is not None:
+            rate = s_line.get("rate")
+        merged_lines.append({
+            **p_line,
+            "qty": merged_qty,
+            "rate": rate,
+        })
+        seen_labels.add(label)
+
+    # Pass 2: any source-only labels get appended in source's order.
+    for line in source_lines:
+        label = (line or {}).get("label") or ""
+        if not label or label in seen_labels:
+            continue
+        merged_lines.append({
+            "label": label,
+            "qty": _to_float_or_zero(line.get("qty")),
+            "rate": line.get("rate"),
+        })
+        seen_labels.add(label)
+
+    return {
+        "lines": merged_lines,
+        "gst_percent": primary.get("gst_percent", source.get("gst_percent", 5)),
+    }
+
+
+@router.get(
+    "/{ticket_id}/possible-duplicates",
+    response_model=list[TMDuplicateCandidateRead],
+    dependencies=[Depends(require_roles(RoleEnum.admin, RoleEnum.office))],
+)
+def list_possible_duplicates(
+    ticket_id: int,
+    db: Session = Depends(get_db),
+):
+    """Return other tickets that match the focal ticket on
+    (spray_date, client, area, created_by_user_id), excluding self
+    and soft-deleted rows.
+
+    Used by ``TMTicketDetailSheet`` to render a "possible duplicates"
+    banner with a Merge button. Office and admin only — workers
+    shouldn't see other workers' tickets, and merging is an
+    audit-affecting action that needs admin/office accountability.
+
+    Approved tickets ARE included so admin can see them in the list,
+    but the merge endpoint refuses to act on approved tickets without
+    them being unapproved first (clearer contract than silently
+    skipping; matches the existing "unapprove to edit" workflow).
+    """
+    ticket = (
+        db.query(TimeMaterialsTicket)
+        .filter(
+            TimeMaterialsTicket.id == ticket_id,
+            TimeMaterialsTicket.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if not ticket:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+
+    # created_by_user_id may be NULL on legacy tickets — never match
+    # those into a duplicate set, the human-name fallback is too fuzzy
+    # for a destructive action like merge.
+    if ticket.created_by_user_id is None:
+        return []
+
+    candidates = (
+        db.query(TimeMaterialsTicket)
+        .options(joinedload(TimeMaterialsTicket.rows))
+        .filter(
+            TimeMaterialsTicket.id != ticket_id,
+            TimeMaterialsTicket.deleted_at.is_(None),
+            TimeMaterialsTicket.spray_date == ticket.spray_date,
+            TimeMaterialsTicket.client == ticket.client,
+            TimeMaterialsTicket.area == ticket.area,
+            TimeMaterialsTicket.created_by_user_id == ticket.created_by_user_id,
+        )
+        .order_by(TimeMaterialsTicket.created_at.asc())
+        .all()
+    )
+    return [
+        TMDuplicateCandidateRead(
+            id=c.id,
+            ticket_number=c.ticket_number,
+            spray_date=c.spray_date,
+            client=c.client,
+            area=c.area,
+            created_by_name=c.created_by_name,
+            description_of_work=c.description_of_work,
+            status=c.status,
+            rows_count=len(c.rows or []),
+        )
+        for c in candidates
+    ]
+
+
+@router.post(
+    "/{primary_id}/merge",
+    response_model=TimeMaterialsTicketRead,
+    dependencies=[Depends(require_roles(RoleEnum.admin, RoleEnum.office))],
+)
+def merge_tm_tickets(
+    primary_id: int,
+    payload: TMMergeRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Fold ``source_ticket_id`` into ``primary_id`` and soft-delete
+    the source.
+
+    What gets moved:
+      * Every ``TimeMaterialsRow`` (re-pointed by ``ticket_id``).
+      * Every ``SiteSprayRecord`` whose ``tm_ticket_id == source.id``
+        is re-pointed to the primary so the lease-sheet history shows
+        the canonical ticket number.
+      * Same for pipeline ``SprayRecord``.
+      * ``office_data`` is merged with summed qtys per label (see
+        ``_merge_office_data``). The primary's GST rate wins.
+      * Source's ``description_of_work`` is appended to the primary's
+        with a "— Merged from {source.ticket_number}: ..." prefix so
+        the audit trail isn't lost.
+      * Source's ``po_approval_number`` is preserved on the primary
+        only when the primary doesn't already have one.
+
+    What's rejected:
+      * Either ticket already soft-deleted -> 404 / 409.
+      * Either ticket in ``approved`` status -> 409. Admin must
+        unapprove first (preserves the existing "approved tickets
+        are frozen" contract; unapproving wipes signature/approval
+        metadata so the merge produces a clean ticket).
+      * ``primary_id == source_ticket_id`` -> 400 (no-op trap).
+
+    All mutations happen in a single transaction. On the next delta
+    sync the source disappears from worker caches (it's soft-deleted),
+    and the primary's bumped ``updated_at`` brings down the merged
+    state.
+    """
+    if primary_id == payload.source_ticket_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot merge a ticket into itself",
+        )
+
+    primary = (
+        db.query(TimeMaterialsTicket)
+        .options(joinedload(TimeMaterialsTicket.rows))
+        .filter(TimeMaterialsTicket.id == primary_id)
+        .first()
+    )
+    if not primary or primary.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Primary ticket not found",
+        )
+
+    source = (
+        db.query(TimeMaterialsTicket)
+        .options(joinedload(TimeMaterialsTicket.rows))
+        .filter(TimeMaterialsTicket.id == payload.source_ticket_id)
+        .first()
+    )
+    if not source or source.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Source ticket not found",
+        )
+
+    if primary.status == TMTicketStatus.approved or source.status == TMTicketStatus.approved:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Cannot merge an approved ticket. "
+                "Unapprove the affected ticket(s) first, then retry the merge."
+            ),
+        )
+
+    # ── Re-point lease-sheet links ───────────────────────────────────
+    # Both directions: the SiteSprayRecord.tm_ticket_id columns AND
+    # the TimeMaterialsRow.ticket_id columns. Order matters: re-point
+    # rows BEFORE soft-deleting source, otherwise the post-delete
+    # delta sync would see orphaned rows on a deleted ticket.
+    (
+        db.query(SiteSprayRecord)
+        .filter(SiteSprayRecord.tm_ticket_id == source.id)
+        .update({SiteSprayRecord.tm_ticket_id: primary.id}, synchronize_session=False)
+    )
+    (
+        db.query(PipelineSprayRecord)
+        .filter(PipelineSprayRecord.tm_ticket_id == source.id)
+        .update({PipelineSprayRecord.tm_ticket_id: primary.id}, synchronize_session=False)
+    )
+    # Re-point every Sites Treated row. The (spray_record_id, site_type)
+    # unique constraint can't fire here because each spray record only
+    # ever links to ONE ticket via tm_ticket_id, so source's rows have
+    # disjoint spray_record_ids from primary's.
+    (
+        db.query(TimeMaterialsRow)
+        .filter(TimeMaterialsRow.ticket_id == source.id)
+        .update({TimeMaterialsRow.ticket_id: primary.id}, synchronize_session=False)
+    )
+
+    # ── Merge office_data (sum qtys per label) ───────────────────────
+    primary.office_data = _merge_office_data(primary.office_data, source.office_data)
+
+    # ── Concatenate description_of_work so audit trail survives ──────
+    src_desc = (source.description_of_work or "").strip()
+    if src_desc:
+        suffix = f"\n— Merged from {source.ticket_number}: {src_desc}"
+        primary.description_of_work = (
+            (primary.description_of_work or "") + suffix
+        ).strip()
+
+    # ── Preserve PO number if primary lacks one ──────────────────────
+    if (not primary.po_approval_number) and source.po_approval_number:
+        primary.po_approval_number = source.po_approval_number
+
+    # ── Mirror status if source is "further along" than primary ──────
+    # (open < submitted < approved). approved is already rejected
+    # above, so the only upgrade path here is open -> submitted: if
+    # the worker had already submitted the source ticket, we want the
+    # primary to reflect that hand-off state too.
+    status_rank = {
+        TMTicketStatus.open: 0,
+        TMTicketStatus.submitted: 1,
+        TMTicketStatus.approved: 2,
+    }
+    if status_rank.get(source.status, 0) > status_rank.get(primary.status, 0):
+        primary.status = source.status
+
+    # ── Soft-delete source ───────────────────────────────────────────
+    now = datetime.utcnow()
+    source.deleted_at = now
+    source.updated_at = now
+
+    primary.updated_at = now
+    db.flush()
+    db.commit()
+    db.refresh(primary)
+
+    logger_msg_user = getattr(current_user, "name", None) or current_user.email
+    logger_audit_msg = (
+        f"[TM_MERGE] {logger_msg_user} merged {source.ticket_number} "
+        f"-> {primary.ticket_number} "
+        f"({len(source.rows or [])} rows moved)"
+    )
+    print(logger_audit_msg)
+
+    return _strip_office_fields_for_worker(primary, current_user)
 
 
 # ── Row helpers used internally by spray record endpoints ────────

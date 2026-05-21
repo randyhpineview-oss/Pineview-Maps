@@ -579,6 +579,25 @@ export const api = {
   deleteTMTicketPermanent(ticketId) {
     return request(`/api/time-materials/${ticketId}/permanent`, { method: 'DELETE' });
   },
+  // Admin merge tool: list tickets that match this one's
+  // (spray_date, client, area, created_by_user_id) so admin can
+  // decide whether to fold a duplicate into it. Office/admin only;
+  // workers will get a 403. Empty array = no candidates.
+  listTMDuplicateCandidates(ticketId) {
+    return request(`/api/time-materials/${ticketId}/possible-duplicates`);
+  },
+  // Admin merge tool: fold `sourceTicketId` into `primaryTicketId`
+  // (re-points spray-record links + Sites Treated rows, sums office_data
+  // qtys per label, soft-deletes the source). Returns the merged
+  // primary ticket's full TimeMaterialsTicketRead so the detail sheet
+  // can refresh state in place. Rejects approved tickets with 409 —
+  // admin must unapprove first.
+  mergeTMTicket(primaryTicketId, sourceTicketId) {
+    return request(`/api/time-materials/${primaryTicketId}/merge`, {
+      method: 'POST',
+      body: { source_ticket_id: sourceTicketId },
+    });
+  },
 
   // ── Password reset (6-digit code flow) ──
   requestResetCode(email) {

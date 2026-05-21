@@ -298,6 +298,121 @@ def _serialize_shift(
     }
 
 
+def _alert_severity(kind: str) -> str:
+    """Bucket a checkin_alerts.kind into a coarse severity for the
+    History timeline pill. Mirrors the cadence in ``checkin_cadence.py``
+    so worker-side T-15 reminders stay visually distinct from "office
+    has been paged" escalations.
+
+    Buckets:
+      * 'reminder' — worker_t-15 (heads up, not yet overdue)
+      * 'due'      — worker_t0   (deadline passed, first nudge)
+      * 'overdue'  — worker_overdue_*, office_first (action needed)
+      * 'urgent'   — office_urgent (call them, >60 min overdue)
+    """
+    if kind == "worker_t-15":
+        return "reminder"
+    if kind == "worker_t0":
+        return "due"
+    if kind.startswith("office_urgent"):
+        return "urgent"
+    if kind.startswith("worker_overdue") or kind.startswith("office"):
+        return "overdue"
+    return "overdue"
+
+
+def _embed_shift_events(
+    db: Session,
+    serialized_shifts: list[dict],
+    users_by_id: Optional[dict[int, User]] = None,
+) -> None:
+    """Batch-attach ``checkins`` and ``missed_events`` arrays onto each
+    serialized shift dict in-place.
+
+    Two queries total regardless of shift count:
+      1. ``Checkin`` rows where shift_id IN (...), ordered by created_at.
+      2. ``CheckinAlert`` rows where shift_id IN (...) and kind targets
+         the worker (T-15, T0, repeats) OR office (first, urgent). We
+         pull both because the History timeline shows the full escalation
+         path in one place.
+
+    ``users_by_id`` (when provided) lets us resolve check-in user names
+    without an extra query -- the calling admin endpoints already build
+    this map for crew_members embedding so reusing it is free.
+    """
+    if not serialized_shifts:
+        return
+    shift_ids = [s["id"] for s in serialized_shifts]
+
+    # Widen the user lookup so a check-in's user_name resolves even if
+    # the user wasn't in the lead/crew set the caller pre-fetched.
+    extra_user_ids: set[int] = set()
+    checkin_rows = (
+        db.query(Checkin)
+        .filter(Checkin.shift_id.in_(shift_ids))
+        .order_by(Checkin.created_at.asc())
+        .all()
+    )
+    for c in checkin_rows:
+        if users_by_id is None or c.user_id not in users_by_id:
+            extra_user_ids.add(c.user_id)
+        if c.recorded_by_user_id and (
+            users_by_id is None or c.recorded_by_user_id not in users_by_id
+        ):
+            extra_user_ids.add(c.recorded_by_user_id)
+    if extra_user_ids:
+        rows = db.query(User).filter(User.id.in_(extra_user_ids)).all()
+        if users_by_id is None:
+            users_by_id = {}
+        for u in rows:
+            users_by_id[u.id] = u
+
+    # Index check-ins by shift_id so the per-shift loop below is O(1).
+    by_shift: dict[int, list[dict]] = {sid: [] for sid in shift_ids}
+    for c in checkin_rows:
+        u = (users_by_id or {}).get(c.user_id)
+        recorder = (
+            (users_by_id or {}).get(c.recorded_by_user_id)
+            if c.recorded_by_user_id else None
+        )
+        by_shift[c.shift_id].append({
+            "id": c.id,
+            "user_id": c.user_id,
+            "user_name": u.name if u else None,
+            "recorded_by_user_id": c.recorded_by_user_id,
+            "recorded_by_name": recorder.name if recorder else None,
+            "lat": c.lat,
+            "lon": c.lon,
+            "accuracy_m": float(c.accuracy_m) if c.accuracy_m is not None else None,
+            "notes": c.notes,
+            "created_at": _aware(c.created_at),
+        })
+
+    # Same pattern for missed_events. Sorted by sent_at so the timeline
+    # reflects the actual escalation order even when due_at == sent_at
+    # (e.g. a deferred scan run that fires two kinds in one tick).
+    alert_rows = (
+        db.query(CheckinAlert)
+        .filter(CheckinAlert.shift_id.in_(shift_ids))
+        .order_by(CheckinAlert.sent_at.asc())
+        .all()
+    )
+    alerts_by_shift: dict[int, list[dict]] = {sid: [] for sid in shift_ids}
+    for a in alert_rows:
+        alerts_by_shift[a.shift_id].append({
+            "id": a.id,
+            "kind": a.kind,
+            "severity": _alert_severity(a.kind),
+            "due_at": _aware(a.due_at),
+            "sent_at": _aware(a.sent_at),
+            "channel": a.channel,
+        })
+
+    for s in serialized_shifts:
+        s["checkins"] = by_shift.get(s["id"], [])
+        s["missed_events"] = alerts_by_shift.get(s["id"], [])
+
+
 def _users_by_id(db: Session, user_ids: list[int]) -> dict[int, User]:
     """Batch-fetch users keyed by id. Used by the admin endpoints to
     embed names into shift JSON without N+1 queries.
@@ -431,6 +546,15 @@ class ShiftRead(BaseModel):
     minutes_to_deadline: Optional[float] = None
     status_tier: Optional[str] = None
     notes: str = ""
+    # Populated only by the admin History endpoint (passes
+    # ``include_events=True`` to ``_serialize_shift``). Empty on
+    # active-tab / overview / worker-self responses to keep the
+    # payload slim. The History tab expands each shift row into a
+    # chronological timeline of its check-ins (each with a map button
+    # when GPS was captured) + missed-deadline events from the alert
+    # ledger -- gives the office a full audit log per shift.
+    checkins: list[CheckinEventRead] = []
+    missed_events: list[MissedEventRead] = []
 
 
 class CheckinRead(BaseModel):
@@ -444,6 +568,48 @@ class CheckinRead(BaseModel):
     accuracy_m: Optional[float] = None
     notes: Optional[str] = None
     created_at: datetime
+
+
+class CheckinEventRead(BaseModel):
+    """One check-in event embedded inside ShiftRead.checkins for the
+    History tab's expandable timeline.
+
+    Same shape as ``CheckinRead`` plus a resolved ``user_name`` so the
+    frontend can render "Joe checked in at 10:42" without a separate
+    user lookup. ``recorded_by_name`` is set only on admin force-checkin
+    overrides; the timeline uses it to render an explicit "(forced by
+    Admin)" suffix.
+    """
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    user_id: int
+    user_name: Optional[str] = None
+    recorded_by_user_id: Optional[int] = None
+    recorded_by_name: Optional[str] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    accuracy_m: Optional[float] = None
+    notes: Optional[str] = None
+    created_at: datetime
+
+
+class MissedEventRead(BaseModel):
+    """One missed-deadline / escalation event embedded inside
+    ShiftRead.missed_events. Sourced from the ``checkin_alerts`` ledger
+    so the timeline shows the same escalations the office actually got
+    paged about (T-15, T0, T+3, repeats, office first/urgent).
+
+    ``severity`` is a coarse bucket the frontend uses to colour the
+    timeline pill: 'reminder' (T-15), 'due' (T0), 'overdue' (worker
+    repeat or office), 'urgent' (office_urgent).
+    """
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    kind: str
+    severity: str
+    due_at: datetime
+    sent_at: datetime
+    channel: str
 
 
 class TodayResponse(BaseModel):
@@ -850,8 +1016,18 @@ def list_crew_candidates(
     If a generic name like "Pineview Worker" appears here, that's a
     real `users` row that should be renamed or deleted in the User
     admin panel -- this endpoint just surfaces what's in the table.
+
+    The three @pineview.local seed rows (Pineview Admin / Office /
+    Worker) are explicitly hidden because they're dev/demo accounts
+    that nobody can actually log into in production -- showing them
+    in the crew picker just clutters the list with three users that
+    can never be selected meaningfully.
     """
-    query = db.query(User).filter(User.id != current_user.id)
+    query = (
+        db.query(User)
+        .filter(User.id != current_user.id)
+        .filter(~User.email.ilike("%@pineview.local"))
+    )
     # `is_active` only exists if the User model defines it. Avoid a
     # hard reference so this works against legacy schemas without it.
     is_active_col = getattr(User, "is_active", None)
@@ -989,6 +1165,12 @@ def get_overview(db: Session = Depends(get_db)) -> list[OverviewEntry]:
         user = user_by_id.get(uid)
         if user is None:
             continue
+        # Demo seed accounts (@pineview.local) shouldn't show on the
+        # admin overview either -- nobody can actually log in as them
+        # in production, so any shift/truck attached to those rows is
+        # noise. Defensive: in normal operation they have neither.
+        if user.email and user.email.lower().endswith("@pineview.local"):
+            continue
         shift = shift_by_user.get(uid)
         truck = truck_by_user.get(uid)
         shift_serial = (
@@ -1056,6 +1238,12 @@ def list_shifts_by_date(
     """History tab: shifts active during the given local-Vancouver date.
 
     See ``list_active_shifts`` for the user_name embedding rationale.
+
+    Each row also embeds its full ``checkins`` and ``missed_events``
+    arrays so the frontend can expand a shift into a chronological
+    audit timeline (every "I'm OK" tap with a map link, every T-15 /
+    T0 / overdue / office-paged escalation) without any per-row
+    follow-up requests.
     """
     target = None
     if date_str:
@@ -1081,12 +1269,15 @@ def list_shifts_by_date(
         all_ids.append(s.user_id)
         all_ids.extend(s.crew_user_ids or [])
     user_map = _users_by_id(db, all_ids)
-    return [
-        ShiftRead(**_serialize_shift(
-            s, user=user_map.get(s.user_id), users_by_id=user_map,
-        ))
+    serialized = [
+        _serialize_shift(s, user=user_map.get(s.user_id), users_by_id=user_map)
         for s in rows
     ]
+    # Attach checkins + missed_events in a single batched roundtrip so
+    # expanding any row in the History UI is instant (data already on
+    # the client). Mutates the dicts in place.
+    _embed_shift_events(db, serialized, users_by_id=user_map)
+    return [ShiftRead(**s) for s in serialized]
 
 
 @admin_router.post("/api/admin/shifts/{shift_id}/end", response_model=ShiftRead)
