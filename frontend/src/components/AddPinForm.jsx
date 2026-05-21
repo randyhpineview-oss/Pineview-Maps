@@ -169,8 +169,18 @@ export default function AddPinForm({
           rows="3"
         />
         <div className="button-row">
-          <button className="primary-button" type="submit" disabled={submitting}>
-            {submitting ? 'Submitting...' : submitLabel}
+          {/* Latitude + longitude are mandatory (the runtime check inside
+              handleSubmit also enforces this). Disable the button when
+              they're missing so the user gets the same gray + tooltip
+              feedback as everywhere else in the app, instead of clicking
+              and being bounced by an inline error. */}
+          <button
+            className="primary-button"
+            type="submit"
+            disabled={submitting || !canSubmit}
+            title={!canSubmit ? 'Latitude and longitude are required' : ''}
+          >
+            {submitting ? 'Submitting...' : !canSubmit ? `${submitLabel} (location required)` : submitLabel}
           </button>
         </div>
         {locationState ? <div className="small-text">{locationState}</div> : null}
