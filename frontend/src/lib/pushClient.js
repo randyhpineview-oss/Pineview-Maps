@@ -56,6 +56,26 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 /**
+ * Byte-compare two ArrayBuffer-ish values. Used to detect VAPID public
+ * key drift between an existing browser-side subscription and the
+ * current server VAPID key.
+ *
+ * Returns false (not equal) when either side is null/undefined so the
+ * caller treats "no info" as "needs refresh" -- safer than silently
+ * keeping a subscription we can't verify.
+ */
+function buffersEqual(a, b) {
+  if (!a || !b) return false;
+  const va = new Uint8Array(a);
+  const vb = new Uint8Array(b);
+  if (va.length !== vb.length) return false;
+  for (let i = 0; i < va.length; i += 1) {
+    if (va[i] !== vb[i]) return false;
+  }
+  return true;
+}
+
+/**
  * Pull the active push subscription (if any) from the SW registration.
  */
 async function getCurrentSubscription() {
@@ -119,12 +139,35 @@ export async function ensurePushSubscribed() {
     return { ok: false, reason: 'no-sw' };
   }
 
+  const expectedKey = urlBase64ToUint8Array(publicKey);
   let subscription = await reg.pushManager.getSubscription();
+
+  // VAPID-drift recovery: if the browser still has a subscription bound
+  // to an OLD VAPID public key (server-side key rotation, fresh deploy
+  // with regenerated keys, etc.), it would silently keep pushing to a
+  // dead endpoint that backend can never sign for -- Apple/FCM return
+  // 403 "bad JWT" every time. Detect the mismatch by comparing the
+  // existing subscription's applicationServerKey bytes to the current
+  // server key, and recycle the sub on mismatch so the new subscribe()
+  // below binds to the current key.
+  if (subscription) {
+    const existingKey = subscription.options && subscription.options.applicationServerKey;
+    if (!buffersEqual(existingKey, expectedKey)) {
+      console.info('[push] VAPID key changed; recycling stale subscription');
+      try {
+        await subscription.unsubscribe();
+      } catch (err) {
+        console.warn('[push] Stale subscription unsubscribe failed:', err);
+      }
+      subscription = null;
+    }
+  }
+
   if (!subscription) {
     try {
       subscription = await reg.pushManager.subscribe({
         userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(publicKey),
+        applicationServerKey: expectedKey,
       });
     } catch (err) {
       console.warn('[push] subscribe() failed:', err);
