@@ -288,7 +288,12 @@ export async function generateTMTicketPdf(ticket, options = {}) {
       ...l,
       label: migrateOfficeLineLabel(l.label || ''),
     }));
-    gstPercent = Number(ticket.office_data.gst_percent ?? 5) || 5;
+    // `|| 0` (not `|| 5`) so an explicit 0% set by office is respected on
+    // the PDF — the `?? 5` above still defaults legacy tickets without
+    // gst_percent to 5%, which is what we want for un-migrated rows.
+    // Old `|| 5` clobbered office's 0% intent back to 5% on render even
+    // though the on-screen editor (computeOfficeTotals) correctly used 0.
+    gstPercent = Number(ticket.office_data.gst_percent ?? 5) || 0;
   }
 
   const officeColW = [270, 70, 90, 110];  // Label | QTY | Rate | Sub Total
