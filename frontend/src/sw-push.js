@@ -120,7 +120,36 @@ self.addEventListener('push', (event) => {
       shiftId: payload.shiftId || null,
     },
   };
-  event.waitUntil(self.registration.showNotification(title, opts));
+  // Two parallel jobs:
+  //   1. Show the OS notification (mandatory on iOS -- Apple revokes
+  //      the push subscription if a `push` event finishes without a
+  //      visible notification).
+  //   2. Post a 'CHECKIN_ALERT' message to every open tab so any admin
+  //      dashboards backgrounded in another window refresh their data
+  //      INSTANTLY rather than waiting for the next 60 s poll. The
+  //      OverviewTab listens for this and re-fetches /admin/checkin-
+  //      overview, so a worker going overdue updates the admin's
+  //      laptop in real time even with the tab hidden in the
+  //      background.
+  const showNotif = self.registration.showNotification(title, opts);
+  const broadcastRefresh = self.clients
+    .matchAll({ type: 'window', includeUncontrolled: true })
+    .then((clientsList) => {
+      for (const client of clientsList) {
+        try {
+          client.postMessage({
+            type: 'CHECKIN_ALERT',
+            tag: payload.tag || 'checkin',
+            urgent: payload.urgent === true,
+            shiftId: payload.shiftId || null,
+          });
+        } catch {
+          /* ignore postMessage errors */
+        }
+      }
+    })
+    .catch(() => { /* swallow -- broadcast is best-effort */ });
+  event.waitUntil(Promise.all([showNotif, broadcastRefresh]));
 });
 
 

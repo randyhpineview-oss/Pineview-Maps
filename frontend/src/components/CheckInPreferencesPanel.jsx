@@ -50,6 +50,17 @@ export default function CheckInPreferencesPanel({ onClose, embedded = false }) {
   const [permission, setPermission] = useState(notificationPermission());
   const supported = pushSupported();
 
+  // ── Test-push diagnostic state ──────────────────────────────────────
+  // Worker taps "Send me a test push" and we surface a clear pass /
+  // fail / "no subscriptions yet" line. Mirrors the admin Settings tab
+  // diagnostic but with a simpler one-line summary -- the worker doesn't
+  // need to see per-endpoint URLs, just whether their phone got the
+  // push or not. Used to triage "I have the PWA installed on iOS but
+  // never get pushes when locked" without waiting for a real overdue.
+  const [testingPush, setTestingPush] = useState(false);
+  const [testResult, setTestResult] = useState(null);    // { ok, count } | null
+  const [testError, setTestError] = useState(null);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -104,6 +115,32 @@ export default function CheckInPreferencesPanel({ onClose, embedded = false }) {
       setError(err.message || String(err));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleTestPush = async () => {
+    setTestingPush(true);
+    setTestError(null);
+    setTestResult(null);
+    try {
+      const res = await api.testMyPush();
+      // Distill the per-endpoint results into a one-line worker
+      // summary. okCount = how many devices the push pipeline accepted;
+      // failCount = expired/dead subs the server cleaned up. Both are
+      // useful: a worker with okCount=1 should now check their lock
+      // screen / notification tray to see if the OS actually showed it.
+      const okCount = (res.results || []).filter((r) => r.ok).length;
+      const failCount = (res.results || []).filter((r) => !r.ok).length;
+      setTestResult({
+        push_configured: !!res.push_configured,
+        sub_count: res.sub_count || 0,
+        ok: okCount,
+        failed: failCount,
+      });
+    } catch (err) {
+      setTestError(err.message || String(err));
+    } finally {
+      setTestingPush(false);
     }
   };
 
@@ -210,6 +247,70 @@ export default function CheckInPreferencesPanel({ onClose, embedded = false }) {
             On by default. Plays the OS sound + vibrates on the lock screen even when the app is closed. Turn off only if you really don't want to be pinged.
           </p>
         )}
+
+        {/* Test-push diagnostic button. Visible whenever push is
+            supported on the device, regardless of whether the worker
+            has the toggle on -- useful for "I just enabled push, did
+            it actually take?" verification. The summary line shows
+            sub_count + ok count so the worker can lock their phone
+            and see whether the test notification actually shows up
+            on the lock screen, which is exactly the iOS-PWA scenario
+            that's been hard to debug. */}
+        {supported ? (
+          <div style={{ marginTop: 10 }}>
+            <button
+              type="button"
+              onClick={handleTestPush}
+              disabled={testingPush || permission !== 'granted'}
+              title={permission !== 'granted' ? 'Allow notifications first' : 'Send a test push to every device you\'re signed in on'}
+              style={{
+                padding: '7px 14px',
+                background: (testingPush || permission !== 'granted') ? t.cardBgRaised : t.accentStrong,
+                color: (testingPush || permission !== 'granted') ? t.textMuted : t.textOnAccent,
+                border: 'none',
+                borderRadius: 6,
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: (testingPush || permission !== 'granted') ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {testingPush ? 'Sending…' : '🔔 Send me a test push'}
+            </button>
+            {testError ? (
+              <div style={{ marginTop: 8, padding: 8, background: t.dangerBg, color: t.danger, border: `1px solid ${t.dangerBorder}`, borderRadius: 6, fontSize: 12 }}>
+                {testError}
+              </div>
+            ) : null}
+            {testResult ? (() => {
+              if (!testResult.push_configured) {
+                return (
+                  <div style={{ marginTop: 8, padding: 8, background: t.warningBg, color: t.warning, border: `1px solid ${t.warningBorder}`, borderRadius: 6, fontSize: 12 }}>
+                    Push isn't configured on the server (missing VAPID keys). Ask your admin.
+                  </div>
+                );
+              }
+              if (testResult.sub_count === 0) {
+                return (
+                  <div style={{ marginTop: 8, padding: 8, background: t.warningBg, color: t.warning, border: `1px solid ${t.warningBorder}`, borderRadius: 6, fontSize: 12 }}>
+                    No push subscriptions yet. Toggle <strong>Push notifications</strong> on above, then try again.
+                  </div>
+                );
+              }
+              if (testResult.ok > 0) {
+                return (
+                  <div style={{ marginTop: 8, padding: 8, background: t.successBg, color: t.success, border: `1px solid ${t.successBorder}`, borderRadius: 6, fontSize: 12, lineHeight: 1.5 }}>
+                    Sent to {testResult.ok} device{testResult.ok === 1 ? '' : 's'}{testResult.failed > 0 ? ` (${testResult.failed} expired and were cleaned up)` : ''}. Lock your phone for ~5 sec and check the lock screen — if you don't see the notification, your OS might be silencing the app (iOS Focus modes, Android battery saver).
+                  </div>
+                );
+              }
+              return (
+                <div style={{ marginTop: 8, padding: 8, background: t.dangerBg, color: t.danger, border: `1px solid ${t.dangerBorder}`, borderRadius: 6, fontSize: 12 }}>
+                  All {testResult.sub_count} subscription{testResult.sub_count === 1 ? '' : 's'} failed. Toggle push off and back on to refresh, then try again.
+                </div>
+              );
+            })() : null}
+          </div>
+        ) : null}
       </section>
 
       {/* Email */}

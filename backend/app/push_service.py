@@ -107,6 +107,7 @@ def send_push(
     payload: PushPayload,
     *,
     ttl: int = 60 * 60,
+    urgency: str = "high",
 ) -> None:
     """POST an encrypted payload to a single subscription endpoint.
 
@@ -118,6 +119,16 @@ def send_push(
         ttl:          Time-to-live in seconds. Default 1 h -- a push
                       that can't be delivered within an hour is stale
                       (worker probably checked in via another device).
+        urgency:      RFC 8030 priority -- one of 'very-low', 'low',
+                      'normal', 'high'. Default 'high' for this module
+                      because every check-in push is time-sensitive
+                      (worker is approaching / past a safety deadline)
+                      and iOS / Android battery-saver paths will
+                      otherwise delay delivery indefinitely on a phone
+                      in low-power mode. The standard non-urgent push
+                      can sit in a delivery queue for tens of minutes
+                      on a sleeping iPhone; ``Urgency: high`` is the
+                      one knob that bypasses that throttling.
 
     Raises ``WebPushException`` on non-recoverable errors so the caller
     can record the failure. Returns normally on success or on the
@@ -135,6 +146,14 @@ def send_push(
             "auth": subscription.auth,
         },
     }
+    # ``Urgency: high`` (RFC 8030) tells Apple/FCM to bypass their
+    # battery / low-power delivery throttling. This is the documented
+    # fix for "I installed the PWA on iOS but I don't get pushes when
+    # my phone is locked" -- iOS only delivers normal-urgency pushes
+    # opportunistically when the device is also doing other work, and
+    # for a phone sitting in a worker's pocket that can mean hours of
+    # delay. With Urgency:high the push attempts immediate delivery.
+    extra_headers = {"Urgency": urgency} if urgency else None
     try:
         webpush(
             subscription_info=sub_info,
@@ -142,6 +161,7 @@ def send_push(
             vapid_private_key=settings.vapid_private_key,
             vapid_claims=vapid_claims,
             ttl=ttl,
+            headers=extra_headers,
         )
     except WebPushException as exc:
         # pywebpush stuffs the upstream HTTP response on .response so

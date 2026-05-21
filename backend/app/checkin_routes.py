@@ -13,6 +13,7 @@ Three routers, audience-separated:
       - GET    /api/push/vapid-public-key
       - POST   /api/push/subscribe
       - DELETE /api/push/subscribe
+      - POST   /api/checkins/me/test-push
       - GET    /api/checkins/me/assignable-users
 
   * ``admin_router`` — admin / office only:
@@ -1662,26 +1663,21 @@ def _classify_push_endpoint(endpoint: str) -> str:
     return "Unknown"
 
 
-@admin_router.post(
-    "/api/admin/checkins/test-push", response_model=TestPushResponse
-)
-def admin_test_push(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> TestPushResponse:
-    """Send a test push to every push subscription registered for the
-    calling admin's user account, returning per-endpoint diagnostic info.
+def _run_test_push_for_user(db: Session, user_id: int) -> TestPushResponse:
+    """Shared implementation for both the admin diagnostic endpoint and
+    the worker-facing "send me a test push" button on the prefs panel.
 
-    Lets the admin verify the push pipeline end-to-end (VAPID keys,
-    network, service worker, OS-level notification permission) without
-    needing an overdue shift to fire a real alert. The test push uses
-    the same ``checkin`` tag as real alerts so it visually replaces any
-    prior check-in notification in the OS tray.
+    Sends a single test notification to every push subscription owned
+    by ``user_id`` and returns per-endpoint outcome (success, expired
+    + deleted, or failure with status code + truncated response body).
+    Same logic as the original admin endpoint; extracted so the worker
+    prefs panel can reuse it without duplicating the cleanup + service
+    classification code.
     """
     results: list[TestPushEndpointResult] = []
     subs = (
         db.query(PushSubscription)
-        .filter(PushSubscription.user_id == current_user.id)
+        .filter(PushSubscription.user_id == user_id)
         .all()
     )
     if not push_configured():
@@ -1719,6 +1715,14 @@ def admin_test_push(
                 vapid_private_key=settings.vapid_private_key,
                 vapid_claims=vapid_claims,
                 ttl=60 * 60,
+                # Mirror push_service.send_push: ``Urgency: high`` tells
+                # Apple/FCM to bypass battery-saver delivery throttling
+                # so the test push actually arrives within seconds even
+                # on a locked iPhone (Apple Push Service queues normal
+                # urgency pushes opportunistically and can delay them
+                # tens of minutes -- exactly the symptom the test push
+                # is supposed to diagnose).
+                headers={"Urgency": "high"},
             )
         except WebPushException as exc:
             status_code = getattr(exc.response, "status_code", None)
@@ -1779,6 +1783,44 @@ def admin_test_push(
     return TestPushResponse(
         push_configured=True, sub_count=len(subs), results=results
     )
+
+
+@admin_router.post(
+    "/api/admin/checkins/test-push", response_model=TestPushResponse
+)
+def admin_test_push(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TestPushResponse:
+    """Send a test push to every push subscription registered for the
+    calling admin's user account, returning per-endpoint diagnostic info.
+
+    Lets the admin verify the push pipeline end-to-end (VAPID keys,
+    network, service worker, OS-level notification permission) without
+    needing an overdue shift to fire a real alert. The test push uses
+    the same ``checkin`` tag as real alerts so it visually replaces any
+    prior check-in notification in the OS tray.
+    """
+    return _run_test_push_for_user(db, current_user.id)
+
+
+@me_router.post(
+    "/api/checkins/me/test-push", response_model=TestPushResponse
+)
+def me_test_push(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TestPushResponse:
+    """Worker-facing version of admin_test_push. Lets a worker verify
+    that push works on their own phone -- the prefs panel renders a
+    "Send me a test push" button that calls this and shows pass/fail.
+
+    Same payload as the admin endpoint; differs only in the auth gate
+    (any signed-in user can hit this for their OWN subscriptions).
+    Crucial for triaging "I installed the PWA on iOS but never get
+    overdue alerts" without waiting for a real shift to go red.
+    """
+    return _run_test_push_for_user(db, current_user.id)
 
 
 # ──────────────────────────────────────────────────────────────────────

@@ -913,6 +913,18 @@ export const api = {
   },
 
   /**
+   * Worker-facing version of testCheckinPush. Any signed-in user can hit
+   * this to send a test push to their own subscriptions; used by the
+   * "Send me a test push" button in CheckInPreferencesPanel so workers
+   * can verify push works on their phone without waiting for an actual
+   * overdue alert. Returns the same TestPushResponse shape as the admin
+   * endpoint (push_configured, sub_count, per-endpoint results array).
+   */
+  testMyPush() {
+    return request('/api/checkins/me/test-push', { method: 'POST' });
+  },
+
+  /**
    * Verify that the backend's configured VAPID public + private keys
    * are mathematically matched. Derives the public key from the private
    * key and compares to the stored public key. Returns ``keys_match``

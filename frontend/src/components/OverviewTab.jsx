@@ -19,6 +19,19 @@
  *     admin sees the green->red transition the moment it fires
  *     server-side. Debounced 500 ms on refetch so a burst of inserts
  *     doesn't thrash the network.
+ *   - Refetches on `visibilitychange` when the tab becomes visible
+ *     again, because browsers throttle setInterval in background tabs
+ *     (~once/min). Without this, a returning admin can see stale
+ *     "still ok" badges for a minute even after walking away for
+ *     hours -- the local 30 s tier-tick has been throttled, no DB
+ *     event has fired, and the data simply hasn't refreshed.
+ *   - Listens for `CHECKIN_ALERT` messages from the service worker.
+ *     The SW posts these whenever a push notification arrives (e.g.
+ *     office_first / office_urgent overdue alerts), so any open admin
+ *     tab refreshes within seconds of the alert firing on the server,
+ *     even when backgrounded -- the missing piece for "real-time"
+ *     dashboard updates that prior to this comment lived only in the
+ *     30s local tick.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -95,6 +108,46 @@ export default function OverviewTab({ isAdmin = false }) {
       .subscribe();
     return () => {
       try { supabase.removeChannel(channel); } catch { /* ignore */ }
+    };
+  }, [scheduleRefetch]);
+
+  // Visibility-driven refetch. When the admin returns to a backgrounded
+  // tab, fetch fresh data immediately rather than waiting for the next
+  // throttled poll/tick. Combined with the 30 s tier-tick below this
+  // ensures the dashboard never shows hours-stale "OK" badges after a
+  // long away period.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        fetchOverview();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [fetchOverview]);
+
+  // Service-worker push -> tab refresh. The SW broadcasts a
+  // CHECKIN_ALERT message to all open clients whenever a push event
+  // fires (see sw-push.js). When that lands here, refetch immediately.
+  // This is what makes the dashboard genuinely real-time even when
+  // the admin's tab is hidden in another window: the OS push -> SW ->
+  // tab message round-trip beats the 60 s poll fallback by orders of
+  // magnitude. Guards on the message `type` so unrelated SW messages
+  // (e.g. 'open-checkin', 'SKIP_WAITING') don't trigger spurious
+  // refetches.
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !navigator.serviceWorker) {
+      return undefined;
+    }
+    const onMessage = (event) => {
+      const data = event && event.data;
+      if (data && data.type === 'CHECKIN_ALERT') {
+        scheduleRefetch();
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', onMessage);
+    return () => {
+      navigator.serviceWorker.removeEventListener('message', onMessage);
     };
   }, [scheduleRefetch]);
 
