@@ -1305,6 +1305,109 @@ def upsert_primary_recipient(
 
 
 # ──────────────────────────────────────────────────────────────────────
+# /api/admin/checkins/vapid-status   (admin-only VAPID config diagnostic)
+# ──────────────────────────────────────────────────────────────────────
+
+
+class VapidStatusResponse(BaseModel):
+    """Diagnostic output for the VAPID keypair validation endpoint."""
+    public_key_set: bool
+    private_key_set: bool
+    contact_email_set: bool
+    stored_public_key: Optional[str] = None
+    stored_public_length: int = 0
+    derived_public_key: Optional[str] = None
+    derived_public_length: int = 0
+    keys_match: bool = False
+    private_key_format: Optional[str] = None
+    error: Optional[str] = None
+
+
+@admin_router.get(
+    "/api/admin/checkins/vapid-status", response_model=VapidStatusResponse
+)
+def admin_vapid_status() -> VapidStatusResponse:
+    """Verify that VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are a matched
+    pair by deriving the public key from the private key and comparing.
+
+    This is the definitive diagnostic for 403 "bad JWT token" failures
+    from Apple/FCM. Apple validates each push's JWT signature against
+    the VAPID public key the subscription was registered with; if the
+    backend's private key isn't the mathematical partner of that public
+    key, every push will 403 forever.
+
+    Surface the derived public key alongside the stored one so the admin
+    can paste them into a diff tool if needed.
+    """
+    import base64
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    stored_pub = (settings.vapid_public_key or "").strip()
+    priv = (settings.vapid_private_key or "").strip()
+    contact = (settings.vapid_contact_email or "").strip()
+
+    resp = VapidStatusResponse(
+        public_key_set=bool(stored_pub),
+        private_key_set=bool(priv),
+        contact_email_set=bool(contact),
+        stored_public_key=stored_pub if stored_pub else None,
+        stored_public_length=len(stored_pub),
+    )
+    if not stored_pub or not priv:
+        resp.error = "VAPID public or private key is not configured."
+        return resp
+
+    # Parse the private key. The generate_vapid_keys.py script emits the
+    # raw 32-byte EC scalar as base64url. PEM is also accepted. Try the
+    # base64url path first (no newlines = friendlier for .env).
+    private_key_obj = None
+    fmt = None
+    try:
+        # base64url with optional padding stripped
+        padding = "=" * ((4 - (len(priv) % 4)) % 4)
+        d_bytes = base64.urlsafe_b64decode(priv + padding)
+        if len(d_bytes) == 32:
+            d_int = int.from_bytes(d_bytes, "big")
+            private_key_obj = ec.derive_private_key(d_int, ec.SECP256R1())
+            fmt = "base64url-d-value"
+    except Exception:  # noqa: BLE001 -- try PEM next
+        private_key_obj = None
+
+    if private_key_obj is None:
+        try:
+            private_key_obj = serialization.load_pem_private_key(
+                priv.encode("utf-8"), password=None
+            )
+            fmt = "PEM"
+        except Exception as exc:  # noqa: BLE001 -- definitive failure
+            resp.error = f"Could not parse VAPID private key: {exc}"
+            return resp
+
+    resp.private_key_format = fmt
+
+    # Derive the matching public key and compare to the stored value.
+    derived_bytes = private_key_obj.public_key().public_bytes(
+        encoding=serialization.Encoding.X962,
+        format=serialization.PublicFormat.UncompressedPoint,
+    )
+    derived_b64 = (
+        base64.urlsafe_b64encode(derived_bytes).rstrip(b"=").decode("ascii")
+    )
+    resp.derived_public_key = derived_b64
+    resp.derived_public_length = len(derived_b64)
+    resp.keys_match = stored_pub == derived_b64
+    if not resp.keys_match:
+        resp.error = (
+            "VAPID public/private key MISMATCH. The backend's private "
+            "key does not mathematically match the public key the "
+            "frontend is using. Regenerate both keys together and "
+            "update Render env vars."
+        )
+    return resp
+
+
+# ──────────────────────────────────────────────────────────────────────
 # /api/admin/checkins/test-push   (admin-only push diagnostic)
 # ──────────────────────────────────────────────────────────────────────
 
@@ -1323,6 +1426,8 @@ class TestPushEndpointResult(BaseModel):
     ok: bool
     deleted: bool = False
     error: Optional[str] = None
+    status_code: Optional[int] = None
+    response_body: Optional[str] = None
 
 
 class TestPushResponse(BaseModel):
@@ -1374,6 +1479,8 @@ def admin_test_push(
             push_configured=False, sub_count=len(subs), results=[]
         )
 
+    from pywebpush import WebPushException, webpush  # type: ignore[import-untyped]
+
     payload = PushPayload(
         title="Pineview Maps test push",
         body="If you see this, push notifications are working on this device.",
@@ -1382,17 +1489,59 @@ def admin_test_push(
         url="/",
         shift_id=None,
     )
+    vapid_claims = {"sub": f"mailto:{settings.vapid_contact_email}"}
     for sub in subs:
         sub_id = sub.id
         ua = sub.user_agent
         service = _classify_push_endpoint(sub.endpoint or "")
+        sub_info = {
+            "endpoint": sub.endpoint,
+            "keys": {"p256dh": sub.p256dh, "auth": sub.auth},
+        }
+        # Direct webpush() call (NOT via send_push) so we capture the
+        # full upstream response BEFORE the cleanup deletes the row.
+        # We still mirror the cleanup logic afterward so admin and prod
+        # behavior stay aligned.
         try:
-            send_push(db, sub, payload)
-        except Exception as exc:  # noqa: BLE001 -- surface to admin UI
-            # ``send_push`` deletes the row on 404/410 then returns
-            # normally; any exception here is something else (signing
-            # error, 5xx, network). Surface the message so the admin
-            # can triage VAPID misconfig vs transient failures.
+            webpush(
+                subscription_info=sub_info,
+                data=payload.to_json(),
+                vapid_private_key=settings.vapid_private_key,
+                vapid_claims=vapid_claims,
+                ttl=60 * 60,
+            )
+        except WebPushException as exc:
+            status_code = getattr(exc.response, "status_code", None)
+            response_body: Optional[str] = None
+            try:
+                response_body = getattr(exc.response, "text", None)
+                if response_body and len(response_body) > 500:
+                    response_body = response_body[:500] + "…"
+            except Exception:  # noqa: BLE001
+                response_body = None
+            deleted = False
+            if status_code in (401, 403, 404, 410):
+                db.delete(sub)
+                db.commit()
+                deleted = True
+            results.append(
+                TestPushEndpointResult(
+                    id=sub_id,
+                    user_agent=ua,
+                    push_service=service,
+                    ok=False,
+                    deleted=deleted,
+                    error=str(exc),
+                    status_code=status_code,
+                    response_body=response_body,
+                )
+            )
+            logger.warning(
+                "Test push to sub %s (%s) failed: status=%s body=%s",
+                sub_id, service, status_code, response_body,
+            )
+            continue
+        except Exception as exc:  # noqa: BLE001 -- non-WebPush failure
             results.append(
                 TestPushEndpointResult(
                     id=sub_id,
@@ -1400,34 +1549,21 @@ def admin_test_push(
                     push_service=service,
                     ok=False,
                     deleted=False,
-                    error=str(exc),
+                    error=f"Unexpected error: {exc}",
                 )
             )
             logger.warning(
-                "Test push to sub %s (%s) failed: %s", sub_id, service, exc
+                "Test push to sub %s (%s) raised non-WebPush exception: %s",
+                sub_id, service, exc,
             )
             continue
-        # If send_push returned normally, either it succeeded OR the
-        # subscription was deleted on 404/410 cleanup. Detect deletion
-        # by checking whether the row still exists.
-        still_exists = (
-            db.query(PushSubscription)
-            .filter(PushSubscription.id == sub_id)
-            .first()
-            is not None
-        )
         results.append(
             TestPushEndpointResult(
                 id=sub_id,
                 user_agent=ua,
                 push_service=service,
-                ok=still_exists,
-                deleted=not still_exists,
-                error=(
-                    "Subscription was stale (4xx); deleted from server."
-                    if not still_exists
-                    else None
-                ),
+                ok=True,
+                deleted=False,
             )
         )
     return TestPushResponse(

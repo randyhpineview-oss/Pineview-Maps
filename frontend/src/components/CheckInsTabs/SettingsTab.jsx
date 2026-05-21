@@ -45,6 +45,27 @@ export default function SettingsTab() {
   const [testPushResult, setTestPushResult] = useState(null);
   const [testPushError, setTestPushError] = useState(null);
 
+  // VAPID keypair validation. Loaded on mount + after every test-push so
+  // the admin can immediately see whether the keys backend is signing
+  // with are actually the matching pair of the public key the frontend
+  // hands to pushManager.subscribe().
+  const [vapidStatus, setVapidStatus] = useState(null);
+  const [vapidLoading, setVapidLoading] = useState(false);
+
+  const loadVapidStatus = useCallback(async () => {
+    setVapidLoading(true);
+    try {
+      const res = await api.getCheckinVapidStatus();
+      setVapidStatus(res);
+    } catch (err) {
+      setVapidStatus({ error: err.message || String(err) });
+    } finally {
+      setVapidLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadVapidStatus(); }, [loadVapidStatus]);
+
   const handleTestPush = async () => {
     setTestingPush(true);
     setTestPushError(null);
@@ -52,6 +73,8 @@ export default function SettingsTab() {
     try {
       const res = await api.testCheckinPush();
       setTestPushResult(res);
+      // Re-verify VAPID after the test in case keys were rotated meanwhile.
+      loadVapidStatus();
     } catch (err) {
       setTestPushError(err.message || String(err));
     } finally {
@@ -325,12 +348,55 @@ export default function SettingsTab() {
       {/* ─── Push diagnostics ─────────────────────────────────────── */}
       <section style={card()}>
         <h3 style={{ margin: '0 0 8px 0', fontSize: 15, color: t.text }}>🔔 Push diagnostics</h3>
+
+        {/* VAPID keypair status -- the smoking-gun config check. If keys
+            don't match, every push to iOS / Android will 403 forever. */}
+        {vapidLoading ? (
+          <div style={{ padding: 10, background: t.cardBgRaised, border: `1px solid ${t.borderSoft}`, borderRadius: 6, fontSize: 12, color: t.textMuted, marginBottom: 10 }}>
+            Verifying VAPID keypair…
+          </div>
+        ) : vapidStatus ? (
+          <div
+            style={{
+              padding: 12,
+              borderRadius: 6,
+              marginBottom: 12,
+              border: `1px solid ${vapidStatus.keys_match ? t.successBorder : t.dangerBorder}`,
+              background: vapidStatus.keys_match ? t.successBg : t.dangerBg,
+              color: vapidStatus.keys_match ? t.success : t.danger,
+              fontSize: 13,
+              lineHeight: 1.5,
+            }}
+          >
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>
+              {vapidStatus.keys_match
+                ? '✅ VAPID keypair matches (backend can sign for this public key)'
+                : '❌ VAPID keypair MISMATCH — push will fail with 403 until fixed'}
+            </div>
+            {vapidStatus.error ? (
+              <div style={{ fontSize: 12, marginBottom: 6 }}>{vapidStatus.error}</div>
+            ) : null}
+            {!vapidStatus.keys_match && vapidStatus.stored_public_key && vapidStatus.derived_public_key ? (
+              <div style={{ fontSize: 11, fontFamily: 'monospace', marginTop: 6 }}>
+                <div><strong>Stored public key:</strong> {vapidStatus.stored_public_key}</div>
+                <div><strong>Derived from private:</strong> {vapidStatus.derived_public_key}</div>
+                <div style={{ marginTop: 6, fontFamily: 'inherit', fontSize: 12 }}>
+                  Generate a fresh matched pair and paste BOTH into Render env vars together.
+                </div>
+              </div>
+            ) : null}
+            {vapidStatus.keys_match && vapidStatus.stored_public_key ? (
+              <div style={{ fontSize: 11, color: t.textMuted, fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                Public key: {vapidStatus.stored_public_key}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
         <p style={{ margin: '0 0 12px 0', fontSize: 13, color: t.textMuted, lineHeight: 1.5 }}>
           Send a test notification to every device subscribed under your account.
           The result table shows whether each device's push service accepted the
-          push. A green check means the push was handed off successfully; on iOS,
-          it does <strong>not</strong> guarantee on-device delivery (Apple accepts
-          pushes for stale subs then silently drops them).
+          push and the exact response from Apple / FCM on failures.
         </p>
         <button
           type="button"
@@ -388,7 +454,13 @@ export default function SettingsTab() {
                           </div>
                           <div style={{ fontSize: 12, color: statusColor, fontWeight: 600, whiteSpace: 'nowrap' }}>{statusLabel}</div>
                         </div>
-                        {r.error ? (
+                        {r.status_code ? (
+                          <div style={{ marginTop: 6, fontSize: 12, color: t.textMuted }}>
+                            <strong>Upstream HTTP {r.status_code}</strong>
+                            {r.response_body ? <span style={{ fontFamily: 'monospace' }}> — {r.response_body}</span> : null}
+                          </div>
+                        ) : null}
+                        {r.error && !r.status_code ? (
                           <div style={{ marginTop: 6, fontSize: 12, color: t.textMuted }}>{r.error}</div>
                         ) : null}
                       </div>

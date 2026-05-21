@@ -872,6 +872,17 @@ export const api = {
     return request('/api/admin/checkins/test-push', { method: 'POST' });
   },
 
+  /**
+   * Verify that the backend's configured VAPID public + private keys
+   * are mathematically matched. Derives the public key from the private
+   * key and compares to the stored public key. Returns ``keys_match``
+   * false when they don't -- the smoking gun for 403 "bad JWT" failures
+   * from Apple/FCM. Admin / office only.
+   */
+  getCheckinVapidStatus() {
+    return request('/api/admin/checkins/vapid-status');
+  },
+
   // ── Admin / office (CheckInsOverlay tabs) ──────────────────────────
   // Single-round-trip data source for the Overview tab.
   getCheckinOverview() {
