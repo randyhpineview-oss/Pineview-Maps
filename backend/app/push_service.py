@@ -130,7 +130,14 @@ def send_push(
         # we can distinguish "subscription is dead" from "everything
         # else" without a string-match.
         status_code = getattr(exc.response, "status_code", None)
-        if status_code in (404, 410):
+        # 404 / 410 -- endpoint expired (browser uninstalled or cleared).
+        # 401 / 403 -- VAPID JWT rejected. The subscription was created
+        # with a different VAPID public key than the one the backend is
+        # currently signing with, so this row will *always* 403 here.
+        # Delete it so the user gets prompted to re-subscribe afresh
+        # next time they enable push, instead of the same broken row
+        # erroring forever.
+        if status_code in (401, 403, 404, 410):
             logger.info(
                 "Push endpoint %s returned %s -- deleting subscription %s",
                 _short(subscription.endpoint),
