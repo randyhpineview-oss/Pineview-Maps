@@ -1305,6 +1305,137 @@ def upsert_primary_recipient(
 
 
 # ──────────────────────────────────────────────────────────────────────
+# /api/admin/checkins/test-push   (admin-only push diagnostic)
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestPushEndpointResult(BaseModel):
+    """Per-subscription outcome for the test-push diagnostic.
+
+    ``ok`` is True when pywebpush accepted the push without raising
+    (i.e. the upstream push service returned 2xx). It does NOT mean
+    the device received it -- Apple in particular accepts pushes for
+    stale subscriptions then silently drops them.
+    """
+    id: int
+    user_agent: Optional[str] = None
+    push_service: str
+    ok: bool
+    deleted: bool = False
+    error: Optional[str] = None
+
+
+class TestPushResponse(BaseModel):
+    push_configured: bool
+    sub_count: int
+    results: list[TestPushEndpointResult]
+
+
+def _classify_push_endpoint(endpoint: str) -> str:
+    """Map a push endpoint URL to a human-readable push service name.
+
+    Mirrors the SQL CASE used in the dashboard so the UI labels match.
+    """
+    if "web.push.apple.com" in endpoint:
+        return "iOS / Safari (Apple)"
+    if "fcm.googleapis.com" in endpoint:
+        return "Android / Chrome (Google FCM)"
+    if "mozilla.com" in endpoint:
+        return "Firefox (Mozilla)"
+    if "notify.windows.com" in endpoint:
+        return "Windows (WNS)"
+    return "Unknown"
+
+
+@admin_router.post(
+    "/api/admin/checkins/test-push", response_model=TestPushResponse
+)
+def admin_test_push(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TestPushResponse:
+    """Send a test push to every push subscription registered for the
+    calling admin's user account, returning per-endpoint diagnostic info.
+
+    Lets the admin verify the push pipeline end-to-end (VAPID keys,
+    network, service worker, OS-level notification permission) without
+    needing an overdue shift to fire a real alert. The test push uses
+    the same ``checkin`` tag as real alerts so it visually replaces any
+    prior check-in notification in the OS tray.
+    """
+    results: list[TestPushEndpointResult] = []
+    subs = (
+        db.query(PushSubscription)
+        .filter(PushSubscription.user_id == current_user.id)
+        .all()
+    )
+    if not push_configured():
+        return TestPushResponse(
+            push_configured=False, sub_count=len(subs), results=[]
+        )
+
+    payload = PushPayload(
+        title="Pineview Maps test push",
+        body="If you see this, push notifications are working on this device.",
+        tag="checkin",
+        urgent=False,
+        url="/",
+        shift_id=None,
+    )
+    for sub in subs:
+        sub_id = sub.id
+        ua = sub.user_agent
+        service = _classify_push_endpoint(sub.endpoint or "")
+        try:
+            send_push(db, sub, payload)
+        except Exception as exc:  # noqa: BLE001 -- surface to admin UI
+            # ``send_push`` deletes the row on 404/410 then returns
+            # normally; any exception here is something else (signing
+            # error, 5xx, network). Surface the message so the admin
+            # can triage VAPID misconfig vs transient failures.
+            results.append(
+                TestPushEndpointResult(
+                    id=sub_id,
+                    user_agent=ua,
+                    push_service=service,
+                    ok=False,
+                    deleted=False,
+                    error=str(exc),
+                )
+            )
+            logger.warning(
+                "Test push to sub %s (%s) failed: %s", sub_id, service, exc
+            )
+            continue
+        # If send_push returned normally, either it succeeded OR the
+        # subscription was deleted on 404/410 cleanup. Detect deletion
+        # by checking whether the row still exists.
+        still_exists = (
+            db.query(PushSubscription)
+            .filter(PushSubscription.id == sub_id)
+            .first()
+            is not None
+        )
+        results.append(
+            TestPushEndpointResult(
+                id=sub_id,
+                user_agent=ua,
+                push_service=service,
+                ok=still_exists,
+                deleted=not still_exists,
+                error=(
+                    "Subscription was stale (4xx); deleted from server."
+                    if not still_exists
+                    else None
+                ),
+            )
+        )
+    return TestPushResponse(
+        push_configured=True, sub_count=len(subs), results=results
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────
 # /api/checkins/scan   (cron, shared-secret auth)
 # ──────────────────────────────────────────────────────────────────────
 

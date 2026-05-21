@@ -39,6 +39,26 @@ export default function SettingsTab() {
   const [newEmail, setNewEmail] = useState('');
   const [newDisplayName, setNewDisplayName] = useState('');
 
+  // Test-push diagnostic state. Result is the TestPushResponse payload
+  // returned by the backend (push_configured, sub_count, results[]).
+  const [testingPush, setTestingPush] = useState(false);
+  const [testPushResult, setTestPushResult] = useState(null);
+  const [testPushError, setTestPushError] = useState(null);
+
+  const handleTestPush = async () => {
+    setTestingPush(true);
+    setTestPushError(null);
+    setTestPushResult(null);
+    try {
+      const res = await api.testCheckinPush();
+      setTestPushResult(res);
+    } catch (err) {
+      setTestPushError(err.message || String(err));
+    } finally {
+      setTestingPush(false);
+    }
+  };
+
   const fetchAll = useCallback(async () => {
     try {
       const rows = await api.listAlertRecipients();
@@ -300,6 +320,92 @@ export default function SettingsTab() {
             ))}
           </tbody>
         </table>
+      </section>
+
+      {/* ─── Push diagnostics ─────────────────────────────────────── */}
+      <section style={card()}>
+        <h3 style={{ margin: '0 0 8px 0', fontSize: 15, color: t.text }}>🔔 Push diagnostics</h3>
+        <p style={{ margin: '0 0 12px 0', fontSize: 13, color: t.textMuted, lineHeight: 1.5 }}>
+          Send a test notification to every device subscribed under your account.
+          The result table shows whether each device's push service accepted the
+          push. A green check means the push was handed off successfully; on iOS,
+          it does <strong>not</strong> guarantee on-device delivery (Apple accepts
+          pushes for stale subs then silently drops them).
+        </p>
+        <button
+          type="button"
+          onClick={handleTestPush}
+          disabled={testingPush}
+          style={btnPrimary()}
+        >
+          {testingPush ? 'Sending…' : 'Send test push to my devices'}
+        </button>
+
+        {testPushError ? (
+          <div style={{ marginTop: 12, padding: 10, background: t.dangerBg, color: t.danger, border: `1px solid ${t.dangerBorder}`, borderRadius: 6, fontSize: 13 }}>
+            {testPushError}
+          </div>
+        ) : null}
+
+        {testPushResult ? (
+          <div style={{ marginTop: 12 }}>
+            {!testPushResult.push_configured ? (
+              <div style={{ padding: 10, background: t.warningBg, color: t.warning, border: `1px solid ${t.warningBorder}`, borderRadius: 6, fontSize: 13 }}>
+                Push is not configured on the backend (missing VAPID env vars).
+                No pushes were sent.
+              </div>
+            ) : testPushResult.sub_count === 0 ? (
+              <div style={{ padding: 10, background: t.warningBg, color: t.warning, border: `1px solid ${t.warningBorder}`, borderRadius: 6, fontSize: 13 }}>
+                You have no push subscriptions registered. Open the Check-ins
+                overlay → Notifications panel on each device you want to test
+                and enable push there first.
+              </div>
+            ) : (
+              <>
+                <div style={{ fontSize: 12, color: t.textMuted, marginBottom: 6 }}>
+                  Sent to {testPushResult.sub_count} device subscription{testPushResult.sub_count === 1 ? '' : 's'}:
+                </div>
+                <div style={{ background: t.cardBgRaised, border: `1px solid ${t.border}`, borderRadius: 6, overflow: 'hidden' }}>
+                  {testPushResult.results.map((r) => {
+                    const statusColor = r.deleted
+                      ? t.warning
+                      : r.ok
+                        ? t.success
+                        : t.danger;
+                    const statusLabel = r.deleted
+                      ? '🧹 Removed (stale)'
+                      : r.ok
+                        ? '✅ Delivered to push service'
+                        : '❌ Failed';
+                    return (
+                      <div key={r.id} style={{ padding: '10px 12px', borderTop: `1px solid ${t.divider}` }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div style={{ fontSize: 13, color: t.text, fontWeight: 600 }}>{r.push_service}</div>
+                            {r.user_agent ? (
+                              <div style={{ fontSize: 11, color: t.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 460 }}>{r.user_agent}</div>
+                            ) : null}
+                          </div>
+                          <div style={{ fontSize: 12, color: statusColor, fontWeight: 600, whiteSpace: 'nowrap' }}>{statusLabel}</div>
+                        </div>
+                        {r.error ? (
+                          <div style={{ marginTop: 6, fontSize: 12, color: t.textMuted }}>{r.error}</div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{ marginTop: 10, padding: 10, background: t.cardBgRaised, border: `1px solid ${t.borderSoft}`, borderRadius: 6, fontSize: 12, color: t.textMuted, lineHeight: 1.5 }}>
+                  <strong>iOS troubleshooting:</strong> If the iOS row shows ✅ but the
+                  notification didn't appear on your iPhone, the subscription is
+                  likely stale (encryption keys mismatch). Open the PWA on your
+                  iPhone, toggle push OFF then ON in the Notifications panel,
+                  then test again.
+                </div>
+              </>
+            )}
+          </div>
+        ) : null}
       </section>
     </div>
   );

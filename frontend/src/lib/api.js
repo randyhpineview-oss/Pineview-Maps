@@ -861,6 +861,17 @@ export const api = {
     });
   },
 
+  /**
+   * Send a diagnostic test push to every push subscription registered
+   * against the calling admin's account. Returns per-endpoint outcome
+   * (ok / deleted-as-stale / error string) so the Settings tab can
+   * surface which device(s) the push pipeline is healthy on. Admin /
+   * office only.
+   */
+  testCheckinPush() {
+    return request('/api/admin/checkins/test-push', { method: 'POST' });
+  },
+
   // ── Admin / office (CheckInsOverlay tabs) ──────────────────────────
   // Single-round-trip data source for the Overview tab.
   getCheckinOverview() {
