@@ -8,6 +8,23 @@
  *      has what enabled, plus the same email picker shows for the admin's
  *      own account).
  *
+ * Sections (top-to-bottom):
+ *   1. Push notifications -- toggle, OS-permission pill, "Send me a test
+ *      push" diagnostic button, and (when blocked) a platform-specific
+ *      "How to re-enable" disclosure.
+ *   2. Location (GPS) -- live permission state, "Test GPS now" button,
+ *      and (when blocked) the same disclosure pattern. Surfaces the
+ *      OFTEN-INVISIBLE failure mode where a worker declined the
+ *      geolocation prompt long ago and their I'm-OK taps are recording
+ *      without coordinates -- the office never sees a map pin and the
+ *      worker can't tell from the green-button UI alone.
+ *   3. Email notifications -- toggle + login-email-vs-custom picker.
+ *
+ * Honest constraint: browsers DELIBERATELY do not let websites reset a
+ * denied permission programmatically. The "How to re-enable" disclosures
+ * are the only path -- they walk the worker through their device's
+ * Settings app screen by screen for iOS / Android / desktop.
+ *
  * Email is OPTIONAL and OFF by default. When the worker turns it on, an
  * email picker reveals two options:
  *    (•) Use my login email — auth.email (one tap, no typing)
@@ -17,7 +34,7 @@
  * and notify_email_address is null, so the "use login email" path stores
  * null and is naturally robust to email-change-at-Supabase.
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { api } from '../lib/api';
 import {
@@ -27,6 +44,12 @@ import {
   requestNotificationPermission,
   unsubscribePush,
 } from '../lib/pushClient';
+import {
+  detectPlatform,
+  geolocationSupported,
+  testGeolocation,
+  watchGeolocationPermission,
+} from '../lib/permissionsClient';
 import { t } from '../lib/checkinTheme';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -60,6 +83,26 @@ export default function CheckInPreferencesPanel({ onClose, embedded = false }) {
   const [testingPush, setTestingPush] = useState(false);
   const [testResult, setTestResult] = useState(null);    // { ok, count } | null
   const [testError, setTestError] = useState(null);
+
+  // ── GPS / Geolocation diagnostic state ──────────────────────────────
+  // Same idea as the test-push button but for the Location permission.
+  // The check-in flow records lat/lon best-effort -- if the worker
+  // declined the permission long ago they may not realise their I'm-OK
+  // taps are being recorded WITHOUT coordinates, which means the office
+  // has no map breadcrumb of where they were. Surfacing the permission
+  // state + a "Test GPS now" button lets workers self-diagnose without
+  // having to make an actual check-in to find out.
+  //
+  // ``gpsState`` is updated reactively via watchGeolocationPermission so
+  // the pill flips the moment the worker re-enables location in OS
+  // Settings without needing to refresh the panel.
+  const [gpsState, setGpsState] = useState(geolocationSupported() ? 'prompt' : 'unsupported');
+  const [testingGps, setTestingGps] = useState(false);
+  const [gpsResult, setGpsResult] = useState(null);  // { ok, lat, lon, accuracyM } | { ok:false, reason, message } | null
+
+  // Platform-aware "How to re-enable" instructions. Computed once;
+  // worker isn't going to switch from iOS to Android mid-session.
+  const platform = detectPlatform();
 
   useEffect(() => {
     let cancelled = false;
@@ -117,6 +160,34 @@ export default function CheckInPreferencesPanel({ onClose, embedded = false }) {
       setSaving(false);
     }
   };
+
+  // Subscribe to geolocation permission changes for live state pill.
+  useEffect(() => {
+    const unwatch = watchGeolocationPermission((next) => setGpsState(next));
+    return unwatch;
+  }, []);
+
+  const handleTestGps = useCallback(async () => {
+    setTestingGps(true);
+    setGpsResult(null);
+    try {
+      const res = await testGeolocation({ timeoutMs: 8000, highAccuracy: true });
+      setGpsResult(res);
+      // If the worker just granted permission via the prompt, refresh
+      // gpsState immediately rather than waiting for the change event,
+      // because some iOS versions are flaky about firing it.
+      if (res.ok) setGpsState('granted');
+      else if (res.reason === 'denied') setGpsState('denied');
+    } catch (err) {
+      setGpsResult({
+        ok: false,
+        reason: 'unknown',
+        message: (err && err.message) || String(err),
+      });
+    } finally {
+      setTestingGps(false);
+    }
+  }, []);
 
   const handleTestPush = async () => {
     setTestingPush(true);
@@ -311,7 +382,99 @@ export default function CheckInPreferencesPanel({ onClose, embedded = false }) {
             })() : null}
           </div>
         ) : null}
+
+        {/* When notifications are explicitly blocked at the OS level,
+            no amount of toggling above will help -- the OS won't show
+            the prompt again. Surface platform-specific reset steps so
+            the worker knows EXACTLY where to go. Honest copy: there's
+            no JS API to reset a denied permission, only the user can
+            do it through Settings. */}
+        {supported && permission === 'denied' ? (
+          <PermissionResetInstructions kind="notifications" platform={platform} />
+        ) : null}
       </section>
+
+      {/* GPS / Location -- diagnostic + reset instructions. The check-in
+          flow uses navigator.geolocation.getCurrentPosition() best-effort
+          so a worker who declined the permission is still able to tap
+          I'm OK, but their check-ins record without lat/lon. This
+          section gives them a way to verify and (if blocked) reset. */}
+      {gpsState !== 'unsupported' ? (
+        <section style={{ marginBottom: 18 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontWeight: 600, color: t.text }}>📍 Location (GPS)</span>
+            {gpsState === 'granted' ? (
+              <span style={{ fontSize: 12, color: t.success }}>(allowed)</span>
+            ) : gpsState === 'denied' ? (
+              <span style={{ fontSize: 12, color: t.danger }}>(blocked in OS settings)</span>
+            ) : gpsState === 'prompt' ? (
+              <span style={{ fontSize: 12, color: t.textMuted }}>(not asked yet)</span>
+            ) : null}
+          </div>
+          <p style={{ marginTop: 6, fontSize: 12, color: t.textMuted, lineHeight: 1.4 }}>
+            Recorded with each I'm OK tap so the office can see where you were if something goes wrong.
+            Your check-ins still work without it — but they won't have a map pin.
+          </p>
+
+          <div style={{ marginTop: 10 }}>
+            <button
+              type="button"
+              onClick={handleTestGps}
+              disabled={testingGps || gpsState === 'denied'}
+              title={gpsState === 'denied' ? 'Location is blocked — see how to fix below' : 'Try to get your current location'}
+              style={{
+                padding: '7px 14px',
+                background: (testingGps || gpsState === 'denied') ? t.cardBgRaised : t.accentStrong,
+                color: (testingGps || gpsState === 'denied') ? t.textMuted : t.textOnAccent,
+                border: 'none',
+                borderRadius: 6,
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: (testingGps || gpsState === 'denied') ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {testingGps
+                ? 'Locating…'
+                : gpsState === 'prompt'
+                  ? '📍 Allow location'
+                  : '📍 Test GPS now'}
+            </button>
+
+            {gpsResult ? (
+              gpsResult.ok ? (
+                <div style={{ marginTop: 8, padding: 8, background: t.successBg, color: t.success, border: `1px solid ${t.successBorder}`, borderRadius: 6, fontSize: 12, lineHeight: 1.5 }}>
+                  GPS is working: <strong>{gpsResult.lat.toFixed(5)}, {gpsResult.lon.toFixed(5)}</strong>
+                  {gpsResult.accuracyM != null ? ` (±${Math.round(gpsResult.accuracyM)} m)` : ''}.
+                </div>
+              ) : gpsResult.reason === 'denied' ? (
+                <div style={{ marginTop: 8, padding: 8, background: t.dangerBg, color: t.danger, border: `1px solid ${t.dangerBorder}`, borderRadius: 6, fontSize: 12 }}>
+                  Location is blocked. See the steps below to re-enable it.
+                </div>
+              ) : gpsResult.reason === 'unavailable' ? (
+                <div style={{ marginTop: 8, padding: 8, background: t.warningBg, color: t.warning, border: `1px solid ${t.warningBorder}`, borderRadius: 6, fontSize: 12 }}>
+                  GPS couldn't get a fix. If you're indoors or the radio is off, try again outside or after toggling Location services.
+                </div>
+              ) : gpsResult.reason === 'timeout' ? (
+                <div style={{ marginTop: 8, padding: 8, background: t.warningBg, color: t.warning, border: `1px solid ${t.warningBorder}`, borderRadius: 6, fontSize: 12 }}>
+                  GPS timed out after 8 seconds. Make sure Location is on and you have a clear sky / signal, then try again.
+                </div>
+              ) : (
+                <div style={{ marginTop: 8, padding: 8, background: t.dangerBg, color: t.danger, border: `1px solid ${t.dangerBorder}`, borderRadius: 6, fontSize: 12 }}>
+                  {gpsResult.message || 'GPS test failed.'}
+                </div>
+              )
+            ) : null}
+          </div>
+
+          {/* If blocked, show how to fix. We can't programmatically
+              reset the permission -- this is a hard browser security
+              guarantee -- so all we can do is point the worker at the
+              right Settings screen for their device. */}
+          {gpsState === 'denied' ? (
+            <PermissionResetInstructions kind="gps" platform={platform} />
+          ) : null}
+        </section>
+      ) : null}
 
       {/* Email */}
       <section style={{ marginBottom: 18 }}>
@@ -390,5 +553,104 @@ export default function CheckInPreferencesPanel({ onClose, embedded = false }) {
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Inline disclosure with platform-specific steps for re-enabling a
+ * blocked browser permission. Honest framing: there is no JavaScript
+ * API to reset a denied Notification or Geolocation permission -- the
+ * Permissions spec deliberately gives the user one-way control over
+ * blocking. So all we can do is render the exact OS / browser path.
+ *
+ * Props:
+ *   - kind: 'notifications' | 'gps'
+ *   - platform: 'ios' | 'android' | 'desktop'
+ */
+function PermissionResetInstructions({ kind, platform }) {
+  const label = kind === 'notifications' ? 'notifications' : 'location (GPS)';
+  // Icon + title vary by kind so the worker can scan multiple
+  // disclosures (Notifications + GPS both blocked) without confusing
+  // them.
+  const icon = kind === 'notifications' ? '🔔' : '📍';
+  const title = `How to re-enable ${label}`;
+
+  // Three platform tracks. Steps are intentionally numbered + short --
+  // worker is reading this on a small phone screen, possibly outdoors.
+  let steps;
+  if (platform === 'ios') {
+    steps = kind === 'notifications' ? [
+      'Open the iPhone Settings app.',
+      'Scroll down and tap Pineview Maps (or Notifications → Pineview Maps).',
+      'Turn Allow Notifications ON.',
+      'Make sure Lock Screen, Banners, and Sounds are all checked.',
+      'For overdue alerts to bypass Focus modes, also turn ON Time Sensitive Notifications.',
+      'Come back and tap "Send me a test push" above to verify.',
+    ] : [
+      'Open the iPhone Settings app.',
+      'Scroll down and tap Pineview Maps.',
+      'Tap Location.',
+      'Choose "While Using the App" (or "Always" if you want check-ins to work in the background).',
+      'Make sure Precise Location is ON.',
+      'Come back and tap "Test GPS now" above to verify.',
+    ];
+  } else if (platform === 'android') {
+    steps = kind === 'notifications' ? [
+      'Long-press the Pineview Maps icon on your home screen.',
+      'Tap App info (or the ⓘ icon).',
+      'Tap Notifications.',
+      'Turn Allow notifications ON.',
+      'If your phone has battery saver / power optimisation, set Pineview Maps to "Unrestricted" so notifications come through promptly.',
+      'Come back and tap "Send me a test push" above to verify.',
+    ] : [
+      'Long-press the Pineview Maps icon on your home screen.',
+      'Tap App info (or the ⓘ icon).',
+      'Tap Permissions → Location.',
+      'Choose "Allow only while using the app" (or "Allow all the time").',
+      'Make sure "Use precise location" is ON.',
+      'Come back and tap "Test GPS now" above to verify.',
+    ];
+  } else {
+    steps = kind === 'notifications' ? [
+      'Click the lock or info icon to the LEFT of the URL in the address bar.',
+      'Find Notifications in the list.',
+      'Change it from Block to Allow (or click "Reset permission").',
+      'Reload the page.',
+      'Come back and tap "Send me a test push" above to verify.',
+    ] : [
+      'Click the lock or info icon to the LEFT of the URL in the address bar.',
+      'Find Location in the list.',
+      'Change it from Block to Allow (or click "Reset permission").',
+      'Reload the page.',
+      'Come back and tap "Test GPS now" above to verify.',
+    ];
+  }
+
+  return (
+    <details
+      style={{
+        marginTop: 10,
+        padding: 10,
+        background: t.warningBg,
+        border: `1px solid ${t.warningBorder}`,
+        borderRadius: 6,
+        color: t.warning,
+        fontSize: 13,
+      }}
+    >
+      <summary style={{ cursor: 'pointer', fontWeight: 600, color: t.warning, listStyle: 'revert' }}>
+        {icon} {title}
+      </summary>
+      <p style={{ marginTop: 8, marginBottom: 8, fontSize: 12, color: t.textSubtle, lineHeight: 1.5 }}>
+        Browsers don't let an app reset a blocked permission directly —
+        only you can, from your device's Settings. Here's the exact path:
+      </p>
+      <ol style={{ marginTop: 4, marginLeft: 20, fontSize: 13, color: t.text, lineHeight: 1.6 }}>
+        {steps.map((s, i) => (
+          // eslint-disable-next-line react/no-array-index-key
+          <li key={i} style={{ marginBottom: 4 }}>{s}</li>
+        ))}
+      </ol>
+    </details>
   );
 }
