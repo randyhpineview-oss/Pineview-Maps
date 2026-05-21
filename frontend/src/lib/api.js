@@ -406,8 +406,15 @@ export const api = {
   },
 
   // ── Ticket number ──
+  // Bumped from the default 20s to 60s so a slow-cellular worker
+  // doesn't timeout during the pre-upload phase (this gets called by
+  // both HerbicideLeaseSheet on submit AND the offline upload queue's
+  // ensurePdfAndTicket). The endpoint itself is a single sequence
+  // bump on the DB, so a real 60s wait only happens when the network
+  // round-trip itself is the bottleneck — exactly the case we want
+  // to be lenient about.
   getNextTicket() {
-    return request('/api/next-ticket');
+    return request('/api/next-ticket', { timeoutMs: 60_000 });
   },
 
   // ── Lookup tables (herbicides, applicators, noxious weeds, location types) ──

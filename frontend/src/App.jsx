@@ -1473,7 +1473,17 @@ export default function App() {
           // Uploading list, but we stop auto-retrying. Short error
           // messages only so we don't bloat IDB with huge payload dumps
           // on 5xx HTML bodies.
-          const MAX_ATTEMPTS = 5;
+          //
+          // 10 attempts × 2-min poll interval = ~20 min of wall-clock
+          // retrying before we mark the item stalled. Was previously 5
+          // (~10 min), which was punishing slow-cellular workers whose
+          // pre-upload calls (getNextTicket, etc.) routinely timed out
+          // on a single round-trip — once the queue burned through 5
+          // setup-phase timeouts, items got stuck stalled even though
+          // the network would have eventually worked. Worker can still
+          // hit the manual-refresh button to un-stall everything; this
+          // just gives a generous default before they have to.
+          const MAX_ATTEMPTS = 10;
           const attempts = (item.attempts || 0) + 1;
           try {
             await updateUploadEntry(item.id, {
