@@ -102,6 +102,13 @@ export default function HydroseedDailyRecord({
     area: '',
     site_name: '',
     description_of_work: '',
+    // Crew is split into three role buckets because each role gets billed
+    // at a different rate. `crew` is kept as a derived flat list (built
+    // on submit + draft save) so existing PDF + backend code paths that
+    // expect a single `crew[]` continue to work without changes.
+    supervisor: '',         // single person, billed as supervisor
+    lead: '',               // single person, billed as lead-hand
+    workers: [],            // every other crew member, billed as labourer
     crew: [],
     equipment: [],
     mulch_type: '',
@@ -181,6 +188,12 @@ export default function HydroseedDailyRecord({
         area: d.area || duplicateFrom.area || '',
         site_name: d.site_name || duplicateFrom.site_name || '',
         description_of_work: d.description_of_work || duplicateFrom.description_of_work || '',
+        // Prefer the structured role fields when present; fall back to
+        // legacy flat `crew` (pre-roles records) by dropping everyone
+        // into the workers bucket so the duplicate doesn't lose names.
+        supervisor: d.supervisor || '',
+        lead: d.lead || '',
+        workers: d.workers || (d.supervisor || d.lead ? [] : (d.crew || [])),
         crew: d.crew || [],
         equipment: d.equipment || [],
         mulch_type: d.mulch_type || duplicateFrom.mulch_type || '',
@@ -204,6 +217,9 @@ export default function HydroseedDailyRecord({
         area: d.area || editingRecord.area || '',
         site_name: d.site_name || editingRecord.site_name || '',
         description_of_work: d.description_of_work || editingRecord.description_of_work || '',
+        supervisor: d.supervisor || '',
+        lead: d.lead || '',
+        workers: d.workers || (d.supervisor || d.lead ? [] : (d.crew || [])),
         crew: d.crew || [],
         equipment: d.equipment || [],
         mulch_type: d.mulch_type || editingRecord.mulch_type || '',
@@ -238,15 +254,44 @@ export default function HydroseedDailyRecord({
   // ── Form mutators ────────────────────────────────────────────────────────
   const setField = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
 
-  const addCrew = (name) => {
+  // Build a payload-ready form with `crew` re-derived from the role
+  // buckets. Used everywhere we send `form` downstream (PDF generator,
+  // upload-queue payload, draft saver) so the backend always sees the
+  // flat crew list it has historically expected, AND the new structured
+  // role fields for billing breakdowns.
+  const formForOutput = () => {
+    const merged = [
+      form.supervisor,
+      form.lead,
+      ...(form.workers || []),
+    ].map(n => (n || '').trim()).filter(Boolean);
+    // De-dup while preserving order (supervisor → lead → workers).
+    const seen = new Set();
+    const crew = merged.filter(n => {
+      if (seen.has(n)) return false;
+      seen.add(n);
+      return true;
+    });
+    return { ...form, crew };
+  };
+
+  // Helper: name already on the crew in ANY role? Prevents double-billing
+  // the same person as e.g. both Lead and Worker on the same record.
+  const isNameTaken = (name) => {
+    const n = (name || '').trim();
+    if (!n) return false;
+    return n === form.supervisor || n === form.lead || (form.workers || []).includes(n);
+  };
+
+  const addWorker = (name) => {
     const v = (name || '').trim();
     if (!v) return;
-    if (form.crew.includes(v)) return;
-    setForm(prev => ({ ...prev, crew: [...prev.crew, v] }));
+    if (isNameTaken(v)) return;
+    setForm(prev => ({ ...prev, workers: [...(prev.workers || []), v] }));
     setNewCrewName('');
   };
-  const removeCrew = (idx) => {
-    setForm(prev => ({ ...prev, crew: prev.crew.filter((_, i) => i !== idx) }));
+  const removeWorker = (idx) => {
+    setForm(prev => ({ ...prev, workers: (prev.workers || []).filter((_, i) => i !== idx) }));
   };
 
   const addEquipment = () => {
@@ -381,7 +426,12 @@ export default function HydroseedDailyRecord({
     if (!form.area) missing.push('Area');
     if (!form.site_name) missing.push('Site');
     if (!form.description_of_work) missing.push('Description of Work');
-    if ((form.crew || []).length === 0) missing.push('Crew');
+    // At least one person on the record — any role counts. Per-role
+    // billing means we can't require ALL three roles, but we DO need a
+    // name somewhere so the timesheet isn't empty.
+    if (!form.supervisor && !form.lead && (form.workers || []).length === 0) {
+      missing.push('Crew (supervisor, lead, or at least one worker)');
+    }
     if (!form.mulch_type) missing.push('Mulch Type');
     if (!(form.seed_types || []).some(s => s.name && s.description)) missing.push('At least one Seed Type');
     if ((form.loads || []).length === 0) missing.push('At least one Load');
@@ -403,7 +453,7 @@ export default function HydroseedDailyRecord({
       const photoUrls = (form.photos || []).map(p => p.dataUrl).filter(Boolean);
       const seedTagUrls = (form.seed_tag_photos || []).map(p => p.dataUrl).filter(Boolean);
       const { base64 } = await generateHydroseedDailyPdf(
-        { ...form, record_number: recordNumber },
+        { ...formForOutput(), record_number: recordNumber },
         photoUrls,
         seedTagUrls,
       );
@@ -436,7 +486,7 @@ export default function HydroseedDailyRecord({
       const label = `${form.client || '—'} / ${form.area || '—'} / ${form.site_name || '—'}`;
       const saved = await saveHydroseedDailyDraft({
         id: ensuredDraftId,
-        form,
+        form: formForOutput(),
         recordNumber: recordNumber || null,
         label,
       });
@@ -503,15 +553,16 @@ export default function HydroseedDailyRecord({
     try {
       const photoUrls = (form.photos || []).map(p => p.dataUrl).filter(Boolean);
       const seedTagUrls = (form.seed_tag_photos || []).map(p => p.dataUrl).filter(Boolean);
+      const submitForm = formForOutput();
       const { base64 } = await generateHydroseedDailyPdf(
-        { ...form, record_number: recordNumber },
+        { ...submitForm, record_number: recordNumber },
         photoUrls,
         seedTagUrls,
       );
 
       const clientSubmissionId = draftId || newUuid();
       const dailyDataSnapshot = {
-        ...form,
+        ...submitForm,
         record_number: recordNumber,
       };
 
@@ -576,6 +627,9 @@ export default function HydroseedDailyRecord({
         (f.seed_tag_photos || []).length > 0 ||
         (f.loads || []).length > 0 ||
         (f.crew || []).length > 0 ||
+        (f.workers || []).length > 0 ||
+        (f.supervisor && String(f.supervisor).trim()) ||
+        (f.lead && String(f.lead).trim()) ||
         (f.equipment || []).length > 0 ||
         (f.client && String(f.client).trim()) ||
         (f.area && String(f.area).trim()) ||
@@ -1035,83 +1089,153 @@ export default function HydroseedDailyRecord({
           />
         </div>
 
-        {/* ── Crew ──
-            Multi-select from system users + free-text fallback for non-users
-            (sub-contractors, day labourers). Pulling from `users` keeps the
-            list consistent with check-ins so admin sees the same roster of
-            people on the same day across both modules. Already-selected
-            members render as removable chips above the picker. */}
-        <div>
-          <label style={labelStyle}>Crew *</label>
-          {form.crew.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-              {form.crew.map((name, i) => (
-                <span key={i} style={{
-                  background: '#374151', padding: '4px 8px', borderRadius: 4,
-                  display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.85rem',
-                }}>
-                  {name}
-                  <button onClick={() => removeCrew(i)} style={{ background: 'none', border: 'none', color: '#fca5a5', cursor: 'pointer', padding: 0 }}>×</button>
-                </span>
-              ))}
-            </div>
-          )}
+        {/* ── Crew (split by role) ──
+            Each role bills at a different rate, so we capture them as
+            separate fields:
+              • Supervisor — single person, top rate
+              • Lead       — single person, mid rate
+              • Workers    — N people, labourer rate
+            The downstream PDF + backend still receive a flat `crew[]`
+            (derived in formForOutput) so nothing breaks; the structured
+            fields are additive. The roster <select> options exclude any
+            name already in another role so a worker can't be billed twice
+            on the same record. */}
+        {(() => {
+          const allRosterNames = (users || [])
+            .filter(u => u && (u.is_active !== false) && (u.deleted_at == null))
+            .map(u => (u.name || u.email || '').trim())
+            .filter(Boolean)
+            .sort((a, b) => a.localeCompare(b));
 
-          {/* Pickable roster: only active workers (no soft-deleted users) and
-              only members not already added to the crew, sorted by name so
-              the list is predictable. Each chip is a single-tap add — no
-              dropdown gymnastics, no scrolling through a long select. */}
-          {(() => {
-            const rosterNames = (users || [])
-              .filter(u => u && (u.is_active !== false) && (u.deleted_at == null))
-              .map(u => (u.name || u.email || '').trim())
-              .filter(Boolean)
-              .filter(n => !form.crew.includes(n))
-              .sort((a, b) => a.localeCompare(b));
-            if (rosterNames.length === 0) return null;
+          // Build the roster <select> options for a given role: omit
+          // anyone already on the crew in a different role, but keep the
+          // CURRENT value for that role so it stays selected in the
+          // dropdown.
+          const optionsFor = (currentValue) =>
+            allRosterNames.filter(n =>
+              n === currentValue || (
+                n !== form.supervisor &&
+                n !== form.lead &&
+                !(form.workers || []).includes(n)
+              )
+            );
+
+          // Reusable single-role picker (supervisor + lead). Combines a
+          // <select> of roster names with a free-text input for people
+          // who aren't in the user list.
+          const SingleRoleRow = ({ roleKey, label, accent }) => {
+            const value = form[roleKey] || '';
+            const opts = optionsFor(value);
             return (
-              <div style={{
-                background: '#111827', border: '1px solid #374151', borderRadius: 6,
-                padding: 8, marginBottom: 8,
-              }}>
-                <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginBottom: 6 }}>
-                  Tap a name to add:
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {rosterNames.map((name) => (
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ ...labelStyle, color: accent }}>{label}</label>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  <select
+                    value={allRosterNames.includes(value) ? value : ''}
+                    onChange={e => setField(roleKey, e.target.value)}
+                    style={{ ...inputStyle, flex: 1, minWidth: 140 }}
+                  >
+                    <option value="">— Select from roster —</option>
+                    {opts.map(n => (
+                      <option key={n} value={n}>{n}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    value={allRosterNames.includes(value) ? '' : value}
+                    onChange={e => setField(roleKey, e.target.value)}
+                    placeholder="…or type a name"
+                    style={{ ...inputStyle, flex: 1, minWidth: 140 }}
+                  />
+                  {value && (
                     <button
-                      key={name}
                       type="button"
-                      onClick={() => addCrew(name)}
+                      onClick={() => setField(roleKey, '')}
+                      title={`Clear ${label}`}
                       style={{
-                        background: '#1f2937', color: '#f9fafb',
-                        padding: '4px 10px', borderRadius: 4,
-                        border: '1px solid #374151', cursor: 'pointer',
-                        fontSize: '0.85rem',
+                        padding: '0 12px', background: '#374151', color: '#f9fafb',
+                        border: 'none', borderRadius: 6, cursor: 'pointer',
                       }}
-                    >
-                      + {name}
-                    </button>
-                  ))}
+                    >×</button>
+                  )}
                 </div>
               </div>
             );
-          })()}
+          };
 
-          <div style={{ display: 'flex', gap: 6 }}>
-            <input
-              type="text" value={newCrewName}
-              onChange={e => setNewCrewName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addCrew(newCrewName))}
-              placeholder="Add someone not on the list"
-              style={inputStyle}
-            />
-            <button onClick={() => addCrew(newCrewName)} style={{
-              padding: '0 14px', background: '#3b82f6', color: 'white',
-              border: 'none', borderRadius: 6, cursor: 'pointer',
-            }}>+</button>
-          </div>
-        </div>
+          const workerRosterRemaining = optionsFor(null).filter(
+            n => !(form.workers || []).includes(n)
+          );
+
+          return (
+            <div>
+              <label style={labelStyle}>Crew *</label>
+
+              <SingleRoleRow roleKey="supervisor" label="Supervisor" accent="#fbbf24" />
+              <SingleRoleRow roleKey="lead" label="Lead" accent="#60a5fa" />
+
+              {/* Workers (multi) */}
+              <div>
+                <label style={{ ...labelStyle, color: '#34d399' }}>Workers</label>
+                {(form.workers || []).length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                    {form.workers.map((name, i) => (
+                      <span key={i} style={{
+                        background: '#374151', padding: '4px 8px', borderRadius: 4,
+                        display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.85rem',
+                      }}>
+                        {name}
+                        <button onClick={() => removeWorker(i)} style={{ background: 'none', border: 'none', color: '#fca5a5', cursor: 'pointer', padding: 0 }}>×</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {workerRosterRemaining.length > 0 && (
+                  <div style={{
+                    background: '#111827', border: '1px solid #374151', borderRadius: 6,
+                    padding: 8, marginBottom: 8,
+                  }}>
+                    <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginBottom: 6 }}>
+                      Tap a name to add:
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {workerRosterRemaining.map((name) => (
+                        <button
+                          key={name}
+                          type="button"
+                          onClick={() => addWorker(name)}
+                          style={{
+                            background: '#1f2937', color: '#f9fafb',
+                            padding: '4px 10px', borderRadius: 4,
+                            border: '1px solid #374151', cursor: 'pointer',
+                            fontSize: '0.85rem',
+                          }}
+                        >
+                          + {name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input
+                    type="text" value={newCrewName}
+                    onChange={e => setNewCrewName(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addWorker(newCrewName))}
+                    placeholder="Add a worker not on the list"
+                    style={inputStyle}
+                  />
+                  <button onClick={() => addWorker(newCrewName)} style={{
+                    padding: '0 14px', background: '#3b82f6', color: 'white',
+                    border: 'none', borderRadius: 6, cursor: 'pointer',
+                  }}>+</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ── Equipment Used ── */}
         <div>

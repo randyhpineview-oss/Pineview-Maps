@@ -167,11 +167,41 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
   doc.text(data.site_name || '', marginL + 345, y);
   y += 14;
 
-  doc.setFont('helvetica', 'bold');
-  doc.text('Crew:', marginL, y);
-  doc.setFont('helvetica', 'normal');
-  doc.text((data.crew || []).join(', '), marginL + 60, y);
-  y += 14;
+  // Crew block — supervisor + lead + workers are billed at different
+  // rates, so we render them on their own lines when present. Falls back
+  // to the legacy flat `crew[]` join for records created before the
+  // role split.
+  const hasRoles = Boolean(data.supervisor || data.lead || (data.workers && data.workers.length));
+  if (hasRoles) {
+    if (data.supervisor) {
+      doc.setFont('helvetica', 'bold');
+      doc.text('Supervisor:', marginL, y);
+      doc.setFont('helvetica', 'normal');
+      doc.text(String(data.supervisor), marginL + 60, y);
+      y += 12;
+    }
+    if (data.lead) {
+      doc.setFont('helvetica', 'bold');
+      doc.text('Lead:', marginL, y);
+      doc.setFont('helvetica', 'normal');
+      doc.text(String(data.lead), marginL + 60, y);
+      y += 12;
+    }
+    if (data.workers && data.workers.length) {
+      doc.setFont('helvetica', 'bold');
+      doc.text('Workers:', marginL, y);
+      doc.setFont('helvetica', 'normal');
+      doc.text(data.workers.join(', '), marginL + 60, y);
+      y += 12;
+    }
+    y += 2;
+  } else {
+    doc.setFont('helvetica', 'bold');
+    doc.text('Crew:', marginL, y);
+    doc.setFont('helvetica', 'normal');
+    doc.text((data.crew || []).join(', '), marginL + 60, y);
+    y += 14;
+  }
 
   doc.setFont('helvetica', 'bold');
   doc.text('Description of Work:', marginL, y);

@@ -584,8 +584,13 @@ export default function MapAnnotationCanvas({
 
   return (
     <div style={{
+      // z-index has to clear EVERYTHING in the app: bottom nav tabs
+      // (Maps/Sites/Forms/Admin), the install prompt (10000), and any
+      // future modals. 100000 is the project-wide "absolute top" tier so
+      // the worker can always reach Save / Discard on iOS, where the
+      // bottom nav was previously overlapping the action bar.
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)',
-      display: 'flex', flexDirection: 'column', zIndex: 1200,
+      display: 'flex', flexDirection: 'column', zIndex: 100000,
     }}>
       {/* ── Header (always-visible title + close X) ──
           A separate row that never wraps and never scrolls horizontally, so
