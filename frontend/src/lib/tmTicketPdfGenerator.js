@@ -86,14 +86,17 @@ export function migrateOfficeLineLabel(label) {
 export function computeOfficeTotals(officeData) {
   const lines = officeData?.lines || [];
   const gstPercent = Number(officeData?.gst_percent ?? 5) || 0;
+  // Defaults to true so legacy tickets (which never had this field) keep
+  // charging GST. Only an explicit `false` zeros the tax line.
+  const gstEnabled = officeData?.gst_enabled !== false;
   const subTotal = lines.reduce((sum, line) => {
     const qty = parseFloat(line.qty) || 0;
     const rate = parseFloat(line.rate) || 0;
     return sum + qty * rate;
   }, 0);
-  const gst = subTotal * (gstPercent / 100);
+  const gst = gstEnabled ? subTotal * (gstPercent / 100) : 0;
   const total = subTotal + gst;
-  return { subTotal, gst, total, gstPercent };
+  return { subTotal, gst, total, gstPercent, gstEnabled };
 }
 
 function formatMoney(n) {
@@ -283,6 +286,11 @@ export async function generateTMTicketPdf(ticket, options = {}) {
   // includeOfficeData so workers never see pricing.
   let displayLines = DEFAULT_OFFICE_LINES.map(l => ({ ...l }));
   let gstPercent = 5;
+  // gst_enabled defaults to true for legacy tickets so this branch behaves
+  // exactly as before unless office explicitly turned GST off via the new
+  // checkbox. When false, we skip the entire GST summary row below — the
+  // customer's PDF goes Sub Total → Total with no tax line.
+  let gstEnabled = true;
   if (ticket.office_data) {
     displayLines = (ticket.office_data.lines || DEFAULT_OFFICE_LINES).map((l) => ({
       ...l,
@@ -294,6 +302,7 @@ export async function generateTMTicketPdf(ticket, options = {}) {
     // Old `|| 5` clobbered office's 0% intent back to 5% on render even
     // though the on-screen editor (computeOfficeTotals) correctly used 0.
     gstPercent = Number(ticket.office_data.gst_percent ?? 5) || 0;
+    gstEnabled = ticket.office_data.gst_enabled !== false;
   }
 
   const officeColW = [270, 70, 90, 110];  // Label | QTY | Rate | Sub Total
@@ -302,14 +311,16 @@ export async function generateTMTicketPdf(ticket, options = {}) {
   const officeHeaders = [' ', 'QTY', 'Rate', 'Sub Total'];
 
   // Estimate room needed for the full Office Use section (title + header
-  // row + all line rows + 3 summary rows + Approved/footer buffer). If we
+  // row + all line rows + summary rows + Approved/footer buffer). If we
   // don't have it on the current page, break to a new page BEFORE drawing
   // the section title so the block stays together rather than splitting
   // mid-table.
+  // Summary rows = Sub Total + Total + (GST iff gstEnabled).
+  const summaryRowCount = gstEnabled ? 3 : 2;
   const officeBlockHeight =
-    28                                        // title + header row
-    + (displayLines.length + 3) * officeRowH  // rows + Sub/GST/Total
-    + 90;                                     // footer + Approved signature area
+    28                                                  // title + header row
+    + (displayLines.length + summaryRowCount) * officeRowH
+    + 90;                                               // footer + Approved signature area
   if (y + officeBlockHeight > pageH - marginB) {
     doc.addPage();
     y = 36;
@@ -365,12 +376,16 @@ export async function generateTMTicketPdf(ticket, options = {}) {
     y += officeRowH;
   }
 
-  // Sub Total / GST / Total rows
-  const gstVal = runningSubTotal * (gstPercent / 100);
+  // Sub Total / GST / Total rows. GST row is omitted entirely when the
+  // office turned the tax line off via the editor checkbox; the customer
+  // then sees Sub Total → Total only.
+  const gstVal = gstEnabled ? runningSubTotal * (gstPercent / 100) : 0;
   const totalVal = runningSubTotal + gstVal;
   const summaryLabels = [
     ['Sub Total', includeOfficeData && runningSubTotal > 0 ? `$ ${formatMoney(runningSubTotal)}` : '$'],
-    [`GST (${gstPercent}%)`, includeOfficeData && gstVal > 0 ? `$ ${formatMoney(gstVal)}` : '$'],
+    ...(gstEnabled
+      ? [[`GST (${gstPercent}%)`, includeOfficeData && gstVal > 0 ? `$ ${formatMoney(gstVal)}` : '$']]
+      : []),
     ['Total', includeOfficeData && totalVal > 0 ? `$ ${formatMoney(totalVal)}` : '$'],
   ];
   for (const [label, value] of summaryLabels) {

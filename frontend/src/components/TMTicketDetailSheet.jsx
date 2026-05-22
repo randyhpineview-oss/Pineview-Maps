@@ -85,6 +85,11 @@ export default function TMTicketDetailSheet({
   const [poNumber, setPoNumber] = useState('');
   const [officeLines, setOfficeLines] = useState(DEFAULT_OFFICE_LINES.map((l) => ({ ...l })));
   const [gstPercent, setGstPercent] = useState(5);
+  // Whether to charge GST on this ticket. Office-controlled toggle; defaults
+  // to true (existing & legacy tickets always had GST). When false, the GST
+  // summary row hides on both the editor totals and the rendered PDF —
+  // Sub Total → Total only. Persisted as `office_data.gst_enabled`.
+  const [gstEnabled, setGstEnabled] = useState(true);
   const [rowsEdits, setRowsEdits] = useState({});  // rowId → { cost_code, ... }
   const [newRows, setNewRows] = useState([]);        // manual site rows not yet saved
   const [rowsToDelete, setRowsToDelete] = useState([]); // ids of saved manual rows to remove
@@ -141,6 +146,10 @@ export default function TMTicketDetailSheet({
           rate: l.rate ?? '',
         })));
         setGstPercent(Number(t.office_data?.gst_percent ?? 5));
+        // gst_enabled defaults true so legacy tickets (which never had this
+        // field) still render the GST row exactly like before. Only an
+        // explicit `false` flips off the tax line.
+        setGstEnabled(t.office_data?.gst_enabled !== false);
       };
 
       // 1. Cache-first render
@@ -238,6 +247,7 @@ export default function TMTicketDetailSheet({
         rate: l.rate ?? '',
       })));
       setGstPercent(Number(merged.office_data?.gst_percent ?? 5));
+      setGstEnabled(merged.office_data?.gst_enabled !== false);
       // Clear any pending edits on the source side (rows that were
       // pending deletion / edit on the primary stay; the merge only
       // adds rows from source).
@@ -339,12 +349,14 @@ export default function TMTicketDetailSheet({
     return Number.isFinite(q) ? q : 0;
   };
 
-  // Totals always use effective (derived where applicable) QTY.
+  // Totals always use effective (derived where applicable) QTY. When GST is
+  // toggled off, we feed `gst_enabled: false` straight through so the helper
+  // produces a $0 GST line and the editor row collapses to a dash.
   const totals = useMemo(() => {
     const lines = officeLines.map((l) => ({ ...l, qty: effectiveQtyOf(l) }));
-    return computeOfficeTotals({ lines, gst_percent: gstPercent });
+    return computeOfficeTotals({ lines, gst_percent: gstPercent, gst_enabled: gstEnabled });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [officeLines, gstPercent, effectiveRows]);
+  }, [officeLines, gstPercent, gstEnabled, effectiveRows]);
 
   const updateLine = (idx, field, value) => {
     setOfficeLines((prev) => prev.map((l, i) => (i === idx ? { ...l, [field]: value } : l)));
@@ -406,6 +418,7 @@ export default function TMTicketDetailSheet({
       return { ...l };
     }),
     gst_percent: gstPercent,
+    gst_enabled: gstEnabled,
   });
 
   // ── Submission readiness ──
@@ -1462,16 +1475,33 @@ export default function TMTicketDetailSheet({
             <div style={{ display: 'grid', gridTemplateColumns: '1.9fr 0.8fr 0.8fr 0.9fr 0.25fr', gap: '4px', padding: '6px 8px', borderTop: '1px solid #374151', fontSize: '0.8rem', alignItems: 'center', background: '#0b1220' }}>
               <span></span>
               <span></span>
-              <span style={{ fontWeight: 600, color: '#9ca3af', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                GST
+              {/* GST cell: checkbox is always visible (so office can re-enable
+                  after turning it off). Percent input only shows when enabled
+                  — when off, the row collapses to "[ ] GST  —" so customers
+                  on the rendered PDF won't see a tax line at all. */}
+              <span style={{ fontWeight: 600, color: gstEnabled ? '#9ca3af' : '#6b7280', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <input
-                  type="number" inputMode="decimal" step="0.1"
-                  value={gstPercent}
-                  onChange={(e) => setGstPercent(Number(e.target.value) || 0)}
-                  style={{ width: '48px', padding: '2px 4px', borderRadius: '4px', border: '1px solid #374151', background: '#111827', color: '#f9fafb', fontSize: '0.75rem' }}
-                />%
+                  type="checkbox"
+                  checked={gstEnabled}
+                  onChange={(e) => setGstEnabled(e.target.checked)}
+                  title="Charge GST on this ticket"
+                  style={{ width: '14px', height: '14px', cursor: 'pointer' }}
+                />
+                GST
+                {gstEnabled ? (
+                  <>
+                    <input
+                      type="number" inputMode="decimal" step="0.1"
+                      value={gstPercent}
+                      onChange={(e) => setGstPercent(Number(e.target.value) || 0)}
+                      style={{ width: '48px', padding: '2px 4px', borderRadius: '4px', border: '1px solid #374151', background: '#111827', color: '#f9fafb', fontSize: '0.75rem' }}
+                    />%
+                  </>
+                ) : null}
               </span>
-              <span style={{ textAlign: 'right', fontWeight: 600 }}>${totals.gst.toFixed(2)}</span>
+              <span style={{ textAlign: 'right', fontWeight: 600, color: gstEnabled ? '#f9fafb' : '#6b7280' }}>
+                {gstEnabled ? `$${totals.gst.toFixed(2)}` : '—'}
+              </span>
               <span></span>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1.9fr 0.8fr 0.8fr 0.9fr 0.25fr', gap: '4px', padding: '8px', borderTop: '1px solid #374151', fontSize: '0.9rem', alignItems: 'center', background: '#0f172a', fontWeight: 700 }}>

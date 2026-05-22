@@ -129,10 +129,15 @@ def _merge_worker_office_data(
             for il in incoming_lines
             if il.get("label")
         ]
-        return {
+        # Preserve the GST charge flag if office had previously set one
+        # (defaults to True elsewhere, so legacy tickets keep the tax line).
+        result = {
             "lines": seeded,
             "gst_percent": (existing or {}).get("gst_percent", 5),
         }
+        if existing and "gst_enabled" in existing:
+            result["gst_enabled"] = existing["gst_enabled"]
+        return result
 
     # Subsequent saves: merge QTY-only on allowlisted labels, preserve
     # everything else (rate, labels, non-allowlisted lines, gst_percent).
@@ -159,10 +164,14 @@ def _merge_worker_office_data(
         if lbl in WORKER_EDITABLE_LINE_LABELS and lbl not in existing_labels:
             merged_lines.append({"label": lbl, "qty": il.get("qty"), "rate": None})
 
-    return {
+    result = {
         "lines": merged_lines,
         "gst_percent": existing.get("gst_percent", 5),
     }
+    # Carry the GST charge flag forward unchanged — workers can't toggle it.
+    if "gst_enabled" in existing:
+        result["gst_enabled"] = existing["gst_enabled"]
+    return result
 
 
 def _strip_office_fields_for_worker(
@@ -875,10 +884,18 @@ def _merge_office_data(
         })
         seen_labels.add(label)
 
-    return {
+    # Primary's GST charge flag wins (single tax decision per merged ticket);
+    # falls back to source if primary never set one. Defaults to True via the
+    # consumers (frontend / PDF generator) so an absent key still bills GST.
+    merged_result = {
         "lines": merged_lines,
         "gst_percent": primary.get("gst_percent", source.get("gst_percent", 5)),
     }
+    if "gst_enabled" in primary:
+        merged_result["gst_enabled"] = primary["gst_enabled"]
+    elif "gst_enabled" in source:
+        merged_result["gst_enabled"] = source["gst_enabled"]
+    return merged_result
 
 
 @router.get(
