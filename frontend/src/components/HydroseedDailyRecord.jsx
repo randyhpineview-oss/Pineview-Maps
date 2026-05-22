@@ -84,6 +84,13 @@ export default function HydroseedDailyRecord({
   draft = null,
   // Phase 6 — edit an already-submitted record.
   editingRecord = null,
+  // System user roster (admin + office + worker). Used to populate the
+  // crew picker so the worker doesn't have to retype their teammates'
+  // names every shift. Mirrors what `cachedUsers` provides to the rest
+  // of the app (check-ins, AdminPanel, etc.). Workers can still add a
+  // custom name on top — sub-contractors, day labourers, etc. — so the
+  // picker is additive, not restrictive.
+  users = [],
 }) {
   const { alert } = useDialog();
   const isEditMode = !!editingRecord;
@@ -989,26 +996,75 @@ export default function HydroseedDailyRecord({
           />
         </div>
 
-        {/* ── Crew ── */}
+        {/* ── Crew ──
+            Multi-select from system users + free-text fallback for non-users
+            (sub-contractors, day labourers). Pulling from `users` keeps the
+            list consistent with check-ins so admin sees the same roster of
+            people on the same day across both modules. Already-selected
+            members render as removable chips above the picker. */}
         <div>
           <label style={labelStyle}>Crew *</label>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-            {form.crew.map((name, i) => (
-              <span key={i} style={{
-                background: '#374151', padding: '4px 8px', borderRadius: 4,
-                display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.85rem',
+          {form.crew.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+              {form.crew.map((name, i) => (
+                <span key={i} style={{
+                  background: '#374151', padding: '4px 8px', borderRadius: 4,
+                  display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.85rem',
+                }}>
+                  {name}
+                  <button onClick={() => removeCrew(i)} style={{ background: 'none', border: 'none', color: '#fca5a5', cursor: 'pointer', padding: 0 }}>×</button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Pickable roster: only active workers (no soft-deleted users) and
+              only members not already added to the crew, sorted by name so
+              the list is predictable. Each chip is a single-tap add — no
+              dropdown gymnastics, no scrolling through a long select. */}
+          {(() => {
+            const rosterNames = (users || [])
+              .filter(u => u && (u.is_active !== false) && (u.deleted_at == null))
+              .map(u => (u.name || u.email || '').trim())
+              .filter(Boolean)
+              .filter(n => !form.crew.includes(n))
+              .sort((a, b) => a.localeCompare(b));
+            if (rosterNames.length === 0) return null;
+            return (
+              <div style={{
+                background: '#111827', border: '1px solid #374151', borderRadius: 6,
+                padding: 8, marginBottom: 8,
               }}>
-                {name}
-                <button onClick={() => removeCrew(i)} style={{ background: 'none', border: 'none', color: '#fca5a5', cursor: 'pointer', padding: 0 }}>×</button>
-              </span>
-            ))}
-          </div>
+                <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginBottom: 6 }}>
+                  Tap a name to add:
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {rosterNames.map((name) => (
+                    <button
+                      key={name}
+                      type="button"
+                      onClick={() => addCrew(name)}
+                      style={{
+                        background: '#1f2937', color: '#f9fafb',
+                        padding: '4px 10px', borderRadius: 4,
+                        border: '1px solid #374151', cursor: 'pointer',
+                        fontSize: '0.85rem',
+                      }}
+                    >
+                      + {name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
           <div style={{ display: 'flex', gap: 6 }}>
             <input
               type="text" value={newCrewName}
               onChange={e => setNewCrewName(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addCrew(newCrewName))}
-              placeholder="Add crew member"
+              placeholder="Add someone not on the list"
               style={inputStyle}
             />
             <button onClick={() => addCrew(newCrewName)} style={{

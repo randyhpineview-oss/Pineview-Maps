@@ -5860,6 +5860,7 @@ export default function App() {
                 duplicateFrom={hydroseedDuplicateFrom}
                 draft={resumingHydroseedDraft}
                 editingRecord={editingHydroseedRecord}
+                users={cachedUsers}
               />
             </Suspense>
           </div>
