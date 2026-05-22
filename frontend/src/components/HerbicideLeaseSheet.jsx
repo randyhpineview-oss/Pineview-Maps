@@ -598,7 +598,16 @@ export default function HerbicideLeaseSheet({
     }
   };
 
+  // Latches `true` the instant submit is initiated. The on-close autosave
+  // effect reads this ref to know whether to skip its forced save —
+  // without it, after a successful submit the parent flips isOpen→false
+  // and the wasOpenRef effect re-creates the draft we just consumed, so
+  // the worker sees a stale draft re-appear after submit.
+  // Never reset; the component unmounts shortly after.
+  const hasSubmittedRef = useRef(false);
+
   const handleConfirmSubmit = async () => {
+    hasSubmittedRef.current = true;
     setIsSubmitting(true);
     try {
       // Network detection. When offline we deliberately SKIP the next-ticket
@@ -1016,13 +1025,19 @@ export default function HerbicideLeaseSheet({
   // Fire one autosave when parent closes the modal (isOpen: true → false).
   // The component stays mounted (early-return null), so the hook's unmount
   // cleanup wouldn't fire on its own.
+  //
+  // hasSubmittedRef.current skips this branch after a successful submit so
+  // we don't race the parent's `deleteLeaseSheetDraft` and re-create the
+  // draft a beat after the queue entry was committed. Without the guard,
+  // workers would see a "phantom" draft reappear in their Drafts list
+  // every time they submitted a new sheet.
   const wasOpenRef = useRef(isOpen);
   useEffect(() => {
     if (wasOpenRef.current && !isOpen && autoSaveEnabled === false) {
       // Re-evaluate the gate manually since `autoSaveEnabled` is already
       // false by this point (isOpen flipped). We still want to save if
-      // not edit-mode / not submitting.
-      if (!isEditMode && !isSubmitting && !isPickingTM) {
+      // not edit-mode / not submitting / and the worker didn't just submit.
+      if (!isEditMode && !isSubmitting && !isPickingTM && !hasSubmittedRef.current) {
         autoSaveDraftNow({ force: true });
       }
     }

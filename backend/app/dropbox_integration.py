@@ -85,7 +85,12 @@ def build_tm_path(date_str: str, client: str, area: str, ticket: str) -> str:
 
 def build_hydroseed_daily_path(date_str: str, client: str, area: str, record: str, site_name: str = "") -> str:
     """
-    /{YYYY} Spray Records/{YYYY-MM-DD}/Hydroseed Daily/{Client}/{Area}/{Record}_{SiteName}.pdf
+    /{YYYY} Hydroseed Records/{YYYY-MM-DD}/Hydroseed Daily/{Client}/{Area}/{Record}_{SiteName}.pdf
+
+    Hydroseed lives in its own top-level year folder (separate from the
+    `{YYYY} Spray Records/` tree used for herbicide lease sheets + T&M
+    tickets) so the office can find a year's worth of hydroseed paperwork
+    without scrolling past spray work.
     """
     try:
         dt = datetime.strptime(date_str, '%Y-%m-%d')
@@ -95,7 +100,7 @@ def build_hydroseed_daily_path(date_str: str, client: str, area: str, record: st
     date_folder = dt.strftime('%Y-%m-%d')
     name_suffix = f"_{_safe_name(site_name)}" if site_name else ""
     return (
-        f"/{year} Spray Records/{date_folder}/Hydroseed Daily"
+        f"/{year} Hydroseed Records/{date_folder}/Hydroseed Daily"
         f"/{_safe_name(client)}/{_safe_name(area)}"
         f"/{_safe_name(record)}{name_suffix}.pdf"
     )
@@ -103,7 +108,10 @@ def build_hydroseed_daily_path(date_str: str, client: str, area: str, record: st
 
 def build_hydroseed_ticket_path(date_str: str, client: str, area: str, ticket: str) -> str:
     """
-    /{YYYY} Spray Records/{YYYY-MM-DD}/Hydroseed Ticket/{Client}/{Area}/{Ticket}.pdf
+    /{YYYY} Hydroseed Records/{YYYY-MM-DD}/Hydroseed Ticket/{Client}/{Area}/{Ticket}.pdf
+
+    Same `{YYYY} Hydroseed Records/` root as the daily path above so a
+    completed HT lands next to the dailies that rolled into it.
     """
     try:
         dt = datetime.strptime(date_str, '%Y-%m-%d')
@@ -112,7 +120,7 @@ def build_hydroseed_ticket_path(date_str: str, client: str, area: str, ticket: s
     year = dt.strftime('%Y')
     date_folder = dt.strftime('%Y-%m-%d')
     return (
-        f"/{year} Spray Records/{date_folder}/Hydroseed Ticket"
+        f"/{year} Hydroseed Records/{date_folder}/Hydroseed Ticket"
         f"/{_safe_name(client)}/{_safe_name(area)}"
         f"/{_safe_name(ticket)}.pdf"
     )
