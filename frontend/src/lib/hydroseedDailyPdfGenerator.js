@@ -179,9 +179,12 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
     doc.text(String(data.customer_rep || ''), marginL + 60, y);
     if (data.customer_rep_phone) {
       doc.setFont('helvetica', 'bold');
-      doc.text('Contact:', marginL + 310, y);
+      doc.text('Contact #:', marginL + 310, y);
       doc.setFont('helvetica', 'normal');
-      doc.text(String(data.customer_rep_phone), marginL + 345, y);
+      // 'Contact #:' is wider than 'Date:' / 'Site:', so the same 35pt offset
+      // those short labels use butts the phone number against the colon.
+      // Bump to 60pt for breathing room.
+      doc.text(String(data.customer_rep_phone), marginL + 360, y);
     }
     y += 12;
   }
@@ -470,24 +473,32 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
     y += commH;
   }
 
-  // ── Seed Tag Photos ──────────────────────────────────────────────────────
-  // Inline on the current page if there's room — workers asked for the
-  // PDF to fit on one page on simple dailies. The 3-up grid below sizes
-  // each row to the tallest photo's actual aspect ratio so narrow seed
-  // tags don't reserve 200pt of empty space below them.
-  const SECTION_MIN_H = 110;  // header + one small photo row + label
-  if (seedTags.length > 0) {
-    y += 6;
+  // Section min-height threshold — header + one small photo row + label.
+  // Used by both photo blocks below to decide whether to page-break before
+  // starting the section.
+  const SECTION_MIN_H = 110;
+
+  // ── Annotated Map / Photos ───────────────────────────────────────────────
+  // Map annotations render FIRST and at 2-up so each one is roughly double
+  // the area of the previous 3-up layout — workers need to see boundary
+  // lines and pin locations clearly to verify where they sprayed.
+  if (photos.length > 0) {
+    // Bigger top-gap (was 6) so the bold section header doesn't overlap
+    // the bottom edge of the preceding loads-totals row when there are no
+    // comments to act as a spacer.
+    y += 14;
     if (y + SECTION_MIN_H > pageH - marginB) {
       doc.addPage();
       y = 36;
     }
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
-    doc.text('Seed Tag Photos', pageW / 2, y, { align: 'center' });
-    y += 12;
-    await drawPhotoGrid(doc, seedTags, {
-      labelPrefix: 'Seed Tag',
+    doc.text('Map / Photo Annotations', pageW / 2, y, { align: 'center' });
+    y += 14;
+    await drawPhotoGrid(doc, photos, {
+      labelPrefix: 'Map / Photo',
+      cols: 2,        // 2-up doubles cell area vs. the previous 3-up grid
+      maxCellH: 320,  // taller cap so map detail stays readable
       marginL,
       marginB,
       contentW,
@@ -497,19 +508,24 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
     }).then(yEnd => { y = yEnd; });
   }
 
-  // ── Annotated Map / Photos ───────────────────────────────────────────────
-  if (photos.length > 0) {
-    y += 6;
+  // ── Seed Tag Photos ──────────────────────────────────────────────────────
+  // Render BELOW the map at 4-up so each tag is small but the batch number
+  // / lot is still legible. Workers don't need to study these in detail —
+  // they just need to confirm which seed went down.
+  if (seedTags.length > 0) {
+    y += 14;
     if (y + SECTION_MIN_H > pageH - marginB) {
       doc.addPage();
       y = 36;
     }
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
-    doc.text('Map / Photo Annotations', pageW / 2, y, { align: 'center' });
-    y += 12;
-    await drawPhotoGrid(doc, photos, {
-      labelPrefix: 'Map / Photo',
+    doc.text('Seed Tag Photos', pageW / 2, y, { align: 'center' });
+    y += 14;
+    await drawPhotoGrid(doc, seedTags, {
+      labelPrefix: 'Seed Tag',
+      cols: 4,        // 4-up keeps tags compact under the bigger map cells
+      maxCellH: 100,  // hard cap — tags don't need to dominate the page
       marginL,
       marginB,
       contentW,
@@ -534,16 +550,18 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
 async function drawPhotoGrid(doc, images, opts) {
   const { labelPrefix, marginL, marginB, contentW, pageW, pageH, yRef } = opts;
   let y = yRef.value;
-  // 3-up with a 10pt gutter — narrower columns let multi-seed dailies +
-  // an annotation photo fit on one page.
-  const COLS = 3;
+  // Caller picks the column count + max cell height per section. Defaults
+  // (3-up, 220pt cap) match the original behavior so other callers don't
+  // need to change. Map / seed-tag sections override these to size each
+  // group of photos appropriately for what workers actually need to see.
+  const COLS = opts.cols ?? 3;
+  const MAX_CELL_H = opts.maxCellH ?? 220;
   const GUTTER = 10;
   const cellW = (contentW - GUTTER * (COLS - 1)) / COLS;
   // Per-row height bounds. MIN is the threshold below which we page-break
-  // (otherwise photos become postage stamps); MAX caps a single tall
-  // portrait from eating a third of the next page.
+  // (otherwise photos become postage stamps); MAX (above) caps a single
+  // tall portrait from eating a third of the next page.
   const MIN_CELL_H = 80;
-  const MAX_CELL_H = 220;
   const LABEL_H = 10;
 
   // Pre-read dimensions for aspect-ratio math.
