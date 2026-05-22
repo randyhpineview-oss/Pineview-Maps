@@ -7,7 +7,11 @@ const DB_NAME = 'pineview-offline-db';
 // offline. The list-level cache in FormsPanel only carries enough columns
 // for the row UI; the detail view needs the full row including
 // `office_data`, signature, and the joined `rows` array.
-const DB_VERSION = 7;
+// v8: added `hydroseedDailyDrafts` store (mirrors `leaseSheetDrafts`) so
+// the new Hydroseed Daily Application Record form can autosave and resume
+// device-local drafts. Phase 6 will add the full upload-queue + Dropbox
+// backup safety net; v8 only carries the form snapshot + photos.
+const DB_VERSION = 8;
 
 function ensureCacheId(site) {
   return {
@@ -47,6 +51,9 @@ const dbPromise = openDB(DB_NAME, DB_VERSION, {
     }
     if (!db.objectStoreNames.contains('tmTickets')) {
       db.createObjectStore('tmTickets', { keyPath: 'id' });
+    }
+    if (!db.objectStoreNames.contains('hydroseedDailyDrafts')) {
+      db.createObjectStore('hydroseedDailyDrafts', { keyPath: 'id' });
     }
   },
 });
@@ -301,6 +308,45 @@ export async function getLeaseSheetDraft(id) {
 export async function deleteLeaseSheetDraft(id) {
   const db = await dbPromise;
   await db.delete('leaseSheetDrafts', id);
+}
+
+// ── Hydroseed Daily Drafts (device-local, not synced) ──
+// Draft shape: { id, form, photos, seedTagPhotos, recordNumber, label,
+//                createdAt, updatedAt }
+//
+// Photos and seedTagPhotos are stored as [{ data, type, dataUrl }] —
+// same shape the in-form state uses, so resume can just `setForm({ ... })`
+// without any reshuffling. Phase 6 adds Dropbox backup + an upload queue
+// to match the lease-sheet flow's safety net.
+
+export async function saveHydroseedDailyDraft(draft) {
+  const db = await dbPromise;
+  const now = new Date().toISOString();
+  const existing = draft.id ? await db.get('hydroseedDailyDrafts', draft.id) : null;
+  const payload = {
+    createdAt: existing?.createdAt || now,
+    ...draft,
+    id: draft.id || existing?.id || crypto.randomUUID(),
+    updatedAt: now,
+  };
+  await db.put('hydroseedDailyDrafts', payload);
+  return payload;
+}
+
+export async function getHydroseedDailyDrafts() {
+  const db = await dbPromise;
+  const drafts = await db.getAll('hydroseedDailyDrafts');
+  return drafts.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+}
+
+export async function getHydroseedDailyDraft(id) {
+  const db = await dbPromise;
+  return db.get('hydroseedDailyDrafts', id);
+}
+
+export async function deleteHydroseedDailyDraft(id) {
+  const db = await dbPromise;
+  await db.delete('hydroseedDailyDrafts', id);
 }
 
 // ── Pipelines cache ──

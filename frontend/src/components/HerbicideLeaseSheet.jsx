@@ -3,6 +3,7 @@ import { generateLeaseSheetPdf } from '../lib/pdfGenerator';
 import { generateTMTicketPdf } from '../lib/tmTicketPdfGenerator';
 import { api } from '../lib/api';
 import { saveLeaseSheetDraft, deleteLeaseSheetDraft } from '../lib/offlineStore';
+import { useAutoSaveDraft } from '../lib/useAutoSaveDraft';
 import { localDateISO } from '../lib/dateUtil';
 import PdfPreviewViewer from './PdfPreviewViewer';
 import AutocompleteInput from './AutocompleteInput';
@@ -925,22 +926,11 @@ export default function HerbicideLeaseSheet({
         (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`
       );
 
-      // Best-effort Dropbox backup. Don't await failures — draft must save
-      // even when offline. Successful uploads carry a `url` back into the
-      // saved photo so the resume path can recover if IDB drops the bytes.
-      if (window.navigator.onLine) {
-        try {
-          await Promise.all(serializablePhotos.map(async (p, i) => {
-            if (p.url || !p.data) return; // already backed up or nothing to upload
-            try {
-              const { url } = await api.uploadDraftPhoto(ensuredDraftId, i, p.data, p.type);
-              if (url) p.url = url;
-            } catch { /* non-fatal */ }
-          }));
-        } catch { /* non-fatal */ }
-      }
-
-      const saved = await saveLeaseSheetDraft({
+      // Write to IndexedDB FIRST so the local snapshot is durable even if
+      // the page unloads (e.g. autosave on pagehide) before the Dropbox
+      // backup network round-trip completes. Phase 3 hook fires on tab
+      // blur / window close, so we can't assume the upload will finish.
+      const draftPayload = {
         id: ensuredDraftId,
         site_id: site?.id || null,
         pipeline_id: pipeline?.id || null,
@@ -949,9 +939,32 @@ export default function HerbicideLeaseSheet({
         photos: serializablePhotos,
         ticketNumber,
         label: `${form.customer || site?.client || '—'} / ${form.area || site?.area || '—'} / ${form.lsdOrPipeline || site?.lsd || '—'}`,
-      });
+      };
+      const saved = await saveLeaseSheetDraft(draftPayload);
       setDraftId(saved.id);
       onDraftSaved?.(saved);
+
+      // Best-effort Dropbox backup runs AFTER the IDB write. Failures are
+      // silent — IDB already has the data. Successful uploads then re-save
+      // the draft with each photo's Dropbox url for the safety-net resume
+      // path (recovers from a wiped IDB / new device).
+      if (window.navigator.onLine) {
+        try {
+          let mutated = false;
+          await Promise.all(serializablePhotos.map(async (p, i) => {
+            if (p.url || !p.data) return;
+            try {
+              const { url } = await api.uploadDraftPhoto(ensuredDraftId, i, p.data, p.type);
+              if (url) { p.url = url; mutated = true; }
+            } catch { /* non-fatal */ }
+          }));
+          if (mutated) {
+            try {
+              await saveLeaseSheetDraft({ ...draftPayload, photos: serializablePhotos });
+            } catch { /* non-fatal */ }
+          }
+        } catch { /* non-fatal */ }
+      }
     } catch (err) {
       await alert({
         title: 'Could not save draft',
@@ -967,6 +980,55 @@ export default function HerbicideLeaseSheet({
     setIsPreviewing(false);
     setPdfBase64(null);
   };
+
+  // ── Auto-save draft on tab blur / form close ─────────────────────────────
+  // The hook saves whenever the tab becomes hidden, the page is being torn
+  // down, or this component unmounts. We additionally fire `saveNow` below
+  // when the parent flips `isOpen` from true → false (the form returns
+  // `null` in that case but doesn't unmount), to cover the most common
+  // "user closes the modal" path.
+  //
+  // Guarded so we never autosave while:
+  //   - the form is closed (nothing to save),
+  //   - we're already submitting (race with the real POST),
+  //   - we're inside the T&M picker (worker is mid-flow, not "abandoning"),
+  //   - we're editing an existing record (drafts are for new sheets only).
+  const autoSaveEnabled = isOpen && !isEditMode && !isSubmitting && !isPickingTM;
+  const { saveNow: autoSaveDraftNow } = useAutoSaveDraft({
+    enabled: autoSaveEnabled,
+    hasContent: () => {
+      const f = form;
+      return Boolean(
+        photos.length > 0 ||
+        (f.customer && String(f.customer).trim()) ||
+        (f.area && String(f.area).trim()) ||
+        (f.lsdOrPipeline && String(f.lsdOrPipeline).trim()) ||
+        f.applicators?.length ||
+        f.locationTypes?.length ||
+        f.herbicidesUsed?.length ||
+        (f.totalLiters && String(f.totalLiters).trim()) ||
+        (f.comments && String(f.comments).trim())
+      );
+    },
+    save: handleSaveDraft,
+  });
+
+  // Fire one autosave when parent closes the modal (isOpen: true → false).
+  // The component stays mounted (early-return null), so the hook's unmount
+  // cleanup wouldn't fire on its own.
+  const wasOpenRef = useRef(isOpen);
+  useEffect(() => {
+    if (wasOpenRef.current && !isOpen && autoSaveEnabled === false) {
+      // Re-evaluate the gate manually since `autoSaveEnabled` is already
+      // false by this point (isOpen flipped). We still want to save if
+      // not edit-mode / not submitting.
+      if (!isEditMode && !isSubmitting && !isPickingTM) {
+        autoSaveDraftNow({ force: true });
+      }
+    }
+    wasOpenRef.current = isOpen;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   if (!isOpen) return null;
 

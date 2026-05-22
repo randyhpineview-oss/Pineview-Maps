@@ -83,6 +83,41 @@ def build_tm_path(date_str: str, client: str, area: str, ticket: str) -> str:
     )
 
 
+def build_hydroseed_daily_path(date_str: str, client: str, area: str, record: str, site_name: str = "") -> str:
+    """
+    /{YYYY} Spray Records/{YYYY-MM-DD}/Hydroseed Daily/{Client}/{Area}/{Record}_{SiteName}.pdf
+    """
+    try:
+        dt = datetime.strptime(date_str, '%Y-%m-%d')
+    except (ValueError, TypeError):
+        dt = datetime.utcnow()
+    year = dt.strftime('%Y')
+    date_folder = dt.strftime('%Y-%m-%d')
+    name_suffix = f"_{_safe_name(site_name)}" if site_name else ""
+    return (
+        f"/{year} Spray Records/{date_folder}/Hydroseed Daily"
+        f"/{_safe_name(client)}/{_safe_name(area)}"
+        f"/{_safe_name(record)}{name_suffix}.pdf"
+    )
+
+
+def build_hydroseed_ticket_path(date_str: str, client: str, area: str, ticket: str) -> str:
+    """
+    /{YYYY} Spray Records/{YYYY-MM-DD}/Hydroseed Ticket/{Client}/{Area}/{Ticket}.pdf
+    """
+    try:
+        dt = datetime.strptime(date_str, '%Y-%m-%d')
+    except (ValueError, TypeError):
+        dt = datetime.utcnow()
+    year = dt.strftime('%Y')
+    date_folder = dt.strftime('%Y-%m-%d')
+    return (
+        f"/{year} Spray Records/{date_folder}/Hydroseed Ticket"
+        f"/{_safe_name(client)}/{_safe_name(area)}"
+        f"/{_safe_name(ticket)}.pdf"
+    )
+
+
 def build_photo_path(ticket: str, index: int) -> str:
     """
     Build Dropbox path:

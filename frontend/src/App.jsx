@@ -52,6 +52,7 @@ import {
   upsertPipeline,
   upsertRecent,
   upsertSite,
+  deleteHydroseedDailyDraft,
 } from './lib/offlineStore';
 import { formatDate, nameKey, normalizeName, pinTypeLabel, statusLabel } from './lib/mapUtils';
 import { localDateISO } from './lib/dateUtil';
@@ -77,6 +78,12 @@ const HerbicideLeaseSheet = lazy(() => import('./components/HerbicideLeaseSheet'
 const FormsPanel = lazy(() => import('./components/FormsPanel'));
 const PdfPreviewOverlay = lazy(() => import('./components/PdfPreviewOverlay'));
 const TMTicketDetailSheet = lazy(() => import('./components/TMTicketDetailSheet'));
+// Hydroseed Daily Application Record (HD######) — modal form, parallel
+// in purpose to HerbicideLeaseSheet but for hydroseeding crews. Lazy because
+// it pulls in its own PDF generator + the annotation canvas.
+const HydroseedDailyRecord = lazy(() => import('./components/HydroseedDailyRecord'));
+// Hydroseed Ticket detail sheet (HT######) — office pricing + signing UI.
+const HydroseedTicketDetailSheet = lazy(() => import('./components/HydroseedTicketDetailSheet'));
 // Reports dashboard is admin/office-only and intentionally opened very
 // rarely (weekly/yearly). Unlike the components above, it is NOT included
 // in the idle-time preload block — we only fetch its chunk on demand when
@@ -526,6 +533,8 @@ export default function App() {
   const [deletedSites, setDeletedSites] = useState([]);
   const [deletedLeaseSheets, setDeletedLeaseSheets] = useState([]);
   const [deletedTMTickets, setDeletedTMTickets] = useState([]);
+  const [deletedHydroseedDailies, setDeletedHydroseedDailies] = useState([]);
+  const [deletedHydroseedTickets, setDeletedHydroseedTickets] = useState([]);
   const [deletedQuotes, setDeletedQuotes] = useState([]);
   const [selectedSite, setSelectedSite] = useState(null);
   const [markerRevision, setMarkerRevision] = useState(0);
@@ -673,6 +682,18 @@ export default function App() {
   const [editingSprayRecord, setEditingSprayRecord] = useState(null);
   // T&M ticket detail view
   const [activeTMTicketId, setActiveTMTicketId] = useState(null);
+  // ── Hydroseed module overlays (Phase 6) ─────────────────────────────────
+  // Daily form: open=true mounts the modal. `hydroseedDuplicateFrom` carries
+  // the previous-daily snapshot when the user accepts the "duplicate?"
+  // prompt on open. `resumingHydroseedDraft` carries an in-progress draft
+  // selected from the drafts tab. `editingHydroseedRecord` swaps the form
+  // into edit mode for an already-submitted record.
+  const [hydroseedDailyOpen, setHydroseedDailyOpen] = useState(false);
+  const [hydroseedDuplicateFrom, setHydroseedDuplicateFrom] = useState(null);
+  const [resumingHydroseedDraft, setResumingHydroseedDraft] = useState(null);
+  const [editingHydroseedRecord, setEditingHydroseedRecord] = useState(null);
+  // Hydroseed ticket detail view (HT######).
+  const [activeHydroseedTicketId, setActiveHydroseedTicketId] = useState(null);
   // Lease sheet draft being resumed
   const [resumingDraft, setResumingDraft] = useState(null);
   // Standalone lease sheet (external, not tied to a map site)
@@ -1092,6 +1113,32 @@ export default function App() {
     }
   }, [roleCanAdmin]);
 
+  const loadDeletedHydroseedDailies = useCallback(async () => {
+    if (!roleCanAdmin || !window.navigator.onLine) {
+      setDeletedHydroseedDailies([]);
+      return;
+    }
+    try {
+      const deleted = await api.listDeletedHydroseedDailies();
+      setDeletedHydroseedDailies(deleted);
+    } catch {
+      setDeletedHydroseedDailies([]);
+    }
+  }, [roleCanAdmin]);
+
+  const loadDeletedHydroseedTickets = useCallback(async () => {
+    if (!roleCanAdmin || !window.navigator.onLine) {
+      setDeletedHydroseedTickets([]);
+      return;
+    }
+    try {
+      const deleted = await api.listDeletedHydroseedTickets();
+      setDeletedHydroseedTickets(deleted);
+    } catch {
+      setDeletedHydroseedTickets([]);
+    }
+  }, [roleCanAdmin]);
+
   // Quote Builder deleted-quotes loader — same shape as the other Recent
   // Deletes loaders so it can be slotted into AdminPanel without bespoke
   // wiring. Only admin/office can see deleted quotes.
@@ -1413,6 +1460,41 @@ export default function App() {
               throw err;
             }
             setTmRefreshToken((x) => x + 1);
+          } else if (item.targetType === 'hydroseed_daily') {
+            // Hydroseed daily — backend allocates HD######, uploads PDF
+            // to /{YYYY} Spray Records/{date}/Hydroseed Daily/... and any
+            // photos to /Pineview Maps/Form Photos/. Idempotent via
+            // `client_submission_id`, so retries on transient 5xx never
+            // create duplicate records.
+            await requestWithUploadProgress(`/api/hydroseed/dailies`, {
+              method: 'POST',
+              body: item.payload,
+              onProgress: onItemBytes,
+            });
+            // Bump the drafts/recents refresh token so FormsPanel re-fetches
+            // its hydroseed lists on the next render — workers see the new
+            // HD###### in Recently Submitted without waiting for the 30 s
+            // poll tick.
+            setDraftsRefreshToken((x) => x + 1);
+          } else if (item.targetType === 'hydroseed_daily_edit') {
+            // Edit of an existing HD###### record. PATCH to the same
+            // endpoint structure as the lease-sheet `site_spray_edit`
+            // branch above.
+            await requestWithUploadProgress(`/api/hydroseed/dailies/${item.targetId}`, {
+              method: 'PATCH',
+              body: item.payload,
+              onProgress: onItemBytes,
+            });
+            setDraftsRefreshToken((x) => x + 1);
+          } else if (item.targetType === 'hydroseed_ticket_update') {
+            // HT ticket office save / approve. Payload mirrors
+            // HydroseedTicketUpdate (office_data, description, etc.).
+            await requestWithUploadProgress(`/api/hydroseed/tickets/${item.targetId}`, {
+              method: 'PATCH',
+              body: item.payload,
+              onProgress: onItemBytes,
+            });
+            setDraftsRefreshToken((x) => x + 1);
           }
           await removeUploadEntry(item.id);
           completed++;
@@ -1557,6 +1639,8 @@ export default function App() {
             loadDeletedPipelines(),
             loadDeletedLeaseSheets(),
             loadDeletedTMTickets(),
+            loadDeletedHydroseedDailies(),
+            loadDeletedHydroseedTickets(),
             loadDeletedQuotes(),
           ]);
 
@@ -1605,7 +1689,8 @@ export default function App() {
   }, [loadCachedSites, loadCachedPipelines, loadCachedRecents, loadCachedLookups, loadCachedUsers,
       loadServerSites, loadServerRecents, loadServerLookups, loadServerUsers, loadDevices,
       loadPipelines, loadPendingPipelines, loadDeletedPipelines,
-      loadDeletedLeaseSheets, loadDeletedTMTickets]);
+      loadDeletedLeaseSheets, loadDeletedTMTickets,
+      loadDeletedHydroseedDailies, loadDeletedHydroseedTickets]);
 
   // ── Boot hydration: hydrate-from-cache fast path ──────────────────────────
   // On first mount we used to unconditionally call refreshAllData(), which
@@ -2710,6 +2795,18 @@ export default function App() {
     const onTMTickets = () => setTmRefreshToken((x) => x + 1);
     const onTMRows = () => setTmRefreshToken((x) => x + 1);
 
+    // ── hydroseed_daily_records / hydroseed_tickets / hydroseed_ticket_rows
+    // Same pattern as the T&M handlers above — bump a refresh token and let
+    // FormsPanel re-fetch the affected list. We deliberately reuse
+    // `draftsRefreshToken` because FormsPanel's hydroseed-list useEffects
+    // already depend on it (see Phase 6 wiring), so this is the cheapest
+    // hook into the existing fetch path. Realtime keeps the office and
+    // field crew in sync on HT approvals / new dailies without waiting
+    // for the 30 s FormsPanel poll.
+    const onHydroseedDailies = () => setDraftsRefreshToken((x) => x + 1);
+    const onHydroseedTickets = () => setDraftsRefreshToken((x) => x + 1);
+    const onHydroseedRows = () => setDraftsRefreshToken((x) => x + 1);
+
     // ── devices: registered iPads (OwnTracks). Each Realtime event is
     //    a position update, color/label change, or activation toggle.
     //    We just upsert; the map's TrucksLayer filters out is_active=false
@@ -2790,6 +2887,9 @@ export default function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'site_updates' }, onSiteUpdates)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'time_materials_tickets' }, onTMTickets)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'time_materials_rows' }, onTMRows)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'hydroseed_daily_records' }, onHydroseedDailies)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'hydroseed_tickets' }, onHydroseedTickets)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'hydroseed_ticket_rows' }, onHydroseedRows)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, onUsers)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'devices' }, onDevices)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'herbicides' }, onHerbicides)
@@ -4124,6 +4224,88 @@ export default function App() {
     setActiveTab(TAB_MAP);
   }
 
+  // ── Hydroseed Daily Application Record (HD######) ───────────────────────
+  // Opening flow: check for the user's most recent (non-deleted) daily; if
+  // it exists, offer to duplicate it (carries over crew/ingredients/etc.).
+  // Otherwise just open a blank form. `force` skips the prompt — used by
+  // the per-record "Duplicate" button which always wants to clone.
+  async function handleStartHydroseedDaily({ force = false, duplicateFrom = null } = {}) {
+    setResumingHydroseedDraft(null);
+    setEditingHydroseedRecord(null);
+    if (duplicateFrom) {
+      setHydroseedDuplicateFrom(duplicateFrom);
+      setHydroseedDailyOpen(true);
+      return;
+    }
+    if (force) {
+      setHydroseedDuplicateFrom(null);
+      setHydroseedDailyOpen(true);
+      return;
+    }
+    let latest = null;
+    try { latest = await api.getMyLatestHydroseedDaily(); } catch { /* offline / new user — silent */ }
+    if (latest && await confirm({
+      title: 'Duplicate previous daily?',
+      message: `Copy header + crew + ingredients from ${latest.record_number} (${latest.work_date}, ${latest.client || '—'} / ${latest.area || '—'})? Loads and photos will be cleared so today is a fresh entry.`,
+      okLabel: 'Duplicate',
+      cancelLabel: 'Start blank',
+    })) {
+      setHydroseedDuplicateFrom(latest);
+    } else {
+      setHydroseedDuplicateFrom(null);
+    }
+    setHydroseedDailyOpen(true);
+  }
+
+  function handleHydroseedDailyCancel() {
+    setHydroseedDailyOpen(false);
+    setHydroseedDuplicateFrom(null);
+    setResumingHydroseedDraft(null);
+    setEditingHydroseedRecord(null);
+    setDraftsRefreshToken((x) => x + 1);
+  }
+
+  // Receives `{ payload, mode, dailyId, draftId, recordNumber }` from
+  // HydroseedDailyRecord. Queues the upload via IndexedDB so the worker
+  // doesn't sit on a spinner while Dropbox + Render finish — mirroring
+  // the lease-sheet `external` and TM `tm_ticket` patterns. Also wipes
+  // the device-local draft (the upload-queue row is the new source of
+  // truth) and kicks `processUploadQueue` immediately.
+  async function handleHydroseedDailySubmit({ payload, mode, dailyId, draftId, recordNumber }) {
+    setHydroseedDailyOpen(false);
+    setHydroseedDuplicateFrom(null);
+    setResumingHydroseedDraft(null);
+    setEditingHydroseedRecord(null);
+
+    try {
+      await queueUpload({
+        targetType: mode === 'edit' ? 'hydroseed_daily_edit' : 'hydroseed_daily',
+        targetId: dailyId || null,
+        payload,
+        // Top-level display fields the FormsPanel "Uploading" row reads.
+        // `record_number` is HD###### and acts as the visible label;
+        // `spray_date` mirrors the lease-sheet/T&M field naming so the
+        // shared FormsPanel row renderer works without a new code path.
+        ticket_number: recordNumber || null,
+        spray_date: payload?.work_date || null,
+        form_type: mode === 'edit' ? 'hydroseed_daily_edit' : 'hydroseed_daily',
+      });
+      // Best-effort draft cleanup — the queue entry is now durable so we
+      // don't need the local draft any more. Failures are non-fatal.
+      if (draftId) {
+        try { await deleteHydroseedDailyDraft(draftId); } catch { /* ignore */ }
+      }
+      await refreshUploadQueue();
+      setDraftsRefreshToken((x) => x + 1);
+      setMessage(window.navigator.onLine
+        ? 'Hydroseed daily queued for upload.'
+        : 'Hydroseed daily queued — will upload when online.');
+      processUploadQueue();
+    } catch (e) {
+      setMessage('Could not queue daily: ' + (e?.message || 'unknown'));
+    }
+  }
+
   function handleCancelStandaloneMapPick() {
     setIsStandaloneMapPicking(false);
     setStandalonePickedLocation(null);
@@ -4985,6 +5167,42 @@ export default function App() {
     });
   }
 
+  async function handleRestoreHydroseedDaily(dailyId) {
+    await runAdminAction(async () => {
+      await api.restoreHydroseedDaily(dailyId);
+      await loadDeletedHydroseedDailies();
+    }, 'Hydroseed daily restored successfully.', {
+      optimistic: () => setDeletedHydroseedDailies((prev) => prev.filter((d) => d.id !== dailyId)),
+    });
+  }
+
+  async function handleDeleteHydroseedDailyPermanent(dailyId) {
+    await runAdminAction(async () => {
+      await api.deleteHydroseedDailyPermanent(dailyId);
+      await loadDeletedHydroseedDailies();
+    }, 'Hydroseed daily permanently deleted.', {
+      optimistic: () => setDeletedHydroseedDailies((prev) => prev.filter((d) => d.id !== dailyId)),
+    });
+  }
+
+  async function handleRestoreHydroseedTicket(ticketId) {
+    await runAdminAction(async () => {
+      await api.restoreHydroseedTicket(ticketId);
+      await loadDeletedHydroseedTickets();
+    }, 'Hydroseed ticket restored successfully.', {
+      optimistic: () => setDeletedHydroseedTickets((prev) => prev.filter((t) => t.id !== ticketId)),
+    });
+  }
+
+  async function handleDeleteHydroseedTicketPermanent(ticketId) {
+    await runAdminAction(async () => {
+      await api.deleteHydroseedTicketPermanent(ticketId);
+      await loadDeletedHydroseedTickets();
+    }, 'Hydroseed ticket permanently deleted.', {
+      optimistic: () => setDeletedHydroseedTickets((prev) => prev.filter((t) => t.id !== ticketId)),
+    });
+  }
+
   // Quote Builder soft-delete restore + permanent. Mirrors the TM ticket
   // handlers above so AdminPanel's per-row buttons can share their plumbing.
   async function handleRestoreQuote(quoteId) {
@@ -5017,6 +5235,8 @@ export default function App() {
       deletedPipelines.length +
       deletedLeaseSheets.length +
       deletedTMTickets.length +
+      deletedHydroseedDailies.length +
+      deletedHydroseedTickets.length +
       deletedQuotes.length;
     if (total === 0) return;
     setAdminBusy(true);
@@ -5044,16 +5264,24 @@ export default function App() {
       for (const ticket of deletedTMTickets) {
         try { await api.deleteTMTicketPermanent(ticket.id); } catch (error) { failed.push(error); }
       }
+      for (const daily of deletedHydroseedDailies) {
+        try { await api.deleteHydroseedDailyPermanent(daily.id); } catch (error) { failed.push(error); }
+      }
+      for (const ticket of deletedHydroseedTickets) {
+        try { await api.deleteHydroseedTicketPermanent(ticket.id); } catch (error) { failed.push(error); }
+      }
       for (const quote of deletedQuotes) {
         try { await api.deleteQuotePermanent(quote.id); } catch (error) { failed.push(error); }
       }
-      // Refresh all five deleted-item lists so the UI reflects the purge.
+      // Refresh all deleted-item lists so the UI reflects the purge.
       // loadPendingSites doubles as loadDeletedSites (see its body) so we
       // call it here to refresh both lists in one shot.
       await loadPendingSites();
       await loadDeletedPipelines();
       await loadDeletedLeaseSheets();
       await loadDeletedTMTickets();
+      await loadDeletedHydroseedDailies();
+      await loadDeletedHydroseedTickets();
       await loadDeletedQuotes();
       const deleted = total - failed.length;
       setMessage(failed.length > 0
@@ -5615,6 +5843,48 @@ export default function App() {
           </div>
         )}
 
+        {/* ── Hydroseed Daily Application Record overlay ── */}
+        {hydroseedDailyOpen && (
+          <div style={{
+            position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+            zIndex: 30, backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
+          }}>
+            <Suspense fallback={null}>
+              <HydroseedDailyRecord
+                isOpen={true}
+                onSubmit={handleHydroseedDailySubmit}
+                onCancel={handleHydroseedDailyCancel}
+                clients={clients}
+                areas={areas}
+                duplicateFrom={hydroseedDuplicateFrom}
+                draft={resumingHydroseedDraft}
+                editingRecord={editingHydroseedRecord}
+              />
+            </Suspense>
+          </div>
+        )}
+
+        {/* ── Hydroseed Ticket Detail overlay ── */}
+        {activeHydroseedTicketId != null && (
+          <div style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            zIndex: 40, background: '#0b1220',
+            display: 'flex', flexDirection: 'column',
+          }}>
+            <Suspense fallback={null}>
+              <HydroseedTicketDetailSheet
+                ticketId={activeHydroseedTicketId}
+                roleCanAdmin={roleCanAdmin}
+                roleCanOffice={roleCanAdmin}
+                currentUserEmail={user?.email}
+                onClose={() => setActiveHydroseedTicketId(null)}
+                onSaved={() => setDraftsRefreshToken((x) => x + 1)}
+              />
+            </Suspense>
+          </div>
+        )}
+
         {/* Place-pin banner */}
         {isPlacingPin ? (
           <div className="place-banner">
@@ -6091,6 +6361,21 @@ export default function App() {
                 }
               }}
               onStartStandaloneLeaseSheet={handleStartStandaloneLeaseSheet}
+              onStartHydroseedDaily={() => handleStartHydroseedDaily()}
+              onOpenHydroseedTicket={(id) => setActiveHydroseedTicketId(id)}
+              onResumeHydroseedDraft={(d) => {
+                setResumingHydroseedDraft(d);
+                setHydroseedDuplicateFrom(null);
+                setEditingHydroseedRecord(null);
+                setHydroseedDailyOpen(true);
+              }}
+              onEditHydroseedDaily={(record) => {
+                setEditingHydroseedRecord(record);
+                setResumingHydroseedDraft(null);
+                setHydroseedDuplicateFrom(null);
+                setHydroseedDailyOpen(true);
+              }}
+              onDuplicateHydroseedDaily={(record) => handleStartHydroseedDaily({ duplicateFrom: record })}
               onStartLeaseSheetFromDraft={(draft) => {
                 // Tapping a draft (or "New lease sheet") opens the lease sheet overlay.
                 // When draft is null, the user needs to pick a site from the Map tab first.
@@ -6330,6 +6615,12 @@ export default function App() {
               deletedTMTickets={deletedTMTickets}
               onRestoreTMTicket={handleRestoreTMTicket}
               onDeleteTMTicketPermanent={handleDeleteTMTicketPermanent}
+              deletedHydroseedDailies={deletedHydroseedDailies}
+              onRestoreHydroseedDaily={handleRestoreHydroseedDaily}
+              onDeleteHydroseedDailyPermanent={handleDeleteHydroseedDailyPermanent}
+              deletedHydroseedTickets={deletedHydroseedTickets}
+              onRestoreHydroseedTicket={handleRestoreHydroseedTicket}
+              onDeleteHydroseedTicketPermanent={handleDeleteHydroseedTicketPermanent}
               onBulkDeleteAllPermanent={handleBulkDeleteAllPermanent}
               cachedLookups={cachedLookups}
               onLookupsChanged={loadServerLookups}

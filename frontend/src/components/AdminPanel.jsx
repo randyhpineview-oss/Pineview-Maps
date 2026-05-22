@@ -101,6 +101,13 @@ export default function AdminPanel({
   deletedTMTickets = [],
   onRestoreTMTicket,
   onDeleteTMTicketPermanent,
+  // Soft-deleted hydroseed records — admin-only Recent Deletes section.
+  deletedHydroseedDailies = [],
+  onRestoreHydroseedDaily,
+  onDeleteHydroseedDailyPermanent,
+  deletedHydroseedTickets = [],
+  onRestoreHydroseedTicket,
+  onDeleteHydroseedTicketPermanent,
   onBulkDeleteAllPermanent,
   // Pre-loaded cached data from IndexedDB
   cachedLookups = { herbicides: [], applicators: [], weeds: [], locations: [] },
@@ -193,6 +200,8 @@ export default function AdminPanel({
     deletedPipelines.length +
     deletedLeaseSheets.length +
     deletedTMTickets.length +
+    deletedHydroseedDailies.length +
+    deletedHydroseedTickets.length +
     deletedQuotes.length;
 
   async function handleBulkDeleteAllPermanent() {
@@ -417,6 +426,72 @@ export default function AdminPanel({
                           okLabel: 'Delete forever',
                         })) {
                           onDeleteTMTicketPermanent?.(ticket.id);
+                        }
+                      }} style={{ marginLeft: '0.5rem' }}>
+                        Delete Forever
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {deletedHydroseedDailies.map((daily) => (
+                  <div className="site-row" key={`hyd-daily-${daily.id}`}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
+                      <div>
+                        <strong>💧 {daily.record_number || 'No Record'}</strong>
+                        <div className="small-text">
+                          Hydroseed Daily • {daily.work_date} • {daily.client || 'No client'} / {daily.area || 'No area'}
+                        </div>
+                        <div className="small-text" style={{ color: '#9ca3af' }}>
+                          {daily.site_name || daily.description_of_work || ''}
+                        </div>
+                      </div>
+                      <span className="pending-badge" style={{ background: '#64748b' }}>Deleted</span>
+                    </div>
+                    <div className="button-row" style={{ marginTop: '0.75rem' }}>
+                      <button className="primary-button" type="button" disabled={busy} onClick={() => onRestoreHydroseedDaily?.(daily.id)}>
+                        Restore
+                      </button>
+                      <button className="danger-button" type="button" disabled={busy} onClick={async () => {
+                        if (await confirm({
+                          title: 'Delete forever',
+                          message: `Permanently delete hydroseed daily "${daily.record_number || ''}"? This cannot be undone.`,
+                          severity: 'danger',
+                          okLabel: 'Delete forever',
+                        })) {
+                          onDeleteHydroseedDailyPermanent?.(daily.id);
+                        }
+                      }} style={{ marginLeft: '0.5rem' }}>
+                        Delete Forever
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {deletedHydroseedTickets.map((ticket) => (
+                  <div className="site-row" key={`hyd-ticket-${ticket.id}`}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
+                      <div>
+                        <strong>💧 {ticket.ticket_number || 'No Ticket'}</strong>
+                        <div className="small-text">
+                          Hydroseed Ticket • {ticket.work_date} • {ticket.client || 'No client'} / {ticket.area || 'No area'}
+                        </div>
+                        <div className="small-text" style={{ color: '#9ca3af' }}>
+                          {ticket.description_of_work || ''}
+                        </div>
+                      </div>
+                      <span className="pending-badge" style={{ background: '#64748b' }}>Deleted</span>
+                    </div>
+                    <div className="button-row" style={{ marginTop: '0.75rem' }}>
+                      <button className="primary-button" type="button" disabled={busy} onClick={() => onRestoreHydroseedTicket?.(ticket.id)}>
+                        Restore
+                      </button>
+                      <button className="danger-button" type="button" disabled={busy} onClick={async () => {
+                        if (await confirm({
+                          title: 'Delete forever',
+                          message: `Permanently delete hydroseed ticket "${ticket.ticket_number || ''}"? This cannot be undone.`,
+                          severity: 'danger',
+                          okLabel: 'Delete forever',
+                        })) {
+                          onDeleteHydroseedTicketPermanent?.(ticket.id);
                         }
                       }} style={{ marginLeft: '0.5rem' }}>
                         Delete Forever

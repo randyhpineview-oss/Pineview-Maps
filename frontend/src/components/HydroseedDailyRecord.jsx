@@ -1,0 +1,1275 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { generateHydroseedDailyPdf, KG_PER_BALE } from '../lib/hydroseedDailyPdfGenerator';
+import { api } from '../lib/api';
+import { localDateISO } from '../lib/dateUtil';
+import {
+  saveHydroseedDailyDraft,
+  deleteHydroseedDailyDraft,
+} from '../lib/offlineStore';
+import { useAutoSaveDraft } from '../lib/useAutoSaveDraft';
+import PdfPreviewViewer from './PdfPreviewViewer';
+import AutocompleteInput from './AutocompleteInput';
+import { useDialog } from './DialogProvider';
+import MapAnnotationCanvas from './MapAnnotationCanvas';
+
+const MULCH_TYPES = ['Wood', 'Wood + Tack', 'BFM', 'FGM'];
+
+// Suggested equipment labels — match the Quote Builder "Hydroseeding" catalog
+// so the office HT pricing stays consistent with quoted rates. Workers can
+// still type any free-text label that isn't in this list.
+const EQUIPMENT_SUGGESTIONS = [
+  'T400 Hydroseeder', 'T330 Hydroseeder', '1600 Hydroseeder',
+  'Crew Truck', 'Skid Steer', 'UTV / SXS',
+  'Supervisor with Truck', 'Lead', 'Labourer',
+];
+
+function newUuid() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function makeBlankLoad(index) {
+  return {
+    id: newUuid(),
+    load_number: index + 1,
+    area_m2: '',
+    mulch_bales: '',
+    soil_amendment_kg: '',
+    seed_kgs: {},
+    aqua_gel_kg: '',
+    tackifier_kg: '',
+    fertilizer_kg: '',
+    notes: '',
+  };
+}
+
+function makeBlankSeedType(index) {
+  return { name: `Seed ${index + 1}`, description: '' };
+}
+
+const inputStyle = {
+  width: '100%',
+  padding: '10px',
+  backgroundColor: '#111827',
+  border: '1px solid #374151',
+  borderRadius: '6px',
+  color: '#f9fafb',
+  fontSize: '0.95rem',
+  boxSizing: 'border-box',
+};
+
+const labelStyle = { display: 'block', fontSize: '0.8rem', color: '#9ca3af', marginBottom: '4px' };
+
+/**
+ * Standalone Hydroseed Daily Application Record form.
+ *
+ * Props are intentionally similar to HerbicideLeaseSheet to ease wiring in
+ * App.jsx: `onSubmit({ daily })` fires after a successful POST, `onCancel`
+ * closes the modal. `clients` / `areas` / `getAreasForClient` feed
+ * autocomplete suggestions for the header. `duplicateFrom`, `draft`, and
+ * `editingRecord` are stubs for later phases (Phase 3 = drafts, Phase 6 =
+ * duplicate). They're accepted now so the prop surface doesn't change later.
+ */
+export default function HydroseedDailyRecord({
+  isOpen,
+  onSubmit,
+  onCancel,
+  clients = [],
+  areas = [],
+  getAreasForClient = null,
+  // Phase 4+ — pre-fill from an existing record (duplicate flow). Cleared
+  // fields: date, photos, seed tags, loads.
+  duplicateFrom = null,
+  // Phase 3 — resume an in-progress draft from IndexedDB.
+  draft = null,
+  // Phase 6 — edit an already-submitted record.
+  editingRecord = null,
+}) {
+  const { alert } = useDialog();
+  const isEditMode = !!editingRecord;
+  const initializedRef = useRef(false);
+
+  const [form, setForm] = useState(() => ({
+    date: localDateISO(),
+    client: '',
+    area: '',
+    site_name: '',
+    description_of_work: '',
+    crew: [],
+    equipment: [],
+    mulch_type: '',
+    soil_amendment: '',
+    seed_types: [makeBlankSeedType(0)],
+    fertilizer: '',
+    loads: [],
+    seed_tag_photos: [],
+    photos: [],
+    comments: '',
+  }));
+
+  const [recordNumber, setRecordNumber] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isPreviewing, setIsPreviewing] = useState(false);
+  const [pdfBase64, setPdfBase64] = useState(null);
+  const [editingLoad, setEditingLoad] = useState(null);   // load object being edited (in sub-modal)
+  const [newCrewName, setNewCrewName] = useState('');
+  // Phase 3 — device-local draft id. Reused across autosaves so we update
+  // the same row instead of piling new ones up.
+  const [draftId, setDraftId] = useState(draft?.id || null);
+  // Phase 4 — HT picker step (between Preview and Submit, mirroring the
+  // lease-sheet → T&M picker). `htChoice` is one of:
+  //   • { ticket_id: <int> }   — link to existing open HT
+  //   • { create: true }       — create a new HT (description below)
+  //   • null                   — worker hasn't decided yet
+  const [isPickingHT, setIsPickingHT] = useState(false);
+  const [openHTTickets, setOpenHTTickets] = useState([]);
+  const [htChoice, setHtChoice] = useState(null);
+  const [htDescription, setHtDescription] = useState('');
+  const [isLoadingHTTickets, setIsLoadingHTTickets] = useState(false);
+  // Phase 5 — annotation canvas modal state.
+  const [annotationOpen, setAnnotationOpen] = useState(false);
+
+  // Preview the next HD###### number (read-only — the real allocation
+  // happens server-side on submit).
+  useEffect(() => {
+    if (!isOpen || recordNumber) return;
+    let cancelled = false;
+    api.getNextHydroseedDaily()
+      .then(resp => { if (!cancelled) setRecordNumber(resp.record_number); })
+      .catch(() => { /* offline-friendly: leave blank, server assigns on submit */ });
+    return () => { cancelled = true; };
+  }, [isOpen, recordNumber]);
+
+  // Hydrate from `duplicateFrom` or `editingRecord` or `draft`. The first
+  // useEffect with isOpen as a dep so reopening doesn't clobber edits.
+  useEffect(() => {
+    if (!isOpen) {
+      initializedRef.current = false;
+      return;
+    }
+    if (initializedRef.current) return;
+    if (draft) {
+      initializedRef.current = true;
+      // The draft's form already carries photos + seed_tag_photos in the
+      // same shape state expects ({ data, type, dataUrl }), so a plain
+      // merge is enough. Older drafts (without photo arrays) fall back to
+      // the blank defaults from initial state.
+      setForm(prev => ({
+        ...prev,
+        ...(draft.form || {}),
+        photos: draft.form?.photos || draft.photos || [],
+        seed_tag_photos: draft.form?.seed_tag_photos || draft.seedTagPhotos || [],
+      }));
+      if (draft.recordNumber) setRecordNumber(draft.recordNumber);
+      if (draft.id) setDraftId(draft.id);
+      return;
+    }
+    if (duplicateFrom?.daily_data) {
+      initializedRef.current = true;
+      const d = duplicateFrom.daily_data;
+      setForm({
+        // Header + ingredients carry over
+        date: localDateISO(),
+        client: d.client || duplicateFrom.client || '',
+        area: d.area || duplicateFrom.area || '',
+        site_name: d.site_name || duplicateFrom.site_name || '',
+        description_of_work: d.description_of_work || duplicateFrom.description_of_work || '',
+        crew: d.crew || [],
+        equipment: d.equipment || [],
+        mulch_type: d.mulch_type || duplicateFrom.mulch_type || '',
+        soil_amendment: d.soil_amendment || '',
+        seed_types: (d.seed_types && d.seed_types.length > 0) ? d.seed_types : [makeBlankSeedType(0)],
+        fertilizer: d.fertilizer || '',
+        // Cleared — new day = fresh entries.
+        loads: [],
+        seed_tag_photos: [],
+        photos: [],
+        comments: '',
+      });
+      return;
+    }
+    if (isEditMode && editingRecord?.daily_data) {
+      initializedRef.current = true;
+      const d = editingRecord.daily_data;
+      setForm({
+        date: d.date || editingRecord.work_date || localDateISO(),
+        client: d.client || editingRecord.client || '',
+        area: d.area || editingRecord.area || '',
+        site_name: d.site_name || editingRecord.site_name || '',
+        description_of_work: d.description_of_work || editingRecord.description_of_work || '',
+        crew: d.crew || [],
+        equipment: d.equipment || [],
+        mulch_type: d.mulch_type || editingRecord.mulch_type || '',
+        soil_amendment: d.soil_amendment || '',
+        seed_types: (d.seed_types && d.seed_types.length > 0) ? d.seed_types : [makeBlankSeedType(0)],
+        fertilizer: d.fertilizer || '',
+        loads: d.loads || [],
+        seed_tag_photos: [],
+        photos: [],
+        comments: d.comments || editingRecord.comments || '',
+      });
+      setRecordNumber(editingRecord.record_number || '');
+      return;
+    }
+    initializedRef.current = true;
+  }, [isOpen, duplicateFrom, draft, isEditMode, editingRecord]);
+
+  // Reset on close so a future open starts clean.
+  useEffect(() => {
+    if (!isOpen) {
+      setIsPreviewing(false);
+      setPdfBase64(null);
+    }
+  }, [isOpen]);
+
+  // ── Derived: area suggestions narrowed by client ─────────────────────────
+  const areaOptions = useMemo(() => {
+    if (!form.client || typeof getAreasForClient !== 'function') return areas;
+    return getAreasForClient(form.client);
+  }, [form.client, getAreasForClient, areas]);
+
+  // ── Form mutators ────────────────────────────────────────────────────────
+  const setField = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
+
+  const addCrew = (name) => {
+    const v = (name || '').trim();
+    if (!v) return;
+    if (form.crew.includes(v)) return;
+    setForm(prev => ({ ...prev, crew: [...prev.crew, v] }));
+    setNewCrewName('');
+  };
+  const removeCrew = (idx) => {
+    setForm(prev => ({ ...prev, crew: prev.crew.filter((_, i) => i !== idx) }));
+  };
+
+  const addEquipment = () => {
+    setForm(prev => ({
+      ...prev,
+      equipment: [...prev.equipment, { label: '', hours: '' }],
+    }));
+  };
+  const updateEquipment = (idx, patch) => {
+    setForm(prev => ({
+      ...prev,
+      equipment: prev.equipment.map((e, i) => i === idx ? { ...e, ...patch } : e),
+    }));
+  };
+  const removeEquipment = (idx) => {
+    setForm(prev => ({ ...prev, equipment: prev.equipment.filter((_, i) => i !== idx) }));
+  };
+
+  const addSeedType = () => {
+    setForm(prev => ({ ...prev, seed_types: [...prev.seed_types, makeBlankSeedType(prev.seed_types.length)] }));
+  };
+  const updateSeedType = (idx, patch) => {
+    setForm(prev => ({
+      ...prev,
+      seed_types: prev.seed_types.map((s, i) => i === idx ? { ...s, ...patch } : s),
+    }));
+  };
+  const removeSeedType = (idx) => {
+    setForm(prev => {
+      const removed = prev.seed_types[idx];
+      const seed_types = prev.seed_types.filter((_, i) => i !== idx);
+      // Also strip kg entries for the removed seed name from every load so
+      // PDF columns don't reference a deleted seed type.
+      const removedName = removed?.name;
+      const loads = removedName
+        ? prev.loads.map(l => {
+            if (!l.seed_kgs) return l;
+            const { [removedName]: _drop, ...rest } = l.seed_kgs;
+            return { ...l, seed_kgs: rest };
+          })
+        : prev.loads;
+      return { ...prev, seed_types, loads };
+    });
+  };
+
+  // ── Load sub-modal ───────────────────────────────────────────────────────
+  const openNewLoad = () => {
+    setEditingLoad(makeBlankLoad(form.loads.length));
+  };
+  const openExistingLoad = (loadId) => {
+    const found = form.loads.find(l => l.id === loadId);
+    if (found) setEditingLoad({ ...found, seed_kgs: { ...(found.seed_kgs || {}) } });
+  };
+  const saveEditingLoad = () => {
+    if (!editingLoad) return;
+    setForm(prev => {
+      const existing = prev.loads.find(l => l.id === editingLoad.id);
+      if (existing) {
+        return {
+          ...prev,
+          loads: prev.loads.map(l => l.id === editingLoad.id ? { ...editingLoad } : l),
+        };
+      }
+      return { ...prev, loads: [...prev.loads, { ...editingLoad }] };
+    });
+    setEditingLoad(null);
+  };
+  const deleteEditingLoad = () => {
+    if (!editingLoad) return;
+    setForm(prev => ({
+      ...prev,
+      loads: prev.loads
+        .filter(l => l.id !== editingLoad.id)
+        .map((l, i) => ({ ...l, load_number: i + 1 })),
+    }));
+    setEditingLoad(null);
+  };
+
+  // ── Photos (seed tags + annotations) — Phase 2 uses plain file picker.
+  //    Phase 5 swaps the annotations slot for MapAnnotationCanvas. ─────────
+  const readPhotoFile = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      // Strip the `data:<mime>;base64,` prefix so the backend gets the same
+      // shape the lease-sheet flow uses.
+      const dataUrl = String(reader.result || '');
+      const commaIdx = dataUrl.indexOf(',');
+      const data = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
+      const mime = (dataUrl.match(/^data:(.+);base64/) || [])[1] || file.type || 'image/jpeg';
+      resolve({ data, type: mime, dataUrl });
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+
+  const onPhotoFiles = async (which, files) => {
+    const arr = Array.from(files || []).filter(Boolean);
+    if (arr.length === 0) return;
+    const next = await Promise.all(arr.map(readPhotoFile));
+    setForm(prev => ({ ...prev, [which]: [...(prev[which] || []), ...next] }));
+  };
+  const removePhoto = (which, idx) => {
+    setForm(prev => ({ ...prev, [which]: prev[which].filter((_, i) => i !== idx) }));
+  };
+
+  // ── Validation ───────────────────────────────────────────────────────────
+  const requiredMissing = useMemo(() => {
+    const missing = [];
+    if (!form.date) missing.push('Date');
+    if (!form.client) missing.push('Customer');
+    if (!form.area) missing.push('Area');
+    if (!form.site_name) missing.push('Site');
+    if (!form.description_of_work) missing.push('Description of Work');
+    if ((form.crew || []).length === 0) missing.push('Crew');
+    if (!form.mulch_type) missing.push('Mulch Type');
+    if (!(form.seed_types || []).some(s => s.name && s.description)) missing.push('At least one Seed Type');
+    if ((form.loads || []).length === 0) missing.push('At least one Load');
+    if ((form.seed_tag_photos || []).length === 0) missing.push('At least one Seed Tag photo');
+    return missing;
+  }, [form]);
+
+  // ── Preview ──────────────────────────────────────────────────────────────
+  const handlePreview = async () => {
+    if (requiredMissing.length > 0) {
+      await alert({
+        title: 'Missing fields',
+        message: `Required fields are missing: ${requiredMissing.join(', ')}`,
+        severity: 'warning',
+      });
+      return;
+    }
+    try {
+      const photoUrls = (form.photos || []).map(p => p.dataUrl).filter(Boolean);
+      const seedTagUrls = (form.seed_tag_photos || []).map(p => p.dataUrl).filter(Boolean);
+      const { base64 } = await generateHydroseedDailyPdf(
+        { ...form, record_number: recordNumber },
+        photoUrls,
+        seedTagUrls,
+      );
+      setPdfBase64(base64);
+      setIsPreviewing(true);
+    } catch (err) {
+      await alert({
+        title: 'Preview failed',
+        message: String(err?.message || err),
+        severity: 'danger',
+      });
+    }
+  };
+
+  const handleBackToEdit = () => {
+    setIsPreviewing(false);
+    setPdfBase64(null);
+  };
+
+  // ── Draft save (Phase 3 — feeds the autosave hook below) ────────────────
+  // Saves the full form snapshot + photos to IndexedDB so the worker can
+  // pick the form back up after a tab close, browser crash, or page refresh.
+  // Phase 6 will hook this into a visible "💾 Save Draft" button in the
+  // FormsPanel drafts row; for now it's autosave-only.
+  const handleSaveDraft = async () => {
+    try {
+      const ensuredDraftId = draftId || (typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      const label = `${form.client || '—'} / ${form.area || '—'} / ${form.site_name || '—'}`;
+      const saved = await saveHydroseedDailyDraft({
+        id: ensuredDraftId,
+        form,
+        recordNumber: recordNumber || null,
+        label,
+      });
+      setDraftId(saved.id);
+    } catch {
+      /* swallow — autosave is best-effort */
+    }
+  };
+
+  // ── Continue → HT picker ─────────────────────────────────────────────────
+  // In edit mode we skip the picker entirely — re-linking after the fact
+  // happens from the HT detail sheet, not the daily form.
+  const handleContinueFromPreview = async () => {
+    if (isEditMode) {
+      await submitDaily(null);
+      return;
+    }
+    // Instant transition into the picker, fetch in the background.
+    setOpenHTTickets([]);
+    setHtChoice({ create: true });
+    setHtDescription(form.description_of_work || '');
+    setIsPickingHT(true);
+
+    const isOffline = typeof window !== 'undefined' && window.navigator?.onLine === false;
+    if (isOffline) return;
+
+    setIsLoadingHTTickets(true);
+    try {
+      const TIMEOUT_MS = 2500;
+      const tickets = await Promise.race([
+        api.listOpenHydroseedTickets({
+          client: form.client || undefined,
+          area: form.area || undefined,
+          work_date: form.date || undefined,
+        }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('HT ticket lookup timed out')), TIMEOUT_MS)
+        ),
+      ]);
+      setOpenHTTickets(tickets || []);
+      // Auto-pick the only open match — same UX as the T&M picker.
+      if (tickets && tickets.length === 1) {
+        setHtChoice((curr) => (curr?.create ? { ticket_id: tickets[0].id } : curr));
+      } else if (tickets && tickets.length > 1) {
+        setHtChoice((curr) => (curr?.create ? null : curr));
+      }
+    } catch {
+      // Timeout / offline — picker stays on "create new" default.
+    } finally {
+      setIsLoadingHTTickets(false);
+    }
+  };
+
+  // Latches `true` the instant submit is initiated. The on-close autosave
+  // useEffect reads this ref to know whether to skip its forced save —
+  // without it we'd race the parent's draft-cleanup and re-create the
+  // draft post-submit. Never reset; the component unmounts shortly after.
+  const hasSubmittedRef = useRef(false);
+
+  // ── Submit (called from picker confirm OR directly in edit mode) ─────────
+  const submitDaily = async (htLink) => {
+    hasSubmittedRef.current = true;
+    setIsSubmitting(true);
+    try {
+      const photoUrls = (form.photos || []).map(p => p.dataUrl).filter(Boolean);
+      const seedTagUrls = (form.seed_tag_photos || []).map(p => p.dataUrl).filter(Boolean);
+      const { base64 } = await generateHydroseedDailyPdf(
+        { ...form, record_number: recordNumber },
+        photoUrls,
+        seedTagUrls,
+      );
+
+      const clientSubmissionId = draftId || newUuid();
+      const dailyDataSnapshot = {
+        ...form,
+        record_number: recordNumber,
+      };
+
+      const payload = {
+        work_date: form.date,
+        client: form.client,
+        area: form.area,
+        site_name: form.site_name,
+        description_of_work: form.description_of_work,
+        mulch_type: form.mulch_type,
+        comments: form.comments,
+        daily_data: dailyDataSnapshot,
+        pdf_base64: base64,
+        photos: (form.photos || []).map(p => ({ data: p.data, type: p.type })),
+        seed_tag_photos: (form.seed_tag_photos || []).map(p => ({ data: p.data, type: p.type })),
+        client_submission_id: clientSubmissionId,
+        hydroseed_ticket_link: htLink,
+      };
+
+      // Hand off to the parent (App.jsx) which queues the upload in IDB
+      // and lets `processUploadQueue` handle the actual PDF + photo +
+      // backend POST/PATCH in the background. Same pattern as
+      // `handleExternalLeaseSheetSubmit` for lease sheets — keeps the
+      // worker out of a long spinner on rural / cellular connections.
+      onSubmit?.({
+        payload,
+        mode: isEditMode ? 'edit' : 'create',
+        dailyId: isEditMode ? editingRecord?.id : null,
+        draftId,
+        recordNumber,
+      });
+    } catch (err) {
+      await alert({
+        title: 'Submit failed',
+        message: String(err?.message || err),
+        severity: 'danger',
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleConfirmHTLink = async () => {
+    if (!htChoice) return;
+    const link = htChoice.ticket_id
+      ? { ticket_id: htChoice.ticket_id }
+      : { create: true, description_of_work: htDescription.trim() || form.description_of_work || '' };
+    await submitDaily(link);
+  };
+
+  // ── Auto-save draft on tab blur / form close ─────────────────────────────
+  // Mirrors HerbicideLeaseSheet. Skipped while submitting, editing an
+  // existing record, or inside the load sub-modal (worker is mid-flow).
+  const autoSaveEnabled =
+    isOpen && !isEditMode && !isSubmitting && !isPreviewing && !editingLoad && !isPickingHT;
+  const { saveNow: autoSaveDraftNow } = useAutoSaveDraft({
+    enabled: autoSaveEnabled,
+    hasContent: () => {
+      const f = form;
+      return Boolean(
+        (f.photos || []).length > 0 ||
+        (f.seed_tag_photos || []).length > 0 ||
+        (f.loads || []).length > 0 ||
+        (f.crew || []).length > 0 ||
+        (f.equipment || []).length > 0 ||
+        (f.client && String(f.client).trim()) ||
+        (f.area && String(f.area).trim()) ||
+        (f.site_name && String(f.site_name).trim()) ||
+        (f.description_of_work && String(f.description_of_work).trim()) ||
+        (f.mulch_type && String(f.mulch_type).trim()) ||
+        (f.comments && String(f.comments).trim())
+      );
+    },
+    save: handleSaveDraft,
+  });
+
+  // Fire one autosave when parent closes the modal (isOpen: true → false).
+  // Skipped post-submit (see hasSubmittedRef) so we don't race the parent's
+  // draft cleanup and re-create a stale draft after a successful queue.
+  const wasOpenRef = useRef(isOpen);
+  useEffect(() => {
+    if (wasOpenRef.current && !isOpen) {
+      if (!isEditMode && !isSubmitting && !hasSubmittedRef.current) {
+        autoSaveDraftNow({ force: true });
+      }
+    }
+    wasOpenRef.current = isOpen;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  // ── Load sub-modal ───────────────────────────────────────────────────────
+  if (editingLoad) {
+    const bales = Number(editingLoad.mulch_bales) || 0;
+    const mulchKg = (bales * KG_PER_BALE).toFixed(1);
+    const isExisting = form.loads.some(l => l.id === editingLoad.id);
+    return (
+      <div style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        zIndex: 1100, padding: 16,
+      }}>
+        <div style={{
+          backgroundColor: '#1f2937', color: '#f9fafb', borderRadius: 12,
+          padding: 20, maxWidth: 480, width: '100%', maxHeight: '90vh', overflowY: 'auto',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <h3 style={{ margin: 0 }}>Load #{editingLoad.load_number}</h3>
+            <button onClick={() => setEditingLoad(null)} style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer' }}>×</button>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={labelStyle}>Area (m²)</label>
+              <input
+                type="number" inputMode="decimal" min="0"
+                value={editingLoad.area_m2}
+                onChange={e => setEditingLoad({ ...editingLoad, area_m2: e.target.value })}
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label style={labelStyle}>Mulch Bales</label>
+              <input
+                type="number" inputMode="decimal" min="0" step="1"
+                value={editingLoad.mulch_bales}
+                onChange={e => setEditingLoad({ ...editingLoad, mulch_bales: e.target.value })}
+                style={inputStyle}
+              />
+              <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: 2 }}>= {mulchKg} kg</div>
+            </div>
+            <div>
+              <label style={labelStyle}>Soil Amendment (kg)</label>
+              <input
+                type="number" inputMode="decimal" min="0"
+                value={editingLoad.soil_amendment_kg}
+                onChange={e => setEditingLoad({ ...editingLoad, soil_amendment_kg: e.target.value })}
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label style={labelStyle}>Aqua Gel (kg)</label>
+              <input
+                type="number" inputMode="decimal" min="0"
+                value={editingLoad.aqua_gel_kg}
+                onChange={e => setEditingLoad({ ...editingLoad, aqua_gel_kg: e.target.value })}
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label style={labelStyle}>Tackifier (kg)</label>
+              <input
+                type="number" inputMode="decimal" min="0"
+                value={editingLoad.tackifier_kg}
+                onChange={e => setEditingLoad({ ...editingLoad, tackifier_kg: e.target.value })}
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label style={labelStyle}>Fertilizer (kg)</label>
+              <input
+                type="number" inputMode="decimal" min="0"
+                value={editingLoad.fertilizer_kg}
+                onChange={e => setEditingLoad({ ...editingLoad, fertilizer_kg: e.target.value })}
+                style={inputStyle}
+              />
+            </div>
+          </div>
+
+          {(form.seed_types || []).length > 0 && (
+            <>
+              <h4 style={{ margin: '14px 0 6px', fontSize: '0.95rem' }}>Seed (kg per type)</h4>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                {form.seed_types.map((st) => {
+                  const value = (editingLoad.seed_kgs || {})[st.name] ?? '';
+                  return (
+                    <div key={st.name}>
+                      <label style={labelStyle}>
+                        {st.name}{st.description ? ` — ${st.description}` : ''}
+                      </label>
+                      <input
+                        type="number" inputMode="decimal" min="0"
+                        value={value}
+                        onChange={e => setEditingLoad({
+                          ...editingLoad,
+                          seed_kgs: { ...(editingLoad.seed_kgs || {}), [st.name]: e.target.value },
+                        })}
+                        style={inputStyle}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          <label style={{ ...labelStyle, marginTop: 14 }}>Notes</label>
+          <textarea
+            rows={2}
+            value={editingLoad.notes}
+            onChange={e => setEditingLoad({ ...editingLoad, notes: e.target.value })}
+            style={{ ...inputStyle, resize: 'vertical' }}
+          />
+
+          <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+            <button
+              onClick={saveEditingLoad}
+              style={{
+                flex: 1, padding: 12, backgroundColor: '#22c55e', color: 'white',
+                border: 'none', borderRadius: 8, fontWeight: 600, cursor: 'pointer',
+              }}
+            >
+              {isExisting ? 'Save Load' : 'Add Load'}
+            </button>
+            {isExisting && (
+              <button
+                onClick={deleteEditingLoad}
+                style={{
+                  padding: 12, backgroundColor: '#7f1d1d', color: 'white',
+                  border: 'none', borderRadius: 8, cursor: 'pointer',
+                }}
+              >
+                Delete
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── HT picker (between Preview and Submit) ──────────────────────────────
+  if (isPickingHT) {
+    const needsDescription = htChoice?.create && !htDescription.trim();
+    const needsChoice = !htChoice;
+    const isDisabled = isSubmitting || needsDescription || needsChoice;
+    const continueLabel = isSubmitting
+      ? 'Uploading...'
+      : needsChoice
+        ? 'Select a ticket above'
+        : needsDescription
+          ? 'Add description of work'
+          : htChoice?.create
+            ? 'Submit Daily & Create HT'
+            : 'Submit Daily & Link HT';
+    return (
+      <div style={{
+        backgroundColor: '#1f2937', color: '#f9fafb',
+        display: 'flex', flexDirection: 'column',
+        height: '100%', width: '100%', boxSizing: 'border-box',
+        padding: 16, overflowY: 'auto',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <h2 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 600 }}>Link to Hydroseed Ticket</h2>
+          <button
+            onClick={() => setIsPickingHT(false)}
+            style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer' }}
+          >×</button>
+        </div>
+        <p style={{ fontSize: '0.85rem', color: '#9ca3af', margin: '0 0 14px 0' }}>
+          Today&apos;s open tickets for <strong>{form.client || '—'}</strong> / <strong>{form.area || '—'}</strong>:
+        </p>
+
+        {isLoadingHTTickets && openHTTickets.length === 0 ? (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10, padding: 14, marginBottom: 14,
+            background: '#111827', borderRadius: 8, color: '#9ca3af', fontSize: '0.9rem',
+          }}>
+            <span style={{
+              display: 'inline-block', width: 14, height: 14,
+              border: '2px solid #374151', borderTopColor: '#3b82f6',
+              borderRadius: '50%', animation: 'spin 0.8s linear infinite',
+            }} />
+            Looking for open Hydroseed tickets…
+            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+          </div>
+        ) : openHTTickets.length > 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
+            {openHTTickets.map((t) => (
+              <label
+                key={t.id}
+                style={{
+                  display: 'flex', alignItems: 'flex-start', gap: 10,
+                  background: htChoice?.ticket_id === t.id ? '#1e40af' : '#111827',
+                  padding: 12, borderRadius: 8, cursor: 'pointer',
+                  border: htChoice?.ticket_id === t.id ? '1px solid #3b82f6' : '1px solid #374151',
+                }}
+              >
+                <input
+                  type="radio" name="ht-choice"
+                  checked={htChoice?.ticket_id === t.id}
+                  onChange={() => setHtChoice({ ticket_id: t.id })}
+                  style={{ marginTop: 2 }}
+                />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>{t.ticket_number}</div>
+                  <div style={{ fontSize: '0.8rem', color: '#9ca3af' }}>
+                    {t.work_date} · {t.client || '—'} / {t.area || '—'}
+                  </div>
+                  {t.description_of_work && (
+                    <div style={{ fontSize: '0.8rem', color: '#9ca3af', marginTop: 2 }}>
+                      {t.description_of_work}
+                    </div>
+                  )}
+                </div>
+              </label>
+            ))}
+          </div>
+        ) : (
+          <div style={{
+            padding: 12, marginBottom: 14, background: '#111827', borderRadius: 8,
+            color: '#9ca3af', fontSize: '0.85rem',
+          }}>
+            No open Hydroseed tickets found for this client/area/date.
+          </div>
+        )}
+
+        <label
+          style={{
+            display: 'flex', alignItems: 'flex-start', gap: 10,
+            background: htChoice?.create ? '#1e40af' : '#111827',
+            padding: 12, borderRadius: 8, cursor: 'pointer',
+            border: htChoice?.create ? '1px solid #3b82f6' : '1px solid #374151',
+            marginBottom: 12,
+          }}
+        >
+          <input
+            type="radio" name="ht-choice"
+            checked={!!htChoice?.create}
+            onChange={() => setHtChoice({ create: true })}
+            style={{ marginTop: 2 }}
+          />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>+ Create new HT ticket</div>
+            <div style={{ fontSize: '0.8rem', color: '#9ca3af' }}>
+              New ticket will be auto-numbered. Office adds rates + signs later.
+            </div>
+          </div>
+        </label>
+
+        {htChoice?.create && (
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ display: 'block', fontSize: '0.85rem', color: '#9ca3af', marginBottom: 6 }}>
+              Description of Work <span style={{ color: '#f87171' }}>*</span>
+            </label>
+            <textarea
+              value={htDescription}
+              onChange={e => setHtDescription(e.target.value)}
+              rows={2}
+              style={{
+                width: '100%', padding: 10, background: '#111827',
+                border: '1px solid #374151', borderRadius: 6, color: '#f9fafb',
+                fontSize: '0.95rem', resize: 'vertical', boxSizing: 'border-box',
+              }}
+              placeholder="e.g. Hydro seed disturbed areas as required"
+            />
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 'auto' }}>
+          <button
+            onClick={handleConfirmHTLink}
+            disabled={isDisabled}
+            style={{
+              flex: 1, padding: 12,
+              backgroundColor: isDisabled ? '#374151' : '#22c55e',
+              color: 'white', border: 'none', borderRadius: 8,
+              fontWeight: 600, fontSize: '1rem',
+              cursor: isDisabled ? 'not-allowed' : 'pointer',
+              opacity: isDisabled ? 0.6 : 1,
+            }}
+          >
+            {continueLabel}
+          </button>
+          <button
+            onClick={() => setIsPickingHT(false)}
+            disabled={isSubmitting}
+            style={{
+              flex: 1, padding: 12, backgroundColor: '#374151', color: '#f9fafb',
+              border: 'none', borderRadius: 8, fontSize: '1rem',
+              cursor: isSubmitting ? 'not-allowed' : 'pointer',
+            }}
+          >
+            Back
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Preview view ─────────────────────────────────────────────────────────
+  if (isPreviewing) {
+    return (
+      <div style={{
+        backgroundColor: '#4b5563',
+        display: 'flex', flexDirection: 'column',
+        height: '100%', width: '100%', boxSizing: 'border-box',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', flexShrink: 0, background: '#1f2937' }}>
+          <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600, color: '#f9fafb' }}>
+            Preview{recordNumber ? ` — ${recordNumber}` : ''}
+          </h2>
+        </div>
+        <PdfPreviewViewer pdfBase64={pdfBase64} />
+        <div style={{ display: 'flex', gap: 10, padding: '12px 16px', flexShrink: 0, background: '#1f2937' }}>
+          <button
+            onClick={handleContinueFromPreview}
+            disabled={isSubmitting}
+            style={{
+              flex: 1, padding: 12, backgroundColor: '#22c55e', color: 'white',
+              border: 'none', borderRadius: 8, fontSize: '1rem', fontWeight: 600,
+              cursor: isSubmitting ? 'not-allowed' : 'pointer', opacity: isSubmitting ? 0.7 : 1,
+            }}
+          >
+            {isSubmitting ? 'Uploading...' : isEditMode ? 'Update & Re-Submit' : 'Continue'}
+          </button>
+          <button
+            onClick={handleBackToEdit}
+            disabled={isSubmitting}
+            style={{
+              flex: 1, padding: 12, backgroundColor: '#374151', color: '#f9fafb',
+              border: 'none', borderRadius: 8, fontSize: '1rem', cursor: isSubmitting ? 'not-allowed' : 'pointer',
+            }}
+          >
+            Back to Edit
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Form view ────────────────────────────────────────────────────────────
+  return (
+    <div className="hydroseed-daily" style={{
+      backgroundColor: '#1f2937', color: '#f9fafb',
+      borderRadius: '16px 16px 0 0',
+      maxHeight: '90vh', overflowY: 'auto', overflowX: 'hidden',
+      padding: 20, maxWidth: 720, margin: '0 auto', width: '100%', boxSizing: 'border-box',
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600 }}>
+          {isEditMode ? 'Edit Hydroseed Daily' : 'Hydroseed Daily Application Record'}
+        </h2>
+        <button onClick={onCancel} style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer' }}>×</button>
+      </div>
+      {recordNumber && (
+        <div style={{
+          backgroundColor: '#111827', border: '1px solid #3b82f6', borderRadius: 6,
+          padding: '8px 12px', marginBottom: 16, textAlign: 'center',
+          fontSize: '1rem', fontWeight: 700, color: '#3b82f6',
+        }}>
+          Record: {recordNumber}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {/* ── Header ── */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label style={labelStyle}>Date *</label>
+            <input type="date" value={form.date} onChange={e => setField('date', e.target.value)} style={inputStyle} />
+          </div>
+          <div>
+            <label style={labelStyle}>Site *</label>
+            <input
+              type="text" value={form.site_name}
+              onChange={e => setField('site_name', e.target.value)}
+              placeholder="e.g. BC Hydro AFDE Site"
+              style={inputStyle}
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Customer *</label>
+            <AutocompleteInput
+              value={form.client}
+              onChange={(v) => setField('client', v)}
+              suggestions={clients}
+              placeholder="Customer / contact"
+              inputStyle={inputStyle}
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Area *</label>
+            <AutocompleteInput
+              value={form.area}
+              onChange={(v) => setField('area', v)}
+              suggestions={areaOptions}
+              placeholder="Project area"
+              inputStyle={inputStyle}
+            />
+          </div>
+        </div>
+
+        <div>
+          <label style={labelStyle}>Description of Work *</label>
+          <textarea
+            rows={2}
+            value={form.description_of_work}
+            onChange={e => setField('description_of_work', e.target.value)}
+            style={{ ...inputStyle, resize: 'vertical' }}
+            placeholder="e.g. Hydro seed areas as required"
+          />
+        </div>
+
+        {/* ── Crew ── */}
+        <div>
+          <label style={labelStyle}>Crew *</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+            {form.crew.map((name, i) => (
+              <span key={i} style={{
+                background: '#374151', padding: '4px 8px', borderRadius: 4,
+                display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.85rem',
+              }}>
+                {name}
+                <button onClick={() => removeCrew(i)} style={{ background: 'none', border: 'none', color: '#fca5a5', cursor: 'pointer', padding: 0 }}>×</button>
+              </span>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              type="text" value={newCrewName}
+              onChange={e => setNewCrewName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addCrew(newCrewName))}
+              placeholder="Add crew member"
+              style={inputStyle}
+            />
+            <button onClick={() => addCrew(newCrewName)} style={{
+              padding: '0 14px', background: '#3b82f6', color: 'white',
+              border: 'none', borderRadius: 6, cursor: 'pointer',
+            }}>+</button>
+          </div>
+        </div>
+
+        {/* ── Equipment Used ── */}
+        <div>
+          <label style={labelStyle}>Equipment Used</label>
+          {form.equipment.map((eq, i) => (
+            <div key={i} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr auto', gap: 6, marginBottom: 6 }}>
+              <AutocompleteInput
+                value={eq.label}
+                onChange={(v) => updateEquipment(i, { label: v })}
+                suggestions={EQUIPMENT_SUGGESTIONS}
+                placeholder="Equipment"
+                inputStyle={inputStyle}
+              />
+              <input
+                type="number" inputMode="decimal" min="0" step="0.25"
+                value={eq.hours}
+                onChange={e => updateEquipment(i, { hours: e.target.value })}
+                placeholder="hours"
+                style={inputStyle}
+              />
+              <button onClick={() => removeEquipment(i)} style={{
+                padding: '0 12px', background: '#7f1d1d', color: 'white',
+                border: 'none', borderRadius: 6, cursor: 'pointer',
+              }}>×</button>
+            </div>
+          ))}
+          <button onClick={addEquipment} style={{
+            padding: '8px 12px', background: '#111827', border: '1px solid #374151',
+            color: '#f9fafb', borderRadius: 6, cursor: 'pointer', fontSize: '0.85rem',
+          }}>+ Equipment</button>
+        </div>
+
+        {/* ── Ingredients ── */}
+        <h3 style={{ margin: '8px 0 0', fontSize: '1rem' }}>Materials</h3>
+        <div>
+          <label style={labelStyle}>Mulch Type *</label>
+          <select
+            value={form.mulch_type}
+            onChange={e => setField('mulch_type', e.target.value)}
+            style={inputStyle}
+          >
+            <option value="">— Select —</option>
+            {MULCH_TYPES.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </div>
+        <div>
+          <label style={labelStyle}>Soil Amendment</label>
+          <input
+            type="text" value={form.soil_amendment}
+            onChange={e => setField('soil_amendment', e.target.value)}
+            placeholder="e.g. Lime"
+            style={inputStyle}
+          />
+        </div>
+        <div>
+          <label style={labelStyle}>Fertilizer</label>
+          <input
+            type="text" value={form.fertilizer}
+            onChange={e => setField('fertilizer', e.target.value)}
+            placeholder="e.g. 20-10-10"
+            style={inputStyle}
+          />
+        </div>
+        <div>
+          <label style={labelStyle}>Seed Types *</label>
+          {form.seed_types.map((s, i) => (
+            <div key={i} style={{ display: 'grid', gridTemplateColumns: '110px 1fr auto', gap: 6, marginBottom: 6 }}>
+              <input
+                type="text" value={s.name}
+                onChange={e => updateSeedType(i, { name: e.target.value })}
+                placeholder="Name"
+                style={inputStyle}
+              />
+              <input
+                type="text" value={s.description}
+                onChange={e => updateSeedType(i, { description: e.target.value })}
+                placeholder="Description (e.g. ESC Mixture)"
+                style={inputStyle}
+              />
+              <button onClick={() => removeSeedType(i)} style={{
+                padding: '0 12px', background: '#7f1d1d', color: 'white',
+                border: 'none', borderRadius: 6, cursor: 'pointer',
+              }}>×</button>
+            </div>
+          ))}
+          <button onClick={addSeedType} style={{
+            padding: '8px 12px', background: '#111827', border: '1px solid #374151',
+            color: '#f9fafb', borderRadius: 6, cursor: 'pointer', fontSize: '0.85rem',
+          }}>+ Seed Type</button>
+        </div>
+
+        {/* ── Loads ── */}
+        <h3 style={{ margin: '8px 0 0', fontSize: '1rem' }}>Loads ({form.loads.length})</h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {form.loads.map((l) => {
+            const mulchKg = (Number(l.mulch_bales) || 0) * KG_PER_BALE;
+            const summary = [
+              `Area: ${l.area_m2 || 0} m²`,
+              `Mulch: ${mulchKg ? mulchKg.toFixed(0) + ' kg' : '—'}`,
+            ].join(' · ');
+            return (
+              <button
+                key={l.id}
+                onClick={() => openExistingLoad(l.id)}
+                style={{
+                  textAlign: 'left', padding: '10px 12px',
+                  background: '#111827', border: '1px solid #374151',
+                  borderRadius: 6, color: '#f9fafb', cursor: 'pointer',
+                }}
+              >
+                <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>Load #{l.load_number}</div>
+                <div style={{ fontSize: '0.8rem', color: '#9ca3af' }}>{summary}</div>
+              </button>
+            );
+          })}
+          <button onClick={openNewLoad} style={{
+            padding: 12, background: '#3b82f6', color: 'white',
+            border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600,
+          }}>+ Add Load</button>
+        </div>
+
+        {/* ── Seed Tag Photos ── */}
+        <div>
+          <label style={labelStyle}>Seed Tag Photos *</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {form.seed_tag_photos.map((p, i) => (
+              <div key={i} style={{ position: 'relative' }}>
+                <img src={p.dataUrl} alt={`Seed tag ${i + 1}`} style={{ width: 100, height: 100, objectFit: 'cover', borderRadius: 6 }} />
+                <button
+                  onClick={() => removePhoto('seed_tag_photos', i)}
+                  style={{
+                    position: 'absolute', top: 2, right: 2,
+                    background: 'rgba(0,0,0,0.6)', color: 'white', border: 'none', borderRadius: '50%',
+                    width: 22, height: 22, cursor: 'pointer',
+                  }}
+                >×</button>
+              </div>
+            ))}
+            <label htmlFor="seed-tag-upload" style={{
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              width: 100, height: 100, background: '#374151', borderRadius: 6,
+              cursor: 'pointer', fontSize: '2rem', color: '#6b7280',
+            }}>+</label>
+            <input
+              id="seed-tag-upload" type="file" accept="image/*" multiple
+              style={{ display: 'none' }}
+              onChange={(e) => onPhotoFiles('seed_tag_photos', e.target.files)}
+            />
+          </div>
+        </div>
+
+        {/* ── Map / Photo Annotations ── */}
+        <div>
+          <label style={labelStyle}>Map / Photo Annotations</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {form.photos.map((p, i) => (
+              <div key={i} style={{ position: 'relative' }}>
+                <img src={p.dataUrl} alt={`Annotation ${i + 1}`} style={{ width: 100, height: 100, objectFit: 'cover', borderRadius: 6 }} />
+                <button
+                  onClick={() => removePhoto('photos', i)}
+                  style={{
+                    position: 'absolute', top: 2, right: 2,
+                    background: 'rgba(0,0,0,0.6)', color: 'white', border: 'none', borderRadius: '50%',
+                    width: 22, height: 22, cursor: 'pointer',
+                  }}
+                >×</button>
+              </div>
+            ))}
+            <label htmlFor="photo-upload" style={{
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              width: 100, height: 100, background: '#374151', borderRadius: 6,
+              cursor: 'pointer', fontSize: '2rem', color: '#6b7280',
+            }} title="Upload photos">+</label>
+            <input
+              id="photo-upload" type="file" accept="image/*" multiple
+              style={{ display: 'none' }}
+              onChange={(e) => onPhotoFiles('photos', e.target.files)}
+            />
+            <button
+              type="button"
+              onClick={() => setAnnotationOpen(true)}
+              title="Open annotation canvas"
+              style={{
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                width: 100, height: 100, background: '#1e3a8a', borderRadius: 6,
+                cursor: 'pointer', fontSize: '0.85rem', color: 'white',
+                border: 'none', flexDirection: 'column', gap: 4, lineHeight: 1.1,
+              }}
+            >
+              <span style={{ fontSize: '1.6rem' }}>✏️</span>
+              <span>Annotate</span>
+            </button>
+          </div>
+          <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: 4 }}>
+            Tap <strong>Annotate</strong> to draw on a map screenshot, a blank canvas, or a photo. Saved annotations append to the photos above.
+          </div>
+        </div>
+
+        {/* ── Comments ── */}
+        <div>
+          <label style={labelStyle}>Comments</label>
+          <textarea
+            rows={3}
+            value={form.comments}
+            onChange={e => setField('comments', e.target.value)}
+            style={{ ...inputStyle, resize: 'vertical' }}
+          />
+        </div>
+
+        {/* ── Required-fields warning ── */}
+        {requiredMissing.length > 0 && (
+          <div style={{
+            background: 'rgba(248, 113, 113, 0.08)',
+            border: '1px solid rgba(248, 113, 113, 0.4)',
+            borderRadius: 6, padding: 10, fontSize: '0.85rem', color: '#fca5a5',
+          }}>
+            Required: {requiredMissing.join(', ')}
+          </div>
+        )}
+
+        {/* ── Action bar ── */}
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button
+            onClick={handlePreview}
+            style={{
+              flex: 1, padding: 12, backgroundColor: '#22c55e', color: 'white',
+              border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '1rem', cursor: 'pointer',
+            }}
+          >
+            {requiredMissing.length > 0 ? `Preview (${requiredMissing.length} missing)` : 'Preview'}
+          </button>
+          <button
+            onClick={onCancel}
+            style={{
+              flex: 1, padding: 12, backgroundColor: '#374151', color: '#f9fafb',
+              border: 'none', borderRadius: 8, fontSize: '1rem', cursor: 'pointer',
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+
+      <MapAnnotationCanvas
+        isOpen={annotationOpen}
+        onCancel={() => setAnnotationOpen(false)}
+        onSave={(payload) => {
+          // Treat the saved canvas as a regular annotation photo so the
+          // existing upload + PDF pipeline picks it up unchanged.
+          setForm(prev => ({ ...prev, photos: [...(prev.photos || []), payload] }));
+          setAnnotationOpen(false);
+        }}
+      />
+    </div>
+  );
+}

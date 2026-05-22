@@ -524,3 +524,201 @@ class TimeMaterialsTicketUpdate(BaseModel):
     row_updates: list[dict] | None = None    # [{ id, cost_code, ... }] batch update rows
     new_rows: list[dict] | None = None       # admin-added manual rows (no spray_record_id)
     rows_to_delete: list[int] | None = None  # ids of manual rows to remove
+
+
+# ── Hydroseed schemas ────────────────────────────────────────────────────────
+
+class HydroseedTicketRowRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    ticket_id: int
+    daily_record_id: int | None = None
+    kind: str
+    label: str
+    qty: float | None = None
+    unit: str | None = None
+    cost_code: str | None = None
+    created_at: datetime
+
+
+class HydroseedLinkedDaily(BaseModel):
+    """Slim summary of a daily that's linked to a hydroseed ticket. Exposed
+    on `HydroseedTicketRead.linked_dailies` so the detail sheet + PDF can
+    show the HD###### list without round-tripping each daily."""
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    record_number: str
+    work_date: date
+    site_name: str | None = None
+
+
+class HydroseedTicketRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    ticket_number: str
+    work_date: date
+    client: str
+    area: str
+    description_of_work: str | None = None
+    po_approval_number: str | None = None
+    created_by_user_id: int | None = None
+    created_by_name: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    pdf_url: str | None = None
+    office_data: dict | None = None       # stripped for worker role in endpoint
+    approved_by_user_id: int | None = None
+    approved_by_name: str | None = None
+    approved_at: datetime | None = None
+    approved_signature: str | None = None  # stripped for worker role in endpoint
+    status: TMTicketStatus
+    rows: list[HydroseedTicketRowRead] = Field(default_factory=list)
+    # Slim summary of HD###### records linked to this ticket. The field
+    # name matches the SQLAlchemy relationship so `from_attributes=True`
+    # populates it directly without any alias gymnastics.
+    daily_records: list[HydroseedLinkedDaily] = Field(default_factory=list)
+
+    @field_validator("daily_records", mode="before")
+    @classmethod
+    def _exclude_soft_deleted_dailies(cls, v):
+        # The SQLAlchemy relationship doesn't filter soft-deleted dailies; do
+        # it here so the detail sheet + PDF never reference an HD record the
+        # office has already removed. Compatible with both ORM lists and
+        # pre-built dicts (e.g. in tests).
+        if v is None:
+            return v
+        out = []
+        for d in v:
+            deleted_at = getattr(d, "deleted_at", None) if not isinstance(d, dict) else d.get("deleted_at")
+            if deleted_at is not None:
+                continue
+            out.append(d)
+        return out
+
+
+class HydroseedTicketDeltaRow(BaseModel):
+    """Slim delta-payload view. Omits office_data + approved_signature.
+    Same rationale as TimeMaterialsTicketDeltaRow."""
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    ticket_number: str
+    work_date: date
+    client: str
+    area: str
+    description_of_work: str | None = None
+    po_approval_number: str | None = None
+    created_by_user_id: int | None = None
+    created_by_name: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    pdf_url: str | None = None
+    approved_by_user_id: int | None = None
+    approved_by_name: str | None = None
+    approved_at: datetime | None = None
+    status: TMTicketStatus
+    rows: list[HydroseedTicketRowRead] = Field(default_factory=list)
+
+
+class HydroseedTicketsDeltaResponse(BaseModel):
+    items: list[HydroseedTicketDeltaRow]
+    ids_removed: list[int]
+    server_time: datetime
+
+
+class HydroseedTicketCreate(BaseModel):
+    work_date: date
+    client: str
+    area: str
+    description_of_work: str | None = None
+
+
+class HydroseedTicketUpdate(BaseModel):
+    description_of_work: str | None = None
+    client: str | None = None
+    area: str | None = None
+    po_approval_number: str | None = None
+    office_data: dict | None = None
+    status: TMTicketStatus | None = None
+    pdf_base64: str | None = None
+    approved_signature: str | None = None
+    approve: bool = False
+
+
+class HydroseedTicketLink(BaseModel):
+    """Picker payload on daily submit — link to existing HT or create new."""
+    ticket_id: int | None = None
+    create: bool = False
+    description_of_work: str | None = None
+
+
+class HydroseedDailyRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    record_number: str
+    work_date: date
+    client: str
+    area: str
+    site_name: str | None = None
+    description_of_work: str | None = None
+    mulch_type: str | None = None
+    comments: str | None = None
+    photo_urls: list | None = None
+    seed_tag_photo_urls: list | None = None
+    daily_data: dict | None = None
+    pdf_url: str | None = None
+    site_id: int | None = None
+    hydroseed_ticket_id: int | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    created_by_user_id: int | None = None
+    created_by_name: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    client_submission_id: str | None = None
+
+
+class HydroseedDailyCreate(BaseModel):
+    """Submit payload for POST /api/hydroseed/dailies. The full form snapshot
+    rides in `daily_data`; top-level fields denormalize for indexing."""
+    work_date: date
+    client: str
+    area: str
+    site_name: str | None = None
+    description_of_work: str | None = None
+    mulch_type: str | None = None
+    comments: str | None = None
+    daily_data: dict | None = None
+    # base64 PDF rendered by frontend at submit time
+    pdf_base64: str | None = None
+    # Inline base64 photos (annotated maps / canvas / uploaded photos). Each is
+    # { data: base64, type: 'image/jpeg' } — backend uploads to Dropbox and
+    # stores the resulting URLs into `photo_urls`.
+    photos: list[dict] | None = None
+    # Same shape, separate bucket for seed bag tag photos.
+    seed_tag_photos: list[dict] | None = None
+    site_id: int | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    client_submission_id: str | None = None
+    hydroseed_ticket_link: HydroseedTicketLink | None = None
+
+
+class HydroseedDailyUpdate(BaseModel):
+    work_date: date | None = None
+    client: str | None = None
+    area: str | None = None
+    site_name: str | None = None
+    description_of_work: str | None = None
+    mulch_type: str | None = None
+    comments: str | None = None
+    daily_data: dict | None = None
+    pdf_base64: str | None = None
+    photos: list[dict] | None = None
+    seed_tag_photos: list[dict] | None = None
+    hydroseed_ticket_link: HydroseedTicketLink | None = None
+
+
+class HydroseedDailyDeltaResponse(BaseModel):
+    items: list[HydroseedDailyRead]
+    ids_removed: list[int]
+    server_time: datetime

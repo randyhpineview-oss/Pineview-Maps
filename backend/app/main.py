@@ -75,6 +75,7 @@ from app.time_materials_routes import (
     find_or_create_ticket_for_link,
     router as time_materials_router,
 )
+from app.hydroseed_routes import router as hydroseed_router
 from app.schemas import (
     BulkResetRequest,
     BulkResetResponse,
@@ -144,6 +145,7 @@ app.include_router(signup_router)
 app.include_router(pipeline_router)
 app.include_router(lookup_router)
 app.include_router(time_materials_router)
+app.include_router(hydroseed_router)
 app.include_router(reports_router)
 app.include_router(quote_rates_router)
 app.include_router(quotes_router)
@@ -661,6 +663,19 @@ def sync_status(
     # changed" without re-downloading the full list every poll tick. Matches
     # the sites/pipelines pattern above — single MAX on an indexed column.
     tm_tickets_updated = db.execute(text("SELECT MAX(updated_at) FROM time_materials_tickets")).scalar()
+    # Hydroseed module watermarks (cheap MAX on indexed updated_at). Defaults
+    # to None when the migration hasn't been applied yet — frontend treats
+    # null as "never changed" and skips the delta call.
+    try:
+        hydroseed_dailies_updated = db.execute(
+            text("SELECT MAX(updated_at) FROM hydroseed_daily_records")
+        ).scalar()
+        hydroseed_tickets_updated = db.execute(
+            text("SELECT MAX(updated_at) FROM hydroseed_tickets")
+        ).scalar()
+    except Exception:
+        hydroseed_dailies_updated = None
+        hydroseed_tickets_updated = None
 
     # Get pending counts for admins
     pending_sites_count = 0
@@ -683,6 +698,8 @@ def sync_status(
         "pipelines_last_updated": pipelines_updated.isoformat() if pipelines_updated else None,
         "spray_records_last_updated": spray_records_updated.isoformat() if spray_records_updated else None,
         "tm_tickets_last_updated": tm_tickets_updated.isoformat() if tm_tickets_updated else None,
+        "hydroseed_dailies_last_updated": hydroseed_dailies_updated.isoformat() if hydroseed_dailies_updated else None,
+        "hydroseed_tickets_last_updated": hydroseed_tickets_updated.isoformat() if hydroseed_tickets_updated else None,
         "pending_sites_count": pending_sites_count,
         "pending_pipelines_count": pending_pipelines_count,
     }

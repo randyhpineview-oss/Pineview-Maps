@@ -620,6 +620,106 @@ export const api = {
     });
   },
 
+  // ── Hydroseed module (HD###### dailies + HT###### tickets) ──
+  getNextHydroseedDaily() {
+    return request('/api/hydroseed/next-daily', { timeoutMs: 60_000 });
+  },
+  getNextHydroseedTicket() {
+    return request('/api/hydroseed/next-ticket', { timeoutMs: 60_000 });
+  },
+  // Latest non-deleted daily for the current user — drives the duplicate
+  // prompt on form open. Returns null when the user has no prior dailies
+  // (form just hides the prompt).
+  getMyLatestHydroseedDaily() {
+    return request('/api/hydroseed/dailies/me/latest');
+  },
+  listHydroseedDailies(filters) {
+    const params = new URLSearchParams();
+    if (filters?.work_date) params.set('work_date', filters.work_date);
+    if (filters?.client) params.set('client', filters.client);
+    if (filters?.area) params.set('area', filters.area);
+    const qs = params.toString();
+    return request(`/api/hydroseed/dailies${qs ? `?${qs}` : ''}`);
+  },
+  getHydroseedDaily(dailyId) {
+    return request(`/api/hydroseed/dailies/${dailyId}`);
+  },
+  submitHydroseedDaily(payload) {
+    // Same long-timeout pattern as lease-sheet submits — PDF + photo
+    // uploads to Dropbox can take 15-30s on slow rural connections.
+    return request('/api/hydroseed/dailies', {
+      method: 'POST',
+      body: payload,
+      timeoutMs: 120_000,
+    });
+  },
+  updateHydroseedDaily(dailyId, payload) {
+    return request(`/api/hydroseed/dailies/${dailyId}`, {
+      method: 'PATCH',
+      body: payload,
+      timeoutMs: 120_000,
+    });
+  },
+  deleteHydroseedDaily(dailyId) {
+    return request(`/api/hydroseed/dailies/${dailyId}`, { method: 'DELETE' });
+  },
+  restoreHydroseedDaily(dailyId) {
+    return request(`/api/hydroseed/dailies/${dailyId}/restore`, { method: 'POST' });
+  },
+  listDeletedHydroseedDailies() {
+    return request('/api/hydroseed/dailies/deleted');
+  },
+  deleteHydroseedDailyPermanent(dailyId) {
+    return request(`/api/hydroseed/dailies/${dailyId}/permanent`, { method: 'DELETE' });
+  },
+  listOpenHydroseedTickets(filters) {
+    const params = new URLSearchParams();
+    if (filters?.client) params.set('client', filters.client);
+    if (filters?.area) params.set('area', filters.area);
+    if (filters?.work_date) params.set('work_date', filters.work_date);
+    const qs = params.toString();
+    return request(`/api/hydroseed/tickets/open${qs ? `?${qs}` : ''}`);
+  },
+  listHydroseedTickets(filters) {
+    const params = new URLSearchParams();
+    if (filters?.status) params.set('status', filters.status);
+    if (filters?.work_date) params.set('work_date', filters.work_date);
+    const qs = params.toString();
+    return request(`/api/hydroseed/tickets${qs ? `?${qs}` : ''}`);
+  },
+  getHydroseedTicket(ticketId) {
+    return request(`/api/hydroseed/tickets/${ticketId}`);
+  },
+  createHydroseedTicket(payload) {
+    return request('/api/hydroseed/tickets', { method: 'POST', body: payload });
+  },
+  updateHydroseedTicket(ticketId, payload) {
+    return request(`/api/hydroseed/tickets/${ticketId}`, {
+      method: 'PATCH',
+      body: payload,
+      timeoutMs: 60_000,
+    });
+  },
+  deleteHydroseedTicket(ticketId) {
+    return request(`/api/hydroseed/tickets/${ticketId}`, { method: 'DELETE' });
+  },
+  restoreHydroseedTicket(ticketId) {
+    return request(`/api/hydroseed/tickets/${ticketId}/restore`, { method: 'POST' });
+  },
+  listDeletedHydroseedTickets() {
+    return request('/api/hydroseed/tickets/deleted');
+  },
+  deleteHydroseedTicketPermanent(ticketId) {
+    return request(`/api/hydroseed/tickets/${ticketId}/permanent`, { method: 'DELETE' });
+  },
+  // Cheap-poll deltas (paired with sync-status watermarks).
+  getHydroseedDailiesDelta(sinceIso) {
+    return request(`/api/hydroseed/dailies/delta?since=${encodeURIComponent(sinceIso)}`);
+  },
+  getHydroseedTicketsDelta(sinceIso) {
+    return request(`/api/hydroseed/tickets/delta?since=${encodeURIComponent(sinceIso)}`);
+  },
+
   // ── Password reset (6-digit code flow) ──
   requestResetCode(email) {
     return request('/api/auth/forgot-password', { method: 'POST', body: { email } });

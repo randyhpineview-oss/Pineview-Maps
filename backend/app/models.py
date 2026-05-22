@@ -438,6 +438,148 @@ class Quote(Base):
     deleted_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 
 
+class HydroseedTicket(Base):
+    """Hydroseed billing ticket (HT######). Mirrors `TimeMaterialsTicket` —
+    many `HydroseedDailyRecord` rows roll up into one HT; office prices it
+    by filling `office_data` (worker-fills-qty / office-fills-rate pattern),
+    signs, and approves. Soft-delete via `deleted_at` for delta sync.
+    """
+    __tablename__ = "hydroseed_tickets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    ticket_number: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
+    work_date: Mapped[datetime] = mapped_column(Date, nullable=False, index=True)
+    client: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    area: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    description_of_work: Mapped[str | None] = mapped_column(Text, nullable=True)
+    po_approval_number: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    created_by_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+        index=True,
+    )
+    pdf_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    office_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    approved_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    approved_by_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    approved_signature: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[TMTicketStatus] = mapped_column(
+        Enum(TMTicketStatus),
+        nullable=False,
+        default=TMTicketStatus.open,
+        index=True,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+    rows: Mapped[list["HydroseedTicketRow"]] = relationship(
+        back_populates="ticket",
+        cascade="all, delete-orphan",
+        order_by="HydroseedTicketRow.created_at",
+    )
+    daily_records: Mapped[list["HydroseedDailyRecord"]] = relationship(
+        back_populates="ticket",
+        foreign_keys="HydroseedDailyRecord.hydroseed_ticket_id",
+    )
+
+
+class HydroseedTicketRow(Base):
+    """Aggregated line item on a `HydroseedTicket`. `kind` is one of
+    'material' | 'equipment' | 'labour' — determines which section the row
+    renders into on the HT PDF.
+
+    Each row points at the daily record that contributed it (one per kind+label
+    per daily), so the HT can show traceability AND we can re-aggregate when
+    a linked daily is edited or deleted.
+    """
+    __tablename__ = "hydroseed_ticket_rows"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    ticket_id: Mapped[int] = mapped_column(
+        ForeignKey("hydroseed_tickets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    daily_record_id: Mapped[int | None] = mapped_column(
+        ForeignKey("hydroseed_daily_records.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(255), nullable=False)
+    qty: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    unit: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    cost_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    ticket: Mapped[HydroseedTicket] = relationship(back_populates="rows")
+    daily_record: Mapped["HydroseedDailyRecord | None"] = relationship(
+        back_populates="ticket_rows",
+        foreign_keys=[daily_record_id],
+    )
+
+
+class HydroseedDailyRecord(Base):
+    """Per-day field record of one or more hydroseed tank loads (HD######).
+    Standalone-by-default — no required site FK. Optional `hydroseed_ticket_id`
+    links to the parent HT for billing roll-up.
+
+    `daily_data` JSONB carries the full form snapshot (header + crew + equipment
+    + ingredients declaration + loads array + comments). Top-level columns are
+    denormalized projections for indexed query (admin search, list views).
+    """
+    __tablename__ = "hydroseed_daily_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    record_number: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
+    work_date: Mapped[datetime] = mapped_column(Date, nullable=False, index=True)
+    client: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    area: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    site_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    description_of_work: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mulch_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    comments: Mapped[str | None] = mapped_column(Text, nullable=True)
+    photo_urls: Mapped[list | None] = mapped_column(JSONB, nullable=True, default=list)
+    seed_tag_photo_urls: Mapped[list | None] = mapped_column(JSONB, nullable=True, default=list)
+    daily_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    pdf_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    site_id: Mapped[int | None] = mapped_column(ForeignKey("sites.id", ondelete="SET NULL"), nullable=True, index=True)
+    hydroseed_ticket_id: Mapped[int | None] = mapped_column(
+        ForeignKey("hydroseed_tickets.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    created_by_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+        index=True,
+    )
+    client_submission_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    deleted_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+
+    ticket: Mapped[HydroseedTicket | None] = relationship(
+        back_populates="daily_records",
+        foreign_keys=[hydroseed_ticket_id],
+    )
+    ticket_rows: Mapped[list[HydroseedTicketRow]] = relationship(
+        back_populates="daily_record",
+        cascade="all, delete-orphan",
+    )
+
+
 class PasswordResetCode(Base):
     """Model for storing 6-digit password reset codes.
     
