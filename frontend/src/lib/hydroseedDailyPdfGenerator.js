@@ -146,7 +146,7 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
   doc.text('Tel: 250.261.9544 | office@pineviewmanagement.com', marginL + 80, titleY + 20);
   doc.setTextColor(0);
 
-  y += 78;
+  y += 72;
 
   // ── Header: Customer / Site / Date ───────────────────────────────────────
   doc.setFont('helvetica', 'bold');
@@ -158,7 +158,7 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
   doc.text('Date:', marginL + 310, y);
   doc.setFont('helvetica', 'normal');
   doc.text(String(data.date || ''), marginL + 345, y);
-  y += 13;
+  y += 12;
 
   doc.setFont('helvetica', 'bold');
   doc.text('Area:', marginL, y);
@@ -168,7 +168,7 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
   doc.text('Site:', marginL + 310, y);
   doc.setFont('helvetica', 'normal');
   doc.text(data.site_name || '', marginL + 345, y);
-  y += 13;
+  y += 12;
 
   // Customer rep — only printed when filled in so we don't waste a line
   // on jobs where the office doesn't track the on-site contact.
@@ -183,7 +183,7 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
       doc.setFont('helvetica', 'normal');
       doc.text(String(data.customer_rep_phone), marginL + 345, y);
     }
-    y += 13;
+    y += 12;
   }
 
   // Crew block — supervisor + lead + workers are billed at different
@@ -197,29 +197,29 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
       doc.text('Supervisor:', marginL, y);
       doc.setFont('helvetica', 'normal');
       doc.text(String(data.supervisor), marginL + 60, y);
-      y += 12;
+      y += 11;
     }
     if (data.lead) {
       doc.setFont('helvetica', 'bold');
       doc.text('Lead:', marginL, y);
       doc.setFont('helvetica', 'normal');
       doc.text(String(data.lead), marginL + 60, y);
-      y += 12;
+      y += 11;
     }
     if (data.workers && data.workers.length) {
       doc.setFont('helvetica', 'bold');
       doc.text('Workers:', marginL, y);
       doc.setFont('helvetica', 'normal');
       doc.text(data.workers.join(', '), marginL + 60, y);
-      y += 12;
+      y += 11;
     }
-    y += 2;
+    y += 1;
   } else {
     doc.setFont('helvetica', 'bold');
     doc.text('Crew:', marginL, y);
     doc.setFont('helvetica', 'normal');
     doc.text((data.crew || []).join(', '), marginL + 60, y);
-    y += 14;
+    y += 12;
   }
 
   doc.setFont('helvetica', 'bold');
@@ -227,20 +227,18 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
   doc.setFont('helvetica', 'normal');
   const descLines = doc.splitTextToSize(data.description_of_work || '', contentW - 125);
   doc.text(descLines, marginL + 115, y);
-  y += Math.max(14, descLines.length * 12);
+  y += Math.max(12, descLines.length * 11);
 
-  // ── Ingredients declaration block ────────────────────────────────────────
-  // Extra gap above the section heading so "Materials" doesn't crash into
-  // the Description-of-Work text. The heading itself is followed by an
-  // 8-pt breathing-room gap before the underline, matching the rest of
-  // the document's section rhythm.
-  y += 10;
+  // ── Materials ────────────────────────────────────────────────────────────
+  // Compact section so multi-seed-type dailies still leave room for photos
+  // on page 1. Tight gaps + inline seed-types list save ~25pt vs. v1.
+  y += 6;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10);
   doc.text('Materials', marginL, y);
-  y += 6;
+  y += 4;
   drawRect(marginL, y, contentW, 1);
-  y += 12;  // breathing room between underline and first row
+  y += 9;
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8.5);
@@ -251,28 +249,31 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
   doc.text('Fertilizer:', marginL + 310, y);
   doc.setFont('helvetica', 'normal');
   doc.text(data.fertilizer || '', marginL + 360, y);
-  y += 14;
+  y += 11;
 
   doc.setFont('helvetica', 'bold');
   doc.text('Soil Amendment:', marginL, y);
   doc.setFont('helvetica', 'normal');
   doc.text(data.soil_amendment || '', marginL + 95, y);
-  y += 14;
+  y += 11;
 
   const seedTypes = data.seed_types || [];
   if (seedTypes.length > 0) {
     doc.setFont('helvetica', 'bold');
     doc.text('Seed Types:', marginL, y);
-    y += 12;
     doc.setFont('helvetica', 'normal');
-    for (const st of seedTypes) {
-      const line = `  • ${st.name || ''}${st.description ? `: ${st.description}` : ''}`;
-      const wrapped = doc.splitTextToSize(line, contentW - 8);
-      doc.text(wrapped, marginL + 4, y);
-      y += wrapped.length * 11;
+    // First seed renders inline next to the label; additional seeds wrap
+    // underneath aligned to the same indent. Saves one line vs. the old
+    // "label on its own line + bullets below" layout.
+    for (let si = 0; si < seedTypes.length; si++) {
+      const st = seedTypes[si];
+      const line = `${st.name || ''}${st.description ? `: ${st.description}` : ''}`;
+      const wrapped = doc.splitTextToSize(line, contentW - 64);
+      doc.text(wrapped, marginL + 64, y);
+      y += wrapped.length * 10;
     }
   }
-  y += 4;
+  y += 2;
 
   // ── Loads table ──────────────────────────────────────────────────────────
   doc.setFont('helvetica', 'bold');
@@ -323,7 +324,7 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
     const scale = contentW / headerSum;
     headerCells.forEach(c => { c.w *= scale; });
   }
-  const rowH = 16;
+  const rowH = 14;
 
   const drawLoadsHeader = (continuation = false) => {
     if (continuation) {
@@ -404,7 +405,7 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
       drawRect(cx, y, w, rowH);
       const text = String(cells[i] || '');
       const truncated = doc.splitTextToSize(text, w - 4)[0] || '';
-      doc.text(truncated, cx + 3, y + 11);
+      doc.text(truncated, cx + 3, y + 10);
       cx += w;
     }
     y += rowH;
@@ -436,74 +437,47 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
     for (let i = 0; i < headerCells.length; i++) {
       const w = headerCells[i].w;
       drawRect(cx, y, w, rowH);
-      doc.text(String(totalCells[i] || ''), cx + 3, y + 11);
+      doc.text(String(totalCells[i] || ''), cx + 3, y + 10);
       cx += w;
     }
     y += rowH;
     doc.setFont('helvetica', 'normal');
   }
 
-  // ── Equipment Used ───────────────────────────────────────────────────────
-  const equipment = data.equipment || [];
-  if (equipment.length > 0) {
-    y += 8;
-    ensureSpace(40);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10);
-    doc.text('Equipment Used', marginL, y);
-    y += 6;
-
-    const eqColW = [contentW * 0.65, contentW * 0.35];
-    const eqRowH = 14;
-    let hx = marginL;
-    doc.setFillColor(240, 240, 240);
-    doc.rect(marginL, y, contentW, eqRowH, 'F');
-    doc.setFontSize(8);
-    drawRect(hx, y, eqColW[0], eqRowH);
-    doc.text('Equipment', hx + 3, y + 10);
-    drawRect(hx + eqColW[0], y, eqColW[1], eqRowH);
-    doc.text('Hours', hx + eqColW[0] + 3, y + 10);
-    y += eqRowH;
-    doc.setFont('helvetica', 'normal');
-
-    for (const eq of equipment) {
-      ensureSpace(eqRowH);
-      let cx = marginL;
-      drawRect(cx, y, eqColW[0], eqRowH);
-      doc.text(String(eq?.label || ''), cx + 3, y + 10);
-      cx += eqColW[0];
-      drawRect(cx, y, eqColW[1], eqRowH);
-      doc.text(fmtNum(eq?.hours), cx + 3, y + 10);
-      y += eqRowH;
-    }
-  }
+  // Equipment-used is intentionally NOT rendered on the daily PDF. Workers
+  // still log equipment hours on the form so the office HT ticket can
+  // aggregate hours across all linked dailies for billing, but the daily
+  // sheet stays focused on what was actually applied to the ground —
+  // materials, loads, and photos. Keeps the PDF to one page on typical
+  // 1–2 load jobs.
 
   // ── Comments ─────────────────────────────────────────────────────────────
+  // Box height grows with the actual comment text (one line per ~10pt) so
+  // a short one-liner doesn't eat 50pt of page-1 real estate.
   if (data.comments) {
-    y += 8;
-    const commH = 50;
-    ensureSpace(commH + 12);
+    y += 6;
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
     doc.text('Comments:', marginL, y);
-    y += 4;
-    drawRect(marginL, y, contentW, commH);
+    y += 3;
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
     const lines = doc.splitTextToSize(data.comments, contentW - 8);
-    doc.text(lines, marginL + 3, y + 12);
+    const commH = Math.min(50, Math.max(18, lines.length * 10 + 8));
+    ensureSpace(commH + 10);
+    drawRect(marginL, y, contentW, commH);
+    doc.text(lines, marginL + 3, y + 11);
     y += commH;
   }
 
   // ── Seed Tag Photos ──────────────────────────────────────────────────────
   // Inline on the current page if there's room — workers asked for the
-  // PDF to fit on one page on simple dailies. We only force a new page
-  // when the section header + at least one minimum-sized photo row
-  // wouldn't fit below the current y. The photo grid below shrinks to
-  // fit the remaining vertical space automatically.
-  const SECTION_MIN_H = 150;  // header (~24) + one small photo cell + label
+  // PDF to fit on one page on simple dailies. The 3-up grid below sizes
+  // each row to the tallest photo's actual aspect ratio so narrow seed
+  // tags don't reserve 200pt of empty space below them.
+  const SECTION_MIN_H = 110;  // header + one small photo row + label
   if (seedTags.length > 0) {
-    y += 10;
+    y += 6;
     if (y + SECTION_MIN_H > pageH - marginB) {
       doc.addPage();
       y = 36;
@@ -511,7 +485,7 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
     doc.text('Seed Tag Photos', pageW / 2, y, { align: 'center' });
-    y += 14;
+    y += 12;
     await drawPhotoGrid(doc, seedTags, {
       labelPrefix: 'Seed Tag',
       marginL,
@@ -525,7 +499,7 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
 
   // ── Annotated Map / Photos ───────────────────────────────────────────────
   if (photos.length > 0) {
-    y += 10;
+    y += 6;
     if (y + SECTION_MIN_H > pageH - marginB) {
       doc.addPage();
       y = 36;
@@ -533,7 +507,7 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
     doc.text('Map / Photo Annotations', pageW / 2, y, { align: 'center' });
-    y += 14;
+    y += 12;
     await drawPhotoGrid(doc, photos, {
       labelPrefix: 'Map / Photo',
       marginL,
@@ -550,23 +524,27 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
   return { blob, base64 };
 }
 
-// 2-up grid of photos that ADAPTS to the remaining vertical space —
+// 3-up grid of photos that ADAPTS to the remaining vertical space —
 // small photos squeeze in next to the form so the daily fits on one page
 // when possible, while still expanding to a comfortable size when the
 // photos section gets its own page (e.g. many photos or a tall loads
-// table). Each photo keeps its aspect ratio; nothing is cropped.
+// table). Each photo keeps its aspect ratio; nothing is cropped. Row
+// height is the tallest scaled photo in the row, NOT the cell cap, so
+// wide seed-tag photos no longer reserve 200pt of empty whitespace.
 async function drawPhotoGrid(doc, images, opts) {
   const { labelPrefix, marginL, marginB, contentW, pageW, pageH, yRef } = opts;
   let y = yRef.value;
-  const cellW = (contentW - 12) / 2;
-  // Per-row cell height — computed from the space left on the current
-  // page. Anywhere between 110 (squeezed onto a busy page) and 280
-  // (when the photos are on a fresh page). The bottom clamp avoids
-  // postage-stamp photos; the top clamp avoids "drone shot eats a third
-  // of the next page" situations.
-  const MIN_CELL_H = 110;
-  const MAX_CELL_H = 280;
-  const LABEL_H = 12;
+  // 3-up with a 10pt gutter — narrower columns let multi-seed dailies +
+  // an annotation photo fit on one page.
+  const COLS = 3;
+  const GUTTER = 10;
+  const cellW = (contentW - GUTTER * (COLS - 1)) / COLS;
+  // Per-row height bounds. MIN is the threshold below which we page-break
+  // (otherwise photos become postage stamps); MAX caps a single tall
+  // portrait from eating a third of the next page.
+  const MIN_CELL_H = 80;
+  const MAX_CELL_H = 220;
+  const LABEL_H = 10;
 
   // Pre-read dimensions for aspect-ratio math.
   const dims = await Promise.all(images.map(src => new Promise((resolve) => {
@@ -584,29 +562,41 @@ async function drawPhotoGrid(doc, images, opts) {
     }
   })));
 
-  for (let i = 0; i < images.length; i += 2) {
-    const a = i;
-    const b = i + 1;
+  for (let i = 0; i < images.length; i += COLS) {
     // Available vertical room for THIS row of photos (incl. label).
     const remaining = pageH - marginB - y;
-    let cellH;
+    let cellHCap;
     if (remaining < MIN_CELL_H + LABEL_H) {
       // No room left on this page — push to a new page with full size.
       doc.addPage();
       y = 36;
-      cellH = MAX_CELL_H;
+      cellHCap = MAX_CELL_H;
     } else {
-      cellH = Math.min(MAX_CELL_H, remaining - LABEL_H - 4);
+      cellHCap = Math.min(MAX_CELL_H, remaining - LABEL_H - 4);
     }
+    // Actual row height = tallest scaled photo in the row. Bounded by
+    // cellHCap so a tall portrait can't break out of the page.
+    let rowH = 0;
+    for (let k = 0; k < COLS; k++) {
+      const idx = i + k;
+      if (idx >= images.length) break;
+      const d = dims[idx];
+      const ratio = d.h / d.w;
+      let drawH = cellW * ratio;
+      if (drawH > cellHCap) drawH = cellHCap;
+      if (drawH > rowH) rowH = drawH;
+    }
+    if (rowH === 0) rowH = MIN_CELL_H;
+
     const drawCell = (idx, x) => {
       if (idx >= images.length) return;
       const d = dims[idx];
       const ratio = d.h / d.w;
       let drawW = cellW;
       let drawH = cellW * ratio;
-      if (drawH > cellH) {
-        drawH = cellH;
-        drawW = cellH / ratio;
+      if (drawH > rowH) {
+        drawH = rowH;
+        drawW = rowH / ratio;
       }
       try {
         doc.addImage(images[idx], 'JPEG', x, y, drawW, drawH);
@@ -617,12 +607,13 @@ async function drawPhotoGrid(doc, images, opts) {
       }
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(7);
-      doc.text(`${labelPrefix} ${idx + 1}`, x, y + drawH + 10);
+      doc.text(`${labelPrefix} ${idx + 1}`, x, y + drawH + 8);
     };
-    drawCell(a, marginL);
-    drawCell(b, marginL + cellW + 12);
-    y += cellH + LABEL_H + 6;
-    if (y + MIN_CELL_H + LABEL_H > pageH - marginB && i + 2 < images.length) {
+    for (let k = 0; k < COLS; k++) {
+      drawCell(i + k, marginL + (cellW + GUTTER) * k);
+    }
+    y += rowH + LABEL_H + 4;
+    if (y + MIN_CELL_H + LABEL_H > pageH - marginB && i + COLS < images.length) {
       doc.addPage();
       y = 36;
     }
