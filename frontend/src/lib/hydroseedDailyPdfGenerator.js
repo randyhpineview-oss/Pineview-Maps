@@ -123,27 +123,30 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
   };
 
   // ── Logo + title (same identity as Lease Sheet + T&M) ────────────────────
+  // Logo + masthead deliberately compact (70 pt tall, not 100) so the rest
+  // of the form has more vertical room — the goal is one-page output on a
+  // typical daily with a single load.
   const logoData = await loadLogo();
-  if (logoData) doc.addImage(logoData, 'PNG', marginL, y, 100, 100);
+  if (logoData) doc.addImage(logoData, 'PNG', marginL, y, 70, 70);
 
-  const titleY = y + 45;
+  const titleY = y + 30;
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(15);
+  doc.setFontSize(13);
   doc.setTextColor(50, 80, 50);
-  doc.text('Hydroseed Daily Application Record', marginL + 120, titleY);
+  doc.text('Hydroseed Daily Application Record', marginL + 80, titleY);
   doc.setTextColor(0);
 
-  doc.setFontSize(12);
+  doc.setFontSize(11);
   doc.text(`No: ${data.record_number || ''}`, pageW - marginR, titleY, { align: 'right' });
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
+  doc.setFontSize(7);
   doc.setTextColor(100);
-  doc.text('7077 252 Road, Pineview, BC, Canada, V1J 8E3', marginL + 120, titleY + 14);
-  doc.text('Tel: 250.261.9544 | office@pineviewmanagement.com', marginL + 120, titleY + 24);
+  doc.text('7077 252 Road, Pineview, BC, Canada, V1J 8E3', marginL + 80, titleY + 11);
+  doc.text('Tel: 250.261.9544 | office@pineviewmanagement.com', marginL + 80, titleY + 20);
   doc.setTextColor(0);
 
-  y += 110;
+  y += 78;
 
   // ── Header: Customer / Site / Date ───────────────────────────────────────
   doc.setFont('helvetica', 'bold');
@@ -155,7 +158,7 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
   doc.text('Date:', marginL + 310, y);
   doc.setFont('helvetica', 'normal');
   doc.text(String(data.date || ''), marginL + 345, y);
-  y += 14;
+  y += 13;
 
   doc.setFont('helvetica', 'bold');
   doc.text('Area:', marginL, y);
@@ -165,7 +168,23 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
   doc.text('Site:', marginL + 310, y);
   doc.setFont('helvetica', 'normal');
   doc.text(data.site_name || '', marginL + 345, y);
-  y += 14;
+  y += 13;
+
+  // Customer rep — only printed when filled in so we don't waste a line
+  // on jobs where the office doesn't track the on-site contact.
+  if (data.customer_rep || data.customer_rep_phone) {
+    doc.setFont('helvetica', 'bold');
+    doc.text('Cust. Rep:', marginL, y);
+    doc.setFont('helvetica', 'normal');
+    doc.text(String(data.customer_rep || ''), marginL + 60, y);
+    if (data.customer_rep_phone) {
+      doc.setFont('helvetica', 'bold');
+      doc.text('Contact:', marginL + 310, y);
+      doc.setFont('helvetica', 'normal');
+      doc.text(String(data.customer_rep_phone), marginL + 345, y);
+    }
+    y += 13;
+  }
 
   // Crew block — supervisor + lead + workers are billed at different
   // rates, so we render them on their own lines when present. Falls back
@@ -211,13 +230,17 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
   y += Math.max(14, descLines.length * 12);
 
   // ── Ingredients declaration block ────────────────────────────────────────
-  y += 4;
+  // Extra gap above the section heading so "Materials" doesn't crash into
+  // the Description-of-Work text. The heading itself is followed by an
+  // 8-pt breathing-room gap before the underline, matching the rest of
+  // the document's section rhythm.
+  y += 10;
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9);
+  doc.setFontSize(10);
   doc.text('Materials', marginL, y);
-  y += 4;
-  drawRect(marginL, y, contentW, 1);
   y += 6;
+  drawRect(marginL, y, contentW, 1);
+  y += 12;  // breathing room between underline and first row
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8.5);
@@ -228,13 +251,13 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
   doc.text('Fertilizer:', marginL + 310, y);
   doc.setFont('helvetica', 'normal');
   doc.text(data.fertilizer || '', marginL + 360, y);
-  y += 13;
+  y += 14;
 
   doc.setFont('helvetica', 'bold');
   doc.text('Soil Amendment:', marginL, y);
   doc.setFont('helvetica', 'normal');
   doc.text(data.soil_amendment || '', marginL + 95, y);
-  y += 13;
+  y += 14;
 
   const seedTypes = data.seed_types || [];
   if (seedTypes.length > 0) {
@@ -266,28 +289,32 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
   const seedNames = seedTypes.map(s => s.name).filter(Boolean);
 
   // Fixed widths for the first columns, then divide what's left among seed
-  // columns + Aqua/Tackifier/Fertilizer.
+  // columns + Aqua/Tackifier/Fertilizer. Bales is its own column now —
+  // workers wanted to see bale count separated from the kg total in the
+  // loads table for at-a-glance verification.
   const fixedColW = {
     num: 22,
-    area: 56,
-    mulch: 56,
-    soilAmend: 56,
+    area: 50,
+    bales: 34,
+    mulch: 48,
+    soilAmend: 50,
   };
   const tailCols = ['Aqua Gel', 'Tackifier', 'Fertilizer'];
-  const notesW = hasNotes ? 90 : 0;
-  const tailW = 46 * tailCols.length;
-  const fixedTotal = fixedColW.num + fixedColW.area + fixedColW.mulch + fixedColW.soilAmend + tailW + notesW;
+  const notesW = hasNotes ? 80 : 0;
+  const tailW = 44 * tailCols.length;
+  const fixedTotal = fixedColW.num + fixedColW.area + fixedColW.bales + fixedColW.mulch + fixedColW.soilAmend + tailW + notesW;
   const seedColTotalW = contentW - fixedTotal;
-  const perSeedW = seedNames.length > 0 ? Math.max(38, Math.min(64, seedColTotalW / seedNames.length)) : 0;
+  const perSeedW = seedNames.length > 0 ? Math.max(34, Math.min(60, seedColTotalW / seedNames.length)) : 0;
 
-  // Header cells in order: # | Area | Mulch (kg) | Soil Amend (kg) | seeds… | Aqua Gel | Tackifier | Fertilizer | (Notes)
+  // Header cells in order: # | Area | Bales | Mulch (kg) | Soil Amend (kg) | seeds… | Aqua Gel | Tackifier | Fertilizer | (Notes)
   const headerCells = [
     { label: '#', w: fixedColW.num },
     { label: 'Area (m²)', w: fixedColW.area },
+    { label: 'Bales', w: fixedColW.bales },
     { label: 'Mulch (kg)', w: fixedColW.mulch },
     { label: 'Soil Amend (kg)', w: fixedColW.soilAmend },
     ...seedNames.map(n => ({ label: `${n} (kg)`, w: perSeedW })),
-    ...tailCols.map(t => ({ label: `${t} (kg)`, w: 46 })),
+    ...tailCols.map(t => ({ label: `${t} (kg)`, w: 44 })),
     ...(hasNotes ? [{ label: 'Notes', w: notesW }] : []),
   ];
   // Resize so total exactly equals contentW (rounding fudge).
@@ -325,6 +352,7 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
   // Running totals for the TOTALS row at the bottom of the table.
   const totals = {
     area_m2: 0,
+    bales: 0,
     mulch_kg: 0,
     soil_amend: 0,
     seed: Object.fromEntries(seedNames.map(n => [n, 0])),
@@ -345,6 +373,7 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
     const bales = toNum(load.mulch_bales);
     const mulchKg = bales * KG_PER_BALE;
     totals.area_m2 += toNum(load.area_m2);
+    totals.bales += bales;
     totals.mulch_kg += mulchKg;
     totals.soil_amend += toNum(load.soil_amendment_kg);
     for (const n of seedNames) {
@@ -357,8 +386,11 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
     const cells = [
       String(load.load_number || (r + 1)),
       fmtNum(load.area_m2, 0),
-      // Show bale count under the kg value: "681 (30)" — kg + bales in parens.
-      mulchKg ? `${fmtNum(mulchKg, 0)} (${fmtNum(bales, 0)})` : '',
+      // Bales and Mulch (kg) are now separate columns so the values
+      // line up cleanly under their own headers (previously "681 (30)"
+      // crowded into one cell, which workers flagged as confusing).
+      bales ? fmtNum(bales, 0) : '',
+      mulchKg ? fmtNum(mulchKg, 0) : '',
       fmtNum(load.soil_amendment_kg),
       ...seedNames.map(n => fmtNum((load.seed_kgs || {})[n])),
       fmtNum(load.aqua_gel_kg),
@@ -392,6 +424,7 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
     const totalCells = [
       'Total',
       fmtNum(totals.area_m2, 0),
+      fmtNum(totals.bales, 0),
       fmtNum(totals.mulch_kg, 0),
       fmtNum(totals.soil_amend),
       ...seedNames.map(n => fmtNum(totals.seed[n])),
@@ -463,13 +496,22 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
   }
 
   // ── Seed Tag Photos ──────────────────────────────────────────────────────
+  // Inline on the current page if there's room — workers asked for the
+  // PDF to fit on one page on simple dailies. We only force a new page
+  // when the section header + at least one minimum-sized photo row
+  // wouldn't fit below the current y. The photo grid below shrinks to
+  // fit the remaining vertical space automatically.
+  const SECTION_MIN_H = 150;  // header (~24) + one small photo cell + label
   if (seedTags.length > 0) {
-    doc.addPage();
-    y = 36;
+    y += 10;
+    if (y + SECTION_MIN_H > pageH - marginB) {
+      doc.addPage();
+      y = 36;
+    }
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(12);
+    doc.setFontSize(11);
     doc.text('Seed Tag Photos', pageW / 2, y, { align: 'center' });
-    y += 18;
+    y += 14;
     await drawPhotoGrid(doc, seedTags, {
       labelPrefix: 'Seed Tag',
       marginL,
@@ -483,12 +525,15 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
 
   // ── Annotated Map / Photos ───────────────────────────────────────────────
   if (photos.length > 0) {
-    doc.addPage();
-    y = 36;
+    y += 10;
+    if (y + SECTION_MIN_H > pageH - marginB) {
+      doc.addPage();
+      y = 36;
+    }
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(12);
+    doc.setFontSize(11);
     doc.text('Map / Photo Annotations', pageW / 2, y, { align: 'center' });
-    y += 18;
+    y += 14;
     await drawPhotoGrid(doc, photos, {
       labelPrefix: 'Map / Photo',
       marginL,
@@ -505,14 +550,23 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
   return { blob, base64 };
 }
 
-// 2-up grid of photos. Each photo keeps its aspect ratio; large photos get
-// scaled to fit the available cell height so we don't crash on a 5000×3000
-// drone shot.
+// 2-up grid of photos that ADAPTS to the remaining vertical space —
+// small photos squeeze in next to the form so the daily fits on one page
+// when possible, while still expanding to a comfortable size when the
+// photos section gets its own page (e.g. many photos or a tall loads
+// table). Each photo keeps its aspect ratio; nothing is cropped.
 async function drawPhotoGrid(doc, images, opts) {
   const { labelPrefix, marginL, marginB, contentW, pageW, pageH, yRef } = opts;
   let y = yRef.value;
   const cellW = (contentW - 12) / 2;
-  const maxCellH = 300;
+  // Per-row cell height — computed from the space left on the current
+  // page. Anywhere between 110 (squeezed onto a busy page) and 280
+  // (when the photos are on a fresh page). The bottom clamp avoids
+  // postage-stamp photos; the top clamp avoids "drone shot eats a third
+  // of the next page" situations.
+  const MIN_CELL_H = 110;
+  const MAX_CELL_H = 280;
+  const LABEL_H = 12;
 
   // Pre-read dimensions for aspect-ratio math.
   const dims = await Promise.all(images.map(src => new Promise((resolve) => {
@@ -533,10 +587,16 @@ async function drawPhotoGrid(doc, images, opts) {
   for (let i = 0; i < images.length; i += 2) {
     const a = i;
     const b = i + 1;
-    const cellH = Math.min(maxCellH, (pageH - marginB - y - 16));
-    if (cellH < 80) {
+    // Available vertical room for THIS row of photos (incl. label).
+    const remaining = pageH - marginB - y;
+    let cellH;
+    if (remaining < MIN_CELL_H + LABEL_H) {
+      // No room left on this page — push to a new page with full size.
       doc.addPage();
       y = 36;
+      cellH = MAX_CELL_H;
+    } else {
+      cellH = Math.min(MAX_CELL_H, remaining - LABEL_H - 4);
     }
     const drawCell = (idx, x) => {
       if (idx >= images.length) return;
@@ -544,9 +604,9 @@ async function drawPhotoGrid(doc, images, opts) {
       const ratio = d.h / d.w;
       let drawW = cellW;
       let drawH = cellW * ratio;
-      if (drawH > maxCellH) {
-        drawH = maxCellH;
-        drawW = maxCellH / ratio;
+      if (drawH > cellH) {
+        drawH = cellH;
+        drawW = cellH / ratio;
       }
       try {
         doc.addImage(images[idx], 'JPEG', x, y, drawW, drawH);
@@ -561,10 +621,8 @@ async function drawPhotoGrid(doc, images, opts) {
     };
     drawCell(a, marginL);
     drawCell(b, marginL + cellW + 12);
-    // Advance by the tallest of the two cells drawn (use maxCellH as the
-    // conservative cell height — guarantees we don't overlap the next pair).
-    y += maxCellH + 18;
-    if (y + 80 > pageH - marginB && i + 2 < images.length) {
+    y += cellH + LABEL_H + 6;
+    if (y + MIN_CELL_H + LABEL_H > pageH - marginB && i + 2 < images.length) {
       doc.addPage();
       y = 36;
     }

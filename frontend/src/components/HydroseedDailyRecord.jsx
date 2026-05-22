@@ -99,6 +99,12 @@ export default function HydroseedDailyRecord({
   const [form, setForm] = useState(() => ({
     date: localDateISO(),
     client: '',
+    // Customer-side contact for THIS job — the rep who signed off / can be
+    // called if something needs clarification. Separate from `client` (the
+    // billing entity) because billing-to and on-site-contact often differ
+    // (e.g. client = "BC Hydro", rep = "Bob Smith, Field Supervisor").
+    customer_rep: '',
+    customer_rep_phone: '',
     area: '',
     site_name: '',
     description_of_work: '',
@@ -185,6 +191,8 @@ export default function HydroseedDailyRecord({
         // Header + ingredients carry over
         date: localDateISO(),
         client: d.client || duplicateFrom.client || '',
+        customer_rep: d.customer_rep || duplicateFrom.customer_rep || '',
+        customer_rep_phone: d.customer_rep_phone || duplicateFrom.customer_rep_phone || '',
         area: d.area || duplicateFrom.area || '',
         site_name: d.site_name || duplicateFrom.site_name || '',
         description_of_work: d.description_of_work || duplicateFrom.description_of_work || '',
@@ -214,6 +222,8 @@ export default function HydroseedDailyRecord({
       setForm({
         date: d.date || editingRecord.work_date || localDateISO(),
         client: d.client || editingRecord.client || '',
+        customer_rep: d.customer_rep || editingRecord.customer_rep || '',
+        customer_rep_phone: d.customer_rep_phone || editingRecord.customer_rep_phone || '',
         area: d.area || editingRecord.area || '',
         site_name: d.site_name || editingRecord.site_name || '',
         description_of_work: d.description_of_work || editingRecord.description_of_work || '',
@@ -1074,6 +1084,28 @@ export default function HydroseedDailyRecord({
               suggestions={areaOptions}
               placeholder="Project area"
               inputStyle={inputStyle}
+            />
+          </div>
+          {/* On-site customer representative — the field-side contact who
+              signed off on the work and can be called about it. Distinct
+              from `client` which is the billing entity. Both fields are
+              optional so workers aren't blocked when they don't know it. */}
+          <div>
+            <label style={labelStyle}>Customer Rep</label>
+            <input
+              type="text" value={form.customer_rep}
+              onChange={e => setField('customer_rep', e.target.value)}
+              placeholder="e.g. Bob Smith, Site Foreman"
+              style={inputStyle}
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Rep Contact #</label>
+            <input
+              type="tel" inputMode="tel" value={form.customer_rep_phone}
+              onChange={e => setField('customer_rep_phone', e.target.value)}
+              placeholder="(250) 555-0100"
+              style={inputStyle}
             />
           </div>
         </div>
