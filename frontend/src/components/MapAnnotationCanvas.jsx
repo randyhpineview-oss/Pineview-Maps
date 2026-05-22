@@ -100,6 +100,11 @@ export default function MapAnnotationCanvas({
   const [tool, setTool] = useState('draw');           // 'draw' | 'highlight'
   const [color, setColor] = useState('#ef4444');
   const [strokeWidth, setStrokeWidth] = useState(3);
+  // Highlighter opacity (0.05–1.0). Stamped into each highlight stroke so
+  // changing the slider later doesn't retroactively alter past strokes —
+  // only new strokes pick up the new alpha. Hidden from the toolbar while
+  // the pen tool is active.
+  const [highlightAlpha, setHighlightAlpha] = useState(0.35);
   const [backgroundDataUrl, setBackgroundDataUrl] = useState(null);
   // History of completed strokes (each = { tool, color, width, points: [[x,y]..] }).
   // We store strokes — not the raw bitmap — so Undo can pop just the last
@@ -237,7 +242,11 @@ export default function MapAnnotationCanvas({
     if (!points || points.length === 0) return;
     ctx.save();
     if (t === 'highlight') {
-      ctx.globalAlpha = 0.35;
+      // Per-stroke alpha (set when the stroke was created) so each
+      // highlight keeps the opacity it was drawn at, even if the worker
+      // moves the slider afterwards. Defaults to 0.35 for legacy strokes
+      // that pre-date the slider.
+      ctx.globalAlpha = (typeof stroke.alpha === 'number') ? stroke.alpha : 0.35;
       ctx.lineWidth = w * 4;
       ctx.globalCompositeOperation = 'multiply';
     } else {
@@ -361,6 +370,9 @@ export default function MapAnnotationCanvas({
       tool,
       color,
       width: strokeWidth,
+      // Stamp alpha only on highlight strokes; pen strokes are always
+      // fully opaque so we omit the field to keep the saved JSON small.
+      ...(tool === 'highlight' ? { alpha: highlightAlpha } : {}),
       points: [eventToCanvasXY(e)],
     };
     redraw();
@@ -649,6 +661,21 @@ export default function MapAnnotationCanvas({
           title={`Stroke width: ${strokeWidth}`}
           style={{ flex: 1, minWidth: 60, maxWidth: 160 }}
         />
+
+        {/* Highlight opacity slider — only relevant while the highlighter
+            is the active tool. Hidden for the pen so the toolbar stays
+            uncluttered when it doesn't apply. Range is 5%–100%; default
+            35% matches the pre-slider behaviour. The label uses 'α' so
+            it doesn't eat width on narrow phones. */}
+        {tool === 'highlight' && (
+          <input
+            type="range" min="0.05" max="1" step="0.05"
+            value={highlightAlpha}
+            onChange={e => setHighlightAlpha(Number(e.target.value))}
+            title={`Highlighter opacity: ${Math.round(highlightAlpha * 100)}%`}
+            style={{ flex: 1, minWidth: 60, maxWidth: 120, accentColor: '#eab308' }}
+          />
+        )}
 
         {/* Icon-only Undo / Clear */}
         <button
