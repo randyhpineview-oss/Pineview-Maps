@@ -300,6 +300,27 @@ export default function HydroseedDailyRecord({
     const found = form.loads.find(l => l.id === loadId);
     if (found) setEditingLoad({ ...found, seed_kgs: { ...(found.seed_kgs || {}) } });
   };
+
+  // Clone an existing load with the same quantities + ingredients but a
+  // fresh id + the next sequential load_number. Skips opening the sub-modal
+  // so the worker can tap "Duplicate" repeatedly when running, e.g., five
+  // identical loads back-to-back on the same site. They can still tap any
+  // load afterwards to tweak it if one load differs.
+  const duplicateLoad = (loadId) => {
+    setForm(prev => {
+      const src = prev.loads.find(l => l.id === loadId);
+      if (!src) return prev;
+      const clone = {
+        ...src,
+        id: newUuid(),
+        load_number: prev.loads.length + 1,
+        // Deep-copy the per-seed-type quantity map so editing the clone
+        // doesn't mutate the original.
+        seed_kgs: { ...(src.seed_kgs || {}) },
+      };
+      return { ...prev, loads: [...prev.loads, clone] };
+    });
+  };
   const saveEditingLoad = () => {
     if (!editingLoad) return;
     setForm(prev => {
@@ -706,6 +727,24 @@ export default function HydroseedDailyRecord({
             >
               {isExisting ? 'Save Load' : 'Add Load'}
             </button>
+            {isExisting && (
+              <button
+                onClick={() => {
+                  // Save any in-progress edits first, then clone — workers
+                  // who tweak this load before duplicating expect the
+                  // tweaks to be in BOTH the original and the clone.
+                  saveEditingLoad();
+                  duplicateLoad(editingLoad.id);
+                }}
+                style={{
+                  padding: 12, backgroundColor: '#1f2937', color: '#f9fafb',
+                  border: '1px solid #374151', borderRadius: 8, cursor: 'pointer',
+                }}
+                title="Save & duplicate this load"
+              >
+                📋 Duplicate
+              </button>
+            )}
             {isExisting && (
               <button
                 onClick={deleteEditingLoad}
@@ -1164,7 +1203,12 @@ export default function HydroseedDailyRecord({
           }}>+ Seed Type</button>
         </div>
 
-        {/* ── Loads ── */}
+        {/* ── Loads ──
+            Each row is a horizontal flex container: the big left half opens
+            the load for editing; the small right-side "Duplicate" button
+            stops propagation and clones the load instead. Lets the worker
+            quickly run, e.g., five identical 500 kg / 1 bale loads on the
+            same site without re-entering everything every time. */}
         <h3 style={{ margin: '8px 0 0', fontSize: '1rem' }}>Loads ({form.loads.length})</h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {form.loads.map((l) => {
@@ -1174,18 +1218,37 @@ export default function HydroseedDailyRecord({
               `Mulch: ${mulchKg ? mulchKg.toFixed(0) + ' kg' : '—'}`,
             ].join(' · ');
             return (
-              <button
+              <div
                 key={l.id}
-                onClick={() => openExistingLoad(l.id)}
                 style={{
-                  textAlign: 'left', padding: '10px 12px',
-                  background: '#111827', border: '1px solid #374151',
-                  borderRadius: 6, color: '#f9fafb', cursor: 'pointer',
+                  display: 'flex', alignItems: 'stretch', gap: 6,
                 }}
               >
-                <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>Load #{l.load_number}</div>
-                <div style={{ fontSize: '0.8rem', color: '#9ca3af' }}>{summary}</div>
-              </button>
+                <button
+                  onClick={() => openExistingLoad(l.id)}
+                  style={{
+                    flex: 1, textAlign: 'left', padding: '10px 12px',
+                    background: '#111827', border: '1px solid #374151',
+                    borderRadius: 6, color: '#f9fafb', cursor: 'pointer',
+                  }}
+                >
+                  <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>Load #{l.load_number}</div>
+                  <div style={{ fontSize: '0.8rem', color: '#9ca3af' }}>{summary}</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => duplicateLoad(l.id)}
+                  title="Duplicate this load (same quantities)"
+                  style={{
+                    padding: '0 14px',
+                    background: '#1f2937', border: '1px solid #374151',
+                    borderRadius: 6, color: '#f9fafb', cursor: 'pointer',
+                    fontSize: '0.85rem', whiteSpace: 'nowrap',
+                  }}
+                >
+                  📋 Duplicate
+                </button>
+              </div>
             );
           })}
           <button onClick={openNewLoad} style={{
