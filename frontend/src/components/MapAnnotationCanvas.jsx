@@ -140,6 +140,12 @@ export default function MapAnnotationCanvas({
   const canvasRef = useRef(null);
   const drawingRef = useRef(null);  // currently in-progress stroke
   const bgImgRef = useRef(null);    // cached HTMLImageElement for the background
+  // Offscreen canvas that holds JUST the annotation layer (pen + highlight
+  // + eraser punch-outs). Compositing into a separate buffer lets the
+  // eraser tool use `destination-out` to wipe annotations without also
+  // erasing the background image — `destination-out` on the main canvas
+  // would punch a hole through the bg too. Created lazily on first redraw.
+  const annotLayerRef = useRef(null);
 
   // Color picker popover open/closed. Closed state collapses the colors
   // back into a single swatch so the top toolbar stays narrow on mobile.
@@ -231,9 +237,23 @@ export default function MapAnnotationCanvas({
       ctx.drawImage(img, dx, dy, dw, dh);
     }
 
-    for (const s of strokes) drawStroke(ctx, s);
-    if (drawingRef.current) drawStroke(ctx, drawingRef.current);
+    // Annotation layer — pen + highlight + eraser composited in an
+    // OFFSCREEN canvas so eraser strokes (destination-out) only chew
+    // through annotations, not the background underneath. Then the
+    // whole annotation buffer is painted on top of the bg in one shot.
+    let layer = annotLayerRef.current;
+    if (!layer) {
+      layer = document.createElement('canvas');
+      layer.width = CANVAS_W;
+      layer.height = CANVAS_H;
+      annotLayerRef.current = layer;
+    }
+    const lctx = layer.getContext('2d');
+    lctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+    for (const s of strokes) drawStroke(lctx, s);
+    if (drawingRef.current) drawStroke(lctx, drawingRef.current);
 
+    ctx.drawImage(layer, 0, 0);
     ctx.restore();
   }
 
@@ -248,7 +268,20 @@ export default function MapAnnotationCanvas({
       // that pre-date the slider.
       ctx.globalAlpha = (typeof stroke.alpha === 'number') ? stroke.alpha : 0.35;
       ctx.lineWidth = w * 4;
-      ctx.globalCompositeOperation = 'multiply';
+      // On the annotation layer we use a plain source-over for highlight
+      // so it can later be erased by an eraser stroke. The "multiply"
+      // visual effect comes from the layer being painted ONTO the
+      // background-bearing main canvas, where the alpha already gives
+      // the marker-over-map look without needing a layer-level multiply.
+      ctx.globalCompositeOperation = 'source-over';
+    } else if (t === 'erase') {
+      // Eraser — uses destination-out on the annotation layer to punch
+      // a hole through pen + highlight strokes. Because the layer sits
+      // ABOVE the background image (and is composited onto the main
+      // canvas with source-over), the bg shows through any erased area.
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = w * 4;  // bigger by default — erasers should feel chunky
+      ctx.globalCompositeOperation = 'destination-out';
     } else {
       ctx.globalAlpha = 1;
       ctx.lineWidth = w;
@@ -623,35 +656,54 @@ export default function MapAnnotationCanvas({
           <option value="photo">📷 Photo</option>
         </select>
 
-        {/* Draw ↔ Highlight toggle — single button so we save a slot. */}
-        <button
-          onClick={() => setTool(tool === 'draw' ? 'highlight' : 'draw')}
-          title={`Tool: ${tool === 'draw' ? 'Pen (tap to switch to highlighter)' : 'Highlighter (tap to switch to pen)'}`}
-          style={{
-            padding: '6px 10px',
-            background: tool === 'draw' ? '#3b82f6' : '#eab308',
-            color: 'white', border: 'none', borderRadius: 6,
-            cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
-            flexShrink: 0, minWidth: 44,
-          }}
-        >
-          {tool === 'draw' ? '🖊️' : '🖍️'}
-        </button>
+        {/* Tool picker — three small icon buttons (pen / highlighter /
+            eraser). The selected one gets a coloured background so
+            the worker always knows which mode they're in. Kept inline
+            (not a dropdown) because tools get swapped often mid-draw
+            and a dropdown would add a tap per switch. */}
+        <div style={{
+          display: 'flex', gap: 2, background: '#111827',
+          border: '1px solid #374151', borderRadius: 6, padding: 2,
+          flexShrink: 0,
+        }}>
+          {[
+            { id: 'draw', icon: '🖊️', label: 'Pen', bg: '#3b82f6' },
+            { id: 'highlight', icon: '🖍️', label: 'Highlighter', bg: '#eab308' },
+            { id: 'erase', icon: '🩹', label: 'Eraser', bg: '#ef4444' },
+          ].map(t => (
+            <button
+              key={t.id}
+              onClick={() => setTool(t.id)}
+              title={t.label}
+              style={{
+                padding: '4px 8px',
+                background: tool === t.id ? t.bg : 'transparent',
+                color: tool === t.id ? 'white' : '#9ca3af',
+                border: 'none', borderRadius: 4, cursor: 'pointer',
+                fontSize: '0.95rem', minWidth: 32,
+              }}
+            >{t.icon}</button>
+          ))}
+        </div>
 
         {/* Color swatch button — taps open a popover with all 10 presets
             plus the native color picker. Avoids eating the entire toolbar
-            with circle swatches on narrow phones. */}
-        <button
-          onClick={() => setShowColorPicker(v => !v)}
-          title={`Color: ${color} (tap to change)`}
-          style={{
-            width: 32, height: 32, borderRadius: '50%',
-            background: color,
-            border: '2px solid #f9fafb',
-            cursor: 'pointer', padding: 0, flexShrink: 0,
-            boxShadow: showColorPicker ? '0 0 0 2px #3b82f6' : 'none',
-          }}
-        />
+            with circle swatches on narrow phones. Hidden for the eraser
+            since stroke colour has no visible effect on a destination-out
+            stroke. */}
+        {tool !== 'erase' && (
+          <button
+            onClick={() => setShowColorPicker(v => !v)}
+            title={`Color: ${color} (tap to change)`}
+            style={{
+              width: 32, height: 32, borderRadius: '50%',
+              background: color,
+              border: '2px solid #f9fafb',
+              cursor: 'pointer', padding: 0, flexShrink: 0,
+              boxShadow: showColorPicker ? '0 0 0 2px #3b82f6' : 'none',
+            }}
+          />
+        )}
 
         {/* Bare width slider — small footprint, no label, no number. */}
         <input
