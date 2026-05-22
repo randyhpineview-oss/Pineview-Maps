@@ -845,18 +845,27 @@ export default function HydroseedDailyRecord({
         backgroundColor: '#1f2937', color: '#f9fafb',
         display: 'flex', flexDirection: 'column',
         height: '100%', width: '100%', boxSizing: 'border-box',
-        padding: 16, overflowY: 'auto',
       }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          <h2 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 600 }}>Link to Hydroseed Ticket</h2>
-          <button
-            onClick={() => setIsPickingHT(false)}
-            style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer' }}
-          >×</button>
+        {/* ── Sticky header ── */}
+        <div style={{ flexShrink: 0, padding: '16px 16px 0' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <h2 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 600 }}>Link to Hydroseed Ticket</h2>
+            <button
+              onClick={() => setIsPickingHT(false)}
+              style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer' }}
+            >×</button>
+          </div>
+          <p style={{ fontSize: '0.85rem', color: '#9ca3af', margin: '0 0 4px 0' }}>
+            Today&apos;s open tickets for <strong>{form.client || '—'}</strong> / <strong>{form.area || '—'}</strong>:
+          </p>
         </div>
-        <p style={{ fontSize: '0.85rem', color: '#9ca3af', margin: '0 0 14px 0' }}>
-          Today&apos;s open tickets for <strong>{form.client || '—'}</strong> / <strong>{form.area || '—'}</strong>:
-        </p>
+
+        {/* ── Scrollable middle ── */}
+        <div style={{
+          flex: 1, overflowY: 'auto', overflowX: 'hidden',
+          padding: '14px 16px 16px',
+          WebkitOverflowScrolling: 'touch',
+        }}>
 
         {isLoadingHTTickets && openHTTickets.length === 0 ? (
           <div style={{
@@ -953,8 +962,14 @@ export default function HydroseedDailyRecord({
             />
           </div>
         )}
+        </div>
 
-        <div style={{ display: 'flex', gap: 10, marginTop: 'auto' }}>
+        {/* ── Sticky bottom action bar ── */}
+        <div style={{
+          flexShrink: 0, padding: '12px 16px 16px',
+          borderTop: '1px solid #374151',
+          display: 'flex', gap: 10,
+        }}>
           <button
             onClick={handleConfirmHTLink}
             disabled={isDisabled}
@@ -1027,30 +1042,47 @@ export default function HydroseedDailyRecord({
   }
 
   // ── Form view ────────────────────────────────────────────────────────────
+  // Layout is a 3-row flex column: fixed header, scrollable middle, sticky
+  // action bar. The action bar uses `flexShrink: 0` so it stays anchored
+  // at the bottom of the sheet on phones — without this the Preview /
+  // Cancel buttons end up below the bottom tabs nav (Map/Sites/Forms/Admin)
+  // when 90vh > the available .main-area height, and workers can't submit
+  // their record. Same pattern that fixes MapAnnotationCanvas's "can't
+  // find Cancel" bug.
   return (
     <div className="hydroseed-daily" style={{
       backgroundColor: '#1f2937', color: '#f9fafb',
       borderRadius: '16px 16px 0 0',
-      maxHeight: '90vh', overflowY: 'auto', overflowX: 'hidden',
-      padding: 20, maxWidth: 720, margin: '0 auto', width: '100%', boxSizing: 'border-box',
+      maxHeight: '90vh',
+      maxWidth: 720, margin: '0 auto', width: '100%', boxSizing: 'border-box',
+      display: 'flex', flexDirection: 'column', overflow: 'hidden',
     }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-        <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600 }}>
-          {isEditMode ? 'Edit Hydroseed Daily' : 'Hydroseed Daily Application Record'}
-        </h2>
-        <button onClick={onCancel} style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer' }}>×</button>
-      </div>
-      {recordNumber && (
-        <div style={{
-          backgroundColor: '#111827', border: '1px solid #3b82f6', borderRadius: 6,
-          padding: '8px 12px', marginBottom: 16, textAlign: 'center',
-          fontSize: '1rem', fontWeight: 700, color: '#3b82f6',
-        }}>
-          Record: {recordNumber}
+      {/* ── Sticky header ── */}
+      <div style={{ flexShrink: 0, padding: '20px 20px 0' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600 }}>
+            {isEditMode ? 'Edit Hydroseed Daily' : 'Hydroseed Daily Application Record'}
+          </h2>
+          <button onClick={onCancel} style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer' }}>×</button>
         </div>
-      )}
+        {recordNumber && (
+          <div style={{
+            backgroundColor: '#111827', border: '1px solid #3b82f6', borderRadius: 6,
+            padding: '8px 12px', marginBottom: 4, textAlign: 'center',
+            fontSize: '1rem', fontWeight: 700, color: '#3b82f6',
+          }}>
+            Record: {recordNumber}
+          </div>
+        )}
+      </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* ── Scrollable middle ── */}
+      <div style={{
+        flex: 1, overflowY: 'auto', overflowX: 'hidden',
+        padding: '16px 20px 16px',
+        display: 'flex', flexDirection: 'column', gap: 16,
+        WebkitOverflowScrolling: 'touch',
+      }}>
         {/* ── Header ── */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <div>
@@ -1500,8 +1532,19 @@ export default function HydroseedDailyRecord({
             style={{ ...inputStyle, resize: 'vertical' }}
           />
         </div>
+      </div>
 
-        {/* ── Required-fields warning ── */}
+      {/* ── Sticky bottom action bar ──
+          `flexShrink: 0` keeps the Preview/Cancel buttons anchored above
+          the bottom tabs nav regardless of how much form content is above
+          (or how tall the device's keyboard / safe-area is). The
+          required-fields warning sits inside the same sticky block so
+          workers see what's missing right next to the disabled Preview. */}
+      <div style={{
+        flexShrink: 0, padding: '12px 20px 16px',
+        borderTop: '1px solid #374151',
+        display: 'flex', flexDirection: 'column', gap: 10,
+      }}>
         {requiredMissing.length > 0 && (
           <div style={{
             background: 'rgba(248, 113, 113, 0.08)',
@@ -1511,8 +1554,6 @@ export default function HydroseedDailyRecord({
             Required: {requiredMissing.join(', ')}
           </div>
         )}
-
-        {/* ── Action bar ── */}
         <div style={{ display: 'flex', gap: 10 }}>
           <button
             onClick={handlePreview}
