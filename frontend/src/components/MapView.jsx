@@ -473,18 +473,37 @@ export default function MapView({
   }, [isLoaded, siteBoundsKey, sites]);
 
   // Tracks the last logical zoomToSite we applied (keyed by its _ts) so that
-  // detailOpen toggles or stale zoomToSite references don't re-issue setZoom(15)
-  // and stomp the user's current zoom level.
+  // detailOpen toggles or stale zoomToSite references don't re-pan the map
+  // to whatever target was selected previously.
+  //
+  // Without this gate, the effect's [detailOpen] dependency would re-fire it
+  // whenever the worker / admin opens or closes the detail sheet, and the
+  // _centerOnly / _isFollowMode / phone-pin-open branches would dutifully
+  // re-pan to the LAST zoomToSite — which is wrong when the user has since
+  // clicked a different pin on PC/iPad (where map clicks deliberately don't
+  // bump zoomTarget so we don't disrupt the manual map view).
+  //
+  // Visible bug we fixed: clicking a new pending pin on the map after having
+  // recently opened a different pin from the sites list would snap the map
+  // back to the sites-list pin every time the detail sheet toggled.
   const lastZoomTsRef = useRef(0);
 
   useEffect(() => {
     if (!isLoaded || !mapRef.current || !zoomToSite) return;
+
+    // Bail when the effect re-fires on a sibling state change (typically
+    // detailOpen toggling) but the zoomToSite target itself hasn't moved
+    // since we last applied it. Each fresh setZoomTarget call stamps a new
+    // _ts, so a re-fire with the same _ts means "nothing new to apply".
+    const ts = zoomToSite._ts || 0;
+    if (ts && ts === lastZoomTsRef.current) return;
 
     const isPhone = isPhoneDevice();
 
     // PC/iPad sites list click - center only, no zoom change
     if (zoomToSite._centerOnly) {
       mapRef.current.panTo({ lat: zoomToSite.latitude, lng: zoomToSite.longitude });
+      if (ts) lastZoomTsRef.current = ts;
       return;
     }
 
@@ -492,11 +511,17 @@ export default function MapView({
     if (zoomToSite._isFollowMode) {
       isFollowModeRef.current = true;
       mapRef.current.panTo({ lat: zoomToSite.latitude, lng: zoomToSite.longitude });
+      if (ts) lastZoomTsRef.current = ts;
       return;
     }
 
-    // Pin taps on PC/iPad/tablet should stay put
-    if (!isPhone) return;
+    // Pin taps on PC/iPad/tablet should stay put. Still record the ts so a
+    // later stale re-fire (e.g. detailOpen toggle) doesn't fall through to
+    // a different branch on the same _ts and re-pan unexpectedly.
+    if (!isPhone) {
+      if (ts) lastZoomTsRef.current = ts;
+      return;
+    }
 
     // Phone pin-open: pan with pixel-accurate offset when a detail sheet is open so
     // the pin ends up centered in the visible map area above the card.
@@ -510,11 +535,7 @@ export default function MapView({
         )
       : { lat: zoomToSite.latitude, lng: zoomToSite.longitude };
     mapRef.current.panTo(target);
-
-    // Only force zoom when a new logical target arrives (new _ts). detailOpen
-    // toggles or re-renders with the same zoomToSite must not reset the zoom.
-    const ts = zoomToSite._ts || 0;
-    if (ts && ts !== lastZoomTsRef.current) {
+    if (ts) {
       lastZoomTsRef.current = ts;
       mapRef.current.setZoom(15);
     }
