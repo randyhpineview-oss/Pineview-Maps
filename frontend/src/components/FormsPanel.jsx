@@ -4,6 +4,7 @@ import {
   deleteLeaseSheetDraft,
   getLeaseSheetDrafts,
   upsertTMTickets,
+  upsertHydroseedTickets,
   getHydroseedDailyDrafts,
   deleteHydroseedDailyDraft,
 } from '../lib/offlineStore';
@@ -223,6 +224,13 @@ export default function FormsPanel({
   // automatically without a page reload — egress stays near zero in the
   // steady state because sync-status only ships a MAX(updated_at) timestamp.
   tmRefreshToken = 0,
+  // Same idea as `tmRefreshToken` but for hydroseed tickets. Bumped by App's
+  // poll loop when `hydroseed_tickets_last_updated` moves, and by Realtime
+  // events on `hydroseed_tickets` / `hydroseed_ticket_rows`. Wakes the
+  // unified hydroseed-tickets sync effect so the Open Tickets / Recents
+  // hydroseed lists reflect office approvals + new tickets in near
+  // real time without forcing a page reload.
+  hydroseedRefreshToken = 0,
   roleCanAdmin = false,
   // When true, the user is an admin/office pretending to be a worker.
   // We filter the recently-submitted + open-ticket lists down to records
@@ -265,11 +273,20 @@ export default function FormsPanel({
   // Device-local drafts (autosaved by HydroseedDailyRecord). Listed alongside
   // lease-sheet drafts in the In Progress → Drafts tab.
   const [hydroseedDrafts, setHydroseedDrafts] = useState([]);
-  // Server-side dailies + tickets. Loaded when Recently Submitted opens.
+  // Server-side dailies. Loaded when Recently Submitted opens.
   const [hydroseedDailies, setHydroseedDailies] = useState([]);
+  // Unified hydroseed-tickets cache that backs BOTH the In Progress → Open
+  // Tickets list AND the Recently Submitted → Hydroseed list. First call
+  // pulls the full list via `/api/hydroseed/tickets`; every subsequent
+  // refresh (tab switch, `tmLocalTick` 30s timer, `hydroseedRefreshToken`
+  // bump) goes through `/api/hydroseed/tickets/delta` so we only ship
+  // rows whose `updated_at > since`. Soft-deleted IDs come back in the
+  // delta's `ids_removed` and get pruned locally. Mirrors the T&M cache
+  // above one-for-one.
   const [hydroseedTickets, setHydroseedTickets] = useState([]);
-  // Open hydroseed tickets for the In Progress → Open tab.
-  const [openHydroseedTickets, setOpenHydroseedTickets] = useState([]);
+  const hydroseedTicketsSinceRef = useRef(null);
+  const hydroseedSyncingRef = useRef(false);
+  const hydroseedDeltaFailCountRef = useRef(0);
 
   // Deep-link from the header "Syncing X%" badge: when App bumps
   // `uploadTabSignal`, jump to In Progress → Uploading so the worker
@@ -287,6 +304,21 @@ export default function FormsPanel({
   const openTickets = useMemo(
     () => tmTickets.filter((t) => t.status === 'open'),
     [tmTickets],
+  );
+  // Same derivation for hydroseed tickets. The unified `hydroseedTickets`
+  // cache holds every status; the Open Tickets list (In Progress) only
+  // wants `status === 'open'`. Sorted newest-first to match the T&M
+  // sortedOpenTickets convention.
+  const openHydroseedTickets = useMemo(
+    () => hydroseedTickets
+      .filter((t) => t.status === 'open')
+      .sort((a, b) => {
+        const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+        if (tb !== ta) return tb - ta;
+        return (b.id || 0) - (a.id || 0);
+      }),
+    [hydroseedTickets],
   );
   // Alias kept so the existing `filteredTm`/recents code doesn't need to
   // be renamed. It's just the same underlying list — the filter that
@@ -479,38 +511,97 @@ export default function FormsPanel({
     return () => { cancelled = true; };
   }, [visible, subTab, ipTab, draftsRefreshToken]);
 
-  // Load open Hydroseed tickets when In Progress → Open tab is shown.
+  // Unified hydroseed-tickets sync — mirror of the T&M sync above. Runs
+  // while the panel is visible AND the user is on a sub-tab that could
+  // show hydroseed tickets:
+  //   - In Progress  (the Open Tickets list reads `openHydroseedTickets`)
+  //   - Recently Submitted (the Hydroseed sub-tab + the All feed)
+  //
+  // First call is a full `api.listHydroseedTickets({})` fetch which seeds
+  // the cache AND the watermark; every subsequent call goes through
+  // `api.getHydroseedTicketsDelta(since)`. Egress stays near zero in the
+  // steady state because the delta response is essentially empty (~60B
+  // gzipped) when nothing has changed.
+  //
+  // Triggered by: visible/subTab/recTab (user navigation),
+  // `hydroseedRefreshToken` (App's poll loop / Realtime), and
+  // `tmLocalTick` (30s local poll, shared with T&M since the timer
+  // already runs on the same set of tabs).
   useEffect(() => {
     if (!visible) return;
-    if (subTab !== SUB_IN_PROGRESS || ipTab !== IP_OPEN) return;
+    const onInProgress = subTab === SUB_IN_PROGRESS;
+    const onRecents = subTab === SUB_RECENTS;
+    if (!onInProgress && !onRecents) return;
+    if (hydroseedSyncingRef.current) return;
+
     let cancelled = false;
+    hydroseedSyncingRef.current = true;
     (async () => {
       try {
-        const list = await api.listHydroseedTickets({ status: 'open' });
-        if (!cancelled) setOpenHydroseedTickets(list || []);
+        const since = hydroseedTicketsSinceRef.current;
+        if (!since) {
+          // Cold start — full list. Seeds state + watermark + the IDB
+          // detail cache so HydroseedTicketDetailSheet can open offline.
+          const list = await api.listHydroseedTickets({});
+          if (cancelled) return;
+          hydroseedDeltaFailCountRef.current = 0;
+          setHydroseedTickets(list || []);
+          hydroseedTicketsSinceRef.current = new Date().toISOString();
+          try { await upsertHydroseedTickets(list || []); } catch { /* non-fatal */ }
+        } else {
+          // Delta — merges new/updated rows and prunes soft-deleted ones.
+          const delta = await api.getHydroseedTicketsDelta(since);
+          if (cancelled) return;
+          hydroseedDeltaFailCountRef.current = 0;
+          const items = Array.isArray(delta?.items) ? delta.items : [];
+          const idsRemoved = Array.isArray(delta?.ids_removed) ? delta.ids_removed : [];
+          if (items.length > 0 || idsRemoved.length > 0) {
+            setHydroseedTickets((prev) => {
+              const byId = new Map(prev.map((t) => [t.id, t]));
+              for (const it of items) byId.set(it.id, it);
+              for (const id of idsRemoved) byId.delete(id);
+              return Array.from(byId.values());
+            });
+            // Keep the offline detail cache in sync with deltas (new
+            // tickets, edits, status changes). Same spread-merge that
+            // `upsertHydroseedTickets` does for `upsertTMTickets` so
+            // slim delta rows don't clobber heavy fields a prior full
+            // fetch wrote (office_data, signatures, joined rows).
+            if (items.length > 0) {
+              try { await upsertHydroseedTickets(items); } catch { /* non-fatal */ }
+            }
+          }
+          // Advance the watermark. Server sends `server_time` captured
+          // BEFORE its query so nothing can slip through on the next tick.
+          hydroseedTicketsSinceRef.current = delta?.server_time || hydroseedTicketsSinceRef.current;
+        }
       } catch (e) {
-        if (!cancelled) console.warn('[FORMS] hydroseed open tickets:', e.message);
+        hydroseedDeltaFailCountRef.current += 1;
+        if (hydroseedDeltaFailCountRef.current >= 2) {
+          console.warn('[FORMS] hydroseed tickets sync failed:', e.message);
+        }
+        // Leave the watermark alone so the next tick retries the same range.
+      } finally {
+        hydroseedSyncingRef.current = false;
       }
     })();
     return () => { cancelled = true; };
-  }, [visible, subTab, ipTab, tmLocalTick, draftsRefreshToken]);
+  }, [visible, subTab, recTab, hydroseedRefreshToken, tmLocalTick]);
 
-  // Load submitted Hydroseed dailies + tickets when Recently Submitted opens.
+  // Load submitted Hydroseed dailies when Recently Submitted opens.
+  // Tickets now flow through the unified cache above; dailies stay on
+  // their own simple fetch since they don't yet have a delta endpoint
+  // and the payload is small enough that a cold list works fine.
   useEffect(() => {
     if (!visible) return;
     if (subTab !== SUB_RECENTS) return;
     let cancelled = false;
     (async () => {
       try {
-        const [dailies, tickets] = await Promise.all([
-          api.listHydroseedDailies(),
-          api.listHydroseedTickets(),
-        ]);
-        if (cancelled) return;
-        setHydroseedDailies(dailies || []);
-        setHydroseedTickets(tickets || []);
+        const dailies = await api.listHydroseedDailies();
+        if (!cancelled) setHydroseedDailies(dailies || []);
       } catch (e) {
-        if (!cancelled) console.warn('[FORMS] hydroseed lists:', e.message);
+        if (!cancelled) console.warn('[FORMS] hydroseed dailies:', e.message);
       }
     })();
     return () => { cancelled = true; };

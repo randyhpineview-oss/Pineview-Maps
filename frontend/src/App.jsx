@@ -747,6 +747,12 @@ export default function App() {
   // updates without a full page reload — at the cost of only one extra
   // MAX(updated_at) query in sync-status, which is already indexed.
   const [tmRefreshToken, setTmRefreshToken] = useState(0);
+  // Same pattern for Hydroseed tickets. FormsPanel uses the unified
+  // `hydroseedTickets` cache + `/api/hydroseed/tickets/delta` to keep
+  // its Open / Recently Submitted hydroseed lists fresh; this token
+  // wakes that sync up immediately when sync-status or Realtime says
+  // something changed, instead of waiting for the 30 s local poll.
+  const [hydroseedRefreshToken, setHydroseedRefreshToken] = useState(0);
   // Recents cache (IndexedDB-backed, pre-loaded at startup)
   const [cachedRecents, setCachedRecents] = useState([]);
   // Lookups cache (IndexedDB-backed)
@@ -2364,6 +2370,10 @@ export default function App() {
         // nothing has changed (sync-status is ~100B).
         const tmTicketsChanged = !lastSyncStatusRef.current?.tm_tickets_last_updated ||
                                 syncStatus.tm_tickets_last_updated !== lastSyncStatusRef.current.tm_tickets_last_updated;
+        // Same MAX(updated_at) watermark for hydroseed_tickets. Backend
+        // already ships `hydroseed_tickets_last_updated` in /api/sync-status.
+        const hydroseedTicketsChanged = !lastSyncStatusRef.current?.hydroseed_tickets_last_updated ||
+                                syncStatus.hydroseed_tickets_last_updated !== lastSyncStatusRef.current.hydroseed_tickets_last_updated;
 
         // Snapshot prev pending counts BEFORE overwriting the ref so the
         // pending-list re-fetch guard below sees the real delta.
@@ -2379,6 +2389,7 @@ export default function App() {
         // FormsPanel decide whether to fetch (it only does when the
         // relevant tab is in view, saving egress when nobody's looking).
         if (tmTicketsChanged) setTmRefreshToken((x) => x + 1);
+        if (hydroseedTicketsChanged) setHydroseedRefreshToken((x) => x + 1);
 
         // Persist the latest watermarks to IndexedDB so the NEXT browser
         // reload can take the hydrate-from-cache fast path and skip the
@@ -2852,15 +2863,16 @@ export default function App() {
 
     // ── hydroseed_daily_records / hydroseed_tickets / hydroseed_ticket_rows
     // Same pattern as the T&M handlers above — bump a refresh token and let
-    // FormsPanel re-fetch the affected list. We deliberately reuse
-    // `draftsRefreshToken` because FormsPanel's hydroseed-list useEffects
-    // already depend on it (see Phase 6 wiring), so this is the cheapest
-    // hook into the existing fetch path. Realtime keeps the office and
-    // field crew in sync on HT approvals / new dailies without waiting
-    // for the 30 s FormsPanel poll.
+    // FormsPanel re-fetch the affected list.
+    //
+    // Tickets + rows use the dedicated `hydroseedRefreshToken`, which kicks
+    // the unified hydroseed-tickets cache (cold full-fetch on first call,
+    // delta sync thereafter) the same way `tmRefreshToken` does for T&M.
+    // Dailies still ride `draftsRefreshToken` since the FormsPanel daily
+    // lists already depend on it (drafts + recents).
     const onHydroseedDailies = () => setDraftsRefreshToken((x) => x + 1);
-    const onHydroseedTickets = () => setDraftsRefreshToken((x) => x + 1);
-    const onHydroseedRows = () => setDraftsRefreshToken((x) => x + 1);
+    const onHydroseedTickets = () => setHydroseedRefreshToken((x) => x + 1);
+    const onHydroseedRows = () => setHydroseedRefreshToken((x) => x + 1);
 
     // ── devices: registered iPads (OwnTracks). Each Realtime event is
     //    a position update, color/label change, or activation toggle.
@@ -6519,6 +6531,7 @@ export default function App() {
               onRequestSync={handleRequestSync}
               draftsRefreshToken={draftsRefreshToken}
               tmRefreshToken={tmRefreshToken}
+              hydroseedRefreshToken={hydroseedRefreshToken}
               roleCanAdmin={roleCanAdmin}
               viewAsWorker={viewAsWorker}
               currentUserName={currentUserName}

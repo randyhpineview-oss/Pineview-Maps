@@ -11,7 +11,11 @@ const DB_NAME = 'pineview-offline-db';
 // the new Hydroseed Daily Application Record form can autosave and resume
 // device-local drafts. Phase 6 will add the full upload-queue + Dropbox
 // backup safety net; v8 only carries the form snapshot + photos.
-const DB_VERSION = 8;
+// v9: added `hydroseedTickets` store so the Hydroseed Ticket list (FormsPanel)
+// can run the same delta-sync + offline-detail caching that T&M tickets
+// already use. Fixes the multi-second cold-fetch lag on every visit to
+// 'In Progress → Open Tickets' for hydroseed.
+const DB_VERSION = 9;
 
 function ensureCacheId(site) {
   return {
@@ -54,6 +58,9 @@ const dbPromise = openDB(DB_NAME, DB_VERSION, {
     }
     if (!db.objectStoreNames.contains('hydroseedDailyDrafts')) {
       db.createObjectStore('hydroseedDailyDrafts', { keyPath: 'id' });
+    }
+    if (!db.objectStoreNames.contains('hydroseedTickets')) {
+      db.createObjectStore('hydroseedTickets', { keyPath: 'id' });
     }
   },
 });
@@ -472,4 +479,42 @@ export async function removeTMTicket(id) {
   if (id == null) return;
   const db = await dbPromise;
   await db.delete('tmTickets', id);
+}
+
+// ── Hydroseed Tickets (v9) ──
+// Mirrors the T&M cache: warm full ticket rows here so the
+// HydroseedTicketDetailSheet can open offline and the FormsPanel
+// list-level cache stays fast. Same spread-merge semantics as
+// `upsertTMTickets` so delta-shipped slim rows never clobber heavy
+// fields (office_data, signatures, joined rows) that a prior full
+// fetch wrote.
+
+export async function upsertHydroseedTicket(ticket) {
+  if (!ticket || !ticket.id) return;
+  const db = await dbPromise;
+  await db.put('hydroseedTickets', ticket);
+}
+
+export async function upsertHydroseedTickets(tickets) {
+  if (!Array.isArray(tickets) || tickets.length === 0) return;
+  const db = await dbPromise;
+  const tx = db.transaction('hydroseedTickets', 'readwrite');
+  for (const t of tickets) {
+    if (!t || t.id == null) continue;
+    const existing = await tx.store.get(t.id);
+    await tx.store.put(existing ? { ...existing, ...t } : t);
+  }
+  await tx.done;
+}
+
+export async function getHydroseedTicket(id) {
+  if (id == null) return null;
+  const db = await dbPromise;
+  return db.get('hydroseedTickets', id);
+}
+
+export async function removeHydroseedTicket(id) {
+  if (id == null) return;
+  const db = await dbPromise;
+  await db.delete('hydroseedTickets', id);
 }
