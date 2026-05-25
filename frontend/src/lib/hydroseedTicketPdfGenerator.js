@@ -312,6 +312,11 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
   const marginR = 36;
   const marginB = 36;
   const contentW = pageW - marginL - marginR;
+  // Visual content width — matches the materials table total (sum of
+  // tableColW below). Used for the info box, signature line, comments
+  // wrap, etc. so every framed/aligned element shares the same right
+  // edge instead of some using contentW (540pt) and some using 525pt.
+  const boxW = 525;
   let y = 36;
 
   const drawRect = (x, yy, w, h) => {
@@ -343,13 +348,22 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
 
   // Title vertically centered with the logo (~y+45 for a 110pt logo) and
   // horizontally centered on the page so it reads as the main letterhead.
+  // Ticket number is rendered separately, smaller + right-aligned to the
+  // boxW right edge so it lines up with the info box / materials table.
   const titleY = y + 45;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(13);
   doc.setTextColor(50, 80, 50);
-  const titleText = 'Hydroseed Time and Materials Ticket';
-  const numberText = `   No. ${ticket.ticket_number || ''}`;
-  doc.text(`${titleText}${numberText}`, pageW / 2, titleY, { align: 'center' });
+  doc.text('Hydroseed Time and Materials Ticket', pageW / 2, titleY, { align: 'center' });
+
+  // Ticket number — smaller, right-aligned, same baseline as the title.
+  doc.setFontSize(11);
+  doc.text(
+    `No. ${ticket.ticket_number || ''}`,
+    marginL + boxW,
+    titleY,
+    { align: 'right' },
+  );
   doc.setTextColor(0);
 
   doc.setFont('helvetica', 'normal');
@@ -358,13 +372,15 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
   doc.text('www.pineviewvegetation.com', pageW / 2, titleY + 14, { align: 'center' });
   doc.setTextColor(0);
 
-  // Address line under the logo (left side, paper-form formatting).
+  // Address line — centered under the URL (was anchored to the left under
+  // the logo). All three letterhead lines are now horizontally centered.
   doc.setFontSize(8);
   doc.setTextColor(80);
   doc.text(
     '7077 252 Road    Pineview BC V1J 8E3    250.261.9544',
-    marginL + 120,
+    pageW / 2,
     titleY + 28,
+    { align: 'center' },
   );
   doc.setTextColor(0);
 
@@ -378,9 +394,9 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
   const infoRowH = 16;
   const infoBoxRows = 4;
   const infoBoxH = infoRowH * infoBoxRows;
-  const infoColW = contentW / 2;
+  const infoColW = boxW / 2;
 
-  drawRect(marginL, y, contentW, infoBoxH);
+  drawRect(marginL, y, boxW, infoBoxH);
   // Vertical divider between the two columns.
   doc.line(marginL + infoColW, y, marginL + infoColW, y + infoBoxH);
 
@@ -424,7 +440,7 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
     doc.text('Personal On Site:', marginL, y);
     doc.setFont('helvetica', 'normal');
     const namesText = header.personalOnSite.join(', ');
-    const namesLines = doc.splitTextToSize(namesText, contentW - 100);
+    const namesLines = doc.splitTextToSize(namesText, boxW - 100);
     doc.text(namesLines, marginL + 95, y);
     y += Math.max(12, namesLines.length * 11);
   }
@@ -435,7 +451,7 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
   doc.text('Job Description:', marginL, y);
   doc.setFont('helvetica', 'normal');
   const descText = ticket.description_of_work || '';
-  const descLines = doc.splitTextToSize(descText, contentW - 95);
+  const descLines = doc.splitTextToSize(descText, boxW - 95);
   doc.text(descLines, marginL + 90, y);
   y += Math.max(12, descLines.length * 11);
 
@@ -814,7 +830,7 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
     y += 11;
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8.5);
-    const commentLines = doc.splitTextToSize(comments, contentW);
+    const commentLines = doc.splitTextToSize(comments, boxW);
     for (const line of commentLines) {
       if (y + 11 > pageH - marginB) {
         doc.addPage();
@@ -836,8 +852,11 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
   doc.setFontSize(10);
   doc.text('Approved:', marginL, y + 14);
 
+  // Signature line ends at the boxW right edge (same as info box +
+  // materials table) so the 'Approved:' line visually lines up with
+  // the right edge of the other framed elements above it.
   const sigLineX1 = marginL + 70;
-  const sigLineX2 = pageW - marginR;
+  const sigLineX2 = marginL + boxW;
   const sigLineY = y + 16;
   doc.setDrawColor(0);
   doc.setLineWidth(0.5);
