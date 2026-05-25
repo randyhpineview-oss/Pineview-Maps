@@ -10,6 +10,13 @@ function PendingSiteCard({ site, busy, onApprove, onReject, onApproveAndEdit, on
   // Approve & Edit now opens the full review modal (ApproveEditModal)
   // via onApproveAndEdit; nothing is submitted until the admin confirms
   // in the modal, which also handles T&M re-homing and PDF regeneration.
+  const isTypeChangeRequest = Boolean(site.pending_pin_type);
+  const typeChangeRequester = site.pending_change_requested_by_user?.name
+    || site.pending_change_requested_by_user?.email
+    || 'Unknown';
+  const newPinRequester = site.created_by_user?.name
+    || site.created_by_user?.email
+    || 'Unknown';
   return (
     <div className="site-row" onClick={() => onSelectSite?.(site)} style={{ cursor: onSelectSite ? 'pointer' : 'default' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
@@ -17,12 +24,15 @@ function PendingSiteCard({ site, busy, onApprove, onReject, onApproveAndEdit, on
           <strong>{site.lsd || 'Unnamed pin'}</strong>
           <div className="small-text">{pinTypeLabel(site.pin_type)} • {site.client || 'No client'} • {site.area || 'No area'}</div>
           <div className="small-text">Status: {statusLabel(site.status)}</div>
+          {!isTypeChangeRequest ? (
+            <div className="small-text">Requested by: <strong>{newPinRequester}</strong></div>
+          ) : null}
         </div>
         <span className="pending-badge">Pending</span>
       </div>
-      {site.pending_pin_type ? (
+      {isTypeChangeRequest ? (
         <div className="small-text" style={{ marginTop: '0.35rem', color: '#fbbf24' }}>
-          Type change requested → <strong>{site.pending_pin_type === 'reclaimed' ? 'Reclaimed' : site.pending_pin_type === 'lsd' ? 'LSD' : site.pending_pin_type}</strong>
+          Type change requested by <strong>{typeChangeRequester}</strong> → <strong>{site.pending_pin_type === 'reclaimed' ? 'Reclaimed' : site.pending_pin_type === 'lsd' ? 'LSD' : site.pending_pin_type}</strong>
         </div>
       ) : null}
       <div className="small-text" style={{ marginTop: '0.55rem' }}>

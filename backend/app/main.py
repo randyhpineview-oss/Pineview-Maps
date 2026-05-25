@@ -301,7 +301,7 @@ def startup_event() -> None:
 # Format: an opaque-but-meaningful string. Date-prefix + initial keeps
 # bumps obvious in git blame. The exact value doesn't matter as long as
 # it differs from any prior committed value.
-_MIGRATION_VERSION = "2026-05-15-checkins"
+_MIGRATION_VERSION = "2026-05-25-pending-change-requester"
 
 
 def _migrate_add_columns() -> None:
@@ -360,6 +360,20 @@ def _migrate_add_columns() -> None:
                 else:
                     conn.execute(text("ALTER TABLE sites ADD COLUMN is_hidden BOOLEAN NOT NULL DEFAULT false"))
                     conn.execute(text("CREATE INDEX IF NOT EXISTS idx_sites_is_hidden ON sites(is_hidden)"))
+            # Track who requested a pending change (currently used by the
+            # request-type-change endpoint so admins can see who asked for
+            # the swap in the Pending Approvals list).
+            if "pending_change_requested_by_user_id" not in existing_sites:
+                if is_sqlite:
+                    conn.execute(text("ALTER TABLE sites ADD COLUMN pending_change_requested_by_user_id INTEGER"))
+                else:
+                    conn.execute(text(
+                        "ALTER TABLE sites ADD COLUMN pending_change_requested_by_user_id INTEGER REFERENCES users(id)"
+                    ))
+                    conn.execute(text(
+                        "CREATE INDEX IF NOT EXISTS idx_sites_pending_change_requested_by_user_id "
+                        "ON sites(pending_change_requested_by_user_id)"
+                    ))
                     
         # Pipelines migrations
         if insp.has_table("pipelines"):
@@ -871,7 +885,11 @@ def pending_sites(
 ) -> list[SiteRead]:
     sites = (
         db.query(Site)
-        .options(joinedload(Site.updates))
+        .options(
+            joinedload(Site.updates),
+            joinedload(Site.created_by_user),
+            joinedload(Site.pending_change_requested_by_user),
+        )
         .filter(Site.approval_state == ApprovalState.pending_review)
         .filter(Site.deleted_at.is_(None))
         .order_by(Site.created_at.desc())
@@ -1977,6 +1995,7 @@ def update_site_approval(
         # pin that was already approved before.
         site.approval_state = ApprovalState.approved
         site.pending_pin_type = None
+        site.pending_change_requested_by_user_id = None
         site.updated_at = datetime.utcnow()
         if current_user.id:
             local_user = db.query(User).filter(User.id == current_user.id).first()
@@ -2080,6 +2099,7 @@ def update_site_approval(
     if site.pending_pin_type is not None:
         site.pin_type = site.pending_pin_type
         site.pending_pin_type = None
+    site.pending_change_requested_by_user_id = None
 
     if payload.lsd is not None:
         site.lsd = payload.lsd
@@ -2205,6 +2225,13 @@ def request_type_change(
     site.pending_pin_type = payload.pin_type
     site.approval_state = ApprovalState.pending_review
     site.updated_at = datetime.utcnow()
+    # Stamp the requester so admins can see who asked for the change in the
+    # Pending Approvals list. Only set if the user is in the local users
+    # table (mirrors the same FK-guard pattern used in create_site).
+    if current_user.id:
+        local_user = db.query(User).filter(User.id == current_user.id).first()
+        if local_user:
+            site.pending_change_requested_by_user_id = current_user.id
     db.commit()
     db.refresh(site)
     return SiteRead.model_validate(site)

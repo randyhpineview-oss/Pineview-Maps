@@ -181,12 +181,14 @@ class SiteRead(BaseModel):
     created_by_user_id: int | None
     approved_by_user_id: int | None
     pending_pin_type: PinType | None = None
+    pending_change_requested_by_user_id: int | None = None
     updates: list[SiteUpdateRead] = Field(default_factory=list)
     spray_records: list[SiteSprayRecordSummary] = Field(default_factory=list)
     # Nested user objects for convenience
     created_by_user: UserRead | None = None
     approved_by_user: UserRead | None = None
     last_inspected_by_user: UserRead | None = None
+    pending_change_requested_by_user: UserRead | None = None
 
     @field_validator('raw_attributes', mode='before')
     @classmethod
@@ -242,6 +244,7 @@ class SiteListRead(BaseModel):
     created_by_user_id: int | None
     approved_by_user_id: int | None
     pending_pin_type: PinType | None = None
+    pending_change_requested_by_user_id: int | None = None
     # Cheap flag so the UI can still show a "has lease sheets" badge without
     # hydrating the spray_records list. Populated by the endpoint.
     has_spray_records: bool = False

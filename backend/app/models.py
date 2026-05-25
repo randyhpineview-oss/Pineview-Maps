@@ -102,6 +102,7 @@ class Site(Base):
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     approved_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     pending_pin_type: Mapped[PinType | None] = mapped_column(Enum(PinType), nullable=True)
+    pending_change_requested_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     deleted_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     is_hidden: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
@@ -122,6 +123,9 @@ class Site(Base):
     )
     last_inspected_by_user: Mapped[User | None] = relationship(
         foreign_keys=[last_inspected_by_user_id],
+    )
+    pending_change_requested_by_user: Mapped[User | None] = relationship(
+        foreign_keys=[pending_change_requested_by_user_id],
     )
     updates: Mapped[list["SiteUpdate"]] = relationship(
         back_populates="site",
