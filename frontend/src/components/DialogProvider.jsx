@@ -370,6 +370,15 @@ function DialogPortal({ entry, onResolve }) {
             justifyContent: 'flex-end',
           }}
         >
+          {opts.neutralLabel ? (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => onResolve('neutral')}
+            >
+              {opts.neutralLabel}
+            </button>
+          ) : null}
           {!isAlert ? (
             <button
               ref={cancelButtonRef}

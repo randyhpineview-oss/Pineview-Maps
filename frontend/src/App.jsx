@@ -694,6 +694,9 @@ export default function App() {
   const [editingHydroseedRecord, setEditingHydroseedRecord] = useState(null);
   // Hydroseed ticket detail view (HT######).
   const [activeHydroseedTicketId, setActiveHydroseedTicketId] = useState(null);
+  // Pre-fetched latest daily record for duplication logic (instant open)
+  const [latestHydroseedDaily, setLatestHydroseedDaily] = useState(null);
+  const [hasFetchedLatestDaily, setHasFetchedLatestDaily] = useState(false);
   // Lease sheet draft being resumed
   const [resumingDraft, setResumingDraft] = useState(null);
   // Standalone lease sheet (external, not tied to a map site)
@@ -3130,6 +3133,23 @@ export default function App() {
     }
   }, []);
 
+  // Pre-fetch the latest Hydroseed Daily in the background whenever the user or drafts refresh
+  useEffect(() => {
+    if (user) {
+      api.getMyLatestHydroseedDaily()
+        .then((res) => {
+          setLatestHydroseedDaily(res);
+          setHasFetchedLatestDaily(true);
+        })
+        .catch(() => {
+          setHasFetchedLatestDaily(true);
+        });
+    } else {
+      setLatestHydroseedDaily(null);
+      setHasFetchedLatestDaily(false);
+    }
+  }, [user, draftsRefreshToken]);
+
   const visibleSites = useMemo(() => {
     const normalizedSearch = filters.search.trim().toLowerCase();
     return sites.filter((site) => {
@@ -4294,19 +4314,38 @@ export default function App() {
       setHydroseedDailyOpen(true);
       return;
     }
-    let latest = null;
-    try { latest = await api.getMyLatestHydroseedDaily(); } catch { /* offline / new user — silent */ }
-    if (latest && await confirm({
-      title: 'Duplicate previous daily?',
-      message: `Copy header + crew + ingredients from ${latest.record_number} (${latest.work_date}, ${latest.client || '—'} / ${latest.area || '—'})? Loads and photos will be cleared so today is a fresh entry.`,
-      okLabel: 'Duplicate',
-      cancelLabel: 'Start blank',
-    })) {
-      setHydroseedDuplicateFrom(latest);
-    } else {
-      setHydroseedDuplicateFrom(null);
+    let latest = latestHydroseedDaily;
+    if (!hasFetchedLatestDaily) {
+      try {
+        latest = await api.getMyLatestHydroseedDaily();
+      } catch {
+        /* offline / new user — silent */
+      }
     }
-    setHydroseedDailyOpen(true);
+    if (latest) {
+      const result = await confirm({
+        title: 'Duplicate previous daily?',
+        message: `Copy header + crew + ingredients from ${latest.record_number} (${latest.work_date}, ${latest.client || '—'} / ${latest.area || '—'})? Loads and photos will be cleared so today is a fresh entry.`,
+        okLabel: 'Duplicate',
+        neutralLabel: 'Start blank',
+        cancelLabel: 'Cancel',
+      });
+      if (result === true) {
+        setHydroseedDuplicateFrom(latest);
+        setHydroseedDailyOpen(true);
+      } else if (result === 'neutral') {
+        setHydroseedDuplicateFrom(null);
+        setHydroseedDailyOpen(true);
+      } else {
+        // result === false (Cancel or Escape or Backdrop click)
+        // Abort the flow completely — do not open the modal!
+        setHydroseedDuplicateFrom(null);
+      }
+    } else {
+      // No prior daily found, start blank directly
+      setHydroseedDuplicateFrom(null);
+      setHydroseedDailyOpen(true);
+    }
   }
 
   function handleHydroseedDailyCancel() {
