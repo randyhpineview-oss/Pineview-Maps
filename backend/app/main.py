@@ -301,7 +301,7 @@ def startup_event() -> None:
 # Format: an opaque-but-meaningful string. Date-prefix + initial keeps
 # bumps obvious in git blame. The exact value doesn't matter as long as
 # it differs from any prior committed value.
-_MIGRATION_VERSION = "2026-05-25-pending-change-requester"
+_MIGRATION_VERSION = "2026-05-25-requester-name-scalars"
 
 
 def _migrate_add_columns() -> None:
@@ -374,6 +374,35 @@ def _migrate_add_columns() -> None:
                         "CREATE INDEX IF NOT EXISTS idx_sites_pending_change_requested_by_user_id "
                         "ON sites(pending_change_requested_by_user_id)"
                     ))
+            # Denormalized requester-name scalars. Required for the admin's
+            # pending-approvals card to show a name on rows that arrive via
+            # Supabase Realtime (raw row, no JOINs). Mirrors the existing
+            # last_inspected_by_name pattern. Backfilled from users.name
+            # for any pre-existing rows so old pending pins also display.
+            if "created_by_name" not in existing_sites:
+                conn.execute(text("ALTER TABLE sites ADD COLUMN created_by_name VARCHAR(255)"))
+                # Backfill from users.name. SQLite supports this UPDATE...FROM
+                # syntax from 3.33+; Postgres has it natively.
+                try:
+                    conn.execute(text(
+                        "UPDATE sites SET created_by_name = users.name "
+                        "FROM users "
+                        "WHERE sites.created_by_user_id = users.id "
+                        "AND sites.created_by_name IS NULL"
+                    ))
+                except Exception as e:
+                    print(f"[MIGRATE] created_by_name backfill skipped (non-fatal): {e}")
+            if "pending_change_requested_by_name" not in existing_sites:
+                conn.execute(text("ALTER TABLE sites ADD COLUMN pending_change_requested_by_name VARCHAR(255)"))
+                try:
+                    conn.execute(text(
+                        "UPDATE sites SET pending_change_requested_by_name = users.name "
+                        "FROM users "
+                        "WHERE sites.pending_change_requested_by_user_id = users.id "
+                        "AND sites.pending_change_requested_by_name IS NULL"
+                    ))
+                except Exception as e:
+                    print(f"[MIGRATE] pending_change_requested_by_name backfill skipped (non-fatal): {e}")
                     
         # Pipelines migrations
         if insp.has_table("pipelines"):
@@ -954,6 +983,13 @@ def create_site(
         local_user = db.query(User).filter(User.id == current_user.id).first()
         if local_user:
             site.created_by_user_id = current_user.id
+    # Always stamp the requester name as a denormalized scalar — it's the
+    # only channel by which the admin's pending-approvals card sees the
+    # name when the row arrives via Supabase Realtime (raw row, no JOINs).
+    # We pull from current_user.name (which the auth layer hydrates from
+    # either the local users row or the JWT user_metadata), so this works
+    # even when the FK guard above bails (e.g. transient user fallback).
+    site.created_by_name = (current_user.name or current_user.email or None)
     
     db.add(site)
     db.flush()
@@ -1996,6 +2032,7 @@ def update_site_approval(
         site.approval_state = ApprovalState.approved
         site.pending_pin_type = None
         site.pending_change_requested_by_user_id = None
+        site.pending_change_requested_by_name = None
         site.updated_at = datetime.utcnow()
         if current_user.id:
             local_user = db.query(User).filter(User.id == current_user.id).first()
@@ -2100,6 +2137,7 @@ def update_site_approval(
         site.pin_type = site.pending_pin_type
         site.pending_pin_type = None
     site.pending_change_requested_by_user_id = None
+    site.pending_change_requested_by_name = None
 
     if payload.lsd is not None:
         site.lsd = payload.lsd
@@ -2226,12 +2264,14 @@ def request_type_change(
     site.approval_state = ApprovalState.pending_review
     site.updated_at = datetime.utcnow()
     # Stamp the requester so admins can see who asked for the change in the
-    # Pending Approvals list. Only set if the user is in the local users
-    # table (mirrors the same FK-guard pattern used in create_site).
+    # Pending Approvals list. The FK is set only if the user is in the local
+    # users table (mirrors create_site's FK guard); the denormalized name
+    # always gets stamped so Supabase Realtime payloads carry it across.
     if current_user.id:
         local_user = db.query(User).filter(User.id == current_user.id).first()
         if local_user:
             site.pending_change_requested_by_user_id = current_user.id
+    site.pending_change_requested_by_name = (current_user.name or current_user.email or None)
     db.commit()
     db.refresh(site)
     return SiteRead.model_validate(site)

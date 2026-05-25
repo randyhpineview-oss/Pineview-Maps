@@ -100,9 +100,14 @@ class Site(Base):
         nullable=False,
     )
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    # Denormalized name so Supabase Realtime payloads (which ship the raw
+    # row, no JOINs) can render the requester immediately on the admin's
+    # pending-approvals card. Mirrors the last_inspected_by_name pattern.
+    created_by_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     approved_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     pending_pin_type: Mapped[PinType | None] = mapped_column(Enum(PinType), nullable=True)
     pending_change_requested_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    pending_change_requested_by_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     deleted_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     is_hidden: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)

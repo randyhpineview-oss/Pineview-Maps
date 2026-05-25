@@ -11,10 +11,16 @@ function PendingSiteCard({ site, busy, onApprove, onReject, onApproveAndEdit, on
   // via onApproveAndEdit; nothing is submitted until the admin confirms
   // in the modal, which also handles T&M re-homing and PDF regeneration.
   const isTypeChangeRequest = Boolean(site.pending_pin_type);
-  const typeChangeRequester = site.pending_change_requested_by_user?.name
+  // Prefer the denormalized scalar names because Supabase Realtime ships
+  // the raw `sites` row to subscribers without nested user joins. Fall
+  // back to the nested user object for any code path that pre-dates the
+  // denorm (and to email if the name happens to be missing).
+  const typeChangeRequester = site.pending_change_requested_by_name
+    || site.pending_change_requested_by_user?.name
     || site.pending_change_requested_by_user?.email
     || 'Unknown';
-  const newPinRequester = site.created_by_user?.name
+  const newPinRequester = site.created_by_name
+    || site.created_by_user?.name
     || site.created_by_user?.email
     || 'Unknown';
   return (
