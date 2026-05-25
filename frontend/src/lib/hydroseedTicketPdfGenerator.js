@@ -341,21 +341,21 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
     doc.addImage(logoData, 'PNG', marginL, y, 110, 110);
   }
 
-  const titleY = y + 28;
+  // Title vertically centered with the logo (~y+45 for a 110pt logo) and
+  // horizontally centered on the page so it reads as the main letterhead.
+  const titleY = y + 45;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(13);
   doc.setTextColor(50, 80, 50);
-  // Right-aligned title block, paper-form style: title and number on the
-  // same line (existing wording kept) + the website link below.
   const titleText = 'Hydroseed Time and Materials Ticket';
   const numberText = `   No. ${ticket.ticket_number || ''}`;
-  doc.text(`${titleText}${numberText}`, pageW - marginR, titleY, { align: 'right' });
+  doc.text(`${titleText}${numberText}`, pageW / 2, titleY, { align: 'center' });
   doc.setTextColor(0);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(60, 100, 60);
-  doc.text('www.pineviewvegetation.com', pageW - marginR, titleY + 14, { align: 'right' });
+  doc.text('www.pineviewvegetation.com', pageW / 2, titleY + 14, { align: 'center' });
   doc.setTextColor(0);
 
   // Address line under the logo (left side, paper-form formatting).
@@ -364,11 +364,13 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
   doc.text(
     '7077 252 Road    Pineview BC V1J 8E3    250.261.9544',
     marginL + 120,
-    titleY + 38,
+    titleY + 28,
   );
   doc.setTextColor(0);
 
-  y += 120;
+  // Tightened gap between the letterhead and the info box (was 120pt, the
+  // logo is only 110pt tall so the extra 10pt was wasted whitespace).
+  y += 112;
 
   // ── Bordered info box (Customer / Date / Customer Rep / Contact # / etc.) ──
   // Two columns × four rows. Right column's last row is intentionally blank
@@ -398,16 +400,22 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
     doc.text(txt, valueX, cellY + 11);
   };
 
+  // Row order (left column / right column):
+  //   row 0: Customer / Date
+  //   row 1: Customer Rep / P.O.#       ← P.O.# moved up to pair with Date
+  //   row 2: Contact # / Lead           ← Contact # moved down to pair with Rep
+  //   row 3: Daily HD# (spans visually; right cell intentionally blank)
   drawInfoCell(0, 0, 'Customer:',                        ticket.client || '', { labelW: 60 });
   drawInfoCell(1, 0, 'Date:',                            String(ticket.work_date || ''), { labelW: 35 });
   drawInfoCell(0, 1, 'Customer Rep:',                    header.customerRep || '', { labelW: 78 });
-  drawInfoCell(1, 1, 'Contact #:',                       header.customerRepPhone || '', { labelW: 60 });
-  drawInfoCell(0, 2, 'P.O.#',                            ticket.po_approval_number || '', { labelW: 40 });
+  drawInfoCell(1, 1, 'P.O.#',                            ticket.po_approval_number || '', { labelW: 40 });
+  drawInfoCell(0, 2, 'Contact #:',                       header.customerRepPhone || '', { labelW: 60 });
   drawInfoCell(1, 2, 'Lead:',                            header.lead || '', { labelW: 35 });
   drawInfoCell(0, 3, 'Daily Hydroseed App. Record #:',   (dailyNumbers || []).join(', '), { labelW: 160 });
-  // Right column row 3 left blank to match paper.
 
-  y += infoBoxH + 6;
+  // 16pt gap (was 6) so the Personal On Site / Job Description labels
+  // don't crash into the bottom border of the info box.
+  y += infoBoxH + 16;
 
   // ── Personal On Site ──
   if (header.personalOnSite.length > 0) {
