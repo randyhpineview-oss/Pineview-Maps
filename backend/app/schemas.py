@@ -1,7 +1,7 @@
 from datetime import date, datetime
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.models import ApprovalState, PinType, RoleEnum, SiteStatus, TMTicketStatus
 
@@ -551,12 +551,72 @@ class HydroseedTicketRowRead(BaseModel):
 class HydroseedLinkedDaily(BaseModel):
     """Slim summary of a daily that's linked to a hydroseed ticket. Exposed
     on `HydroseedTicketRead.linked_dailies` so the detail sheet + PDF can
-    show the HD###### list without round-tripping each daily."""
+    show the HD###### list without round-tripping each daily.
+
+    Header-level fields from `daily_data` (customer rep, lead, supervisor,
+    crew names, payroll hours, crew-truck/water-truck/travel scalars) are
+    surfaced here too so the HT PDF generator can paper-form-render them
+    without pulling the full daily snapshot. They're hoisted out of the
+    JSONB blob in `_hoist_from_daily_data` below so the API payload stays
+    slim (no loads array, no photos)."""
     model_config = ConfigDict(from_attributes=True)
     id: int
     record_number: str
     work_date: date
     site_name: str | None = None
+    # Hoisted from daily_data
+    customer_rep: str | None = None
+    customer_rep_phone: str | None = None
+    supervisor: str | None = None
+    lead: str | None = None
+    workers: list[str] = Field(default_factory=list)
+    crew: list[str] = Field(default_factory=list)        # legacy fallback
+    supervisor_hours: float | None = None
+    lead_hours: float | None = None
+    labour_hours_per_person: float | None = None
+    crew_truck_count: float | None = None
+    crew_truck_hours: float | None = None
+    water_truck_loads: float | None = None
+    travel_km: float | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _hoist_from_daily_data(cls, v):
+        # Accept both ORM objects (have `.daily_data` attr) and dicts (tests).
+        # Pull the slim subset of daily_data fields we need into the top-level
+        # validation payload so the resulting model carries them as proper
+        # typed fields instead of a free-form `daily_data: dict`.
+        if v is None:
+            return v
+        if isinstance(v, dict):
+            payload = dict(v)
+            daily_data = payload.get("daily_data") or {}
+        else:
+            payload = {
+                "id": getattr(v, "id", None),
+                "record_number": getattr(v, "record_number", None),
+                "work_date": getattr(v, "work_date", None),
+                "site_name": getattr(v, "site_name", None),
+            }
+            daily_data = getattr(v, "daily_data", None) or {}
+        for key in (
+            "customer_rep",
+            "customer_rep_phone",
+            "supervisor",
+            "lead",
+            "workers",
+            "crew",
+            "supervisor_hours",
+            "lead_hours",
+            "labour_hours_per_person",
+            "crew_truck_count",
+            "crew_truck_hours",
+            "water_truck_loads",
+            "travel_km",
+        ):
+            if key not in payload and daily_data.get(key) is not None:
+                payload[key] = daily_data.get(key)
+        return payload
 
 
 class HydroseedTicketRead(BaseModel):

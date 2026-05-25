@@ -118,17 +118,40 @@ def _visible_dailies_query(db: Session, current_user: User, include_deleted: boo
 def _strip_office_fields_for_worker(
     ticket: HydroseedTicket, current_user: User
 ) -> HydroseedTicketRead:
+    """Hide pricing-bearing office fields from worker payloads.
+
+    The paper-form HT PDF has counts, comments, and "other product" labels in
+    the same combined table as the priced rate lines. Workers should still
+    see the descriptive non-price fields so the PDF preview is meaningful to
+    them — only `rate`, GST/percent, and totals get stripped.
+    """
     data = HydroseedTicketRead.model_validate(ticket)
     if current_user.role == RoleEnum.worker:
         stripped_office_data = None
         if ticket.office_data:
-            # Strip `rate` from every line, keep label + qty (worker can verify
-            # auto-rolled-up totals but never sees pricing).
+            src = ticket.office_data
+            # Lines: keep label + qty + unit, strip only `rate`.
             stripped_lines = [
                 {k: v for k, v in (line or {}).items() if k != "rate"}
-                for line in (ticket.office_data.get("lines") or [])
+                for line in (src.get("lines") or [])
             ]
-            stripped_office_data = {"lines": stripped_lines}
+            # Other products: same — keep label + qty + unit, strip only `rate`.
+            stripped_other_products = [
+                {k: v for k, v in (op or {}).items() if k != "rate"}
+                for op in (src.get("other_products") or [])
+            ]
+            stripped_office_data = {
+                "lines": stripped_lines,
+                "comments": src.get("comments"),
+                "other_products": stripped_other_products,
+            }
+            # Drop None/empty so the worker payload stays slim.
+            stripped_office_data = {
+                k: v for k, v in stripped_office_data.items()
+                if v not in (None, [], "")
+            }
+            if not stripped_office_data:
+                stripped_office_data = None
         data = data.model_copy(update={
             "office_data": stripped_office_data,
             "approved_signature": None,
@@ -148,11 +171,40 @@ def _to_decimal(v) -> Decimal:
 
 
 def _aggregate_rows_from_daily(daily: HydroseedDailyRecord) -> list[dict]:
-    """Roll up daily.daily_data.loads + .equipment into ticket-row dicts.
+    """Roll up daily.daily_data.loads + .equipment + payroll fields into
+    ticket-row dicts.
 
     Returns one row per non-zero (kind, label, unit) triple. The HT PDF
     generator sums these across all linked dailies for the ticket's totals
     table; this function is the per-daily contribution.
+
+    Per-seed-type rows: each declared seed type emits its own row labelled
+    'Seed: <name>' so the HT PDF can split them into '#1 Seed' / '#2 Seed'
+    slots in the paper-form schedule. A combined 'Seed' row is also emitted
+    for backward compatibility with anything that consumes the rolled-up
+    rows directly.
+
+    Mulch: emits BOTH a kg row AND a separate 'Mulch (bales)' row so the
+    paper-form 'Mulch (bales used. N)' label can render the bale count
+    inline without re-deriving from KG_PER_BALE.
+
+    Labour: emits up to 3 rows from the daily's payroll fields:
+      - 'Supervisor'         qty = supervisor_hours
+      - 'Lead Hand'          qty = lead_hours
+      - 'Total General Labour' qty = labour_hours_per_person × workers.length
+        with cost_code = 'per_person=<H>;count=<N>' so the PDF can show
+        '<N> # of Labourers on site' inline alongside the total hours.
+
+    Crew Truck: emits 'Crew Truck' equipment row from the new
+    crew_truck_count × crew_truck_hours fields, with cost_code carrying
+    the per-truck-hours and count for the paper-form '<N> # trucks on
+    site' annotation.
+
+    Travel + Water Truck: emit 'Travel (Mob/Demob)' (unit=km) and
+    'Water Truck' (unit=loads) when present.
+
+    Equipment[] entries are passed through as-is so existing flows
+    (e.g. multiple hydroseeders rendered as separate rows) keep working.
     """
     data = daily.daily_data or {}
     loads = data.get("loads") or []
@@ -163,26 +215,34 @@ def _aggregate_rows_from_daily(daily: HydroseedDailyRecord) -> list[dict]:
     # ── Material totals across all loads on this daily ─────────────────────
     total_area_m2 = Decimal(0)
     total_mulch_kg = Decimal(0)
+    total_mulch_bales = Decimal(0)
     total_soil_amend_kg = Decimal(0)
     total_seed_kg = Decimal(0)
+    seed_kg_by_name: dict[str, Decimal] = {}
     total_aqua_gel_kg = Decimal(0)
     total_tackifier_kg = Decimal(0)
     total_fertilizer_kg = Decimal(0)
 
     for load in loads:
         total_area_m2 += _to_decimal(load.get("area_m2"))
-        total_mulch_kg += _to_decimal(load.get("mulch_bales")) * KG_PER_BALE
+        bales = _to_decimal(load.get("mulch_bales"))
+        total_mulch_bales += bales
+        total_mulch_kg += bales * KG_PER_BALE
         total_soil_amend_kg += _to_decimal(load.get("soil_amendment_kg"))
         total_aqua_gel_kg += _to_decimal(load.get("aqua_gel_kg"))
         total_tackifier_kg += _to_decimal(load.get("tackifier_kg"))
         total_fertilizer_kg += _to_decimal(load.get("fertilizer_kg"))
         # seed_kgs is a dict {seed_type_name: kg}
         seed_kgs = load.get("seed_kgs") or {}
-        for v in seed_kgs.values():
-            total_seed_kg += _to_decimal(v)
+        for name, v in seed_kgs.items():
+            qty = _to_decimal(v)
+            total_seed_kg += qty
+            if name:
+                seed_kg_by_name[name] = seed_kg_by_name.get(name, Decimal(0)) + qty
 
     material_rows = [
         ("Mulch", total_mulch_kg, "kg"),
+        ("Mulch (bales)", total_mulch_bales, "bales"),
         ("Soil Amendment", total_soil_amend_kg, "kg"),
         ("Seed", total_seed_kg, "kg"),
         ("Aqua Gel", total_aqua_gel_kg, "kg"),
@@ -193,6 +253,24 @@ def _aggregate_rows_from_daily(daily: HydroseedDailyRecord) -> list[dict]:
     for label, qty, unit in material_rows:
         if qty and qty != 0:
             rows.append({"kind": "material", "label": label, "qty": float(qty), "unit": unit})
+
+    # Per-seed-type rows so the HT PDF can fill #1 Seed / #2 Seed slots.
+    # `cost_code` carries the declared-order index (0-based) so the PDF can
+    # match seed names back to their position even if the worker reordered
+    # the seed_types list between dailies on the same ticket.
+    seed_types_decl = data.get("seed_types") or []
+    declared_order = {(st.get("name") or ""): idx for idx, st in enumerate(seed_types_decl)}
+    for name, qty in seed_kg_by_name.items():
+        if not qty:
+            continue
+        idx = declared_order.get(name)
+        rows.append({
+            "kind": "material",
+            "label": f"Seed: {name}",
+            "qty": float(qty),
+            "unit": "kg",
+            "cost_code": f"seed_idx={idx}" if idx is not None else None,
+        })
 
     # ── Equipment hours (daily-level) ──────────────────────────────────────
     for eq in equipment:
@@ -205,6 +283,66 @@ def _aggregate_rows_from_daily(daily: HydroseedDailyRecord) -> list[dict]:
             "label": label,
             "qty": float(hours),
             "unit": "hr",
+        })
+
+    # ── Crew Truck (count × hours, paper-form style) ───────────────────────
+    crew_truck_count = _to_decimal(data.get("crew_truck_count"))
+    crew_truck_hours_per = _to_decimal(data.get("crew_truck_hours"))
+    crew_truck_total = crew_truck_count * crew_truck_hours_per
+    if crew_truck_total and crew_truck_total != 0:
+        rows.append({
+            "kind": "equipment",
+            "label": "Crew Truck",
+            "qty": float(crew_truck_total),
+            "unit": "hr",
+            "cost_code": f"per_unit={crew_truck_hours_per};count={crew_truck_count}",
+        })
+
+    # ── Labour (per-role from payroll-hours fields on the daily) ───────────
+    supervisor_hours = _to_decimal(data.get("supervisor_hours"))
+    if supervisor_hours and supervisor_hours != 0:
+        rows.append({
+            "kind": "labour",
+            "label": "Supervisor",
+            "qty": float(supervisor_hours),
+            "unit": "hr",
+        })
+    lead_hours = _to_decimal(data.get("lead_hours"))
+    if lead_hours and lead_hours != 0:
+        rows.append({
+            "kind": "labour",
+            "label": "Lead Hand",
+            "qty": float(lead_hours),
+            "unit": "hr",
+        })
+    labour_per_person = _to_decimal(data.get("labour_hours_per_person"))
+    workers_count = len(data.get("workers") or [])
+    labour_total = labour_per_person * workers_count
+    if labour_total and labour_total != 0:
+        rows.append({
+            "kind": "labour",
+            "label": "Total General Labour",
+            "qty": float(labour_total),
+            "unit": "hr",
+            "cost_code": f"per_person={labour_per_person};count={workers_count}",
+        })
+
+    # ── Travel + Water Truck scalars ───────────────────────────────────────
+    travel_km = _to_decimal(data.get("travel_km"))
+    if travel_km and travel_km != 0:
+        rows.append({
+            "kind": "equipment",
+            "label": "Travel (Mob/Demob)",
+            "qty": float(travel_km),
+            "unit": "km",
+        })
+    water_truck_loads = _to_decimal(data.get("water_truck_loads"))
+    if water_truck_loads and water_truck_loads != 0:
+        rows.append({
+            "kind": "equipment",
+            "label": "Water Truck",
+            "qty": float(water_truck_loads),
+            "unit": "loads",
         })
 
     return rows

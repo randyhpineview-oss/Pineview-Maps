@@ -17,10 +17,16 @@ const MULCH_TYPES = ['Wood', 'Wood + Tack', 'BFM', 'FGM'];
 // Suggested equipment labels — match the Quote Builder "Hydroseeding" catalog
 // so the office HT pricing stays consistent with quoted rates. Workers can
 // still type any free-text label that isn't in this list.
+//
+// NOTE: "Crew Truck", "Supervisor with Truck", "Lead", and "Labourer" are
+// intentionally NOT in this list — those have dedicated count/hours fields
+// on the form (the paper-form schedule treats them as fixed rows with
+// auto-multiplied totals). Workers can still type those labels as free
+// text if they really want a one-off equipment entry, but the dedicated
+// fields are the supported path.
 const EQUIPMENT_SUGGESTIONS = [
   'T400 Hydroseeder', 'T330 Hydroseeder', '1600 Hydroseeder',
-  'Crew Truck', 'Skid Steer', 'UTV / SXS',
-  'Supervisor with Truck', 'Lead', 'Labourer',
+  'Skid Steer', 'UTV / SXS',
 ];
 
 function newUuid() {
@@ -116,12 +122,31 @@ export default function HydroseedDailyRecord({
     lead: '',               // single person, billed as lead-hand
     workers: [],            // every other crew member, billed as labourer
     crew: [],
+    // Per-role payroll hours. Each role bills at a different rate so we
+    // capture them as separate scalars. `labour_hours_per_person` is
+    // multiplied by `workers.length` server-side to produce the
+    // "Total General Labour" hours on the HT PDF.
+    supervisor_hours: '',
+    lead_hours: '',
+    labour_hours_per_person: '',
+    // Crew Truck (count × hours per truck). Auto-multiplied on the HT
+    // PDF so the office only types the per-truck-hour rate. Hydroseeders
+    // intentionally stay in `equipment[]` (one row per machine) so the
+    // client sees each unit as its own line item.
+    crew_truck_count: '',
+    crew_truck_hours: '',
     equipment: [],
     mulch_type: '',
     soil_amendment: '',
     seed_types: [makeBlankSeedType(0)],
     fertilizer: '',
     loads: [],
+    // Mob/demob distance — sums across linked dailies on the HT PDF
+    // 'Travel (Mob/Demob)' row.
+    travel_km: '',
+    // Water-truck loads — sums across linked dailies on the HT PDF
+    // 'Water Truck' row.
+    water_truck_loads: '',
     seed_tag_photos: [],
     photos: [],
     comments: '',
@@ -203,6 +228,12 @@ export default function HydroseedDailyRecord({
         lead: d.lead || '',
         workers: d.workers || (d.supervisor || d.lead ? [] : (d.crew || [])),
         crew: d.crew || [],
+        // Payroll hours carry over — same crew, often same shift length.
+        supervisor_hours: d.supervisor_hours ?? '',
+        lead_hours: d.lead_hours ?? '',
+        labour_hours_per_person: d.labour_hours_per_person ?? '',
+        crew_truck_count: d.crew_truck_count ?? '',
+        crew_truck_hours: d.crew_truck_hours ?? '',
         equipment: d.equipment || [],
         mulch_type: d.mulch_type || duplicateFrom.mulch_type || '',
         soil_amendment: d.soil_amendment || '',
@@ -210,6 +241,9 @@ export default function HydroseedDailyRecord({
         fertilizer: d.fertilizer || '',
         // Cleared — new day = fresh entries.
         loads: [],
+        // Cleared — travel + water truck are typically per-day, not carried.
+        travel_km: '',
+        water_truck_loads: '',
         seed_tag_photos: [],
         photos: [],
         comments: '',
@@ -231,12 +265,19 @@ export default function HydroseedDailyRecord({
         lead: d.lead || '',
         workers: d.workers || (d.supervisor || d.lead ? [] : (d.crew || [])),
         crew: d.crew || [],
+        supervisor_hours: d.supervisor_hours ?? '',
+        lead_hours: d.lead_hours ?? '',
+        labour_hours_per_person: d.labour_hours_per_person ?? '',
+        crew_truck_count: d.crew_truck_count ?? '',
+        crew_truck_hours: d.crew_truck_hours ?? '',
         equipment: d.equipment || [],
         mulch_type: d.mulch_type || editingRecord.mulch_type || '',
         soil_amendment: d.soil_amendment || '',
         seed_types: (d.seed_types && d.seed_types.length > 0) ? d.seed_types : [makeBlankSeedType(0)],
         fertilizer: d.fertilizer || '',
         loads: d.loads || [],
+        travel_km: d.travel_km ?? '',
+        water_truck_loads: d.water_truck_loads ?? '',
         seed_tag_photos: [],
         photos: [],
         comments: d.comments || editingRecord.comments || '',
@@ -646,7 +687,16 @@ export default function HydroseedDailyRecord({
         (f.site_name && String(f.site_name).trim()) ||
         (f.description_of_work && String(f.description_of_work).trim()) ||
         (f.mulch_type && String(f.mulch_type).trim()) ||
-        (f.comments && String(f.comments).trim())
+        (f.comments && String(f.comments).trim()) ||
+        // Any payroll-hours / crew-truck / travel / water-truck scalar set
+        // is also enough to mark the draft dirty so partial entries autosave.
+        (f.supervisor_hours !== '' && f.supervisor_hours != null) ||
+        (f.lead_hours !== '' && f.lead_hours != null) ||
+        (f.labour_hours_per_person !== '' && f.labour_hours_per_person != null) ||
+        (f.crew_truck_count !== '' && f.crew_truck_count != null) ||
+        (f.crew_truck_hours !== '' && f.crew_truck_hours != null) ||
+        (f.travel_km !== '' && f.travel_km != null) ||
+        (f.water_truck_loads !== '' && f.water_truck_loads != null)
       );
     },
     save: handleSaveDraft,
@@ -1301,7 +1351,132 @@ export default function HydroseedDailyRecord({
           );
         })()}
 
-        {/* ── Equipment Used ── */}
+        {/* ── Payroll Hours ──
+            Captured per role because each role bills at a different rate
+            on the HT. The 'Total General Labour' row on the HT PDF auto-
+            computes as labour_hours_per_person × workers.length so the
+            worker only types the per-person shift hours once. */}
+        <div style={{
+          background: '#111827', border: '1px solid #374151', borderRadius: 6,
+          padding: 12, marginTop: 4,
+        }}>
+          <label style={{ ...labelStyle, marginBottom: 8, color: '#f9fafb', fontSize: '0.9rem' }}>
+            Payroll Hours
+          </label>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div>
+              <label style={{ ...labelStyle, color: '#fbbf24' }}>Supervisor hrs</label>
+              <input
+                type="number" inputMode="decimal" min="0" step="0.25"
+                value={form.supervisor_hours}
+                onChange={e => setField('supervisor_hours', e.target.value)}
+                disabled={!form.supervisor}
+                placeholder={form.supervisor ? 'hours' : '— add supervisor —'}
+                style={{ ...inputStyle, opacity: form.supervisor ? 1 : 0.5 }}
+              />
+            </div>
+            <div>
+              <label style={{ ...labelStyle, color: '#60a5fa' }}>Lead hrs</label>
+              <input
+                type="number" inputMode="decimal" min="0" step="0.25"
+                value={form.lead_hours}
+                onChange={e => setField('lead_hours', e.target.value)}
+                disabled={!form.lead}
+                placeholder={form.lead ? 'hours' : '— add lead —'}
+                style={{ ...inputStyle, opacity: form.lead ? 1 : 0.5 }}
+              />
+            </div>
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <label style={{ ...labelStyle, color: '#34d399' }}>
+              Labourer hrs (per person)
+            </label>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <input
+                type="number" inputMode="decimal" min="0" step="0.25"
+                value={form.labour_hours_per_person}
+                onChange={e => setField('labour_hours_per_person', e.target.value)}
+                disabled={(form.workers || []).length === 0}
+                placeholder={(form.workers || []).length > 0 ? 'hours each' : '— add workers —'}
+                style={{
+                  ...inputStyle,
+                  flex: '0 1 140px',
+                  opacity: (form.workers || []).length > 0 ? 1 : 0.5,
+                }}
+              />
+              {(() => {
+                const per = Number(form.labour_hours_per_person) || 0;
+                const n = (form.workers || []).length;
+                if (per > 0 && n > 0) {
+                  return (
+                    <span style={{
+                      fontSize: '0.85rem', color: '#9ca3af',
+                      background: '#1f2937', padding: '6px 10px',
+                      borderRadius: 4, border: '1px solid #374151',
+                    }}>
+                      × {n} labourer{n === 1 ? '' : 's'} = <b style={{ color: '#34d399' }}>{(per * n).toFixed(2)} hrs total</b>
+                    </span>
+                  );
+                }
+                return null;
+              })()}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Crew Trucks ──
+            Count × hours per truck. Auto-multiplied on the HT PDF so the
+            office types only one rate (per truck-hour). Hydroseeders go
+            in the Equipment Used list below as separate rows so the
+            client sees each unit (T400, T330, etc.) on its own line. */}
+        <div style={{
+          background: '#111827', border: '1px solid #374151', borderRadius: 6,
+          padding: 12,
+        }}>
+          <label style={{ ...labelStyle, marginBottom: 8, color: '#f9fafb', fontSize: '0.9rem' }}>
+            Crew Trucks (Truck/Trailer)
+          </label>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div>
+              <label style={labelStyle}># of Crew Trucks on site</label>
+              <input
+                type="number" inputMode="numeric" min="0" step="1"
+                value={form.crew_truck_count}
+                onChange={e => setField('crew_truck_count', e.target.value)}
+                placeholder="e.g. 2"
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label style={labelStyle}>Hours per truck</label>
+              <input
+                type="number" inputMode="decimal" min="0" step="0.25"
+                value={form.crew_truck_hours}
+                onChange={e => setField('crew_truck_hours', e.target.value)}
+                placeholder="hours each"
+                style={inputStyle}
+              />
+            </div>
+          </div>
+          {(() => {
+            const n = Number(form.crew_truck_count) || 0;
+            const h = Number(form.crew_truck_hours) || 0;
+            if (n > 0 && h > 0) {
+              return (
+                <div style={{ marginTop: 8, fontSize: '0.85rem', color: '#9ca3af' }}>
+                  = <b style={{ color: '#f9fafb' }}>{(n * h).toFixed(2)} truck-hrs total</b>
+                </div>
+              );
+            }
+            return null;
+          })()}
+        </div>
+
+        {/* ── Equipment Used ──
+            Free-form list for everything that isn't crew-truck/labour
+            (i.e. Hydroseeders, Skid Steer, UTV, etc.). Hydroseeders are
+            entered as separate rows per machine (T400, T330) so the HT
+            PDF shows each unit as its own line item. */}
         <div>
           <label style={labelStyle}>Equipment Used</label>
           {form.equipment.map((eq, i) => (
@@ -1330,6 +1505,34 @@ export default function HydroseedDailyRecord({
             padding: '8px 12px', background: '#111827', border: '1px solid #374151',
             color: '#f9fafb', borderRadius: 6, cursor: 'pointer', fontSize: '0.85rem',
           }}>+ Equipment</button>
+        </div>
+
+        {/* ── Travel + Water Truck ──
+            Per-day scalars that aggregate up to the HT PDF as their own
+            paper-form rows. Travel is mob/demob distance (multiplied by
+            the office-typed per-km rate); Water Truck is a count of
+            tank loads. */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div>
+            <label style={labelStyle}>Travel (Mob/Demob) kms</label>
+            <input
+              type="number" inputMode="decimal" min="0" step="1"
+              value={form.travel_km}
+              onChange={e => setField('travel_km', e.target.value)}
+              placeholder="kms"
+              style={inputStyle}
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Water Truck Loads</label>
+            <input
+              type="number" inputMode="numeric" min="0" step="1"
+              value={form.water_truck_loads}
+              onChange={e => setField('water_truck_loads', e.target.value)}
+              placeholder="# of loads"
+              style={inputStyle}
+            />
+          </div>
         </div>
 
         {/* ── Ingredients ── */}

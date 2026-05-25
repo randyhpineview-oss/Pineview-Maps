@@ -83,6 +83,15 @@ export default function HydroseedTicketDetailSheet({
   const [officeLines, setOfficeLines] = useState([]);
   const [gstPercent, setGstPercent] = useState(5);
   const [gstEnabled, setGstEnabled] = useState(true);
+  // Paper-form office-typed fields. `comments` is the free-text bottom
+  // box on the printed ticket; `otherProducts` are the two optional
+  // 'Other Product' rows in the materials/installation table (label +
+  // qty + unit + rate, same shape as a regular office line).
+  const [comments, setComments] = useState('');
+  const [otherProducts, setOtherProducts] = useState([
+    { label: '', qty: '', unit: '', rate: '' },
+    { label: '', qty: '', unit: '', rate: '' },
+  ]);
 
   const applyTicket = (t) => {
     if (!t) return;
@@ -105,6 +114,27 @@ export default function HydroseedTicketDetailSheet({
       unit: l.unit || '',
       rate: l.rate ?? '',
     })));
+
+    setComments(t.office_data?.comments || '');
+    // Hydrate the two Other Product slots; pad with blanks so the UI
+    // always shows exactly two rows even when only one is saved.
+    const savedOther = Array.isArray(t.office_data?.other_products)
+      ? t.office_data.other_products
+      : [];
+    setOtherProducts([
+      {
+        label: savedOther[0]?.label || '',
+        qty: savedOther[0]?.qty ?? '',
+        unit: savedOther[0]?.unit || '',
+        rate: savedOther[0]?.rate ?? '',
+      },
+      {
+        label: savedOther[1]?.label || '',
+        qty: savedOther[1]?.qty ?? '',
+        unit: savedOther[1]?.unit || '',
+        rate: savedOther[1]?.rate ?? '',
+      },
+    ]);
   };
 
   useEffect(() => {
@@ -159,7 +189,22 @@ export default function HydroseedTicketDetailSheet({
     })),
     gst_percent: Number(gstPercent) || 0,
     gst_enabled: !!gstEnabled,
+    // Paper-form fields. `comments` is plain text; `other_products` is
+    // always serialized as a 2-element array (with blanks for unused
+    // slots) so the PDF generator can index by position.
+    comments: comments || '',
+    other_products: otherProducts.map(op => ({
+      label: op.label || '',
+      qty: op.qty === '' || op.qty == null ? null : Number(op.qty),
+      unit: op.unit || '',
+      rate: op.rate === '' || op.rate == null ? null : Number(op.rate),
+    })),
   });
+
+  // Helper for the two Other Product rows.
+  const updateOtherProduct = (idx, patch) => {
+    setOtherProducts(prev => prev.map((op, i) => i === idx ? { ...op, ...patch } : op));
+  };
 
   // Re-generate the current PDF (used for both Preview and Approve).
   const regeneratePdf = async (options = {}) => {
@@ -425,8 +470,71 @@ export default function HydroseedTicketDetailSheet({
         )}
       </div>
 
+      {/* ── Paper-form fields (office-typed) ──
+          Two Other Product slots + the bottom Comments box. These mirror
+          the optional rows on the printed ticket; they're persisted on
+          `office_data` so the PDF can render them in the combined
+          materials/installation table and below it. Workers see the
+          non-rate parts on their PDF preview but never the rates. */}
+      <h3 style={{ margin: '8px 0 6px', fontSize: '1rem' }}>Paper-form fields</h3>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 90px 70px 90px 30px', gap: 6, fontSize: '0.78rem', color: '#9ca3af', marginBottom: 4, padding: '0 4px' }}>
+        <div>Other Product</div>
+        <div style={{ textAlign: 'right' }}>QTY</div>
+        <div>Unit</div>
+        <div style={{ textAlign: 'right' }}>Rate</div>
+        <div />
+      </div>
+      {otherProducts.map((op, idx) => (
+        <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1fr 90px 70px 90px 30px', gap: 6, marginBottom: 4 }}>
+          <input
+            type="text"
+            value={op.label}
+            onChange={e => updateOtherProduct(idx, { label: e.target.value })}
+            disabled={isReadOnly}
+            placeholder={`Other Product ${idx + 1}`}
+            style={inputStyle}
+          />
+          <input
+            type="number" inputMode="decimal" min="0" step="any"
+            value={op.qty}
+            onChange={e => updateOtherProduct(idx, { qty: e.target.value })}
+            disabled={isReadOnly}
+            style={{ ...inputStyle, textAlign: 'right' }}
+          />
+          <input
+            type="text"
+            value={op.unit}
+            onChange={e => updateOtherProduct(idx, { unit: e.target.value })}
+            disabled={isReadOnly}
+            placeholder="kg / hr"
+            style={inputStyle}
+          />
+          <input
+            type="number" inputMode="decimal" min="0" step="any"
+            value={op.rate}
+            onChange={e => updateOtherProduct(idx, { rate: e.target.value })}
+            disabled={isReadOnly}
+            style={{ ...inputStyle, textAlign: 'right' }}
+          />
+          <div />
+        </div>
+      ))}
+      <div style={{ marginTop: 10 }}>
+        <label style={{ display: 'block', fontSize: '0.8rem', color: '#9ca3af', marginBottom: 4 }}>
+          Comments
+        </label>
+        <textarea
+          rows={3}
+          value={comments}
+          onChange={e => setComments(e.target.value)}
+          disabled={isReadOnly}
+          placeholder="Notes that print at the bottom of the ticket…"
+          style={{ ...inputStyle, resize: 'vertical', width: '100%' }}
+        />
+      </div>
+
       {/* ── Office Use ── */}
-      <h3 style={{ margin: '8px 0 6px', fontSize: '1rem' }}>Office Use ONLY</h3>
+      <h3 style={{ margin: '14px 0 6px', fontSize: '1rem' }}>Office Use ONLY</h3>
       {!canOfficeEdit && (
         <div style={{
           background: '#7f1d1d33', color: '#fca5a5',
