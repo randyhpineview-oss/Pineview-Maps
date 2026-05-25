@@ -1069,7 +1069,7 @@ def create_site_spray_record(
 ):
     """Create a new spray record for a site."""
     import base64
-    from app.dropbox_integration import upload_pdf_to_dropbox, upload_photo_to_dropbox, build_pdf_path, build_photo_path
+    from app.dropbox_integration import upload_files_parallel, build_pdf_path, build_photo_path
 
     site = get_site_or_404(db, site_id)
 
@@ -1115,15 +1115,22 @@ def create_site_spray_record(
             seq_value = result.scalar()
             ticket_number = f"HL{seq_value:06d}"
 
-    # Handle Dropbox uploads
+    # Handle Dropbox uploads — PDF + all photos go up in parallel via a
+    # single thread-pool so a 10-photo lease sheet finishes in ~3 s
+    # instead of ~15 s of serial Dropbox round-trips.
     pdf_url = None
-    photo_urls = []
+    photo_urls: list[str] = []
 
     if payload.lease_sheet_data:
         lease_sheet_data = payload.lease_sheet_data.copy()
         lease_sheet_data['ticket_number'] = ticket_number
 
-        # Upload frontend-generated PDF if provided
+        # Build (content, path) jobs in a known order: PDF first (if any),
+        # photos after. We track how many of each we queued so we can
+        # split the parallel results back out into pdf_url / photo_urls.
+        upload_jobs: list[tuple[bytes, str]] = []
+        has_pdf = False
+
         if payload.pdf_base64:
             try:
                 pdf_content = base64.b64decode(payload.pdf_base64)
@@ -1134,21 +1141,26 @@ def create_site_spray_record(
                     ticket=ticket_number,
                     lsd_or_pipeline=lease_sheet_data.get('lsdOrPipeline', ''),
                 )
-                pdf_url = upload_pdf_to_dropbox(pdf_content, pdf_path)
+                upload_jobs.append((pdf_content, pdf_path))
+                has_pdf = True
             except Exception as e:
-                print(f"Error uploading PDF: {e}")
+                print(f"Error decoding PDF base64: {e}")
 
-        # Upload photos if present
-        if lease_sheet_data.get('photos'):
-            for i, photo_data in enumerate(lease_sheet_data.get('photos', [])):
-                try:
-                    photo_content = base64.b64decode(photo_data.get('data', ''))
-                    photo_path = build_photo_path(ticket_number, i + 1)
-                    photo_url = upload_photo_to_dropbox(photo_content, photo_path)
-                    if photo_url:
-                        photo_urls.append(photo_url)
-                except Exception as e:
-                    print(f"Error uploading photo {i+1}: {e}")
+        for i, photo_data in enumerate(lease_sheet_data.get('photos') or []):
+            try:
+                photo_content = base64.b64decode(photo_data.get('data', ''))
+                photo_path = build_photo_path(ticket_number, i + 1)
+                upload_jobs.append((photo_content, photo_path))
+            except Exception as e:
+                print(f"Error decoding photo {i+1} base64: {e}")
+
+        if upload_jobs:
+            results = upload_files_parallel(upload_jobs)
+            if has_pdf:
+                pdf_url = results[0]
+                photo_urls = [u for u in results[1:] if u]
+            else:
+                photo_urls = [u for u in results if u]
 
     # Strip photos[].data before persisting — the actual images live in Dropbox
     # (URLs in photo_urls). Storing the base64 in the DB balloons egress.
@@ -1219,7 +1231,7 @@ def create_external_lease_sheet(
 ):
     """Create a standalone lease sheet for a location not on the map."""
     import base64
-    from app.dropbox_integration import upload_pdf_to_dropbox, upload_photo_to_dropbox, build_pdf_path, build_photo_path
+    from app.dropbox_integration import upload_files_parallel, build_pdf_path, build_photo_path
 
     # ── Safety net: reject if matching non-hidden site exists ──
     lsd_value = (payload.lease_sheet_data or {}).get("lsdOrPipeline", "").strip()
@@ -1299,13 +1311,18 @@ def create_external_lease_sheet(
             seq_value = result.scalar()
             ticket_number = f"HL{seq_value:06d}"
 
-    # ── Dropbox uploads ──
+    # ── Dropbox uploads — parallel batch (PDF + all photos at once) ──
+    # Same pattern as create_site_spray_record above; see that function
+    # for the shape rationale.
     pdf_url = None
-    photo_urls = []
+    photo_urls: list[str] = []
 
     if payload.lease_sheet_data:
         lease_sheet_data = payload.lease_sheet_data.copy()
         lease_sheet_data['ticket_number'] = ticket_number
+
+        upload_jobs: list[tuple[bytes, str]] = []
+        has_pdf = False
 
         if payload.pdf_base64:
             try:
@@ -1317,20 +1334,26 @@ def create_external_lease_sheet(
                     ticket=ticket_number,
                     lsd_or_pipeline=lease_sheet_data.get('lsdOrPipeline', ''),
                 )
-                pdf_url = upload_pdf_to_dropbox(pdf_content, pdf_path)
+                upload_jobs.append((pdf_content, pdf_path))
+                has_pdf = True
             except Exception as e:
-                print(f"Error uploading PDF: {e}")
+                print(f"Error decoding PDF base64: {e}")
 
-        if lease_sheet_data.get('photos'):
-            for i, photo_data in enumerate(lease_sheet_data.get('photos', [])):
-                try:
-                    photo_content = base64.b64decode(photo_data.get('data', ''))
-                    photo_path = build_photo_path(ticket_number, i + 1)
-                    photo_url = upload_photo_to_dropbox(photo_content, photo_path)
-                    if photo_url:
-                        photo_urls.append(photo_url)
-                except Exception as e:
-                    print(f"Error uploading photo {i+1}: {e}")
+        for i, photo_data in enumerate(lease_sheet_data.get('photos') or []):
+            try:
+                photo_content = base64.b64decode(photo_data.get('data', ''))
+                photo_path = build_photo_path(ticket_number, i + 1)
+                upload_jobs.append((photo_content, photo_path))
+            except Exception as e:
+                print(f"Error decoding photo {i+1} base64: {e}")
+
+        if upload_jobs:
+            results = upload_files_parallel(upload_jobs)
+            if has_pdf:
+                pdf_url = results[0]
+                photo_urls = [u for u in results[1:] if u]
+            else:
+                photo_urls = [u for u in results if u]
 
     persisted_lease_data = _strip_photos_from_lease_data(payload.lease_sheet_data)
 

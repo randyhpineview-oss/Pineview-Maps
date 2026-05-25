@@ -1313,13 +1313,26 @@ export default function App() {
           // end of the branch so the delta fetch happens immediately.
           const bumpsTm = !!item.payload?.time_materials_link;
 
-          // Per-file progress callback. Cap at 0.95 during the upload
-          // phase: once XHR fires `upload.onload` (fraction === 1) the
-          // bytes are sent, but the backend still has to render the PDF
-          // and push it to Dropbox — we have no client-side signal for
-          // that work, so 95% says "almost done" without lying. The
-          // jump to 100% happens via setUploadProgress below once the
-          // promise actually resolves.
+          // Per-file progress is a TWO-PHASE model:
+          //
+          //   Phase A (bytes 0%→95%): driven by xhr.upload.onprogress.
+          //     Capped at 95% because once the bytes have flushed, the
+          //     backend still has to do PDF generation + parallel
+          //     Dropbox uploads — work we have no client-side signal
+          //     for. 95% says "almost done" without lying.
+          //
+          //   Phase B (finalising 95%→99%): kicks in the first time
+          //     fraction >= 1 (i.e. xhr.upload.load fired). A 200 ms
+          //     timer linearly drifts the displayed percent from 95
+          //     to 99 over a ~6 s window — calibrated for the typical
+          //     5-photo Dropbox time after parallelisation. Without
+          //     this, the bar parks at 95% for the whole backend
+          //     phase and looks frozen, which is the bug the user
+          //     described as "uploads feel slow even on fast wifi".
+          //
+          // The actual jump to 100% happens via setCurrentItemPercent
+          // and setUploadProgress in the success path below, once the
+          // XHR promise resolves.
           const itemsBefore = completed;
           // Throttle progress to ~10 Hz. XHR upload.onprogress fires every
           // ~50 ms on Wi-Fi, which causes a React re-render storm in
@@ -1327,7 +1340,31 @@ export default function App() {
           // showing visible jitter on mobile. 100 ms cadence is plenty
           // for a smooth-looking bar without thrashing the render loop.
           let lastProgressTs = 0;
+          let finalizeTimer = null;
+          const clearFinalizeTimer = () => {
+            if (finalizeTimer != null) {
+              clearInterval(finalizeTimer);
+              finalizeTimer = null;
+            }
+          };
           const onItemBytes = (fraction) => {
+            // Once bytes are done, hand off to the finalising creep.
+            // We start it ONCE per item (the null-check below) and let
+            // it own the bar until the success/catch path clears it.
+            if (fraction >= 1 && finalizeTimer == null) {
+              const startTs = Date.now();
+              finalizeTimer = setInterval(() => {
+                // Linear creep across ~6 s. After that we hold at 99%
+                // until the response actually arrives — better than
+                // claiming 100% when work is still in flight.
+                const t = Math.min(1, (Date.now() - startTs) / 6000);
+                const itemPct = 95 + Math.round(t * 4); // 95 → 99
+                setCurrentItemPercent(itemPct);
+                const overall = ((itemsBefore + 0.95 + t * 0.04) / total) * 100;
+                setUploadProgress(Math.min(99, Math.round(overall)));
+              }, 200);
+              return; // skip the byte-phase update for this final beat
+            }
             const now = Date.now();
             const isComplete = fraction >= 0.95;
             if (!isComplete && now - lastProgressTs < 100) return;
@@ -1447,6 +1484,9 @@ export default function App() {
               });
             } catch (err) {
               if (err?.status === 409) {
+                // Stop the finalising creep before the alert blocks; the
+                // bar would otherwise keep drifting while the dialog is up.
+                clearFinalizeTimer();
                 const detail = err?.detail || {};
                 // Block the queue loop on this dialog — same behavior as
                 // the previous native alert (which froze the JS thread).
@@ -1500,6 +1540,10 @@ export default function App() {
             });
             setDraftsRefreshToken((x) => x + 1);
           }
+          // Response arrived — stop the finalising creep before we set
+          // 100%, otherwise the next interval tick would briefly drag
+          // the bar back to 95-99% after the success bump.
+          clearFinalizeTimer();
           await removeUploadEntry(item.id);
           completed++;
           setUploadCompleted(completed);
@@ -1510,6 +1554,10 @@ export default function App() {
           // next file's 0%, hiding the "this file is done" beat.
           setCurrentItemPercent(100);
         } catch (err) {
+          // Always stop the finalising creep on any error path so the
+          // bar doesn't keep drifting while we surface the failure or
+          // sit on a dialog. Cheap no-op if the timer never started.
+          clearFinalizeTimer();
           // ── Auth failure: try a one-shot session refresh ─────────────
           // 401/403 typically means the access token expired. Supabase's
           // auto-refresh covers most cases, but if the queue picked up

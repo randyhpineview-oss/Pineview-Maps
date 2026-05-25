@@ -281,16 +281,17 @@ def _upload_ticket_pdf(
         return None
 
 
-def _upload_photos(record_number: str, photos: list[dict], prefix: str = "") -> list[str]:
-    """Upload a list of {data, type} base64 photos to Dropbox. Returns URLs.
-
-    `prefix` differentiates seed-tag photos from map/annotation photos in the
-    Dropbox filename so admins can scan the folder and tell them apart.
+def _build_photo_jobs(
+    record_number: str, photos: list[dict], prefix: str = ""
+) -> list[tuple[bytes, str]]:
+    """Decode {data, type} base64 photos and pair them with their Dropbox
+    paths. Skips entries with empty `data`. Used to assemble a single
+    parallel-upload batch in the create/update endpoints below.
     """
     import base64 as b64
-    from app.dropbox_integration import build_photo_path, upload_photo_to_dropbox
+    from app.dropbox_integration import build_photo_path
 
-    urls: list[str] = []
+    jobs: list[tuple[bytes, str]] = []
     for i, photo_data in enumerate(photos or []):
         try:
             data_b64 = (photo_data or {}).get("data") or ""
@@ -299,12 +300,25 @@ def _upload_photos(record_number: str, photos: list[dict], prefix: str = "") -> 
             content = b64.b64decode(data_b64)
             label = f"{prefix}{record_number}" if prefix else record_number
             path = build_photo_path(label, i + 1)
-            url = upload_photo_to_dropbox(content, path)
-            if url:
-                urls.append(url)
+            jobs.append((content, path))
         except Exception as e:
-            print(f"[HYDROSEED] Error uploading photo {i+1}: {e}")
-    return urls
+            print(f"[HYDROSEED] Error decoding photo {i+1}: {e}")
+    return jobs
+
+
+def _upload_photos(record_number: str, photos: list[dict], prefix: str = "") -> list[str]:
+    """Upload a list of {data, type} base64 photos to Dropbox concurrently.
+
+    `prefix` differentiates seed-tag photos from map/annotation photos in the
+    Dropbox filename so admins can scan the folder and tell them apart.
+    """
+    from app.dropbox_integration import upload_files_parallel
+
+    jobs = _build_photo_jobs(record_number, photos, prefix)
+    if not jobs:
+        return []
+    results = upload_files_parallel(jobs)
+    return [u for u in results if u]
 
 
 def _strip_photo_bytes_from_daily_data(data: dict | None) -> dict | None:
@@ -578,14 +592,48 @@ def create_daily(
     db.add(daily)
     db.flush()
 
-    # ── Upload photos ─────────────────────────────────────────────────────
+    # ── Bundle PDF + ann photos + seed-tag photos into ONE parallel batch ─
+    # A daily with 6 ann photos + 4 seed-tag photos + the PDF was 11
+    # serial Dropbox round-trips (~15 s) before; one parallel batch
+    # finishes in ~3 s. Order in the jobs list is PDF → ann → seed so we
+    # can split the results back into their three target columns.
+    import base64 as b64
+    from app.dropbox_integration import upload_files_parallel, build_hydroseed_daily_path
+
     photos_input = payload.photos or (payload.daily_data or {}).get("photos") or []
     seed_tag_input = payload.seed_tag_photos or (payload.daily_data or {}).get("seed_tag_photos") or []
 
-    photo_urls = _upload_photos(record_number, photos_input, prefix="ann_")
-    seed_tag_urls = _upload_photos(record_number, seed_tag_input, prefix="seed_")
-    daily.photo_urls = photo_urls
-    daily.seed_tag_photo_urls = seed_tag_urls
+    ann_jobs = _build_photo_jobs(record_number, photos_input, prefix="ann_")
+    seed_jobs = _build_photo_jobs(record_number, seed_tag_input, prefix="seed_")
+
+    pdf_job: Optional[tuple[bytes, str]] = None
+    if payload.pdf_base64:
+        try:
+            pdf_content = b64.b64decode(payload.pdf_base64)
+            pdf_path = build_hydroseed_daily_path(
+                date_str=str(daily.work_date),
+                client=daily.client or "",
+                area=daily.area or "",
+                record=daily.record_number or "",
+                site_name=daily.site_name or "",
+            )
+            pdf_job = (pdf_content, pdf_path)
+        except Exception as e:
+            print(f"[HYDROSEED] Error decoding daily PDF base64: {e}")
+
+    batch: list[tuple[bytes, str]] = (
+        ([pdf_job] if pdf_job else []) + ann_jobs + seed_jobs
+    )
+    if batch:
+        results = upload_files_parallel(batch)
+        cursor = 0
+        if pdf_job:
+            if results[cursor]:
+                daily.pdf_url = results[cursor]
+            cursor += 1
+        daily.photo_urls = [u for u in results[cursor:cursor + len(ann_jobs)] if u]
+        cursor += len(ann_jobs)
+        daily.seed_tag_photo_urls = [u for u in results[cursor:cursor + len(seed_jobs)] if u]
 
     # Stamp record_number into the daily_data snapshot so re-render shows it.
     if payload.daily_data is not None:
@@ -593,12 +641,6 @@ def create_daily(
     else:
         snapshot = {"record_number": record_number}
     daily.daily_data = _strip_photo_bytes_from_daily_data(snapshot)
-
-    # ── Upload PDF ────────────────────────────────────────────────────────
-    if payload.pdf_base64:
-        pdf_url = _upload_daily_pdf(daily, payload.pdf_base64)
-        if pdf_url:
-            daily.pdf_url = pdf_url
 
     # ── HT linking ────────────────────────────────────────────────────────
     link = payload.hydroseed_ticket_link
@@ -647,22 +689,68 @@ def update_daily(
         if val is not None:
             setattr(daily, fld, val)
 
-    # Photos (re-upload + replace; clients always send full lists)
-    if payload.photos is not None:
-        daily.photo_urls = _upload_photos(daily.record_number, payload.photos, prefix="ann_")
-    if payload.seed_tag_photos is not None:
-        daily.seed_tag_photo_urls = _upload_photos(daily.record_number, payload.seed_tag_photos, prefix="seed_")
+    # ── Bundle every Dropbox upload that's actually present on this PATCH
+    #    into ONE parallel batch. Edits where the worker tweaked a comment
+    #    but didn't re-upload anything skip this entirely (`batch == []`).
+    #    Edits that re-uploaded photos + a fresh PDF go up in parallel
+    #    instead of three serial waves. Same shape as create_hydroseed_daily.
+    import base64 as b64
+    from app.dropbox_integration import upload_files_parallel, build_hydroseed_daily_path
+
+    ann_jobs = (
+        _build_photo_jobs(daily.record_number, payload.photos, prefix="ann_")
+        if payload.photos is not None else []
+    )
+    seed_jobs = (
+        _build_photo_jobs(daily.record_number, payload.seed_tag_photos, prefix="seed_")
+        if payload.seed_tag_photos is not None else []
+    )
+    has_ann = payload.photos is not None
+    has_seed = payload.seed_tag_photos is not None
+
+    pdf_job: Optional[tuple[bytes, str]] = None
+    if payload.pdf_base64:
+        try:
+            pdf_content = b64.b64decode(payload.pdf_base64)
+            pdf_path = build_hydroseed_daily_path(
+                date_str=str(daily.work_date),
+                client=daily.client or "",
+                area=daily.area or "",
+                record=daily.record_number or "",
+                site_name=daily.site_name or "",
+            )
+            pdf_job = (pdf_content, pdf_path)
+        except Exception as e:
+            print(f"[HYDROSEED] Error decoding daily PDF base64: {e}")
+
+    batch: list[tuple[bytes, str]] = (
+        ([pdf_job] if pdf_job else []) + ann_jobs + seed_jobs
+    )
+    if batch:
+        results = upload_files_parallel(batch)
+        cursor = 0
+        if pdf_job:
+            if results[cursor]:
+                daily.pdf_url = results[cursor]
+            cursor += 1
+        if has_ann:
+            daily.photo_urls = [u for u in results[cursor:cursor + len(ann_jobs)] if u]
+            cursor += len(ann_jobs)
+        if has_seed:
+            daily.seed_tag_photo_urls = [u for u in results[cursor:cursor + len(seed_jobs)] if u]
+    else:
+        # Worker explicitly cleared one of the photo lists (sent []) — preserve
+        # that intent. The `is not None` check above means an empty list still
+        # produces no jobs; we still need to wipe the column.
+        if has_ann:
+            daily.photo_urls = []
+        if has_seed:
+            daily.seed_tag_photo_urls = []
 
     # daily_data snapshot
     if payload.daily_data is not None:
         snapshot = {**payload.daily_data, "record_number": daily.record_number}
         daily.daily_data = _strip_photo_bytes_from_daily_data(snapshot)
-
-    # PDF re-upload
-    if payload.pdf_base64:
-        pdf_url = _upload_daily_pdf(daily, payload.pdf_base64)
-        if pdf_url:
-            daily.pdf_url = pdf_url
 
     # Ticket re-link
     if payload.hydroseed_ticket_link is not None:

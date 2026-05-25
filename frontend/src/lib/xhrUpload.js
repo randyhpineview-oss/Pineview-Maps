@@ -49,6 +49,16 @@ export function requestWithUploadProgress(path, opts) {
           try { onProgress(e.loaded / e.total); } catch (_) { /* swallow */ }
         }
       });
+      // Some browsers don't fire a final `progress` event at exactly
+      // fraction === 1 — the last `progress` lands at e.g. 0.97 and then
+      // `load` fires when bytes are flushed. Without this listener the
+      // App.jsx finalize-creep timer (which kicks in on fraction >= 1)
+      // would never start, leaving the bar parked at the last progress
+      // value while the server does its Dropbox work. Firing onProgress(1)
+      // here guarantees the trigger.
+      xhr.upload.addEventListener('load', function () {
+        try { onProgress(1); } catch (_) { /* swallow */ }
+      });
     }
 
     xhr.onload = function () {

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, defer, joinedload
 
 from app.auth import get_current_user, require_roles
 from app.database import get_db
-from app.dropbox_integration import upload_pdf_to_dropbox, upload_photo_to_dropbox, build_pdf_path, build_photo_path
+from app.dropbox_integration import upload_pdf_to_dropbox, upload_files_parallel, build_pdf_path, build_photo_path
 from app.kml_pipeline_import import parse_pipeline_kml, simplify_coordinates, _total_length_km
 from app.models import RoleEnum, User
 from app.pipeline_models import Pipeline, PipelineApprovalState, PipelineStatus, SprayRecord
@@ -641,15 +641,19 @@ def create_spray_record(
     if not payload.is_avoided:
         ticket_number = payload.ticket_number or generate_ticket_number(db)
     
-    # Handle Dropbox uploads
+    # Handle Dropbox uploads — PDF + all photos go up in parallel via a
+    # single thread-pool. See create_site_spray_record in main.py for the
+    # shape rationale.
     pdf_url = None
-    photo_urls = []
-    
+    photo_urls: list[str] = []
+
     if payload.lease_sheet_data:
         lease_sheet_data = payload.lease_sheet_data.copy()
         lease_sheet_data['ticket_number'] = ticket_number
-        
-        # Upload frontend-generated PDF if provided
+
+        upload_jobs: list[tuple[bytes, str]] = []
+        has_pdf = False
+
         if payload.pdf_base64:
             try:
                 pdf_content = base64.b64decode(payload.pdf_base64)
@@ -660,21 +664,26 @@ def create_spray_record(
                     ticket=ticket_number,
                     lsd_or_pipeline=lease_sheet_data.get('lsdOrPipeline', ''),
                 )
-                pdf_url = upload_pdf_to_dropbox(pdf_content, pdf_path)
+                upload_jobs.append((pdf_content, pdf_path))
+                has_pdf = True
             except Exception as e:
-                print(f"Error uploading PDF: {e}")
-        
-        # Upload photos if present
-        if lease_sheet_data.get('photos'):
-            for i, photo_data in enumerate(lease_sheet_data.get('photos', [])):
-                try:
-                    photo_content = base64.b64decode(photo_data.get('data', ''))
-                    photo_path = build_photo_path(ticket_number, i + 1)
-                    photo_url = upload_photo_to_dropbox(photo_content, photo_path)
-                    if photo_url:
-                        photo_urls.append(photo_url)
-                except Exception as e:
-                    print(f"Error uploading photo {i+1}: {e}")
+                print(f"Error decoding PDF base64: {e}")
+
+        for i, photo_data in enumerate(lease_sheet_data.get('photos') or []):
+            try:
+                photo_content = base64.b64decode(photo_data.get('data', ''))
+                photo_path = build_photo_path(ticket_number, i + 1)
+                upload_jobs.append((photo_content, photo_path))
+            except Exception as e:
+                print(f"Error decoding photo {i+1} base64: {e}")
+
+        if upload_jobs:
+            results = upload_files_parallel(upload_jobs)
+            if has_pdf:
+                pdf_url = results[0]
+                photo_urls = [u for u in results[1:] if u]
+            else:
+                photo_urls = [u for u in results if u]
 
     record = SprayRecord(
         pipeline_id=pipeline_id,

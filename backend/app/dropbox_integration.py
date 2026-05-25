@@ -1,8 +1,9 @@
 import os
 import re
 import dropbox
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Tuple
 
 from app.log_util import get_logger
 
@@ -188,20 +189,37 @@ def _get_or_create_shared_link(dbx, file_path: str) -> Optional[str]:
     return None
 
 
-def upload_pdf_to_dropbox(pdf_content: bytes, file_path: str) -> Optional[str]:
-    """Upload a PDF to Dropbox at the given path and return the shared link."""
-    try:
-        logger.debug("Uploading PDF (%d bytes)", len(pdf_content))
-        dbx = get_dropbox_client()
-        folder = '/'.join(file_path.split('/')[:-1])
-        _ensure_folder(dbx, folder)
+def _upload_one_file(
+    content: bytes,
+    file_path: str,
+    *,
+    skip_ensure_folder: bool = False,
+    label: str = "file",
+) -> Optional[str]:
+    """Internal: upload a single file (PDF or photo) and return the shared link.
 
-        dbx.files_upload(pdf_content, file_path, mode=dropbox.files.WriteMode.overwrite)
-        logger.debug("PDF uploaded successfully, creating shared link")
+    `skip_ensure_folder=True` skips the per-file `files_create_folder_v2`
+    round-trip — caller must have already created the parent folder
+    (`upload_files_parallel` does this once for the whole batch).
+    """
+    try:
+        logger.debug("Uploading %s %s (%d bytes)", label, file_path, len(content))
+        dbx = get_dropbox_client()
+        if not skip_ensure_folder:
+            folder = '/'.join(file_path.split('/')[:-1])
+            _ensure_folder(dbx, folder)
+
+        dbx.files_upload(content, file_path, mode=dropbox.files.WriteMode.overwrite)
+        logger.debug("%s uploaded successfully, creating shared link", label.capitalize())
         return _get_or_create_shared_link(dbx, file_path)
     except Exception as e:
-        logger.exception("Error uploading PDF: %s", type(e).__name__)
+        logger.exception("Error uploading %s: %s", label, type(e).__name__)
         return None
+
+
+def upload_pdf_to_dropbox(pdf_content: bytes, file_path: str) -> Optional[str]:
+    """Upload a PDF to Dropbox at the given path and return the shared link."""
+    return _upload_one_file(pdf_content, file_path, label="PDF")
 
 
 def build_draft_photo_path(user_id: str, draft_id: str, index: int) -> str:
@@ -224,15 +242,69 @@ def delete_dropbox_path(file_path: str) -> bool:
 
 def upload_photo_to_dropbox(photo_content: bytes, file_path: str) -> Optional[str]:
     """Upload a photo to Dropbox at the given path and return the shared link."""
-    try:
-        logger.debug("Uploading photo (%d bytes)", len(photo_content))
-        dbx = get_dropbox_client()
-        folder = '/'.join(file_path.split('/')[:-1])
-        _ensure_folder(dbx, folder)
+    return _upload_one_file(photo_content, file_path, label="photo")
 
-        dbx.files_upload(photo_content, file_path, mode=dropbox.files.WriteMode.overwrite)
-        logger.debug("Photo uploaded successfully, creating shared link")
-        return _get_or_create_shared_link(dbx, file_path)
-    except Exception as e:
-        logger.exception("Error uploading photo: %s", type(e).__name__)
-        return None
+
+def upload_files_parallel(
+    jobs: List[Tuple[bytes, str]],
+    *,
+    max_workers: int = 5,
+) -> List[Optional[str]]:
+    """Upload (content, file_path) tuples to Dropbox concurrently.
+
+    Used to fan out a single record's PDF + photos so a 10-photo lease
+    sheet doesn't sit in an 11-deep serial Dropbox queue (~15 s on the
+    backend even when the worker's network is fast). Each thread spins
+    up its own `dropbox.Dropbox` client via `get_dropbox_client()` so
+    we don't share an HTTP session across threads.
+
+    Performance notes:
+      • `max_workers=5` is a deliberate ceiling — Dropbox's per-app
+        rate-limit kicks in around 12 concurrent calls, and the
+        diminishing-returns curve flattens after ~5 anyway because
+        `_get_or_create_shared_link` does its own internal round-trips.
+      • Unique parent folders are pre-created ONCE (sequentially, on
+        a single client) before the fan-out, so we don't waste N-1
+        redundant `files_create_folder_v2` calls when many photos share
+        a folder. Per-worker uploads then pass `skip_ensure_folder=True`.
+
+    Returns a list of shared-link URLs in the same order as `jobs`;
+    individual entries are `None` if that file's upload failed.
+    """
+    if not jobs:
+        return []
+
+    # Pre-create unique parent folders on a single client. _ensure_folder
+    # swallows "already exists", so this is idempotent and cheap.
+    folders_ok = False
+    unique_folders = sorted({'/'.join(p.split('/')[:-1]) for _, p in jobs if '/' in p})
+    if unique_folders:
+        try:
+            dbx = get_dropbox_client()
+            for folder in unique_folders:
+                _ensure_folder(dbx, folder)
+            folders_ok = True
+        except Exception as e:
+            # Fall back to per-file ensure inside each worker — slower but
+            # still correct. Don't bail on the whole batch.
+            logger.warning(
+                "Folder pre-create failed (falling back to per-file ensure): %s",
+                type(e).__name__,
+            )
+
+    workers = max(1, min(max_workers, len(jobs)))
+    results: List[Optional[str]] = [None] * len(jobs)
+
+    def _do(task: Tuple[int, bytes, str]) -> None:
+        idx, content, path = task
+        results[idx] = _upload_one_file(
+            content, path, skip_ensure_folder=folders_ok, label="file",
+        )
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        # `list(...)` forces the iterator so exceptions in workers
+        # surface here instead of being silently swallowed; individual
+        # upload errors are already caught inside `_upload_one_file`.
+        list(ex.map(_do, [(i, c, p) for i, (c, p) in enumerate(jobs)]))
+
+    return results
