@@ -1182,9 +1182,11 @@ export default function App() {
     if (payload.ticket_number && payload.pdf_base64) return payload;
 
     // Reconstruct the PDF input shape the form used. lease_sheet_data is
-    // the full form snapshot; herbicidesLookup comes from the local cache
-    // so we still produce PCP numbers even when the API roundtrip would
-    // otherwise add latency to the upload path.
+    // the full form snapshot; herbicidesLookup / applicatorsLookup come
+    // from the local cache so we still produce PCP and licence numbers
+    // even when the API roundtrip would otherwise add latency to the
+    // upload path. Empty arrays on miss are safe — the PDF formatters
+    // gracefully fall back to plain names when no lookup match is found.
     const leaseData = payload.lease_sheet_data || {};
     const photoArr = Array.isArray(leaseData.photos) ? leaseData.photos : [];
     const photoDataUrls = photoArr
@@ -1193,6 +1195,8 @@ export default function App() {
 
     let herbicidesLookup = [];
     try { herbicidesLookup = await getLookups('herbicides'); } catch { /* fall through with empty lookup */ }
+    let applicatorsLookup = [];
+    try { applicatorsLookup = await getLookups('applicators'); } catch { /* fall through with empty lookup */ }
 
     let ticketNumber = payload.ticket_number;
     if (!ticketNumber) {
@@ -1210,7 +1214,7 @@ export default function App() {
     let pdfBase64 = payload.pdf_base64;
     try {
       const out = await generateLeaseSheetPdf(
-        { ...leaseData, ticket_number: ticketNumber, herbicidesLookup },
+        { ...leaseData, ticket_number: ticketNumber, herbicidesLookup, applicatorsLookup },
         photoDataUrls
       );
       pdfBase64 = out.base64;
@@ -6766,6 +6770,11 @@ export default function App() {
             clientSuggestions={clients}
             lsdSuggestions={lsdSuggestions}
             getAreasForClient={getAreasForClient}
+            // Pass the herbicide + applicator lookup caches so the
+            // PDF-regen path inside Approve & Edit can render PCP and
+            // licence numbers (they live in the lookup tables, not in
+            // the saved lease_sheet_data).
+            cachedLookups={cachedLookups}
           />
         </Suspense>
       ) : null}

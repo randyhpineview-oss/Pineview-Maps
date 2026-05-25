@@ -96,6 +96,22 @@ function formatHerbicidesWithPcp(names, herbicideLookup) {
   });
 }
 
+// Given a list of applicator names and a lookup of { name, license_number },
+// return display strings like "Name - Lic #12345". Names with no licence
+// match fall back to just the name (same forgiving behavior as the
+// herbicide formatter — admin may not have entered a licence yet).
+function formatApplicatorsWithLicense(names, applicatorsLookup) {
+  const list = Array.isArray(names) ? names : [];
+  const lookup = Array.isArray(applicatorsLookup) ? applicatorsLookup : [];
+  const byName = new Map(
+    lookup.map(a => [String(a.name).toLowerCase(), a.license_number])
+  );
+  return list.map(n => {
+    const lic = byName.get(String(n).toLowerCase());
+    return lic ? `${n} - Lic #${lic}` : n;
+  });
+}
+
 export async function generateLeaseSheetPdf(data, photoDataUrls = []) {
   // Fix photo orientations first
   const fixedPhotos = await Promise.all(
@@ -164,12 +180,22 @@ export async function generateLeaseSheetPdf(data, photoDataUrls = []) {
   doc.text(data.time || '', marginL + 192, y);
   y += 14;
 
-  // Applicators
+  // Applicators (with licence numbers when available in the lookup).
+  // We splitTextToSize because adding licence numbers can push the line
+  // past the right margin once a sheet has 4+ applicators selected.
+  // contentW - 65 reserves room for the bold "Applicators:" label that
+  // sits at marginL; the wrapped data starts at marginL + 65.
   doc.setFont('helvetica', 'bold');
   doc.text('Applicators:', marginL, y);
   doc.setFont('helvetica', 'normal');
-  doc.text((data.applicators || []).join(', '), marginL + 65, y);
-  y += 14;
+  const applicatorDisplay = formatApplicatorsWithLicense(data.applicators, data.applicatorsLookup);
+  const applicatorLines = doc.splitTextToSize(applicatorDisplay.join(', '), contentW - 65);
+  doc.text(applicatorLines, marginL + 65, y);
+  // 1 line → 14pt (preserves original layout rhythm). Each additional
+  // wrapped line adds 11pt — enough breathing room above the 9pt font's
+  // baseline so wrapped lines don't visually crowd, and the next
+  // section (Wind / Location Type rectangles) gets pushed down cleanly.
+  y += applicatorLines.length === 1 ? 14 : 14 + (applicatorLines.length - 1) * 11;
 
   // ── Wind / Location Type ──
   const tH = 34;

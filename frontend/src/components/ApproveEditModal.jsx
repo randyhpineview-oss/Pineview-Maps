@@ -35,6 +35,13 @@ export default function ApproveEditModal({
   clientSuggestions = [],
   lsdSuggestions = [],
   getAreasForClient,
+  // Cached lookup arrays from App.jsx so the regenerated lease-sheet
+  // PDF still renders herbicide PCP numbers and applicator licence
+  // numbers — these live in the lookup tables, not in
+  // lease_sheet_data, so without them the regen produces a PDF that
+  // silently drops them. Empty defaults mean a missing prop falls
+  // back to plain names (same forgiving behavior as the formatters).
+  cachedLookups = { herbicides: [], applicators: [] },
 }) {
   const isPipeline = kind === 'pipeline';
   const labels = isPipeline
@@ -159,13 +166,19 @@ export default function ApproveEditModal({
             ...correctedData,
           };
 
-          // Regenerate lease-sheet PDF for this record.
+          // Regenerate lease-sheet PDF for this record. Pass the
+          // herbicide + applicator lookups through so PCP numbers and
+          // applicator licence numbers stay on the PDF — these aren't
+          // stored in lease_sheet_data, so omitting the lookups would
+          // silently strip them on every metadata correction.
           let lease_pdf_base64 = null;
           try {
             const ticketForPdf = record.ticket_number || updatedLeaseData.ticket_number || '';
             const { base64 } = await generateLeaseSheetPdf({
               ...updatedLeaseData,
               ticket_number: ticketForPdf,
+              herbicidesLookup: cachedLookups.herbicides || [],
+              applicatorsLookup: cachedLookups.applicators || [],
             });
             lease_pdf_base64 = base64;
           } catch (err) {

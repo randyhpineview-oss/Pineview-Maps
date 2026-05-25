@@ -515,6 +515,7 @@ export default function HerbicideLeaseSheet({
         ...form,
         ticket_number: ticketNumber,
         herbicidesLookup: herbicides,
+        applicatorsLookup: applicators,
       };
       const { base64 } = await generateLeaseSheetPdf(pdfData, photoDataUrls);
       setPdfBase64(base64);
@@ -674,7 +675,12 @@ export default function HerbicideLeaseSheet({
       let finalPdfBase64 = null;
       if (finalTicket || isEditMode) {
         const out = await generateLeaseSheetPdf(
-          { ...form, ticket_number: finalTicket, herbicidesLookup: herbicides },
+          {
+            ...form,
+            ticket_number: finalTicket,
+            herbicidesLookup: herbicides,
+            applicatorsLookup: applicators,
+          },
           photoDataUrls
         );
         finalPdfBase64 = out.base64;
