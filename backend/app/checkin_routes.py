@@ -48,7 +48,7 @@ from sqlalchemy import and_, cast, or_, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
-from app.auth import get_current_user, require_roles
+from app.auth import MANAGES_PINS, get_current_user, require_roles
 from app.checkin_cadence import (
     OFFICE_REPEAT_AFTER_URGENT_MIN,
     OFFICE_ALERTS,
@@ -91,12 +91,21 @@ VANCOUVER = ZoneInfo("America/Vancouver")
 # Routers --------------------------------------------------------------
 me_router = APIRouter(
     tags=["checkins-me"],
-    dependencies=[Depends(require_roles(RoleEnum.admin, RoleEnum.office, RoleEnum.worker))],
+    dependencies=[Depends(require_roles(RoleEnum.admin, RoleEnum.office, RoleEnum.crew_lead, RoleEnum.worker))],
 )
+# Crew leads can READ the dashboard (overview/active/history/recipients)
+# but cannot mutate it. The router admits MANAGES_PINS; each mutating
+# endpoint adds an extra office/admin-only dep below.
 admin_router = APIRouter(
     tags=["checkins-admin"],
-    dependencies=[Depends(require_roles(RoleEnum.admin, RoleEnum.office))],
+    dependencies=[Depends(require_roles(*MANAGES_PINS))],
 )
+
+# Reusable per-endpoint guard for mutating admin actions (force check-in,
+# end shift, edit recipient list, send test push). Stacks on top of the
+# router-level MANAGES_PINS check to reject crew_lead with 403.
+require_office_admin = Depends(require_roles(RoleEnum.admin, RoleEnum.office))
+
 cron_router = APIRouter(tags=["checkins-cron"])
 
 
@@ -838,7 +847,7 @@ def end_shift(
     if (
         shift.user_id != current_user.id
         and current_user.id not in crew_ids
-        and current_user.role not in (RoleEnum.admin, RoleEnum.office)
+        and current_user.role not in MANAGES_PINS
     ):
         raise HTTPException(status_code=403, detail="Not your shift")
     if shift.ended_at is None:
@@ -870,7 +879,7 @@ def patch_composition(
     if (
         shift.user_id != current_user.id
         and current_user.id not in crew_ids
-        and current_user.role not in (RoleEnum.admin, RoleEnum.office)
+        and current_user.role not in MANAGES_PINS
     ):
         raise HTTPException(status_code=403, detail="Not your shift")
     if shift.ended_at is not None:
@@ -1281,7 +1290,11 @@ def list_shifts_by_date(
     return [ShiftRead(**s) for s in serialized]
 
 
-@admin_router.post("/api/admin/shifts/{shift_id}/end", response_model=ShiftRead)
+@admin_router.post(
+    "/api/admin/shifts/{shift_id}/end",
+    response_model=ShiftRead,
+    dependencies=[require_office_admin],
+)
 def admin_end_shift(
     shift_id: int,
     db: Session = Depends(get_db),
@@ -1300,7 +1313,11 @@ def admin_end_shift(
     return ShiftRead(**_serialize_shift(shift))
 
 
-@admin_router.post("/api/admin/shifts/{shift_id}/checkin", response_model=CheckinRead)
+@admin_router.post(
+    "/api/admin/shifts/{shift_id}/checkin",
+    response_model=CheckinRead,
+    dependencies=[require_office_admin],
+)
 def admin_force_checkin(
     shift_id: int,
     payload: CheckinCreate,
@@ -1355,7 +1372,10 @@ def list_recipients(db: Session = Depends(get_db)) -> list[RecipientRead]:
 
 
 @admin_router.post(
-    "/api/admin/checkin-recipients", response_model=RecipientRead, status_code=201
+    "/api/admin/checkin-recipients",
+    response_model=RecipientRead,
+    status_code=201,
+    dependencies=[require_office_admin],
 )
 def add_recipient(
     payload: RecipientCreate,
@@ -1383,7 +1403,9 @@ def add_recipient(
 
 
 @admin_router.put(
-    "/api/admin/checkin-recipients/{recipient_id}", response_model=RecipientRead
+    "/api/admin/checkin-recipients/{recipient_id}",
+    response_model=RecipientRead,
+    dependencies=[require_office_admin],
 )
 def update_recipient(
     recipient_id: int,
@@ -1415,7 +1437,9 @@ def update_recipient(
 
 
 @admin_router.delete(
-    "/api/admin/checkin-recipients/{recipient_id}", status_code=204
+    "/api/admin/checkin-recipients/{recipient_id}",
+    status_code=204,
+    dependencies=[require_office_admin],
 )
 def delete_recipient(recipient_id: int, db: Session = Depends(get_db)):
     # No `-> None`: see subscribe_push for the FastAPI 0.116+ assertion.
@@ -1438,6 +1462,7 @@ def delete_recipient(recipient_id: int, db: Session = Depends(get_db)):
 @admin_router.post(
     "/api/admin/checkin-recipients/primary",
     response_model=RecipientRead,
+    dependencies=[require_office_admin],
 )
 def upsert_primary_recipient(
     payload: RecipientPrimaryUpsert,
@@ -1786,7 +1811,9 @@ def _run_test_push_for_user(db: Session, user_id: int) -> TestPushResponse:
 
 
 @admin_router.post(
-    "/api/admin/checkins/test-push", response_model=TestPushResponse
+    "/api/admin/checkins/test-push",
+    response_model=TestPushResponse,
+    dependencies=[require_office_admin],
 )
 def admin_test_push(
     db: Session = Depends(get_db),

@@ -83,6 +83,13 @@ function CollapsibleSection({ title, count, defaultOpen = false, children }) {
 
 export default function AdminPanel({
   visible,
+  // Crew-lead variant: shows ONLY pin-related sections — pending pin /
+  // pipeline approvals, the matching Recent Deletes rows (sites, pipelines,
+  // lease sheets), and the Tools row (which auto-collapses to just the
+  // Check-ins Dashboard button when the office-only handlers are omitted).
+  // Hides User Management, Truck Tracking, Lookup Tables, KML imports,
+  // Bulk Reset, and the T&M / hydroseed / quote Recent Deletes loops.
+  canOnlyManagePins = false,
   pendingSites,
   deletedSites = [],
   clients,
@@ -208,7 +215,18 @@ export default function AdminPanel({
     await onBulkRejectPending?.();
   }
 
-  // Total count across all four Recent-Deletes item types. Drives both
+  // Crew leads only see pin-related Recent Deletes (sites, pipelines,
+  // lease sheets). Strip the office-only buckets here so the loops below
+  // and the bulk-delete counter both behave correctly even if App.jsx
+  // accidentally still passes the arrays.
+  if (canOnlyManagePins) {
+    deletedTMTickets = [];
+    deletedHydroseedDailies = [];
+    deletedHydroseedTickets = [];
+    deletedQuotes = [];
+  }
+
+  // Total count across all Recent-Deletes item types. Drives both
   // the "Delete All Permanently" button's visibility and the numbers
   // shown in the confirmation dialog + helper text.
   const deletedCount =
@@ -320,20 +338,24 @@ export default function AdminPanel({
                 {/* Bulk-actions card mirroring the Pending section's
                     "Approve All / Reject All" row so admins can empty
                     the recycle bin in one action when the list has
-                    accumulated obvious-to-purge items. */}
-                <div className="site-row">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <div>
-                      <strong>Bulk actions</strong>
-                      <div className="small-text">{deletedCount} deleted item{deletedCount === 1 ? '' : 's'} can be permanently removed.</div>
-                    </div>
-                    <div className="button-row">
-                      <button className="danger-button" type="button" disabled={busy} onClick={handleBulkDeleteAllPermanent}>
-                        Delete All Permanently
-                      </button>
+                    accumulated obvious-to-purge items. Hidden for
+                    crew leads — irreversible bulk delete stays an
+                    office/admin tool. */}
+                {!canOnlyManagePins ? (
+                  <div className="site-row">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <div>
+                        <strong>Bulk actions</strong>
+                        <div className="small-text">{deletedCount} deleted item{deletedCount === 1 ? '' : 's'} can be permanently removed.</div>
+                      </div>
+                      <div className="button-row">
+                        <button className="danger-button" type="button" disabled={busy} onClick={handleBulkDeleteAllPermanent}>
+                          Delete All Permanently
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
+                ) : null}
                 {deletedSites.map((site) => (
                   <div className="site-row" key={`site-${site.id}`}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
@@ -553,6 +575,12 @@ export default function AdminPanel({
           </div>
         </CollapsibleSection>
 
+        {/* The five sections below (KML import, Bulk Reset, User
+            Management, Truck Tracking, Lookup Tables) are office/admin
+            tooling. Crew leads only see pin-management + Recent Deletes
+            (sites/pipelines/lease sheets) + the Tools row's Check-ins
+            Dashboard entry. */}
+        {!canOnlyManagePins ? (<>
         <CollapsibleSection title="Import KML" defaultOpen={false}>
           <div className="list-grid">
             <div className="small-text" style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Sites KML</div>
@@ -655,6 +683,7 @@ export default function AdminPanel({
         <CollapsibleSection title="Lookup Tables" defaultOpen={false}>
           <LookupManager cachedLookups={cachedLookups} onLookupsChanged={onLookupsChanged} />
         </CollapsibleSection>
+        </>) : null}
 
         {/* Tools row — Reports / Quotes / Calendar collapsed into a single
             compact site-row to save vertical space. All three are admin/

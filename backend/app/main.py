@@ -11,7 +11,7 @@ from slowapi.errors import RateLimitExceeded
 from sqlalchemy import and_, func, inspect, or_, text
 from sqlalchemy.orm import Session, contains_eager, defer, joinedload
 
-from app.auth import get_current_user, require_roles, seed_demo_users
+from app.auth import MANAGES_PINS, get_current_user, require_roles, seed_demo_users
 from app.config import get_settings
 from app.database import Base, SessionLocal, engine, get_db
 from app.kml_import import parse_kml_file
@@ -728,7 +728,7 @@ def sync_status(
     # Get pending counts for admins
     pending_sites_count = 0
     pending_pipelines_count = 0
-    if current_user.role in (RoleEnum.admin, RoleEnum.office):
+    if current_user.role in MANAGES_PINS:
         pending_sites_count = db.query(Site).filter(
             Site.approval_state == ApprovalState.pending_review,
             Site.deleted_at.is_(None),
@@ -911,7 +911,7 @@ def get_site(
 @app.get(
     "/api/pending-sites",
     response_model=list[SiteRead],
-    dependencies=[Depends(require_roles(RoleEnum.admin, RoleEnum.office))],
+    dependencies=[Depends(require_roles(*MANAGES_PINS))],
 )
 def pending_sites(
     db: Session = Depends(get_db),
@@ -1461,7 +1461,7 @@ def create_external_lease_sheet(
 def delete_site_spray_record(
     record_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
+    current_user: User = Depends(require_roles(*MANAGES_PINS)),
 ):
     """Soft-delete a site spray record. Unlinks its T&M rows so they become
     manual rows rather than orphaning them."""
@@ -1490,7 +1490,7 @@ def delete_site_spray_record(
 def restore_site_spray_record(
     record_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
+    current_user: User = Depends(require_roles(*MANAGES_PINS)),
 ):
     """Restore a soft-deleted site spray record."""
     record = db.query(SiteSprayRecord).filter(SiteSprayRecord.id == record_id).first()
@@ -1542,7 +1542,7 @@ def update_site_spray_record(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Site spray record not found")
 
     # Permission: workers may only edit their own records
-    if current_user.role not in (RoleEnum.admin, RoleEnum.office):
+    if current_user.role not in MANAGES_PINS:
         if record.sprayed_by_user_id != current_user.id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
 
@@ -1601,7 +1601,7 @@ def update_site_spray_record(
 def list_standalone_lease_sheets(
     search: str = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
+    current_user: User = Depends(require_roles(*MANAGES_PINS)),
 ):
     """List lease sheets submitted as standalone (against a hidden placeholder site).
 
@@ -1655,7 +1655,7 @@ def move_spray_record_to_site(
     target_site_id: int,
     payload: MoveToSiteRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
+    current_user: User = Depends(require_roles(*MANAGES_PINS)),
 ):
     """Move a standalone lease-sheet spray record from its hidden placeholder site
     to a visible pin, applying the chosen inspection status to that pin.
@@ -2034,7 +2034,7 @@ def update_site_status(
 @app.delete(
     "/api/sites/{site_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(require_roles(RoleEnum.admin, RoleEnum.office))],
+    dependencies=[Depends(require_roles(*MANAGES_PINS))],
 )
 def delete_site(
     site_id: int,
@@ -2070,7 +2070,7 @@ def delete_site_permanent(
 @app.post(
     "/api/sites/{site_id}/approval",
     response_model=SiteRead,
-    dependencies=[Depends(require_roles(RoleEnum.admin, RoleEnum.office))],
+    dependencies=[Depends(require_roles(*MANAGES_PINS))],
 )
 def update_site_approval(
     site_id: int,
@@ -2506,7 +2506,7 @@ def import_kml(
 @app.get(
     "/api/deleted-sites",
     response_model=list[SiteRead],
-    dependencies=[Depends(require_roles(RoleEnum.admin, RoleEnum.office))],
+    dependencies=[Depends(require_roles(*MANAGES_PINS))],
 )
 def list_deleted_sites(
     db: Session = Depends(get_db),
@@ -2525,7 +2525,7 @@ def list_deleted_sites(
 @app.get(
     "/api/deleted-lease-sheets",
     response_model=list[RecentSubmissionRead],
-    dependencies=[Depends(require_roles(RoleEnum.admin, RoleEnum.office))],
+    dependencies=[Depends(require_roles(*MANAGES_PINS))],
 )
 def list_deleted_lease_sheets(
     db: Session = Depends(get_db),
@@ -2598,7 +2598,7 @@ def list_deleted_lease_sheets(
 @app.post(
     "/api/sites/{site_id}/restore",
     response_model=SiteRead,
-    dependencies=[Depends(require_roles(RoleEnum.admin, RoleEnum.office))],
+    dependencies=[Depends(require_roles(*MANAGES_PINS))],
 )
 def restore_site(
     site_id: int,

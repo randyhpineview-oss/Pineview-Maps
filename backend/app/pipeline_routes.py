@@ -6,7 +6,7 @@ import base64
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session, defer, joinedload
 
-from app.auth import get_current_user, require_roles
+from app.auth import MANAGES_PINS, get_current_user, require_roles
 from app.database import get_db
 from app.dropbox_integration import upload_pdf_to_dropbox, upload_files_parallel, build_pdf_path, build_photo_path
 from app.kml_pipeline_import import parse_pipeline_kml, simplify_coordinates, _total_length_km
@@ -53,7 +53,7 @@ def _get_pipeline_or_404(db: Session, pipeline_id: int) -> Pipeline:
 async def import_pipeline_kml(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
+    current_user: User = Depends(require_roles(*MANAGES_PINS)),
 ):
     """Import pipelines from a KML or KMZ file."""
     contents = await file.read()
@@ -186,7 +186,7 @@ def pipelines_delta(
 @router.get("/pending-pipelines", response_model=list[PipelineListRead])
 def list_pending_pipelines(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
+    current_user: User = Depends(require_roles(*MANAGES_PINS)),
 ):
     """List pipelines pending approval."""
     pipelines = (
@@ -215,7 +215,7 @@ def update_pipeline(
     pipeline_id: int,
     payload: PipelineUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
+    current_user: User = Depends(require_roles(*MANAGES_PINS)),
 ):
     """Update pipeline metadata."""
     pipeline = _get_pipeline_or_404(db, pipeline_id)
@@ -261,7 +261,7 @@ def update_pipeline_status(
 def delete_pipeline(
     pipeline_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
+    current_user: User = Depends(require_roles(*MANAGES_PINS)),
 ):
     """Soft-delete a pipeline."""
     pipeline = _get_pipeline_or_404(db, pipeline_id)
@@ -278,7 +278,7 @@ def delete_pipeline(
 @router.get("/deleted-pipelines", response_model=list[PipelineListRead])
 def list_deleted_pipelines(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
+    current_user: User = Depends(require_roles(*MANAGES_PINS)),
 ):
     """List soft-deleted pipelines."""
     pipelines = (
@@ -295,7 +295,7 @@ def list_deleted_pipelines(
 def restore_pipeline(
     pipeline_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
+    current_user: User = Depends(require_roles(*MANAGES_PINS)),
 ):
     """Restore a soft-deleted pipeline."""
     pipeline = (
@@ -333,7 +333,7 @@ def update_pipeline_approval(
     pipeline_id: int,
     payload: PipelineApprovalUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
+    current_user: User = Depends(require_roles(*MANAGES_PINS)),
 ):
     """Approve or reject a pipeline, cascading metadata corrections.
 
@@ -571,8 +571,8 @@ def create_pipeline(
     simplified = simplify_coordinates(coords)
     length_km = _total_length_km(coords)
 
-    # Workers get pending_review, admin/office get approved
-    is_admin = current_user.role in (RoleEnum.admin, RoleEnum.office)
+    # Workers get pending_review, pin-managers (admin/office/crew_lead) get approved
+    is_admin = current_user.role in MANAGES_PINS
     approval = "approved" if is_admin else "pending_review"
 
     user_id = None

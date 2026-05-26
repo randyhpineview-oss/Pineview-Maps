@@ -524,7 +524,7 @@ export default function App() {
   const [pendingSites, setPendingSites] = useState([]);
   // Lightweight count seeded from /api/sync-status (cheap ~100 B response)
   // and persisted alongside the delta watermarks. The full pending list
-  // (`pendingSites`) is only fetched after roleCanAdmin + an online check,
+  // (`pendingSites`) is only fetched after canManagePins + an online check,
   // so on cold start the topbar's "Pending: N" badge used to flicker on
   // empty for ~1 s while the network call resolved. Keeping a separate
   // count lets the badge render the right number INSTANTLY from cache.
@@ -799,8 +799,17 @@ export default function App() {
   // Actual role from the Supabase session. Never changed by the view
   // toggle \u2014 used for identity, backend auth, and deciding whether the
   // "View as Worker" button is available at all.
+  //
+  // Three tiers in increasing privilege:
+  //   actualIsCrewLead    \u2014 crew_lead only (sub-flag for read-only UI bits)
+  //   actualCanManagePins \u2014 admin | office | crew_lead (pin & lease-sheet ops)
+  //   actualCanAdmin      \u2014 admin | office only          (reports, quotes,
+  //                          calendar, lookups, T&M / hydroseed approvals,
+  //                          user management, etc.)
   const userRole = session?.user?.user_metadata?.role || 'worker';
   const actualCanAdmin = userRole === 'admin' || userRole === 'office';
+  const actualIsCrewLead = userRole === 'crew_lead';
+  const actualCanManagePins = actualCanAdmin || actualIsCrewLead;
 
   // Display label for the current user, computed once and reused by both
   // the inline (tablet/PC) name badge and the mobile avatar menu. Mirrors
@@ -855,17 +864,17 @@ export default function App() {
     return () => document.removeEventListener('pointerdown', handleOutside);
   }, [accountMenuOpen]);
 
-  // If the user isn't actually admin/office, force the toggle off so a
-  // stale localStorage value from a previous session/account doesn't lock
-  // a real worker into some phantom "view as worker" state. (No-op for
-  // actual workers since the effective roles are already false.)
+  // If the user isn't actually admin/office/crew_lead, force the toggle
+  // off so a stale localStorage value from a previous session/account
+  // doesn't lock a real worker into some phantom "view as worker" state.
+  // (No-op for actual workers since the effective roles are already false.)
   useEffect(() => {
-    if (!actualCanAdmin && viewAsWorker) setViewAsWorker(false);
-  }, [actualCanAdmin, viewAsWorker]);
+    if (!actualCanManagePins && viewAsWorker) setViewAsWorker(false);
+  }, [actualCanManagePins, viewAsWorker]);
 
   // If the user was sitting on the Admin tab when they flipped to worker
   // view, bounce them back to the Map tab so they don't end up staring
-  // at a blank screen (the admin panel is hidden once roleCanAdmin is
+  // at a blank screen (the admin panel is hidden once canManagePins is
   // false, but `activeTab` would still be TAB_ADMIN without this snap).
   useEffect(() => {
     if (viewAsWorker && activeTab === TAB_ADMIN) setActiveTab(TAB_MAP);
@@ -874,8 +883,23 @@ export default function App() {
   // Effective permissions \u2014 downgraded to worker-level when the toggle
   // is on. Every role-gated render in the app reads these, not the raw
   // userRole, so flipping the toggle instantly updates the whole UI.
-  const canManagePins = actualCanAdmin && !viewAsWorker;
+  //
+  //   canManagePins   \u2014 admin | office | crew_lead. Used for pin/site
+  //                     approve/edit/delete, link-lease-sheet modal, the
+  //                     Admin tab/side-panel, pending-sites loaders, and
+  //                     opening the (read-only-for-crew-lead) Check-ins
+  //                     Dashboard.
+  //   roleCanAdmin    \u2014 admin | office only. Used for Reports, Quote
+  //                     Builder, Calendar, Lookups, User Management,
+  //                     T&M / hydroseed approval, and the
+  //                     "Permanently delete all" footer. Crew leads
+  //                     never see these even though they sit in the
+  //                     same Admin tab.
+  //   isCrewLeadOnly  \u2014 sub-flag the AdminPanel uses to strip out
+  //                     non-pin sections.
+  const canManagePins = actualCanManagePins && !viewAsWorker;
   const roleCanAdmin = actualCanAdmin && !viewAsWorker;
+  const isCrewLeadOnly = actualIsCrewLead && !viewAsWorker;
 
   // Current user's display name, matching the backend's derivation in
   // auth.py: user_metadata.name if set, else the email prefix run through
@@ -912,7 +936,7 @@ export default function App() {
   }, []);
 
   const loadPendingSites = useCallback(async () => {
-    if (!roleCanAdmin || !window.navigator.onLine) {
+    if (!canManagePins || !window.navigator.onLine) {
       setPendingSites([]);
       setDeletedSites([]);
       // Deliberately don't flip the loaded ref when we're offline or
@@ -934,7 +958,7 @@ export default function App() {
     } catch {
       setDeletedSites([]);
     }
-  }, [roleCanAdmin]);
+  }, [canManagePins]);
 
   const loadCachedSites = useCallback(async () => {
     const cachedSites = await getSites();
@@ -1078,7 +1102,7 @@ export default function App() {
   }, []);
 
   const loadPendingPipelines = useCallback(async () => {
-    if (!roleCanAdmin || !window.navigator.onLine) {
+    if (!canManagePins || !window.navigator.onLine) {
       setPendingPipelines([]);
       return;
     }
@@ -1089,10 +1113,10 @@ export default function App() {
     } catch {
       setPendingPipelines([]);
     }
-  }, [roleCanAdmin]);
+  }, [canManagePins]);
 
   const loadDeletedPipelines = useCallback(async () => {
-    if (!roleCanAdmin || !window.navigator.onLine) {
+    if (!canManagePins || !window.navigator.onLine) {
       setDeletedPipelines([]);
       return;
     }
@@ -1102,10 +1126,10 @@ export default function App() {
     } catch {
       setDeletedPipelines([]);
     }
-  }, [roleCanAdmin]);
+  }, [canManagePins]);
 
   const loadDeletedLeaseSheets = useCallback(async () => {
-    if (!roleCanAdmin || !window.navigator.onLine) {
+    if (!canManagePins || !window.navigator.onLine) {
       setDeletedLeaseSheets([]);
       return;
     }
@@ -1115,7 +1139,7 @@ export default function App() {
     } catch {
       setDeletedLeaseSheets([]);
     }
-  }, [roleCanAdmin]);
+  }, [canManagePins]);
 
   const loadDeletedTMTickets = useCallback(async () => {
     if (!roleCanAdmin || !window.navigator.onLine) {
@@ -2437,7 +2461,7 @@ export default function App() {
         // worker added a pin while we were offline, …), the re-fetch
         // below pulls the authoritative list and the derivation effect
         // re-syncs the badge in the same React tick.
-        if (roleCanAdmin) {
+        if (canManagePins) {
           const sitesPendingChanged = syncStatus.pending_sites_count !== prevPendingSites;
           const pipelinesPendingChanged = syncStatus.pending_pipelines_count !== prevPendingPipelines;
           if (sitesPendingChanged) {
@@ -2510,7 +2534,7 @@ export default function App() {
       document.removeEventListener('visibilitychange', onVisibilityChange);
       runPollTickRef.current = null;
     };
-  }, [isOnline, serverFilters, roleCanAdmin, selectedSite, processUploadQueue, realtimeStatus]);
+  }, [isOnline, serverFilters, canManagePins, selectedSite, processUploadQueue, realtimeStatus]);
 
   // ── Mirror selectedSite / selectedPipeline into refs ────────────────────
   // The Realtime subscription useEffect below opens a single long-lived
@@ -2573,7 +2597,7 @@ export default function App() {
       void import('./components/HerbicideLeaseSheet');
       void import('./components/PdfPreviewOverlay');
       void import('./components/TMTicketDetailSheet');
-      if (roleCanAdmin) {
+      if (canManagePins) {
         void import('./components/AdminPanel');
         void import('./components/ApproveEditModal');
       }
@@ -2587,7 +2611,7 @@ export default function App() {
     }
     const timer = window.setTimeout(preload, 1500);
     return () => window.clearTimeout(timer);
-  }, [user, roleCanAdmin]);
+  }, [user, canManagePins]);
 
   // ── Supabase Realtime: live row-level push from Postgres ───────────────
   //
@@ -2702,7 +2726,7 @@ export default function App() {
       }
 
       // Admin pending list
-      if (roleCanAdmin) {
+      if (canManagePins) {
         setPendingSites((prev) => {
           const exists = prev.some((s) => matchSiteIdentity(s, row));
           const shouldBeIn = !isHardDelete && !isSoftDeleted && approval === 'pending_review';
@@ -2754,7 +2778,7 @@ export default function App() {
         void upsertPipeline(row);
       }
 
-      if (roleCanAdmin) {
+      if (canManagePins) {
         setPendingPipelines((prev) => {
           const exists = prev.some((p) => p.id === row.id);
           const shouldBeIn = !isHardDelete && !isSoftDeleted && approval === 'pending_review';
@@ -3002,10 +3026,10 @@ export default function App() {
       try { supabase.removeChannel(channel); } catch { /* ignore */ }
     };
   // user.id is the only auth-bound dep — recreate the channel only when
-  // the logged-in user changes (login/logout). roleCanAdmin gates the
-  // admin-only state writes inside handlers but reading the latest value
-  // via closure is fine because we re-create on user change anyway.
-  }, [user?.id, roleCanAdmin, isOnline]);
+  // the logged-in user changes (login/logout). canManagePins gates the
+  // pin-management state writes inside handlers but reading the latest
+  // value via closure is fine because we re-create on user change anyway.
+  }, [user?.id, canManagePins, isOnline]);
 
   // ── Check-ins: load active shift + subscribe to own shifts/checkins ──
   // Drives the topbar countdown, the forced overlay, and the soft
@@ -4819,7 +4843,7 @@ export default function App() {
         // (~200–600 ms on Wi-Fi). The poll loop will reconcile the server
         // truth on its next tick, but the worker sees the pending count
         // tick up immediately on submit.
-        if (created.approval_state === 'pending_review' && roleCanAdmin) {
+        if (created.approval_state === 'pending_review' && canManagePins) {
           // Append to pendingSites; the derivation effect that locks
           // pendingSitesCount = pendingSites.length will set the topbar
           // badge. Do NOT also bump the count explicitly — if the Supabase
@@ -5595,7 +5619,7 @@ export default function App() {
               {isSyncing ? 'Syncing...' : `Sync (${queuedCount})`}
             </button>
           ) : null}
-          {roleCanAdmin && (() => {
+          {canManagePins && (() => {
             // Prefer the cheap count from /api/sync-status (and persisted
             // watermarks) over the array length, since it's available
             // immediately on cold start while the full pending lists are
@@ -6610,12 +6634,12 @@ export default function App() {
 
         {/* ── Admin panel ── */}
         <div
-          className={`side-panel ${activeTab === TAB_ADMIN && roleCanAdmin ? 'open' : ''} ${adminPanelDragging ? 'dragging' : ''}`}
+          className={`side-panel ${activeTab === TAB_ADMIN && canManagePins ? 'open' : ''} ${adminPanelDragging ? 'dragging' : ''}`}
           onTouchStart={handleAdminPanelTouchStart}
           onTouchMove={handleAdminPanelTouchMove}
           onTouchEnd={handleAdminPanelTouchEnd}
           style={{
-            transform: activeTab === TAB_ADMIN && roleCanAdmin
+            transform: activeTab === TAB_ADMIN && canManagePins
               ? `translateX(${adminPanelDragOffset}px)`
               : 'translateX(100%)'
           }}
@@ -6627,6 +6651,13 @@ export default function App() {
             <Suspense fallback={<div className="small-text" style={{ padding: '1rem' }}>Loading admin tools…</div>}>
             <AdminPanel
               visible={true}
+              // Crew leads see ONLY pin-related sections in the Admin
+              // panel — no User Management, Lookups, Truck Tracking,
+              // KML import, Bulk Reset, or T&M/hydroseed/quote recent
+              // deletes. AdminPanel reads this flag and strips those
+              // sections defensively in case any handler/list is
+              // accidentally passed.
+              canOnlyManagePins={isCrewLeadOnly}
               pendingSites={pendingSites}
               deletedSites={deletedSites}
               clients={clients}
@@ -6807,9 +6838,11 @@ export default function App() {
               onOpenQuotes={roleCanAdmin ? () => setShowQuoteBuilder(true) : undefined}
               onOpenCalendar={roleCanAdmin ? () => setShowCalendar(true) : undefined}
               // Check-ins Dashboard (Overview / Active / History / Settings).
-              // Admin/office only — workers manage their own shift via the
-              // avatar-menu "🛟 Check-ins" item which opens MyCheckInsOverlay.
-              onOpenCheckins={roleCanAdmin ? () => setShowCheckinsDashboard(true) : undefined}
+              // Admin/office full controls, crew_lead read-only (the dashboard
+              // hides force/override buttons via isAdmin={actualCanAdmin}).
+              // Workers manage their own shift via the avatar-menu
+              // "🛟 Check-ins" item which opens MyCheckInsOverlay.
+              onOpenCheckins={canManagePins ? () => setShowCheckinsDashboard(true) : undefined}
               deletedQuotes={deletedQuotes}
               onRestoreQuote={handleRestoreQuote}
               onDeleteQuotePermanent={handleDeleteQuotePermanent}
@@ -6902,10 +6935,11 @@ export default function App() {
         </Suspense>
       ) : null}
 
-      {/* ── Check-ins Dashboard (admin/office full-page overlay) ──
+      {/* ── Check-ins Dashboard (admin / office / crew_lead overlay) ──
           Lazy chunk, opens its own Realtime subscription. Closes if
-          roleCanAdmin flips false (View as Worker). */}
-      {showCheckinsDashboard && roleCanAdmin ? (
+          canManagePins flips false (View as Worker). Crew leads see the
+          dashboard in read-only mode via isAdmin={actualCanAdmin}. */}
+      {showCheckinsDashboard && canManagePins ? (
         <Suspense fallback={null}>
           <CheckInsOverlay
             onClose={() => setShowCheckinsDashboard(false)}
@@ -6914,8 +6948,8 @@ export default function App() {
         </Suspense>
       ) : null}
 
-      {/* ── Import (link) standalone lease sheet to visible pin (admin/office) ── */}
-      {showLinkModal && linkModalTargetSite && roleCanAdmin ? (
+      {/* ── Import (link) standalone lease sheet to visible pin (pin managers) ── */}
+      {showLinkModal && linkModalTargetSite && canManagePins ? (
         <Suspense fallback={null}>
           <LinkLeaseSheetModal
             targetSite={linkModalTargetSite}
@@ -6986,7 +7020,7 @@ export default function App() {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
           <span>Forms</span>
         </button>
-        {roleCanAdmin ? (
+        {canManagePins ? (
           <button className={`tab-btn ${activeTab === TAB_ADMIN ? 'active' : ''}`} type="button" onClick={() => { 
             if (activeTab === TAB_ADMIN) {
               setActiveTab(TAB_MAP);

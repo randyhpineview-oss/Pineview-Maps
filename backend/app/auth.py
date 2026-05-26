@@ -57,9 +57,17 @@ def _stable_user_id(sub: str) -> int:
     return int(digest[:8], 16) & 0x7FFFFFFF
 
 
+# Roles allowed to create/approve/edit map pins (sites & pipelines), import
+# standalone lease sheets onto pins, and view the Check-ins Dashboard. The
+# crew_lead role sits above worker (its own forms only) but below
+# office/admin (full data-administration access).
+MANAGES_PINS: tuple[RoleEnum, ...] = (RoleEnum.admin, RoleEnum.office, RoleEnum.crew_lead)
+
+
 DEMO_USERS = {
     "admin": {"name": "Pineview Admin", "email": "admin@pineview.local", "role": RoleEnum.admin},
     "office": {"name": "Pineview Office", "email": "office@pineview.local", "role": RoleEnum.office},
+    "crew_lead": {"name": "Pineview Crew Lead", "email": "crewlead@pineview.local", "role": RoleEnum.crew_lead},
     "worker": {"name": "Pineview Worker", "email": "worker@pineview.local", "role": RoleEnum.worker},
 }
 

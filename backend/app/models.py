@@ -21,6 +21,7 @@ class TMTicketStatus(str, enum.Enum):
 class RoleEnum(str, enum.Enum):
     admin = "admin"
     office = "office"
+    crew_lead = "crew_lead"
     worker = "worker"
 
 

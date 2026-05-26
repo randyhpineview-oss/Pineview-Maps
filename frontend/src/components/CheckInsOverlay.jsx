@@ -34,7 +34,10 @@ const TABS = [
   { id: 'active',   label: 'Active' },
   { id: 'overview', label: 'Overview' },
   { id: 'history',  label: 'History' },
-  { id: 'settings', label: 'Settings' },
+  // Settings tab edits the office-alert recipient list and primary
+  // email — backend gates those mutations to admin/office. Hidden
+  // entirely from crew_lead sessions (isAdmin=false).
+  { id: 'settings', label: 'Settings', adminOnly: true },
 ];
 
 const S = {
@@ -83,7 +86,7 @@ export default function CheckInsOverlay({ onClose, isAdmin = true }) {
       <header style={S.header}>
         <h2 style={S.title}>🛟 Check-ins Dashboard</h2>
         <nav style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {TABS.map((t) => (
+          {TABS.filter((t) => !t.adminOnly || isAdmin).map((t) => (
             <button
               key={t.id}
               type="button"

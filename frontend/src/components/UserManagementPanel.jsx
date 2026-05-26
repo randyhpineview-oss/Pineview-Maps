@@ -167,6 +167,7 @@ function WorkerSignupQR() {
 const ROLES = [
   { value: 'admin', label: 'Admin' },
   { value: 'office', label: 'Office' },
+  { value: 'crew_lead', label: 'Crew Lead' },
   { value: 'worker', label: 'Worker' },
 ];
 
@@ -176,6 +177,8 @@ function roleBadgeStyle(role) {
       return { background: '#7c3aed', color: '#fff' };
     case 'office':
       return { background: '#2563eb', color: '#fff' };
+    case 'crew_lead':
+      return { background: '#0891b2', color: '#fff' };
     default:
       return { background: '#475569', color: '#fff' };
   }
@@ -244,7 +247,7 @@ function UserRow({ user, busy, onUpdateRole, onUpdateName, onDelete, onConfirmEm
             className="pending-badge"
             style={{ ...roleBadgeStyle(user.role), fontSize: '0.7rem', padding: '2px 8px', borderRadius: '4px' }}
           >
-            {user.role}
+            {ROLES.find((r) => r.value === user.role)?.label || user.role}
           </span>
           {emailUnconfirmed ? (
             <span
