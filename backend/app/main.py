@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import and_, func, inspect, or_, text
-from sqlalchemy.orm import Session, defer, joinedload
+from sqlalchemy.orm import Session, contains_eager, defer, joinedload
 
 from app.auth import get_current_user, require_roles, seed_demo_users
 from app.config import get_settings
@@ -646,7 +646,11 @@ def get_site_or_404(db: Session, site_id: int) -> Site:
     site = (
         db.query(Site)
         .options(joinedload(Site.updates))
-        .options(joinedload(Site.spray_records))
+        .outerjoin(
+            SiteSprayRecord,
+            (SiteSprayRecord.site_id == Site.id) & SiteSprayRecord.deleted_at.is_(None),
+        )
+        .options(contains_eager(Site.spray_records))
         .filter(Site.id == site_id)
         .first()
     )

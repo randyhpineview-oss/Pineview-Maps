@@ -4083,6 +4083,8 @@ export default function App() {
   }
 
   async function handleDeleteSiteSprayRecord(recordId, siteId) {
+    const ok = await confirm({ title: 'Delete spray record?', message: 'This will soft-delete the record. It can be restored from the trash.' });
+    if (!ok) return;
     setAdminBusy(true);
     try {
       await api.deleteSiteSprayRecord(recordId);
