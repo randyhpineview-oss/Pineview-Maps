@@ -632,3 +632,26 @@ class PasswordResetCode(Base):
     @property
     def is_locked(self) -> bool:
         return self.attempts >= self.max_attempts or self.is_used or self.is_expired
+
+
+class QuoteDraft(Base):
+    """A saved (but not yet submitted) quote draft.
+
+    Drafts are per-user so each admin/office operator has their own list.
+    The entire form state is kept as JSONB in `data` — same pattern as
+    `line_items_json` on `Quote`, so the catalog can evolve without
+    breaking stored drafts.
+    """
+    __tablename__ = "quote_drafts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, default="Untitled")
+    data: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )

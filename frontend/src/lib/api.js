@@ -827,6 +827,20 @@ export const api = {
     // mid-flight timeout doesn't burn the sequence value.
     return request('/api/quotes', { method: 'POST', body: payload, timeoutMs: 45_000 });
   },
+  // ── Quote Drafts (per-user, server-side) ──
+  listQuoteDrafts() {
+    return request('/api/quotes/drafts');
+  },
+  createQuoteDraft(payload) {
+    return request('/api/quotes/drafts', { method: 'POST', body: payload });
+  },
+  updateQuoteDraft(id, payload) {
+    return request(`/api/quotes/drafts/${id}`, { method: 'PATCH', body: payload });
+  },
+  deleteQuoteDraft(id) {
+    return request(`/api/quotes/drafts/${id}`, { method: 'DELETE' });
+  },
+
   // Peek at the next Q###### the server would assign without consuming
   // the sequence. Used for preview rendering — if the user doesn't
   // submit, the same number stays available for the next quote.

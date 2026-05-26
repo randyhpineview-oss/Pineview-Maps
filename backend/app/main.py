@@ -25,6 +25,7 @@ from app.lookup_routes import router as lookup_router
 from app.reports_routes import router as reports_router
 from app.quote_rates_routes import router as quote_rates_router
 from app.quotes_routes import router as quotes_router
+from app.quote_drafts_routes import router as quote_drafts_router
 from app.calendar_routes import router as calendar_router
 from app.devices_routes import (
     read_router as devices_read_router,
@@ -149,6 +150,7 @@ app.include_router(time_materials_router)
 app.include_router(hydroseed_router)
 app.include_router(reports_router)
 app.include_router(quote_rates_router)
+app.include_router(quote_drafts_router)
 app.include_router(quotes_router)
 app.include_router(calendar_router)
 # Three device routers split by audience:

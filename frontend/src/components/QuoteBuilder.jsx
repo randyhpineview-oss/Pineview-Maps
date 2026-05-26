@@ -20,7 +20,6 @@ import { computeLineSubtotal, computeQuoteTotals, generateQuotePdf } from '../li
  */
 
 // ── Constants ─────────────────────────────────────────────────────────────
-const DRAFTS_KEY = 'quote_drafts_v2';
 
 const TAB_NEW = 'new';
 const TAB_DRAFTS = 'drafts';
@@ -386,19 +385,6 @@ export default function QuoteBuilder({
     loadCatalog();
   }, [loadCatalog, online]);
 
-  // ── Draft helpers ──────────────────────────────────────────────────────
-  // Read all drafts from localStorage. Always returns an array.
-  const readDrafts = () => {
-    try {
-      const raw = localStorage.getItem(DRAFTS_KEY);
-      return raw ? JSON.parse(raw) : [];
-    } catch { return []; }
-  };
-
-  const writeDrafts = (list) => {
-    try { localStorage.setItem(DRAFTS_KEY, JSON.stringify(list)); } catch { /* non-fatal */ }
-  };
-
   // ── New Quote form state ──────────────────────────────────────────────
   const [client, setClient] = useState('');
   const [area, setArea] = useState('');
@@ -419,10 +405,9 @@ export default function QuoteBuilder({
   // `line_items`, which is reconstructed on load.
   const [sections, setSections] = useState([]);  // [{ uid, categoryId }]
 
-  // Draft list state — list of saved draft objects, loaded once on mount.
-  // Each draft: { id, name, savedAt, client, area, projectDescription,
-  //   quoteDate, taxEnabled, taxLabel, taxRate, quoteNotes, lineItems, sections }
-  const [drafts, setDrafts] = useState(() => readDrafts());
+  // Draft list state — fetched from the server.
+  const [drafts, setDrafts] = useState([]);
+  const [draftsLoading, setDraftsLoading] = useState(false);
   // ID of the draft currently loaded into the form (null = fresh/unsaved).
   const [activeDraftId, setActiveDraftId] = useState(null);
 
@@ -469,38 +454,48 @@ export default function QuoteBuilder({
   }, []);
 
   // ── Draft actions ──────────────────────────────────────────────────────
-  const handleSaveDraft = useCallback(() => {
-    const now = new Date().toISOString();
+  const loadDrafts = useCallback(async () => {
+    if (!online) return;
+    setDraftsLoading(true);
+    try {
+      const data = await api.listQuoteDrafts();
+      setDrafts(Array.isArray(data) ? data : []);
+    } catch { /* non-fatal — drafts list just stays empty */ }
+    finally { setDraftsLoading(false); }
+  }, [online]);
+
+  // Load drafts once when the builder opens and is online.
+  useEffect(() => { loadDrafts(); }, [loadDrafts]);
+
+  const handleSaveDraft = useCallback(async () => {
     const name = client.trim() || 'Untitled';
-    setDrafts((prev) => {
-      let next;
+    const data = { client, area, projectDescription, quoteDate, taxEnabled, taxLabel, taxRate, quoteNotes, lineItems, sections };
+    try {
       if (activeDraftId) {
-        // Overwrite the existing draft entry.
-        next = prev.map((d) => d.id === activeDraftId
-          ? { ...d, name, savedAt: now, client, area, projectDescription, quoteDate, taxEnabled, taxLabel, taxRate, quoteNotes, lineItems, sections }
-          : d);
+        const updated = await api.updateQuoteDraft(activeDraftId, { name, data });
+        setDrafts((prev) => prev.map((d) => d.id === activeDraftId ? updated : d));
       } else {
-        // Create a new draft, assign it as the active one.
-        const id = makeUid();
-        setActiveDraftId(id);
-        next = [{ id, name, savedAt: now, client, area, projectDescription, quoteDate, taxEnabled, taxLabel, taxRate, quoteNotes, lineItems, sections }, ...prev];
+        const created = await api.createQuoteDraft({ name, data });
+        setActiveDraftId(created.id);
+        setDrafts((prev) => [created, ...prev]);
       }
-      writeDrafts(next);
-      return next;
-    });
+    } catch (e) {
+      setSubmitError(e?.message || 'Failed to save draft');
+    }
   }, [activeDraftId, client, area, projectDescription, quoteDate, taxEnabled, taxLabel, taxRate, quoteNotes, lineItems, sections]);
 
   const handleLoadDraft = useCallback((draft) => {
-    setClient(draft.client || '');
-    setArea(draft.area || '');
-    setProjectDescription(draft.projectDescription || '');
-    setQuoteDate(draft.quoteDate || localISODate());
-    setTaxEnabled(!!draft.taxEnabled);
-    setTaxLabel(draft.taxLabel || DEFAULT_TAX_LABEL);
-    setTaxRate(draft.taxRate != null ? String(draft.taxRate) : String(DEFAULT_TAX_RATE));
-    setQuoteNotes(draft.quoteNotes || '');
-    setLineItems((draft.lineItems || []).map((li) => ({ ...li, _uid: makeUid() })));
-    setSections((draft.sections || []).map((s) => ({ ...s, uid: makeUid() })));
+    const d = draft.data || {};
+    setClient(d.client || '');
+    setArea(d.area || '');
+    setProjectDescription(d.projectDescription || '');
+    setQuoteDate(d.quoteDate || localISODate());
+    setTaxEnabled(!!d.taxEnabled);
+    setTaxLabel(d.taxLabel || DEFAULT_TAX_LABEL);
+    setTaxRate(d.taxRate != null ? String(d.taxRate) : String(DEFAULT_TAX_RATE));
+    setQuoteNotes(d.quoteNotes || '');
+    setLineItems((d.lineItems || []).map((li) => ({ ...li, _uid: makeUid() })));
+    setSections((d.sections || []).map((s) => ({ ...s, uid: makeUid() })));
     setSubmittedQuote(null);
     setSubmitError('');
     setPeekedQuoteNumber('');
@@ -509,13 +504,14 @@ export default function QuoteBuilder({
     setActiveTab(TAB_NEW);
   }, []);
 
-  const handleDeleteDraft = useCallback((draftId) => {
-    setDrafts((prev) => {
-      const next = prev.filter((d) => d.id !== draftId);
-      writeDrafts(next);
-      return next;
-    });
-    setActiveDraftId((prev) => (prev === draftId ? null : prev));
+  const handleDeleteDraft = useCallback(async (draftId) => {
+    try {
+      await api.deleteQuoteDraft(draftId);
+      setDrafts((prev) => prev.filter((d) => d.id !== draftId));
+      setActiveDraftId((prev) => (prev === draftId ? null : prev));
+    } catch (e) {
+      setSubmitError(e?.message || 'Failed to delete draft');
+    }
   }, []);
 
   // ── Recent Quotes state ───────────────────────────────────────────────
@@ -886,11 +882,8 @@ export default function QuoteBuilder({
       setSubmittedQuote(created);
       // Remove the active draft from the list — it’s been submitted.
       if (activeDraftId) {
-        setDrafts((prev) => {
-          const next = prev.filter((d) => d.id !== activeDraftId);
-          writeDrafts(next);
-          return next;
-        });
+        api.deleteQuoteDraft(activeDraftId).catch(() => { /* non-fatal */ });
+        setDrafts((prev) => prev.filter((d) => d.id !== activeDraftId));
         setActiveDraftId(null);
       }
       // Refresh the Recent Quotes list silently so it's ready when the
@@ -1116,6 +1109,7 @@ export default function QuoteBuilder({
       {activeTab === TAB_DRAFTS ? (
         <DraftsTab
           drafts={drafts}
+          draftsLoading={draftsLoading}
           activeDraftId={activeDraftId}
           onLoad={handleLoadDraft}
           onDelete={handleDeleteDraft}
@@ -1502,7 +1496,7 @@ function NewQuoteTab(props) {
 }
 
 // ── Sub-component: Drafts tab ─────────────────────────────────────────────
-function DraftsTab({ drafts, activeDraftId, onLoad, onDelete, isMobile }) {
+function DraftsTab({ drafts, draftsLoading, activeDraftId, onLoad, onDelete, isMobile }) {
   const { confirm } = useDialog();
 
   const handleDelete = async (draft) => {
@@ -1518,7 +1512,9 @@ function DraftsTab({ drafts, activeDraftId, onLoad, onDelete, isMobile }) {
 
   return (
     <div style={isMobile ? S.bodyMobile : S.body}>
-      {drafts.length === 0 ? (
+      {draftsLoading ? (
+        <div style={{ ...S.card, color: '#9ab1d6', fontSize: '0.9rem' }}>Loading drafts…</div>
+      ) : drafts.length === 0 ? (
         <div style={{ ...S.card, color: '#9ab1d6', fontSize: '0.9rem' }}>
           No saved drafts yet. Use <strong>Save Draft</strong> on the New Quote tab to save work in progress.
         </div>
@@ -1526,50 +1522,53 @@ function DraftsTab({ drafts, activeDraftId, onLoad, onDelete, isMobile }) {
         <section style={S.card}>
           <h3 style={S.sectionTitle}>Saved Drafts</h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {drafts.map((draft) => (
-              <div
-                key={draft.id}
-                style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  gap: '12px', flexWrap: 'wrap',
-                  padding: '10px 12px', borderRadius: '8px',
-                  background: draft.id === activeDraftId
-                    ? 'rgba(59,130,246,0.15)'
-                    : 'rgba(255,255,255,0.04)',
-                  border: draft.id === activeDraftId
-                    ? '1px solid rgba(59,130,246,0.4)'
-                    : '1px solid rgba(143,182,255,0.1)',
-                }}
-              >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '2px' }}>
-                    {draft.name}
-                    {draft.id === activeDraftId ? (
-                      <span style={{ marginLeft: '8px', fontSize: '0.72rem', color: '#60a5fa', fontWeight: 400 }}>
-                        currently editing
-                      </span>
-                    ) : null}
+            {drafts.map((draft) => {
+              const d = draft.data || {};
+              return (
+                <div
+                  key={draft.id}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    gap: '12px', flexWrap: 'wrap',
+                    padding: '10px 12px', borderRadius: '8px',
+                    background: draft.id === activeDraftId
+                      ? 'rgba(59,130,246,0.15)'
+                      : 'rgba(255,255,255,0.04)',
+                    border: draft.id === activeDraftId
+                      ? '1px solid rgba(59,130,246,0.4)'
+                      : '1px solid rgba(143,182,255,0.1)',
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '2px' }}>
+                      {draft.name}
+                      {draft.id === activeDraftId ? (
+                        <span style={{ marginLeft: '8px', fontSize: '0.72rem', color: '#60a5fa', fontWeight: 400 }}>
+                          currently editing
+                        </span>
+                      ) : null}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: '#9ab1d6' }}>
+                      {d.quoteDate ? `${formatDate(d.quoteDate)} · ` : ''}
+                      {d.lineItems?.length ?? 0} line{(d.lineItems?.length ?? 0) === 1 ? '' : 's'}
+                      {' · saved '}
+                      {new Date(draft.updated_at).toLocaleString([], {
+                        month: 'short', day: 'numeric',
+                        hour: '2-digit', minute: '2-digit',
+                      })}
+                    </div>
                   </div>
-                  <div style={{ fontSize: '0.75rem', color: '#9ab1d6' }}>
-                    {draft.quoteDate ? `${formatDate(draft.quoteDate)} · ` : ''}
-                    {draft.lineItems?.length ?? 0} line{(draft.lineItems?.length ?? 0) === 1 ? '' : 's'}
-                    {' · saved '}
-                    {new Date(draft.savedAt).toLocaleString([], {
-                      month: 'short', day: 'numeric',
-                      hour: '2-digit', minute: '2-digit',
-                    })}
+                  <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                    <button type="button" onClick={() => onLoad(draft)} style={S.primary}>
+                      {draft.id === activeDraftId ? 'Continue' : 'Open'}
+                    </button>
+                    <button type="button" onClick={() => handleDelete(draft)} style={S.danger}>
+                      Delete
+                    </button>
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                  <button type="button" onClick={() => onLoad(draft)} style={S.primary}>
-                    {draft.id === activeDraftId ? 'Continue' : 'Open'}
-                  </button>
-                  <button type="button" onClick={() => handleDelete(draft)} style={S.danger}>
-                    Delete
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       )}
