@@ -33,6 +33,7 @@ import { precacheAndRoute, cleanupOutdatedCaches } from 'workbox-precaching';
 import { NavigationRoute, registerRoute } from 'workbox-routing';
 import { CacheFirst, StaleWhileRevalidate } from 'workbox-strategies';
 import { ExpirationPlugin } from 'workbox-expiration';
+import { CacheableResponsePlugin } from 'workbox-cacheable-response';
 
 // __WB_MANIFEST is replaced at build time with the list of precache
 // entries. injectManifest will error out at build time if this exact
@@ -72,6 +73,62 @@ registerRoute(
     cacheName: 'gfonts-files',
     plugins: [
       new ExpirationPlugin({ maxEntries: 30, maxAgeSeconds: 60 * 60 * 24 * 365 }),
+    ],
+  }),
+);
+
+// Google Maps JS API script and dynamically loaded modules — load instantly, update in bg
+registerRoute(
+  ({ url }) => url.origin === 'https://maps.googleapis.com' && 
+               (url.pathname.startsWith('/maps/api/js') || url.pathname.includes('/maps-api-v3/api/js/')),
+  new StaleWhileRevalidate({
+    cacheName: 'google-maps-api',
+    plugins: [
+      new CacheableResponsePlugin({
+        statuses: [0, 200],
+      }),
+      new ExpirationPlugin({
+        maxAgeSeconds: 60 * 60 * 24 * 30, // 30 days
+      }),
+    ],
+  }),
+);
+
+// Google Maps tile images (satellite imagery, hybrid label tiles, roadmap tiles)
+registerRoute(
+  ({ url }) => {
+    const isTileDomain = /^(khms[0-3]?|mts[0-3]?|cbk[0-3]?|lh[3-6]?|maps)\.(googleapis|google)\.com$/.test(url.hostname);
+    const isTilePath = url.pathname.includes('/kh/v=') || url.pathname.includes('/maps/vt') || url.pathname.includes('/vt/icon');
+    return isTileDomain || isTilePath;
+  },
+  new CacheFirst({
+    cacheName: 'google-maps-tiles',
+    plugins: [
+      new CacheableResponsePlugin({
+        statuses: [0, 200], // Crucial because tile cross-origin responses are opaque (status 0)
+      }),
+      new ExpirationPlugin({
+        maxEntries: 500, // Safe limit (approx 15-40 MB)
+        maxAgeSeconds: 60 * 60 * 24 * 30, // 30 days
+        purgeOnQuotaError: true, // Reclaim space if device storage is full
+      }),
+    ],
+  }),
+);
+
+// Google Maps static assets (icons, styles, map files)
+registerRoute(
+  ({ url }) => url.origin === 'https://maps.gstatic.com',
+  new CacheFirst({
+    cacheName: 'google-maps-static',
+    plugins: [
+      new CacheableResponsePlugin({
+        statuses: [0, 200],
+      }),
+      new ExpirationPlugin({
+        maxEntries: 100,
+        maxAgeSeconds: 60 * 60 * 24 * 30, // 30 days
+      }),
     ],
   }),
 );
