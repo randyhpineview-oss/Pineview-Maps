@@ -5,6 +5,10 @@ import {
   syncOfficeLineQtysFromRows,
   computeOfficeTotals,
   generateHydroseedTicketPdf,
+  OFFICE_UNIT_OPTIONS,
+  getOfficeLineProductCategory,
+  getOfficeLineKgPerUnit,
+  isLegacyAutoSeededLabel,
 } from '../lib/hydroseedTicketPdfGenerator';
 import { useDialog } from './DialogProvider';
 import SignaturePadModal from './SignaturePadModal';
@@ -555,6 +559,36 @@ export default function HydroseedTicketDetailSheet({
         const qty = parseFloat(line.qty) || 0;
         const rate = parseFloat(line.rate) || 0;
         const sub = qty * rate;
+        // Hide legacy auto-seeded rolled-up lines ('Mulch (bales)' /
+        // 'Seed') from the editable UI when they're empty — the per-
+        // product unit dropdown + per-seed-type lines have replaced
+        // them. Lines that already carry a rate stay visible so the
+        // office can manually migrate the rate onto the consolidated
+        // line before deleting (otherwise we'd silently orphan an
+        // already-entered rate).
+        if (isLegacyAutoSeededLabel(line.label) && !(rate > 0)) {
+          return null;
+        }
+        // Decide whether this line gets the unit dropdown (mulch /
+        // seed: <name> / fertilizer) or the legacy free-text unit input.
+        const productCategory = getOfficeLineProductCategory(line.label);
+        const unitOptions = productCategory ? OFFICE_UNIT_OPTIONS[productCategory] : null;
+        // Switching units re-derives qty via the kg total so the
+        // displayed amount always represents the same physical
+        // quantity — e.g. 1000 kg ↔ 44.05 bales — regardless of how
+        // many times the office flips the dropdown.
+        const handleUnitChange = (newUnit) => {
+          const fromFactor = getOfficeLineKgPerUnit(productCategory, line.unit) || 1;
+          const toFactor = getOfficeLineKgPerUnit(productCategory, newUnit) || 1;
+          const currentQtyNum = parseFloat(line.qty);
+          if (!Number.isFinite(currentQtyNum)) {
+            updateLine(idx, { unit: newUnit });
+            return;
+          }
+          const kgEquivalent = currentQtyNum * fromFactor;
+          const newQty = Math.round((kgEquivalent / toFactor) * 100) / 100;
+          updateLine(idx, { unit: newUnit, qty: newQty });
+        };
         return (
           <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1fr 90px 70px 90px 90px 30px', gap: 6, marginBottom: 4 }}>
             <input
@@ -571,13 +605,27 @@ export default function HydroseedTicketDetailSheet({
               disabled={isReadOnly}
               style={{ ...inputStyle, textAlign: 'right' }}
             />
-            <input
-              type="text"
-              value={line.unit}
-              onChange={e => updateLine(idx, { unit: e.target.value })}
-              disabled={isReadOnly}
-              style={inputStyle}
-            />
+            {unitOptions ? (
+              <select
+                value={unitOptions.some(o => o.value === line.unit) ? line.unit : (unitOptions[0]?.value || 'kg')}
+                onChange={e => handleUnitChange(e.target.value)}
+                disabled={isReadOnly}
+                style={inputStyle}
+                title={`Toggle billing unit for ${line.label} — qty re-derives automatically`}
+              >
+                {unitOptions.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.value}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={line.unit}
+                onChange={e => updateLine(idx, { unit: e.target.value })}
+                disabled={isReadOnly}
+                style={inputStyle}
+              />
+            )}
             <input
               type="number" inputMode="decimal" min="0" step="any"
               value={line.rate}

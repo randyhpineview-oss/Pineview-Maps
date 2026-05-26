@@ -15,6 +15,71 @@ async function loadLogo() {
   } catch { return null; }
 }
 
+// ── Per-product unit catalog ────────────────────────────────────────────────
+//
+// Office can charge mulch / seed / fertilizer in either their kg total or
+// their packaging unit (bales for mulch, bags for seed + fertilizer). The
+// detail-sheet dropdown reads OFFICE_UNIT_OPTIONS to render the <select>,
+// and the PDF schedule + the office-line sync use it to convert qty
+// to/from kg as the office user flips billing units. The actual mulch /
+// seed / fertilizer used always lives in kg on the daily aggregation — the
+// office line just expresses it in whatever unit the customer is billed in,
+// and the schedule annotates the alternate-unit total beside the label so
+// the office can sanity-check the conversion.
+//
+// Other product rows (Aqua Gel, Tackifier, Crew Truck, etc.) keep a free-
+// form unit text input — they're either single-unit billing (always kg /
+// always hours) or office-typed custom items.
+export const OFFICE_UNIT_OPTIONS = {
+  mulch: [
+    { value: 'kg',    kgPerUnit: 1 },
+    { value: 'bales', kgPerUnit: 22.7 },
+  ],
+  seed: [
+    { value: 'kg',        kgPerUnit: 1 },
+    { value: '25 kg bag', kgPerUnit: 25 },
+  ],
+  fertilizer: [
+    { value: 'kg',        kgPerUnit: 1 },
+    { value: '25 kg bag', kgPerUnit: 25 },
+    { value: '18 kg bag', kgPerUnit: 18 },
+  ],
+};
+
+// Detect which product family a line belongs to so the dropdown + the
+// schedule renderer know which unit options apply. Match is by label,
+// case-insensitive, exact for Mulch / Fertilizer and prefix for Seed:<name>
+// (each declared seed type gets its own line).
+export function getOfficeLineProductCategory(label) {
+  const lc = String(label || '').toLowerCase().trim();
+  if (lc === 'mulch') return 'mulch';
+  if (lc.startsWith('seed:')) return 'seed';
+  if (lc === 'fertilizer') return 'fertilizer';
+  return null;
+}
+
+// kg per `unit` for a given product family. Falls back to 1 (no
+// conversion) for unknown/free-form units so non-product lines pass
+// through the sync untouched.
+export function getOfficeLineKgPerUnit(category, unit) {
+  if (!category) return 1;
+  const opts = OFFICE_UNIT_OPTIONS[category] || [];
+  const u = String(unit || '').toLowerCase().trim();
+  const match = opts.find(o => o.value.toLowerCase() === u);
+  return match?.kgPerUnit || 1;
+}
+
+// Aggregator-emitted rolled-up labels we no longer auto-seed as office
+// lines. The kg/bales toggle on the Mulch line replaces the separate
+// 'Mulch (bales)' line, and the per-seed-type 'Seed: <name>' lines
+// replace the rolled-up 'Seed' total (each seed can be priced
+// independently).
+const LEGACY_AUTO_SEEDED_LABELS = new Set(['mulch (bales)', 'seed']);
+
+export function isLegacyAutoSeededLabel(label) {
+  return LEGACY_AUTO_SEEDED_LABELS.has(String(label || '').toLowerCase().trim());
+}
+
 /**
  * Auto-seeded office lines when an HT is first opened in the detail sheet
  * and `office_data.lines` is still null/empty. We add one row per existing
@@ -23,15 +88,20 @@ async function loadLogo() {
  * lines (mobilization, day-rate top-ups, etc.) — they live alongside the
  * auto-seeded ones in the same array.
  *
+ * Skips the rolled-up 'Mulch (bales)' / 'Seed' rows since the per-product
+ * dropdown + per-seed-type rows now cover those cases.
+ *
  * Returns [{ label, qty, unit, rate: '' }, ...]
  */
 export function seedOfficeLinesFromTicketRows(rows) {
-  return (rows || []).map(r => ({
-    label: r.label || '',
-    qty: r.qty != null ? Number(r.qty) : '',
-    unit: r.unit || '',
-    rate: '',
-  }));
+  return (rows || [])
+    .filter(r => !isLegacyAutoSeededLabel(r?.label))
+    .map(r => ({
+      label: r.label || '',
+      qty: r.qty != null ? Number(r.qty) : '',
+      unit: r.unit || '',
+      rate: '',
+    }));
 }
 
 /**
@@ -39,11 +109,18 @@ export function seedOfficeLinesFromTicketRows(rows) {
  * Preserves rate + any custom (non-aggregated) lines. Called by the detail
  * sheet whenever fresh ticket data arrives via realtime/delta sync so the
  * office sees up-to-date totals as workers add more dailies.
+ *
+ * For mulch / seed / fertilizer lines the qty is converted from the
+ * aggregator's kg total into whatever billing unit the office picked
+ * (bales / 25-kg bag / etc.). Legacy 'Mulch (bales)' / 'Seed' lines
+ * already saved on a ticket are preserved untouched so any rate the
+ * office may have entered before this rollout isn't silently wiped.
  */
 export function syncOfficeLineQtysFromRows(existingLines, rows) {
   const rowByLabel = new Map();
   for (const r of rows || []) {
     if (!r?.label) continue;
+    if (isLegacyAutoSeededLabel(r.label)) continue;
     // If two rows happen to share a label (e.g. same equipment label on two
     // dailies didn't get pre-deduped on the server), sum them so the office
     // ticket reflects the true total.
@@ -58,10 +135,23 @@ export function syncOfficeLineQtysFromRows(existingLines, rows) {
 
   const seen = new Set();
   const out = (existingLines || []).map(l => {
+    // Don't auto-touch legacy lines — the office may still have a rate
+    // entered on the old 'Mulch (bales)' / 'Seed' total lines and the
+    // detail sheet decides at render time whether to hide them.
+    if (isLegacyAutoSeededLabel(l.label)) return { ...l };
     const match = rowByLabel.get(l.label);
     if (match) {
       seen.add(l.label);
-      return { ...l, qty: match.qty, unit: l.unit || match.unit };
+      // Convert the aggregator's kg total into the office line's chosen
+      // billing unit so the qty cell reflects how the office is charging
+      // (kg vs bales for mulch, kg vs 25-kg bag for seed, etc.). Falls
+      // back to factor 1 for non-product lines.
+      const category = getOfficeLineProductCategory(l.label);
+      const factor = getOfficeLineKgPerUnit(category, l.unit) || 1;
+      const qtyInOfficeUnit = match.qty / factor;
+      // Round to 2 decimals so 1000 / 22.7 = 44.05 (not 44.05286...).
+      const rounded = Math.round(qtyInOfficeUnit * 100) / 100;
+      return { ...l, qty: rounded, unit: l.unit || match.unit };
     }
     // Custom line — leave it alone.
     return { ...l };
@@ -551,15 +641,36 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
       y = 36;
       drawTableHeader(true);
     }
-    const qtyForSub = Number(kgsUsed) || Number(hours) || 0;
+    // Extract the numeric part of `kgsUsed` for sub-total math: callers
+    // can pass either a raw number (legacy: kgs / hours / m²) or a string
+    // like '44.05 bales' / '100 kms' / '500 m²' when the row needs to
+    // print a unit suffix beside the qty. Without this fallback the
+    // qty×rate computation silently dropped to 0 for any string-typed
+    // qty (so Travel + Water Truck rows showed a rate but no subtotal).
+    const numericKgsUsed = (() => {
+      if (kgsUsed == null || kgsUsed === '') return 0;
+      const direct = Number(kgsUsed);
+      if (Number.isFinite(direct)) return direct;
+      const m = String(kgsUsed).match(/[-+]?\d*\.?\d+/);
+      return m ? Number(m[0]) || 0 : 0;
+    })();
+    const qtyForSub = numericKgsUsed || Number(hours) || 0;
     const rateNum = Number(rate) || 0;
     const sub = qtyForSub * rateNum;
     if (includeOfficeData && sub > 0) runningSubTotal += sub;
 
+    // Display rule: if `kgsUsed` is already a string (e.g. '44.05 bales'),
+    // print it verbatim; if it's a number, format it via formatQty so it
+    // renders the same as before. Same for `hours`.
+    const renderQtyCell = (v) => {
+      if (v == null || v === '') return '';
+      if (typeof v === 'string') return v;
+      return Number(v) !== 0 ? formatQty(v) : '';
+    };
     const cells = [
       String(label || ''),
-      kgsUsed != null && kgsUsed !== '' && Number(kgsUsed) !== 0 ? formatQty(kgsUsed) : '',
-      hours   != null && hours   !== '' && Number(hours)   !== 0 ? formatQty(hours)   : '',
+      renderQtyCell(kgsUsed),
+      renderQtyCell(hours),
       includeOfficeData && rateNum !== 0 ? `$ ${formatMoney(rateNum)}` : (includeOfficeData ? '' : ''),
       includeOfficeData && sub > 0 ? `$ ${formatMoney(sub)}` : '',
     ];
@@ -588,49 +699,101 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
     (Number(hrs) || 0) !== 0
   );
 
+  // Helper: find the office line for a product (by exact label match,
+  // case-insensitive) so the schedule renderer can read its chosen
+  // billing unit and convert qty into that unit. Returns null if the
+  // line doesn't exist yet (no office_data has been entered).
+  const findOfficeLineByLabel = (label) => {
+    const target = String(label || '').toLowerCase().trim();
+    return (officeLines || []).find(l => (l?.label || '').toLowerCase().trim() === target) || null;
+  };
+
+  // Render a product row in the office line's chosen billing unit.
+  // Annotates the alternate-unit total beside the label so the office
+  // can sanity-check the conversion (e.g. when billing in bales the
+  // label reads 'Mulch (1000 kg)', and when billing in kg it reads
+  // 'Mulch (44.05 bales)'). `category` is one of the OFFICE_UNIT_OPTIONS
+  // keys; the kg total comes from the daily aggregator.
+  const renderProductRow = ({
+    productLabel,    // exact label as auto-seeded (e.g. 'Mulch', 'Fertilizer', 'Seed: ESC Mixture')
+    displayLabel,    // the schedule-side prefix (e.g. '#1 Seed: ESC Mixture')
+    kgTotal,         // kg aggregated from the daily(ies)
+    category,        // 'mulch' | 'seed' | 'fertilizer'
+    rateNeedles,     // priority-ordered fuzzy fallbacks if the exact-label match misses
+  }) => {
+    const line = findOfficeLineByLabel(productLabel);
+    const unit = line?.unit || 'kg';
+    const factor = getOfficeLineKgPerUnit(category, unit) || 1;
+    const qtyInUnit = kgTotal / factor;
+    // Format qty + suffix for the qty cell. kg keeps the legacy raw-
+    // number rendering (the column header already says 'Kgs Used'); any
+    // non-kg unit prints '<qty> <unit>' so the office sees what they're
+    // billing.
+    const qtyCell = (unit === 'kg')
+      ? qtyInUnit
+      : `${formatQty(qtyInUnit)} ${unit}`;
+    // Alternate-unit annotation. When billing in non-kg, always show
+    // the kg total (it's the universal denominator). When billing in
+    // kg, show the primary alternate for products that have exactly
+    // one (mulch → bales, seed → 25 kg bag); skip for fertilizer in kg
+    // since it has two bag sizes and showing one would mislead.
+    let altText = '';
+    if (unit !== 'kg') {
+      altText = ` (${formatQty(kgTotal)} kg)`;
+    } else if (category === 'mulch') {
+      // Mulch in kg → show bale count from the aggregator's separate
+      // 'Mulch (bales)' total (which we hide from the office UI).
+      if (mulchBales > 0) altText = ` (${formatQty(mulchBales)} bales)`;
+    } else if (category === 'seed') {
+      const bags = kgTotal / 25;
+      if (bags > 0) altText = ` (${formatQty(bags)} × 25 kg bags)`;
+    }
+    drawScheduleRow({
+      label: `${displayLabel}${altText}`,
+      kgsUsed: qtyCell,
+      hours: null,
+      rate: findRate(officeLines, productLabel) || findRateFuzzy(officeLines, rateNeedles),
+    });
+  };
+
   // ── Materials rows ──────────────────────────────────────────────────
   if (hasData(mulchKg, 0)) {
-    const balesText = mulchBales > 0 ? ` (bales used. ${formatQty(mulchBales)})` : '';
-    drawScheduleRow({
-      label: `Mulch${balesText}`,
-      kgsUsed: mulchKg,
-      hours: null,
-      rate: findRateFuzzy(officeLines, ['mulch']),
+    renderProductRow({
+      productLabel: 'Mulch',
+      displayLabel: 'Mulch',
+      kgTotal: mulchKg,
+      category: 'mulch',
+      rateNeedles: ['mulch'],
     });
   }
   if (hasData(fertilizerKg, 0)) {
-    drawScheduleRow({
-      label: 'Fertilizer',
-      kgsUsed: fertilizerKg,
-      hours: null,
-      rate: findRateFuzzy(officeLines, ['fertilizer']),
+    renderProductRow({
+      productLabel: 'Fertilizer',
+      displayLabel: 'Fertilizer',
+      kgTotal: fertilizerKg,
+      category: 'fertilizer',
+      rateNeedles: ['fertilizer'],
     });
   }
-  // #1 Seed / #2 Seed (using declaration-order seed types from cost_code).
-  if (seedTypes.length > 0 && (Number(seedTypes[0]?.qty) || 0) !== 0) {
-    drawScheduleRow({
-      label: `#1 Seed${seedTypes[0]?.name ? `: ${seedTypes[0].name}` : ''}`,
-      kgsUsed: seedTypes[0].qty,
-      hours: null,
-      rate: findRateFuzzy(officeLines, [`seed: ${seedTypes[0].name}`, '#1 seed', 'seed']),
-    });
-  }
-  if (seedTypes.length > 1 && (Number(seedTypes[1]?.qty) || 0) !== 0) {
-    drawScheduleRow({
-      label: `#2 Seed${seedTypes[1]?.name ? `: ${seedTypes[1].name}` : ''}`,
-      kgsUsed: seedTypes[1].qty,
-      hours: null,
-      rate: findRateFuzzy(officeLines, [`seed: ${seedTypes[1].name}`, '#2 seed', 'seed']),
-    });
-  }
-  // Any 3rd+ seed types still print so nothing is lost.
-  for (let i = 2; i < seedTypes.length; i++) {
-    if ((Number(seedTypes[i]?.qty) || 0) === 0) continue;
-    drawScheduleRow({
-      label: `#${i + 1} Seed${seedTypes[i]?.name ? `: ${seedTypes[i].name}` : ''}`,
-      kgsUsed: seedTypes[i].qty,
-      hours: null,
-      rate: findRateFuzzy(officeLines, [`seed: ${seedTypes[i].name}`, 'seed']),
+  // Per-seed-type rows (declaration-order from cost_code). Each seed
+  // type has its own office line, its own rate, and — thanks to the
+  // unit dropdown — its own billing unit (kg or 25 kg bag).
+  for (let i = 0; i < seedTypes.length; i++) {
+    const seedKg = Number(seedTypes[i]?.qty) || 0;
+    if (seedKg === 0) continue;
+    const name = seedTypes[i]?.name || '';
+    const productLabel = `Seed: ${name}`;
+    const displayLabel = `#${i + 1} Seed${name ? `: ${name}` : ''}`;
+    renderProductRow({
+      productLabel,
+      displayLabel,
+      kgTotal: seedKg,
+      category: 'seed',
+      // No bare 'seed' fallback here — word-boundary regex would also
+      // match 'Seed: <other-name>' lines and pull the wrong rate. The
+      // exact-label findRate above is the primary path; '#N seed' is
+      // the only fuzzy fallback for office-renamed labels.
+      rateNeedles: [`#${i + 1} seed`],
     });
   }
   if (hasData(tackifierKg, 0)) {
