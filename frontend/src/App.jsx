@@ -4487,7 +4487,7 @@ export default function App() {
 
   function renderStandaloneLeaseSheet() {
     return (
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 30, backgroundColor: 'rgba(0,0,0,0.5)', display: isStandaloneMapPicking ? 'none' : 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+      <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 40, backgroundColor: 'rgba(0,0,0,0.5)', display: isStandaloneMapPicking ? 'none' : 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
         <Suspense fallback={null}>
           <HerbicideLeaseSheet
             standalone={true}
@@ -5892,12 +5892,12 @@ export default function App() {
         {/* ── Lease Sheet overlay ── */}
         {(inspectionSite || inspectionPipeline) && (
           <div style={{
-            position: 'absolute',
+            position: 'fixed',
             top: 0,
             left: 0,
             right: 0,
             bottom: 0,
-            zIndex: 30,
+            zIndex: 40,
             backgroundColor: 'rgba(0, 0, 0, 0.5)',
             display: 'flex',
             flexDirection: 'column',
@@ -5958,12 +5958,12 @@ export default function App() {
         {/* ── Edit Lease Sheet overlay ── */}
         {editingSprayRecord && (
           <div style={{
-            position: 'absolute',
+            position: 'fixed',
             top: 0,
             left: 0,
             right: 0,
             bottom: 0,
-            zIndex: 30,
+            zIndex: 40,
             backgroundColor: 'rgba(0, 0, 0, 0.5)',
             display: 'flex',
             flexDirection: 'column',
@@ -6018,8 +6018,8 @@ export default function App() {
         {/* ── Hydroseed Daily Application Record overlay ── */}
         {hydroseedDailyOpen && (
           <div style={{
-            position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-            zIndex: 30, backgroundColor: 'rgba(0,0,0,0.5)',
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            zIndex: 40, backgroundColor: 'rgba(0,0,0,0.5)',
             display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
           }}>
             <Suspense fallback={null}>
