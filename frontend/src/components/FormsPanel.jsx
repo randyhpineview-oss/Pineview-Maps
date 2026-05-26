@@ -246,7 +246,7 @@ export default function FormsPanel({
   viewAsWorker = false,
   currentUserName = '',
 }) {
-  const { confirm } = useDialog();
+  const { confirm, alert } = useDialog();
   const [subTab, setSubTab] = useState(SUB_FORMS);
   const [ipTab, setIpTab] = useState(IP_UPLOADING);
   const [recTab, setRecTab] = useState(REC_ALL);
@@ -824,6 +824,28 @@ export default function FormsPanel({
       } else {
         const seen = new Set(allLeaseRecents.map((r) => r.id));
         const fresh = rows.filter((r) => !seen.has(r.id));
+        // Deploy-lag guard: when the server hasn't picked up the ?before=
+        // cursor yet, it silently returns the same first page again — every
+        // row comes back as a duplicate of what we already cached. Without
+        // this check we'd flag history exhausted and hide the button,
+        // making it look like there are no older sheets when there are.
+        // Surface a clear diagnostic instead so the user knows to retry
+        // after the backend finishes deploying / their device updates.
+        const cursorWasSent = !!oldest;
+        const looksLikeUnpaginatedRepeat = cursorWasSent && fresh.length === 0 && rows.length > 0;
+        if (looksLikeUnpaginatedRepeat) {
+          alert({
+            title: 'Older lease sheets unavailable',
+            message:
+              'The server returned the same recent lease sheets again instead of older ones. '
+              + 'This usually means your app is still running an older cached version. '
+              + 'Open the avatar menu (top-right) and tap "↑ Update Now" if it appears, '
+              + 'or fully quit and reopen the app. If the problem persists, remove the app from your home screen and reinstall it.',
+            severity: 'warning',
+          });
+          // Leave noMoreOlderLease=false so they can retry after updating.
+          return;
+        }
         if (fresh.length > 0) {
           setOlderLeaseRecents((prev) => [...prev, ...fresh]);
           // Reveal the newly-fetched batch immediately.

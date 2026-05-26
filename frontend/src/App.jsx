@@ -1002,7 +1002,12 @@ export default function App() {
   const loadServerRecents = useCallback(async () => {
     if (!window.navigator.onLine) return;
     try {
-      const data = await api.listRecentSubmissions();
+      // Pull 100 rows on initial / full-refresh fetches so a freshly-installed
+      // PWA (or any device whose IDB recents cache was wiped) shows ~3–6 weeks
+      // of lease-sheet history immediately, instead of just the last day or two.
+      // The FormsPanel "Load more" button still pages further back via the
+      // server's ?before= cursor when this initial window runs out.
+      const data = await api.listRecentSubmissions({ limit: 100 });
       setCachedRecents(data);
       await replaceRecents(data);
     } catch {
@@ -2340,7 +2345,10 @@ export default function App() {
     async function syncRecentsIncrementally(syncStatus) {
       if (!recentsSinceRef.current) {
         try {
-          const full = await api.listRecentSubmissions();
+          // Cold incremental sync (no watermark yet) — same 100-row history
+          // window as the dedicated full-refresh path so users always get a
+          // useful chunk of past lease sheets without paging.
+          const full = await api.listRecentSubmissions({ limit: 100 });
           setCachedRecents(full);
           await replaceRecents(full);
           recentsSinceRef.current = syncStatus.spray_records_last_updated || new Date().toISOString();
@@ -2372,7 +2380,9 @@ export default function App() {
         recentsSinceRef.current = delta.server_time || recentsSinceRef.current;
       } catch {
         try {
-          const full = await api.listRecentSubmissions();
+          // Delta sync errored — fall back to a fresh 100-row pull rather than
+          // leaving the cache stale.
+          const full = await api.listRecentSubmissions({ limit: 100 });
           setCachedRecents(full);
           await replaceRecents(full);
           recentsSinceRef.current = syncStatus.spray_records_last_updated || new Date().toISOString();
