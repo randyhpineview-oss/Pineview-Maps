@@ -599,6 +599,24 @@ class HydroseedLinkedDaily(BaseModel):
                 "site_name": getattr(v, "site_name", None),
             }
             daily_data = getattr(v, "daily_data", None) or {}
+        # Daily form stores blank numeric inputs as `''` (empty string) so
+        # the <input value=…> stays controlled. The hoist below copies the
+        # raw value through — pydantic then tries to parse `''` as a float
+        # for the numeric scalars below and 500s the entire list_tickets
+        # / list_open_tickets / tickets_delta response (one malformed
+        # daily nukes every ticket the user can see). Treat empty strings
+        # on numeric keys as missing so they fall through to the schema's
+        # `None` default; non-numeric keys keep `''` since the model's
+        # `str | None` fields accept it.
+        NUMERIC_KEYS = {
+            "supervisor_hours",
+            "lead_hours",
+            "labour_hours_per_person",
+            "crew_truck_count",
+            "crew_truck_hours",
+            "water_truck_loads",
+            "travel_km",
+        }
         for key in (
             "customer_rep",
             "customer_rep_phone",
@@ -614,8 +632,14 @@ class HydroseedLinkedDaily(BaseModel):
             "water_truck_loads",
             "travel_km",
         ):
-            if key not in payload and daily_data.get(key) is not None:
-                payload[key] = daily_data.get(key)
+            if key in payload:
+                continue
+            raw = daily_data.get(key)
+            if raw is None:
+                continue
+            if key in NUMERIC_KEYS and isinstance(raw, str) and raw.strip() == "":
+                continue
+            payload[key] = raw
         return payload
 
 
