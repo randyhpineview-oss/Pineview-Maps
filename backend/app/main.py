@@ -1741,6 +1741,14 @@ def move_spray_record_to_site(
 @app.get("/api/recent-submissions", response_model=list[RecentSubmissionRead])
 def list_recent_submissions(
     search: str = Query(default=None),
+    before: datetime | None = Query(
+        default=None,
+        description=(
+            "Optional pagination cursor: return only rows with created_at "
+            "strictly less than this ISO timestamp. Use the oldest row's "
+            "created_at from the previous page to fetch the next page."
+        ),
+    ),
     limit: int = Query(default=20, le=200),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -1748,8 +1756,10 @@ def list_recent_submissions(
     """List recent lease sheet submissions with search.
 
     EGRESS: lease_sheet_data is NOT selected (defer) — the summary response
-    only needs scalar columns + joined site context. Default limit lowered
-    from 50 -> 20 since the Forms panel paginates client-side with "Load more".
+    only needs scalar columns + joined site context. Default limit is 20
+    for the first page. Pass `before=<oldest_created_at>` to fetch older
+    pages (the FormsPanel "Load more" button uses this to walk back further
+    than the initial cache holds).
     """
     site_q = (
         db.query(
@@ -1803,6 +1813,13 @@ def list_recent_submissions(
                 ),
             )
         )
+
+    # Pagination cursor: strict less-than so the boundary row from the
+    # previous page isn't repeated. Applied to BOTH source tables so the
+    # merged feed stays consistent.
+    if before is not None:
+        site_q = site_q.filter(SiteSprayRecord.created_at < before)
+        pipeline_q = pipeline_q.filter(SprayRecord.created_at < before)
 
     if search:
         search_term = f"%{search}%"

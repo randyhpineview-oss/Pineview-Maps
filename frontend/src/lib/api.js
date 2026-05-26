@@ -287,9 +287,21 @@ export const api = {
   getSiteSprayRecord(recordId) {
     return request(`/api/site-spray-records/${recordId}`);
   },
-  listRecentSubmissions(search) {
-    const params = search ? `?search=${encodeURIComponent(search)}` : '';
-    return request(`/api/recent-submissions${params}`);
+  // Lists recent lease-sheet submissions. Accepts an optional options object:
+  //   - search:  free-text filter (ticket #, sprayed_by, lsd/client/area)
+  //   - before:  ISO timestamp cursor — return only rows older than this
+  //              (used by the FormsPanel "Load more" button to walk back
+  //              past the initial 20-row cache)
+  //   - limit:   page size override (server caps at 200, defaults to 20)
+  // Backward compatible with no-arg calls (initial load uses defaults).
+  listRecentSubmissions(opts = {}) {
+    const { search, before, limit } = opts || {};
+    const params = new URLSearchParams();
+    if (search) params.set('search', search);
+    if (before) params.set('before', before);
+    if (limit) params.set('limit', String(limit));
+    const qs = params.toString();
+    return request(`/api/recent-submissions${qs ? `?${qs}` : ''}`);
   },
   listStandaloneLeaseSheets(search) {
     const params = search ? `?search=${encodeURIComponent(search)}` : '';

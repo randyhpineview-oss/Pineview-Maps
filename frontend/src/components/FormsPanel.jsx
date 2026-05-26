@@ -382,7 +382,22 @@ export default function FormsPanel({
   // doesn't fight with the per-type counts behind the scenes.
   const [allCount, setAllCount] = useState(PAGE_SIZE);
   const [openCount, setOpenCount] = useState(PAGE_SIZE);
+  // Lease-sheet history fetched on demand by clicking "Load more" past the
+  // end of the cached recents. These rows live ONLY in component state
+  // (not the IDB recents cache) — that cache is kept lean for boot speed.
+  // They get merged into `filteredLease` so they render alongside the
+  // freshest entries from `cachedRecents`.
+  const [olderLeaseRecents, setOlderLeaseRecents] = useState([]);
+  const [noMoreOlderLease, setNoMoreOlderLease] = useState(false);
+  const [loadingMoreLease, setLoadingMoreLease] = useState(false);
   useEffect(() => { setLeaseCount(PAGE_SIZE); setTmCount(PAGE_SIZE); setAllCount(PAGE_SIZE); }, [search]);
+  // Search/viewAsWorker change the server-side result set, so any older
+  // rows we paged in under the previous filter are stale — drop them and
+  // start fresh from the cache.
+  useEffect(() => {
+    setOlderLeaseRecents([]);
+    setNoMoreOlderLease(false);
+  }, [search, viewAsWorker]);
   useEffect(() => { setAllCount(PAGE_SIZE); }, [recTab]);
   useEffect(() => { setOpenCount(PAGE_SIZE); }, [ipTab]);
   // Resetting tmCount when the office toggles its status filter keeps the
@@ -672,9 +687,21 @@ export default function FormsPanel({
     return (b.id || 0) - (a.id || 0);
   };
 
+  // Combined lease-sheet pool: realtime cache (fresh, capped at ~20 by the
+  // server's default page size on initial sync) plus any older rows pulled
+  // in on demand via the "Load more" cursor. Dedupe by id so realtime
+  // refreshes of an already-paged row don't double up.
+  const allLeaseRecents = useMemo(() => {
+    if (!olderLeaseRecents.length) return cachedRecents;
+    const byId = new Map();
+    for (const r of cachedRecents) byId.set(r.id, r);
+    for (const r of olderLeaseRecents) if (!byId.has(r.id)) byId.set(r.id, r);
+    return Array.from(byId.values());
+  }, [cachedRecents, olderLeaseRecents]);
+
   // Filtered + sorted lease sheet recents
   const filteredLease = useMemo(() => {
-    let base = [...cachedRecents].sort(byNewest);
+    let base = [...allLeaseRecents].sort(byNewest);
     // View-as-worker: admin/office are impersonating a worker, so the
     // recents list should only include sheets THEY sprayed \u2014 matches
     // what a real worker sees. Backend still returned everyone's, so we
@@ -758,6 +785,60 @@ export default function FormsPanel({
   const visibleTm = useMemo(() => filteredTm.slice(0, tmCount), [filteredTm, tmCount]);
   const visibleAll = useMemo(() => filteredAll.slice(0, allCount), [filteredAll, allCount]);
   const visibleOpen = useMemo(() => sortedOpenTickets.slice(0, openCount), [sortedOpenTickets, openCount]);
+
+  // Lease-sheet "Load more" handler: first reveal any still-cached rows
+  // client-side (cheap), then once the local pool is exhausted, fetch an
+  // older page from the server using the oldest row's created_at as the
+  // cursor. Honors the active search so paging through filtered history
+  // keeps finding matches. When the server returns fewer than asked for
+  // (or zero), we mark the lease history exhausted and hide the button.
+  const PAGE_FETCH_SIZE = 50;
+  const canRevealMoreCachedLease = filteredLease.length > leaseCount;
+  const canFetchOlderLease = !noMoreOlderLease && !loadingMoreLease;
+  const showLoadMoreLease = canRevealMoreCachedLease || canFetchOlderLease;
+  const handleLoadMoreLease = async () => {
+    if (canRevealMoreCachedLease) {
+      setLeaseCount((c) => c + PAGE_SIZE);
+      return;
+    }
+    if (!canFetchOlderLease) return;
+    // Cursor = oldest created_at currently in our combined pool. Using the
+    // RAW pool (not search-filtered) so we don't skip rows the user can't
+    // see locally but the server can match.
+    const oldest = allLeaseRecents.reduce((min, r) => {
+      const t = r.created_at || '';
+      if (!t) return min;
+      if (!min || t < min) return t;
+      return min;
+    }, null);
+    setLoadingMoreLease(true);
+    try {
+      const page = await api.listRecentSubmissions({
+        search: search || undefined,
+        before: oldest || undefined,
+        limit: PAGE_FETCH_SIZE,
+      });
+      const rows = Array.isArray(page) ? page : [];
+      if (rows.length === 0) {
+        setNoMoreOlderLease(true);
+      } else {
+        const seen = new Set(allLeaseRecents.map((r) => r.id));
+        const fresh = rows.filter((r) => !seen.has(r.id));
+        if (fresh.length > 0) {
+          setOlderLeaseRecents((prev) => [...prev, ...fresh]);
+          // Reveal the newly-fetched batch immediately.
+          setLeaseCount((c) => c + fresh.length);
+        }
+        // Short page = no more history (server returned less than asked).
+        if (rows.length < PAGE_FETCH_SIZE) setNoMoreOlderLease(true);
+      }
+    } catch {
+      // Surface as a transient state: leave noMoreOlder false so the user
+      // can retry. Silent — the panel doesn't have an inline error slot.
+    } finally {
+      setLoadingMoreLease(false);
+    }
+  };
 
   if (!visible) return null;
 
@@ -1354,13 +1435,18 @@ export default function FormsPanel({
               ) : (
                 visibleLease.map((record) => renderLeaseRow(record, onViewPdf, onEditRecord, onDeleteRecord, roleCanAdmin))
               )}
-              {filteredLease.length > leaseCount && (
+              {showLoadMoreLease && (
                 <button
                   type="button"
-                  onClick={() => setLeaseCount((c) => c + PAGE_SIZE)}
-                  style={{ padding: '8px', background: '#1f2937', border: '1px solid #374151', borderRadius: '6px', color: '#60a5fa', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', marginTop: '4px' }}
+                  onClick={handleLoadMoreLease}
+                  disabled={loadingMoreLease}
+                  style={{ padding: '8px', background: '#1f2937', border: '1px solid #374151', borderRadius: '6px', color: '#60a5fa', fontSize: '0.8rem', fontWeight: 600, cursor: loadingMoreLease ? 'wait' : 'pointer', marginTop: '4px', opacity: loadingMoreLease ? 0.6 : 1 }}
                 >
-                  Load more ({filteredLease.length - leaseCount} remaining)
+                  {loadingMoreLease
+                    ? 'Loading older lease sheets…'
+                    : canRevealMoreCachedLease
+                      ? `Load more (${filteredLease.length - leaseCount} remaining)`
+                      : 'Load more (fetch older)'}
                 </button>
               )}
             </div>
