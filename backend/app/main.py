@@ -81,6 +81,7 @@ from app.schemas import (
     BulkResetResponse,
     ExternalLeaseSheetCreate,
     KmlImportResponse,
+    MoveToSiteRequest,
     RecentSubmissionRead,
     RecentSubmissionsDeltaResponse,
     SessionResponse,
@@ -1586,6 +1587,147 @@ def update_site_spray_record(
     site = db.query(Site).filter(Site.id == record.site_id).first()
     if site is not None:
         site.updated_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(record)
+    return SiteSprayRecordRead.model_validate(record)
+
+
+@app.get("/api/standalone-lease-sheets", response_model=list[RecentSubmissionRead])
+def list_standalone_lease_sheets(
+    search: str = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
+):
+    """List lease sheets submitted as standalone (against a hidden placeholder site).
+
+    These are candidates for linking to a visible pin via the move-to-site endpoint.
+    Only admin/office can see and action these.
+    """
+    q = (
+        db.query(
+            SiteSprayRecord,
+            Site.lsd.label('site_lsd'),
+            Site.client.label('site_client'),
+            Site.area.label('site_area'),
+        )
+        .options(defer(SiteSprayRecord.lease_sheet_data))
+        .join(Site, SiteSprayRecord.site_id == Site.id)
+        .filter(
+            Site.is_hidden.is_(True),
+            Site.deleted_at.is_(None),
+            SiteSprayRecord.deleted_at.is_(None),
+            SiteSprayRecord.lease_sheet_data.isnot(None),
+        )
+    )
+
+    if search:
+        search_term = f"%{search}%"
+        q = q.filter(
+            or_(
+                SiteSprayRecord.ticket_number.ilike(search_term),
+                SiteSprayRecord.sprayed_by_name.ilike(search_term),
+                Site.lsd.ilike(search_term),
+                Site.client.ilike(search_term),
+                Site.area.ilike(search_term),
+            )
+        )
+
+    rows = q.order_by(SiteSprayRecord.created_at.desc()).all()
+
+    results: list[RecentSubmissionRead] = []
+    for record, site_lsd, site_client, site_area in rows:
+        data = SiteSprayRecordSummary.model_validate(record).model_dump()
+        data['site_lsd'] = site_lsd
+        data['site_client'] = site_client
+        data['site_area'] = site_area
+        results.append(RecentSubmissionRead(**data))
+    return results
+
+
+@app.post("/api/site-spray-records/{record_id}/move-to-site/{target_site_id}", response_model=SiteSprayRecordRead)
+def move_spray_record_to_site(
+    record_id: int,
+    target_site_id: int,
+    payload: MoveToSiteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
+):
+    """Move a standalone lease-sheet spray record from its hidden placeholder site
+    to a visible pin, applying the chosen inspection status to that pin.
+
+    The hidden placeholder site is soft-deleted when it has no remaining
+    non-deleted spray records after the move.
+    """
+    now = datetime.utcnow()
+
+    # ── Validate record ──
+    record = (
+        db.query(SiteSprayRecord)
+        .filter(SiteSprayRecord.id == record_id, SiteSprayRecord.deleted_at.is_(None))
+        .first()
+    )
+    if not record:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Spray record not found")
+
+    # Guard: source must be a hidden site (i.e., a standalone submission)
+    source_site = db.query(Site).filter(Site.id == record.site_id).first()
+    if not source_site or not source_site.is_hidden:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This spray record is already attached to a visible pin and cannot be moved.",
+        )
+
+    # ── Validate target site ──
+    if target_site_id == record.site_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Source and target sites are the same.")
+
+    target_site = (
+        db.query(Site)
+        .filter(Site.id == target_site_id, Site.deleted_at.is_(None), Site.is_hidden.is_(False))
+        .first()
+    )
+    if not target_site:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target site not found or is not a visible pin.")
+
+    # ── Parse and validate target_status ──
+    raw_status = payload.target_status if payload else "inspected"
+    try:
+        target_status = SiteStatus(raw_status)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Invalid target_status: {raw_status!r}")
+
+    # ── Move the record ──
+    old_site_id = record.site_id
+    record.site_id = target_site_id
+
+    # ── Update target site's inspection metadata ──
+    target_site.status = target_status
+    if target_status in (SiteStatus.inspected, SiteStatus.in_progress, SiteStatus.issue_not_inspected):
+        # Use the spray record's original date/inspector so history is accurate
+        target_site.last_inspected_at = record.spray_date if record.spray_date else now
+        target_site.last_inspected_by_user_id = record.sprayed_by_user_id
+        target_site.last_inspected_by_name = record.sprayed_by_name
+    target_site.updated_at = now
+
+    # ── Soft-delete the hidden source site if it has no remaining records ──
+    remaining_count = (
+        db.query(SiteSprayRecord)
+        .filter(
+            SiteSprayRecord.site_id == old_site_id,
+            SiteSprayRecord.id != record_id,
+            SiteSprayRecord.deleted_at.is_(None),
+        )
+        .count()
+    )
+    if remaining_count == 0 and source_site.deleted_at is None:
+        source_site.deleted_at = now
+        source_site.deleted_by_user_id = current_user.id
+        # Keep updated_at current so delta feed ships the site in ids_removed
+        source_site.updated_at = now
+    else:
+        # Still has records — just bump updated_at so delta can reflect the change
+        source_site.updated_at = now
 
     db.commit()
     db.refresh(record)

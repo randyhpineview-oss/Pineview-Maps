@@ -89,6 +89,11 @@ class SiteSprayRecordUpdate(BaseModel):
     tm_pdf_base64: str | None = None  # regenerated T&M PDF after edit propagation
 
 
+class MoveToSiteRequest(BaseModel):
+    """Request body for POST /api/site-spray-records/{id}/move-to-site/{site_id}."""
+    target_status: str = "inspected"
+
+
 class ExternalLeaseSheetCreate(BaseModel):
     """Standalone lease sheet for a location not on the map."""
     spray_date: date

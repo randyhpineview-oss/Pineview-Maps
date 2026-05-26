@@ -105,6 +105,7 @@ const MyCheckInsOverlay = lazy(() => import('./components/MyCheckInsOverlay'));
 // Admin/office Check-ins Dashboard (Overview / Active / History /
 // Settings tabs). Same lazy/admin pattern as ReportsDashboard etc.
 const CheckInsOverlay = lazy(() => import('./components/CheckInsOverlay'));
+const LinkLeaseSheetModal = lazy(() => import('./components/LinkLeaseSheetModal'));
 
 const DEFAULT_FILTERS = { search: '', client: '', area: '', status: '', approval_state: '' };
 const DEFAULT_LAYERS = { lsd: true, water: true, quad_access: true, reclaimed: true, pipelines: true, trucks: true };
@@ -727,6 +728,8 @@ export default function App() {
   // Admin dashboard overlay (Overview / Active / History / Settings).
   // Same role gating as Calendar/Reports/Quotes via roleCanAdmin guard.
   const [showCheckinsDashboard, setShowCheckinsDashboard] = useState(false);
+  const [showLinkModal, setShowLinkModal] = useState(false);
+  const [linkModalTargetSite, setLinkModalTargetSite] = useState(null);
   // The calling user's currently-active shift (or null). Loaded after
   // auth + refreshed via Realtime + after every POST /api/checkins.
   // Drives the topbar countdown, the forced overlay logic, and the
@@ -4055,6 +4058,30 @@ export default function App() {
     }
   }
 
+  function handleImportLeaseSheet(site) {
+    setLinkModalTargetSite(site);
+    setShowLinkModal(true);
+  }
+
+  async function handleLinkLeaseSheetConfirm(updatedRecord, targetStatus) {
+    setShowLinkModal(false);
+    setLinkModalTargetSite(null);
+    if (!updatedRecord?.site_id) return;
+    try {
+      const updated = await api.getSite(updatedRecord.site_id);
+      if (updated) {
+        setSites((prev) => prev.map((s) => (s.id === updated.id ? { ...s, ...updated } : s)));
+        setSelectedSite((prev) => (prev && prev.id === updated.id ? { ...prev, ...updated } : prev));
+        await upsertSite(updated);
+      }
+      // Refresh recents so the moved record appears under the visible pin
+      // and the standalone entry disappears. Full re-fetch is acceptable here
+      // since moves are infrequent admin actions.
+      loadServerRecents();
+    } catch { /* non-fatal — sites delta will catch it on next tick */ }
+    setMessage('Lease sheet linked successfully.');
+  }
+
   async function handleDeleteSiteSprayRecord(recordId, siteId) {
     setAdminBusy(true);
     try {
@@ -6309,6 +6336,7 @@ export default function App() {
                   setPreviewingRecord(record);
                 }}
                 onEditRecord={(record) => openEditRecord(record, { site_lsd: selectedSite?.lsd, site_client: selectedSite?.client, site_area: selectedSite?.area })}
+                onImportLeaseSheet={canManagePins ? handleImportLeaseSheet : undefined}
                 // Autofill data so the LSD / Client / Area inputs in the
                 // admin edit panel surface existing values — same UX as
                 // the in-map "Add pin" popup. Without these props the
@@ -6880,6 +6908,17 @@ export default function App() {
           <CheckInsOverlay
             onClose={() => setShowCheckinsDashboard(false)}
             isAdmin={actualCanAdmin}
+          />
+        </Suspense>
+      ) : null}
+
+      {/* ── Import (link) standalone lease sheet to visible pin (admin/office) ── */}
+      {showLinkModal && linkModalTargetSite && roleCanAdmin ? (
+        <Suspense fallback={null}>
+          <LinkLeaseSheetModal
+            targetSite={linkModalTargetSite}
+            onConfirm={handleLinkLeaseSheetConfirm}
+            onCancel={() => { setShowLinkModal(false); setLinkModalTargetSite(null); }}
           />
         </Suspense>
       ) : null}

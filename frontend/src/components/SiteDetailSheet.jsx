@@ -39,6 +39,7 @@ export default function SiteDetailSheet({
   onStartIssueNotInspected,
   onViewPdf,
   onEditRecord,
+  onImportLeaseSheet,
   // Autofill data for the LSD / Client / Area edit fields. All three
   // are optional — if a parent doesn't pass them, the relevant input
   // degrades gracefully to a plain text box (the AutocompleteInput
@@ -348,6 +349,16 @@ export default function SiteDetailSheet({
                   Delete pin
                 </button>
               </>
+            ) : null}
+            {canManagePin && !isInfoOnlyPin(site.pin_type) && onImportLeaseSheet ? (
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => onImportLeaseSheet(site)}
+                style={{ marginTop: '0.5rem' }}
+              >
+                📥 Import Lease Sheet
+              </button>
             ) : null}
           </div>
           {!isInfoOnlyPin(site.pin_type) ? (

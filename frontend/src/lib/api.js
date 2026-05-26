@@ -291,6 +291,16 @@ export const api = {
     const params = search ? `?search=${encodeURIComponent(search)}` : '';
     return request(`/api/recent-submissions${params}`);
   },
+  listStandaloneLeaseSheets(search) {
+    const params = search ? `?search=${encodeURIComponent(search)}` : '';
+    return request(`/api/standalone-lease-sheets${params}`);
+  },
+  moveSprayRecordToSite(recordId, targetSiteId, targetStatus) {
+    return request(`/api/site-spray-records/${recordId}/move-to-site/${targetSiteId}`, {
+      method: 'POST',
+      body: { target_status: targetStatus },
+    });
+  },
   listDeletedLeaseSheets() {
     return request('/api/deleted-lease-sheets');
   },
