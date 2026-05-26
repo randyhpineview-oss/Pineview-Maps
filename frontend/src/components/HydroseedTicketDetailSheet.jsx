@@ -366,10 +366,17 @@ export default function HydroseedTicketDetailSheet({
   };
 
   // Worker (or office on the worker's behalf) flips Open → Pending. We
-  // intentionally don't bundle a save here — the worker shouldn't be
-  // allowed to alter office_data, and the backend rejects that field on
-  // worker writes anyway. Office still sees the same button; if they
-  // had unsaved rate edits they should hit Save first.
+  // intentionally don't bundle a Save of office_data here — the worker
+  // shouldn't be allowed to alter rates and the backend rejects that
+  // field on worker writes anyway. We DO regenerate + send a fresh
+  // pdf_base64 though: the backend's upload guard skips uploads while
+  // the ticket is Open, so the very first Dropbox upload only happens
+  // on the Open → Pending transition. Without a PDF in this payload
+  // the ticket would stay Pending with pdf_url=NULL until the office
+  // subsequently hit Save, which left the Dropbox link missing for
+  // however long that took. Worker-generated PDFs carry
+  // includeOfficeData=false (no rates) — the office will overwrite on
+  // their next Save once they've typed pricing.
   const handleSubmitForApproval = async () => {
     if (!(await confirm({
       title: 'Submit for approval?',
@@ -377,7 +384,11 @@ export default function HydroseedTicketDetailSheet({
     }))) return;
     setIsSaving(true);
     try {
-      const updated = await api.updateHydroseedTicket(ticket.id, { status: 'submitted' });
+      const pdf = await regeneratePdf();
+      const updated = await api.updateHydroseedTicket(ticket.id, {
+        status: 'submitted',
+        pdf_base64: pdf,
+      });
       applyTicket(updated);
       onSaved?.(updated);
     } catch (e) {
