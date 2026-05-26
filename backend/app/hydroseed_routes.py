@@ -222,6 +222,10 @@ def _aggregate_rows_from_daily(daily: HydroseedDailyRecord) -> list[dict]:
     total_aqua_gel_kg = Decimal(0)
     total_tackifier_kg = Decimal(0)
     total_fertilizer_kg = Decimal(0)
+    # Per-load liquid additive measured in litres. Workers enter it on
+    # each load via the load editor; the HT PDF rolls these up into a
+    # single 'Micronutrients' line in the materials/installation table.
+    total_micronutrients_l = Decimal(0)
 
     for load in loads:
         total_area_m2 += _to_decimal(load.get("area_m2"))
@@ -232,6 +236,7 @@ def _aggregate_rows_from_daily(daily: HydroseedDailyRecord) -> list[dict]:
         total_aqua_gel_kg += _to_decimal(load.get("aqua_gel_kg"))
         total_tackifier_kg += _to_decimal(load.get("tackifier_kg"))
         total_fertilizer_kg += _to_decimal(load.get("fertilizer_kg"))
+        total_micronutrients_l += _to_decimal(load.get("micronutrients_l"))
         # seed_kgs is a dict {seed_type_name: kg}
         seed_kgs = load.get("seed_kgs") or {}
         for name, v in seed_kgs.items():
@@ -248,6 +253,7 @@ def _aggregate_rows_from_daily(daily: HydroseedDailyRecord) -> list[dict]:
         ("Aqua Gel", total_aqua_gel_kg, "kg"),
         ("Tackifier", total_tackifier_kg, "kg"),
         ("Fertilizer", total_fertilizer_kg, "kg"),
+        ("Micronutrients", total_micronutrients_l, "L"),
         ("Area covered", total_area_m2, "m²"),
     ]
     for label, qty, unit in material_rows:
@@ -258,15 +264,29 @@ def _aggregate_rows_from_daily(daily: HydroseedDailyRecord) -> list[dict]:
     # `cost_code` carries the declared-order index (0-based) so the PDF can
     # match seed names back to their position even if the worker reordered
     # the seed_types list between dailies on the same ticket.
+    #
+    # The daily form keeps `seed_kgs` keyed by the placeholder `name`
+    # ("Seed 1", "Seed 2") so multiple loads can stack on the same seed
+    # type even before the worker fills in a description. But the HT PDF
+    # needs the human-readable blend (e.g. "ESC Mixture") in its row
+    # label so the office + client can tell the seeds apart. We resolve
+    # `name` -> `description` via the daily's declared `seed_types[]`
+    # and fall back to the placeholder name when a description is blank
+    # (or when older data only has names).
     seed_types_decl = data.get("seed_types") or []
     declared_order = {(st.get("name") or ""): idx for idx, st in enumerate(seed_types_decl)}
+    seed_descriptions = {
+        (st.get("name") or ""): (st.get("description") or "").strip()
+        for st in seed_types_decl
+    }
     for name, qty in seed_kg_by_name.items():
         if not qty:
             continue
         idx = declared_order.get(name)
+        display_name = seed_descriptions.get(name) or name
         rows.append({
             "kind": "material",
-            "label": f"Seed: {name}",
+            "label": f"Seed: {display_name}",
             "qty": float(qty),
             "unit": "kg",
             "cost_code": f"seed_idx={idx}" if idx is not None else None,

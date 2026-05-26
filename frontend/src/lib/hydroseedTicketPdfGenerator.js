@@ -507,8 +507,9 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
   const seedTypes = collectSeedTypes(rows);
   const hydroseederRows = collectHydroseederRows(rows);
 
-  const mulchKg     = sumRowsByLabel(rows, 'Mulch');
-  const mulchBales  = sumRowsByLabel(rows, 'Mulch (bales)');
+  const mulchKg          = sumRowsByLabel(rows, 'Mulch');
+  const mulchBales       = sumRowsByLabel(rows, 'Mulch (bales)');
+  const micronutrientsL  = sumRowsByLabel(rows, 'Micronutrients');
   const fertilizerKg= sumRowsByLabel(rows, 'Fertilizer');
   const tackifierKg = sumRowsByLabel(rows, 'Tackifier');
   const aquagelKg   = sumRowsByLabel(rows, 'Aqua Gel');
@@ -630,6 +631,19 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
       kgsUsed: aquagelKg,
       hours: null,
       rate: findRateFuzzy(officeLines, ['aqua gel', 'aquagel']),
+    });
+  }
+  // Micronutrients: liquid additive, summed in litres across all loads.
+  // Rendered in the 'Kgs Used' column with an explicit ' L' suffix
+  // (paper convention — same trick we use for Travel km / Water Truck
+  // loads) so the office can see units at a glance without adding a
+  // dedicated column to the schedule.
+  if ((Number(micronutrientsL) || 0) !== 0) {
+    drawScheduleRow({
+      label: 'Micronutrients',
+      kgsUsed: `${formatQty(micronutrientsL)} L`,
+      hours: null,
+      rate: findRateFuzzy(officeLines, ['micronutrients', 'micronutrient']),
     });
   }
   if (hasData(bioticKg, 0)) {
