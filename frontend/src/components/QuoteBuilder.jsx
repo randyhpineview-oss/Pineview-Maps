@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { useDialog } from './DialogProvider';
 import PdfPreviewViewer from './PdfPreviewViewer';
@@ -20,6 +20,8 @@ import { computeLineSubtotal, computeQuoteTotals, generateQuotePdf } from '../li
  */
 
 // ── Constants ─────────────────────────────────────────────────────────────
+const DRAFT_KEY = 'quote_draft_v1';
+
 const TAB_NEW = 'new';
 const TAB_RECENT = 'recent';
 const TAB_SETTINGS = 'settings';
@@ -383,6 +385,15 @@ export default function QuoteBuilder({
     loadCatalog();
   }, [loadCatalog, online]);
 
+  // ── Draft helpers ──────────────────────────────────────────────────────
+  // Reads the stored draft from localStorage. Returns null if none exists.
+  const readDraft = () => {
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  };
+
   // ── New Quote form state ──────────────────────────────────────────────
   const [client, setClient] = useState('');
   const [area, setArea] = useState('');
@@ -402,6 +413,15 @@ export default function QuoteBuilder({
   // sections collapse into the implicit category order embedded in
   // `line_items`, which is reconstructed on load.
   const [sections, setSections] = useState([]);  // [{ uid, categoryId }]
+
+  // Draft persistence state
+  const [draftSavedAt, setDraftSavedAt] = useState(null);   // Date | null
+  const [draftRestoreBanner, setDraftRestoreBanner] = useState(false);
+  // Ref holding a pending auto-save timer so we can clear it on unmount.
+  const draftTimerRef = useRef(null);
+  // Flag: true while the form was just populated from a draft restore so
+  // we don't immediately re-save the restored state as a "new" auto-save.
+  const draftRestoringRef = useRef(false);
 
   // Submit / preview / confirmation state
   const [submitting, setSubmitting] = useState(false);
@@ -441,7 +461,62 @@ export default function QuoteBuilder({
     // Clear the cached peek so the next "Start a new quote" gets a fresh
     // number (which may have advanced if other operators submitted in between).
     setPeekedQuoteNumber('');
+    // Wipe any saved draft so a fresh session doesn't offer the old data.
+    try { localStorage.removeItem(DRAFT_KEY); } catch { /* non-fatal */ }
+    setDraftSavedAt(null);
+    setDraftRestoreBanner(false);
   }, []);
+
+  // ── Draft: restore prompt on mount ─────────────────────────────────────
+  // On first render, check if a non-trivial draft exists. "Non-trivial"
+  // means the draft has at least a client name or at least one line item.
+  // Trivial drafts (just a blank date) are silently discarded.
+  useEffect(() => {
+    const draft = readDraft();
+    if (!draft) return;
+    const hasContent = draft.client?.trim() || draft.lineItems?.length > 0;
+    if (!hasContent) {
+      try { localStorage.removeItem(DRAFT_KEY); } catch { /* non-fatal */ }
+      return;
+    }
+    setDraftRestoreBanner(true);
+  // Only run on initial mount.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Draft: auto-save on form changes (1 s debounce) ───────────────────
+  useEffect(() => {
+    // Don't re-save immediately after a restore — wait for the next real edit.
+    if (draftRestoringRef.current) {
+      draftRestoringRef.current = false;
+      return;
+    }
+    // Don't auto-save after the quote has been successfully submitted.
+    if (submittedQuote) return;
+    // Nothing worth saving yet.
+    const hasContent = client.trim() || lineItems.length > 0 || area.trim() || projectDescription.trim() || quoteNotes.trim();
+    if (!hasContent) return;
+
+    if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    draftTimerRef.current = setTimeout(() => {
+      try {
+        const draft = {
+          client, area, projectDescription, quoteDate,
+          taxEnabled, taxLabel, taxRate, quoteNotes,
+          lineItems, sections,
+          savedAt: new Date().toISOString(),
+        };
+        localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+        setDraftSavedAt(new Date());
+      } catch { /* quota or private-mode — non-fatal */ }
+    }, 1000);
+
+    return () => { if (draftTimerRef.current) clearTimeout(draftTimerRef.current); };
+  }, [
+    client, area, projectDescription, quoteDate,
+    taxEnabled, taxLabel, taxRate, quoteNotes,
+    lineItems, sections, submittedQuote,
+  ]);
 
   // ── Recent Quotes state ───────────────────────────────────────────────
   const [recent, setRecent] = useState([]);
@@ -809,6 +884,9 @@ export default function QuoteBuilder({
       const { base64 } = await generateQuotePdf(buildQuoteForPdf(qn));
       const created = await api.submitQuote(buildSubmitPayload(base64, qn));
       setSubmittedQuote(created);
+      // Clear draft — successfully submitted, nothing left to restore.
+      try { localStorage.removeItem(DRAFT_KEY); } catch { /* non-fatal */ }
+      setDraftSavedAt(null);
       // Refresh the Recent Quotes list silently so it's ready when the
       // user clicks the View tab.
       loadRecent();
@@ -894,6 +972,9 @@ export default function QuoteBuilder({
       setPeekedQuoteNumber('');
       setPreviewBase64('');
       setSubmitError('');
+      // Duplicate populates the form — suppress the immediate auto-save
+      // so a partially-saved old draft isn't overwritten by the restore.
+      draftRestoringRef.current = true;
       setActiveTab(TAB_NEW);
     } catch (e) {
       // Surface in the recent tab error banner; the user is still on Recent.
@@ -1014,6 +1095,44 @@ export default function QuoteBuilder({
           onReset={resetForm}
           online={online}
           isMobile={isMobile}
+          draftSavedAt={draftSavedAt}
+          draftRestoreBanner={draftRestoreBanner}
+          onRestoreDraft={() => {
+            const draft = readDraft();
+            if (!draft) return;
+            draftRestoringRef.current = true;
+            setClient(draft.client || '');
+            setArea(draft.area || '');
+            setProjectDescription(draft.projectDescription || '');
+            setQuoteDate(draft.quoteDate || localISODate());
+            setTaxEnabled(!!draft.taxEnabled);
+            setTaxLabel(draft.taxLabel || DEFAULT_TAX_LABEL);
+            setTaxRate(draft.taxRate != null ? String(draft.taxRate) : String(DEFAULT_TAX_RATE));
+            setQuoteNotes(draft.quoteNotes || '');
+            setLineItems((draft.lineItems || []).map((li) => ({ ...li, _uid: makeUid() })));
+            setSections((draft.sections || []).map((s) => ({ ...s, uid: makeUid() })));
+            setSubmitError('');
+            setDraftSavedAt(draft.savedAt ? new Date(draft.savedAt) : null);
+            setDraftRestoreBanner(false);
+          }}
+          onDiscardDraft={() => {
+            try { localStorage.removeItem(DRAFT_KEY); } catch { /* non-fatal */ }
+            setDraftSavedAt(null);
+            setDraftRestoreBanner(false);
+          }}
+          onSaveDraft={() => {
+            try {
+              const draft = {
+                client, area, projectDescription, quoteDate,
+                taxEnabled, taxLabel, taxRate, quoteNotes,
+                lineItems, sections,
+                savedAt: new Date().toISOString(),
+              };
+              localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+              const now = new Date();
+              setDraftSavedAt(now);
+            } catch { /* non-fatal */ }
+          }}
         />
       ) : null}
 
@@ -1080,6 +1199,7 @@ function NewQuoteTab(props) {
     submitting, submitError, submittedQuote, peekedQuoteNumber,
     previewOpen, previewBase64, setPreviewOpen,
     onPreview, onSubmit, onReset, online, isMobile,
+    draftSavedAt, draftRestoreBanner, onRestoreDraft, onDiscardDraft, onSaveDraft,
   } = props;
   const { confirm } = useDialog();
 
@@ -1119,6 +1239,15 @@ function NewQuoteTab(props) {
   return (
     <>
       <div style={isMobile ? S.bodyMobile : S.body}>
+        {draftRestoreBanner ? (
+          <div style={{ ...S.banner, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+            <span>✏️ You have an unsaved draft. Restore it to continue where you left off.</span>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button type="button" onClick={onRestoreDraft} style={S.primary}>Restore draft</button>
+              <button type="button" onClick={onDiscardDraft} style={S.secondary}>Discard</button>
+            </div>
+          </div>
+        ) : null}
         {!online ? (
           <div style={S.banner}>⚠ You're offline — submitting a quote needs an internet connection.</div>
         ) : null}
@@ -1364,7 +1493,15 @@ function NewQuoteTab(props) {
           ) : null}
           <div style={{ fontSize: '1rem' }}>Grand Total: <strong>{formatMoney(totals.grandTotal)}</strong></div>
         </div>
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+          {draftSavedAt ? (
+            <span style={{ fontSize: '0.75rem', color: '#6b8ab8' }}>
+              Draft saved {draftSavedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          ) : null}
+          <button type="button" onClick={onSaveDraft} style={S.secondary} disabled={!!submittedQuote}>
+            Save Draft
+          </button>
           <button type="button" onClick={onReset} style={S.secondary}>Reset</button>
           <button type="button" onClick={onPreview} style={S.secondary} disabled={submitting}>
             Preview PDF
