@@ -443,11 +443,22 @@ export default function TMTicketDetailSheet({
     return Number.isFinite(n);
   };
   const missingQtyLabels = useMemo(() => {
-    return officeLines
-      .filter((l) => isQtyRequired(l) && !isQtyFilled(l))
-      .map((l) => l.label || '(unlabeled)');
+    const presentRequired = officeLines.filter((l) => isQtyRequired(l));
+    // For workers: also flag required labels that are absent from the lines
+    // altogether (backend enforces the same rule). For office/admin: skip
+    // the "absent" check — they may have intentionally renamed a default
+    // label, and the backend (is_office=True) won't block them for it either.
+    const absentLabels = canOfficeEdit
+      ? []
+      : WORKER_EDITABLE_LINE_LABELS.filter(
+          (lbl) => !officeLines.some((l) => l.label === lbl)
+        );
+    return [
+      ...presentRequired.filter((l) => !isQtyFilled(l)).map((l) => l.label || '(unlabeled)'),
+      ...absentLabels,
+    ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [officeLines]);
+  }, [officeLines, canOfficeEdit]);
   const hasMissingQty = missingQtyLabels.length > 0;
 
   // Any editor can move an open ticket into "submitted" status. Workers

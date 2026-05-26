@@ -51,7 +51,10 @@ WORKER_EDITABLE_LINE_LABELS = frozenset({
 })
 
 
-def _validate_ticket_ready_for_submission(ticket: TimeMaterialsTicket) -> None:
+def _validate_ticket_ready_for_submission(
+    ticket: TimeMaterialsTicket,
+    is_office: bool = False,
+) -> None:
     """Enforce that every worker-required Office Use row has a numeric qty
     before a ticket may transition to `submitted` or `approved`.
 
@@ -60,6 +63,13 @@ def _validate_ticket_ready_for_submission(ticket: TimeMaterialsTicket) -> None:
     ("didn't use this item"); empty/null/non-numeric is rejected. Auto-
     populated lines are derived from the spray rows and don't need checking.
     Custom office-added pricing lines are optional.
+
+    is_office=True relaxes the "absent required label" check: office/admin
+    may intentionally rename a default label (e.g. rename "Assistant Applicator
+    (/hr)" to a custom description). In that case the canonical label is no
+    longer present in the lines, which is fine — office took responsibility.
+    We still require a numeric qty on any line whose label still matches a
+    canonical required name.
 
     Kept as a server-side backstop \u2014 the frontend also validates (the Submit /
     Approve buttons are gated on this) but a UI-only check is bypassable via
@@ -84,9 +94,12 @@ def _validate_ticket_ready_for_submission(ticket: TimeMaterialsTicket) -> None:
             float(qty)
         except (TypeError, ValueError):
             missing.append(label)
-    # Any required label missing from the payload altogether counts as empty.
-    for label in WORKER_EDITABLE_LINE_LABELS - present_required:
-        missing.append(label)
+    # Any required label absent from the payload altogether counts as empty
+    # for workers. For office/admin it is skipped — they may have renamed the
+    # line intentionally and are responsible for the qty on the renamed row.
+    if not is_office:
+        for label in WORKER_EDITABLE_LINE_LABELS - present_required:
+            missing.append(label)
     if missing:
         # Deterministic ordering for a clean error message.
         ordered = [l for l in WORKER_EDITABLE_LINE_LABELS if l in set(missing)]
@@ -567,7 +580,8 @@ def update_ticket(
             #
             # office_data may have just been mutated above \u2014 validate the
             # merged state, not the pre-merge version.
-            _validate_ticket_ready_for_submission(ticket)
+            # is_office=True so renamed default labels don't block approval.
+            _validate_ticket_ready_for_submission(ticket, is_office=True)
             ticket.status = TMTicketStatus.approved
             ticket.approved_at = datetime.utcnow()
             # current_user.id is guaranteed-present (auth upserts the user row).
@@ -635,7 +649,7 @@ def update_ticket(
                 )
             # Validate the merged office_data FIRST so the error message points
             # at the qty fields the worker still needs to fill in.
-            _validate_ticket_ready_for_submission(ticket)
+            _validate_ticket_ready_for_submission(ticket, is_office=False)
             ticket.status = TMTicketStatus.submitted
         # Workers cannot update rows (cost_code etc. is office-only); silently ignore.
 
