@@ -1160,16 +1160,79 @@ export default function HydroseedDailyRecord({
 
   // ── Preview view ─────────────────────────────────────────────────────────
   if (isPreviewing) {
+    // Print via hidden iframe (iOS-safe). window.open + onload.print() is
+    // unreliable inside iOS Safari + standalone PWA mode — the blob URL
+    // frequently fails to fire onload, leaving a blank window. Same
+    // pattern used by QuoteBuilder and HydroseedTicketDetailSheet.
+    const handlePrint = () => {
+      if (!pdfBase64) return;
+      let bytes;
+      try {
+        const raw = atob(pdfBase64);
+        bytes = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+      } catch {
+        return;
+      }
+      const blob = new Blob([bytes], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const iframe = document.createElement('iframe');
+      iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+      iframe.src = url;
+      const cleanup = () => {
+        try { iframe.remove(); } catch { /* ignore */ }
+        URL.revokeObjectURL(url);
+      };
+      iframe.onload = () => {
+        setTimeout(() => {
+          try {
+            iframe.contentWindow?.focus();
+            iframe.contentWindow?.print();
+          } catch {
+            window.open(url, '_blank');
+          }
+        }, 200);
+        setTimeout(cleanup, 60_000);
+      };
+      iframe.onerror = cleanup;
+      document.body.appendChild(iframe);
+    };
+    // Dropbox link — only meaningful in edit mode where the daily was
+    // previously submitted (so a Dropbox PDF exists). Brand-new dailies
+    // have no Dropbox URL until after submit. Same URL transform as
+    // T&M / Hydroseed tickets: replace www → dl content host, drop dl=0.
+    const dropboxHref = (editingRecord?.pdf_url || '')
+      .replace('www.dropbox.com', 'dl.dropboxusercontent.com')
+      .replace('&dl=0', '')
+      .replace('?dl=0', '?')
+      .replace(/[?&]$/, '');
     return (
       <div style={{
         backgroundColor: '#4b5563',
         display: 'flex', flexDirection: 'column',
         height: '100%', width: '100%', boxSizing: 'border-box',
       }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', flexShrink: 0, background: '#1f2937' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', flexShrink: 0, background: '#1f2937', gap: 12, flexWrap: 'wrap' }}>
           <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600, color: '#f9fafb' }}>
             Preview{recordNumber ? ` — ${recordNumber}` : ''}
           </h2>
+          <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              onClick={handlePrint}
+              disabled={!pdfBase64}
+              style={{ background: 'none', border: 'none', color: '#60a5fa', fontSize: '0.9rem', cursor: pdfBase64 ? 'pointer' : 'not-allowed', padding: 0 }}
+            >Print</button>
+            {dropboxHref ? (
+              <a
+                href={dropboxHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: '#60a5fa', fontSize: '0.9rem', textDecoration: 'none' }}
+              >
+                Open Dropbox PDF ↗
+              </a>
+            ) : null}
+          </div>
         </div>
         <PdfPreviewViewer pdfBase64={pdfBase64} />
         <div style={{ display: 'flex', gap: 10, padding: '12px 16px', flexShrink: 0, background: '#1f2937' }}>

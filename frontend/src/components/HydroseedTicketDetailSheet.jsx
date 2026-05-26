@@ -14,9 +14,12 @@ import { useDialog } from './DialogProvider';
 import SignaturePadModal from './SignaturePadModal';
 import PdfPreviewViewer from './PdfPreviewViewer';
 
+// Status labels mirror T&M herbicide so the office's mental model is
+// the same across both ticket types: Open → Pending → Approved.
+// (Backend value is still 'submitted' — the rename is UI-only.)
 const STATUS_LABELS = {
   open: 'Open',
-  submitted: 'Submitted',
+  submitted: 'Pending',
   approved: 'Approved',
 };
 const STATUS_COLORS = {
@@ -24,6 +27,58 @@ const STATUS_COLORS = {
   submitted: { bg: '#eab308', text: '#1f2937' },
   approved: { bg: '#22c55e', text: '#fff' },
 };
+
+// Print a base64-encoded PDF via a hidden iframe. Same approach as
+// QuoteBuilder — window.open() + onload.print() is unreliable in iOS
+// PWAs and Chromium standalone mode (blob URL frequently fails to fire
+// onload, leaving a blank window). The hidden iframe loads the PDF
+// inside the current page's origin, which exposes a working print()
+// on contentWindow on every browser we've tested.
+function printPdfFromBase64(pdfBase64) {
+  if (!pdfBase64) return;
+  let bytes;
+  try {
+    const raw = atob(pdfBase64);
+    bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  } catch {
+    return;
+  }
+  const blob = new Blob([bytes], { type: 'application/pdf' });
+  const url = URL.createObjectURL(blob);
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+  iframe.src = url;
+  const cleanup = () => {
+    try { iframe.remove(); } catch { /* ignore */ }
+    URL.revokeObjectURL(url);
+  };
+  iframe.onload = () => {
+    setTimeout(() => {
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } catch {
+        window.open(url, '_blank');
+      }
+    }, 200);
+    setTimeout(cleanup, 60_000);
+  };
+  iframe.onerror = cleanup;
+  document.body.appendChild(iframe);
+}
+
+// Convert a Dropbox share URL into a direct-content URL the browser
+// will open inline (PDF viewer) instead of as a download. Same
+// transform used by T&M tickets.
+function dropboxDirectUrl(rawUrl) {
+  if (!rawUrl) return '';
+  return rawUrl
+    .replace('www.dropbox.com', 'dl.dropboxusercontent.com')
+    .replace('&dl=0', '')
+    .replace('?dl=0', '?')
+    .replace(/[?&]$/, '');
+}
 
 const inputStyle = {
   width: '100%',
@@ -282,19 +337,51 @@ export default function HydroseedTicketDetailSheet({
     }
   };
 
+  // Re-open transitions:
+  //   Approved → Pending  (mirrors T&M handleUnapprove, so office can
+  //                        tweak rates and re-approve in one extra click)
+  //   Pending  → Open     (only fired by the office button; lets office
+  //                        kick a ticket back to the worker if the rolled-up
+  //                        rows are wrong)
   const handleUnapprove = async () => {
     if (!canOfficeEdit) return;
+    const goingTo = isApproved ? 'submitted' : 'open';
+    const message = isApproved
+      ? 'This will clear the approval signature so the ticket can be edited and re-approved.'
+      : 'This will move the ticket back to Open so the worker can revise it before resubmitting for approval.';
     if (!(await confirm({
       title: 'Re-open this ticket?',
-      message: 'This will remove the approval signature so it can be edited again.',
+      message,
     }))) return;
     setIsSaving(true);
     try {
-      const updated = await api.updateHydroseedTicket(ticket.id, { status: 'open' });
+      const updated = await api.updateHydroseedTicket(ticket.id, { status: goingTo });
       applyTicket(updated);
       onSaved?.(updated);
     } catch (e) {
       await alert({ title: 'Could not re-open', message: String(e?.message || e), severity: 'danger' });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Worker (or office on the worker's behalf) flips Open → Pending. We
+  // intentionally don't bundle a save here — the worker shouldn't be
+  // allowed to alter office_data, and the backend rejects that field on
+  // worker writes anyway. Office still sees the same button; if they
+  // had unsaved rate edits they should hit Save first.
+  const handleSubmitForApproval = async () => {
+    if (!(await confirm({
+      title: 'Submit for approval?',
+      message: 'This moves the ticket to Pending so the office can finalize pricing and sign.',
+    }))) return;
+    setIsSaving(true);
+    try {
+      const updated = await api.updateHydroseedTicket(ticket.id, { status: 'submitted' });
+      applyTicket(updated);
+      onSaved?.(updated);
+    } catch (e) {
+      await alert({ title: 'Submit failed', message: String(e?.message || e), severity: 'danger' });
     } finally {
       setIsSaving(false);
     }
@@ -352,16 +439,38 @@ export default function HydroseedTicketDetailSheet({
   if (!ticket) return null;
 
   if (isPreviewOpen) {
+    // Dropbox link — office/admin only. The stored PDF carries office
+    // rates + signature once the ticket is past Open, which workers
+    // must not see. Their preview is regenerated client-side without
+    // that data.
+    const dropboxHref = canOfficeEdit && ticket.pdf_url ? dropboxDirectUrl(ticket.pdf_url) : '';
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: '#1f2937' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: '#1f2937', gap: 12, flexWrap: 'wrap' }}>
           <h2 style={{ margin: 0, fontSize: '1.1rem', color: '#f9fafb' }}>
             Preview — {ticket.ticket_number}
           </h2>
-          <button
-            onClick={() => { setIsPreviewOpen(false); setPreviewBase64(null); }}
-            style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer' }}
-          >×</button>
+          <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              onClick={() => printPdfFromBase64(previewBase64)}
+              disabled={!previewBase64}
+              style={{ background: 'none', border: 'none', color: '#60a5fa', fontSize: '0.9rem', cursor: previewBase64 ? 'pointer' : 'not-allowed', padding: 0 }}
+            >Print</button>
+            {dropboxHref ? (
+              <a
+                href={dropboxHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: '#60a5fa', fontSize: '0.9rem', textDecoration: 'none' }}
+              >
+                Open Dropbox PDF ↗
+              </a>
+            ) : null}
+            <button
+              onClick={() => { setIsPreviewOpen(false); setPreviewBase64(null); }}
+              style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer', padding: 0 }}
+            >×</button>
+          </div>
         </div>
         <PdfPreviewViewer pdfBase64={previewBase64} />
       </div>
@@ -694,7 +803,14 @@ export default function HydroseedTicketDetailSheet({
         </div>
       </div>
 
-      {/* ── Actions ── */}
+      {/* ── Actions ──
+          Workflow mirrors T&M herbicide:
+            Open    → 'Submit for Approval'  (worker or office) → Pending
+            Pending → 'Approve & Sign'       (office)            → Approved
+            Pending → 'Re-open'              (office)            → Open
+            Approved→ 'Re-open'              (office)            → Pending
+          Save is available on Open and Pending for office (the office
+          types rates after the worker has submitted). */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 16 }}>
         <button onClick={handlePreview} disabled={isSaving} style={{
           flex: 1, padding: 12, background: '#374151', color: '#f9fafb',
@@ -706,13 +822,20 @@ export default function HydroseedTicketDetailSheet({
             border: 'none', borderRadius: 8, fontWeight: 600, cursor: isSaving ? 'not-allowed' : 'pointer',
           }}>{isSaving ? 'Saving…' : 'Save'}</button>
         )}
-        {canOfficeEdit && !isApproved && (
+        {status === 'open' && (
+          <button onClick={handleSubmitForApproval} disabled={isSaving} style={{
+            flex: 1, padding: 12, background: '#8b5cf6', color: 'white',
+            border: 'none', borderRadius: 8, fontWeight: 600, cursor: isSaving ? 'not-allowed' : 'pointer',
+            minWidth: 160,
+          }}>Submit for Approval</button>
+        )}
+        {canOfficeEdit && status === 'submitted' && (
           <button onClick={() => setIsSignatureOpen(true)} disabled={isSaving} style={{
             flex: 1, padding: 12, background: '#22c55e', color: 'white',
             border: 'none', borderRadius: 8, fontWeight: 600, cursor: isSaving ? 'not-allowed' : 'pointer',
           }}>Approve & Sign</button>
         )}
-        {canOfficeEdit && isApproved && (
+        {canOfficeEdit && (status === 'submitted' || isApproved) && (
           <button onClick={handleUnapprove} disabled={isSaving} style={{
             flex: 1, padding: 12, background: '#eab308', color: '#1f2937',
             border: 'none', borderRadius: 8, fontWeight: 600, cursor: isSaving ? 'not-allowed' : 'pointer',
@@ -725,6 +848,20 @@ export default function HydroseedTicketDetailSheet({
           }}>Delete</button>
         )}
       </div>
+
+      {/* Dropbox link — office/admin only, mirrors the T&M pattern. The
+          stored PDF includes rates + signature, which workers must not
+          see; their Preview button regenerates a clean copy on the fly. */}
+      {canOfficeEdit && ticket.pdf_url ? (
+        <a
+          href={dropboxDirectUrl(ticket.pdf_url)}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ display: 'inline-block', marginTop: 12, color: '#60a5fa', fontSize: '0.85rem' }}
+        >
+          Open Dropbox PDF ↗
+        </a>
+      ) : null}
 
       <SignaturePadModal
         isOpen={isSignatureOpen}
