@@ -232,62 +232,12 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
   doc.text(descLines, marginL + 115, y);
   y += Math.max(12, descLines.length * 11);
 
-  // ── Payroll Hours + Crew Truck + Travel + Water Truck ────────────────────
-  // Compact two-column block so the worker can verify what they entered
-  // before submit (and so the office's HT auto-rollup is traceable back to
-  // each daily). Each line is suppressed when both its values are blank
-  // so an empty section doesn't waste vertical space on quick dailies.
-  const supHrs = toNum(data.supervisor_hours);
-  const leadHrs = toNum(data.lead_hours);
-  const labourPer = toNum(data.labour_hours_per_person);
-  const workersCount = (data.workers || []).length;
-  const labourTotal = labourPer * workersCount;
-  const ctCount = toNum(data.crew_truck_count);
-  const ctHours = toNum(data.crew_truck_hours);
-  const ctTotal = ctCount * ctHours;
-  const travelKm = toNum(data.travel_km);
-  const waterLoads = toNum(data.water_truck_loads);
-
-  const hoursLines = [];
-  if (supHrs)    hoursLines.push(['Supervisor:', `${fmtNum(supHrs)} hrs`]);
-  if (leadHrs)   hoursLines.push(['Lead:',       `${fmtNum(leadHrs)} hrs`]);
-  if (labourTotal) hoursLines.push([
-    'Labour:',
-    `${fmtNum(labourPer)} hrs/person × ${workersCount} = ${fmtNum(labourTotal)} hrs total`,
-  ]);
-  if (ctTotal)   hoursLines.push([
-    'Crew Trucks:',
-    `${fmtNum(ctCount, 0)} × ${fmtNum(ctHours)} hrs = ${fmtNum(ctTotal)} truck-hrs`,
-  ]);
-  if (travelKm)  hoursLines.push(['Travel (Mob/Demob):', `${fmtNum(travelKm)} kms`]);
-  if (waterLoads) hoursLines.push(['Water Truck:',       `${fmtNum(waterLoads, 0)} loads`]);
-
-  if (hoursLines.length > 0) {
-    y += 4;
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8.5);
-    doc.text('Hours & Logistics', marginL, y);
-    y += 3;
-    drawRect(marginL, y, contentW, 0.5);
-    y += 8;
-    // Two-column grid for tighter packing on dailies with many fields.
-    const colW = contentW / 2;
-    for (let i = 0; i < hoursLines.length; i += 2) {
-      const left = hoursLines[i];
-      const right = hoursLines[i + 1];
-      doc.setFont('helvetica', 'bold');
-      doc.text(left[0], marginL, y);
-      doc.setFont('helvetica', 'normal');
-      doc.text(left[1], marginL + 90, y);
-      if (right) {
-        doc.setFont('helvetica', 'bold');
-        doc.text(right[0], marginL + colW, y);
-        doc.setFont('helvetica', 'normal');
-        doc.text(right[1], marginL + colW + 90, y);
-      }
-      y += 11;
-    }
-  }
+  // Hours & Logistics (supervisor / lead / labour / crew trucks / travel /
+  // water truck) is intentionally NOT rendered on the daily PDF. Workers
+  // still log those values on the form so the office HT ticket can roll
+  // them up across all linked dailies for billing, but the daily sheet
+  // stays focused on what was actually applied to the ground — materials,
+  // loads, and photos. Keeps seed-tag photos on page 1 of typical jobs.
 
   // ── Materials ────────────────────────────────────────────────────────────
   // Compact section so multi-seed-type dailies still leave room for photos
