@@ -753,6 +753,11 @@ export default function App() {
   // wakes that sync up immediately when sync-status or Realtime says
   // something changed, instead of waiting for the 30 s local poll.
   const [hydroseedRefreshToken, setHydroseedRefreshToken] = useState(0);
+  // Same pattern for hydroseed dailies (HD######). Bumped from the
+  // sync-status poll when `hydroseed_dailies_last_updated` moves and
+  // from Realtime daily inserts/updates so FormsPanel can run a cheap
+  // delta sync of its dailies list instead of a full re-fetch.
+  const [hydroseedDailiesRefreshToken, setHydroseedDailiesRefreshToken] = useState(0);
   // Recents cache (IndexedDB-backed, pre-loaded at startup)
   const [cachedRecents, setCachedRecents] = useState([]);
   // Lookups cache (IndexedDB-backed)
@@ -2374,6 +2379,8 @@ export default function App() {
         // already ships `hydroseed_tickets_last_updated` in /api/sync-status.
         const hydroseedTicketsChanged = !lastSyncStatusRef.current?.hydroseed_tickets_last_updated ||
                                 syncStatus.hydroseed_tickets_last_updated !== lastSyncStatusRef.current.hydroseed_tickets_last_updated;
+        const hydroseedDailiesChanged = !lastSyncStatusRef.current?.hydroseed_dailies_last_updated ||
+                                syncStatus.hydroseed_dailies_last_updated !== lastSyncStatusRef.current.hydroseed_dailies_last_updated;
 
         // Snapshot prev pending counts BEFORE overwriting the ref so the
         // pending-list re-fetch guard below sees the real delta.
@@ -2390,6 +2397,7 @@ export default function App() {
         // relevant tab is in view, saving egress when nobody's looking).
         if (tmTicketsChanged) setTmRefreshToken((x) => x + 1);
         if (hydroseedTicketsChanged) setHydroseedRefreshToken((x) => x + 1);
+        if (hydroseedDailiesChanged) setHydroseedDailiesRefreshToken((x) => x + 1);
 
         // Persist the latest watermarks to IndexedDB so the NEXT browser
         // reload can take the hydrate-from-cache fast path and skip the
@@ -2870,7 +2878,15 @@ export default function App() {
     // delta sync thereafter) the same way `tmRefreshToken` does for T&M.
     // Dailies still ride `draftsRefreshToken` since the FormsPanel daily
     // lists already depend on it (drafts + recents).
-    const onHydroseedDailies = () => setDraftsRefreshToken((x) => x + 1);
+    const onHydroseedDailies = () => {
+      // Bump both tokens so:
+      //   - drafts pane refreshes (legacy behaviour)
+      //   - the unified hydroseedDailies cache in FormsPanel runs a
+      //     cheap delta sync immediately instead of waiting for the
+      //     next sync-status tick.
+      setDraftsRefreshToken((x) => x + 1);
+      setHydroseedDailiesRefreshToken((x) => x + 1);
+    };
     const onHydroseedTickets = () => setHydroseedRefreshToken((x) => x + 1);
     const onHydroseedRows = () => setHydroseedRefreshToken((x) => x + 1);
 
@@ -6473,13 +6489,34 @@ export default function App() {
                 setEditingHydroseedRecord(null);
                 setHydroseedDailyOpen(true);
               }}
-              onEditHydroseedDaily={(record) => {
-                setEditingHydroseedRecord(record);
-                setResumingHydroseedDraft(null);
-                setHydroseedDuplicateFrom(null);
-                setHydroseedDailyOpen(true);
+              onEditHydroseedDaily={async (record) => {
+                // List rows are slim (no daily_data) — fetch the full record
+                // on demand so the form can hydrate all fields. This keeps
+                // the recently-submitted list itself fast.
+                setMessage('Loading record…');
+                try {
+                  const full = await api.getHydroseedDaily(record.id);
+                  setEditingHydroseedRecord(full);
+                  setResumingHydroseedDraft(null);
+                  setHydroseedDuplicateFrom(null);
+                  setHydroseedDailyOpen(true);
+                  setMessage('');
+                } catch (e) {
+                  setMessage('Failed to load record: ' + (e?.message || 'unknown'));
+                }
               }}
-              onDuplicateHydroseedDaily={(record) => handleStartHydroseedDaily({ duplicateFrom: record })}
+              onDuplicateHydroseedDaily={async (record) => {
+                // Same on-demand fetch as Edit — duplication needs the full
+                // daily_data snapshot to clone crew/ingredients/etc.
+                setMessage('Loading record…');
+                try {
+                  const full = await api.getHydroseedDaily(record.id);
+                  setMessage('');
+                  handleStartHydroseedDaily({ duplicateFrom: full });
+                } catch (e) {
+                  setMessage('Failed to load record: ' + (e?.message || 'unknown'));
+                }
+              }}
               onStartLeaseSheetFromDraft={(draft) => {
                 // Tapping a draft (or "New lease sheet") opens the lease sheet overlay.
                 // When draft is null, the user needs to pick a site from the Map tab first.
@@ -6532,6 +6569,7 @@ export default function App() {
               draftsRefreshToken={draftsRefreshToken}
               tmRefreshToken={tmRefreshToken}
               hydroseedRefreshToken={hydroseedRefreshToken}
+              hydroseedDailiesRefreshToken={hydroseedDailiesRefreshToken}
               roleCanAdmin={roleCanAdmin}
               viewAsWorker={viewAsWorker}
               currentUserName={currentUserName}

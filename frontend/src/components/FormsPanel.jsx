@@ -231,6 +231,11 @@ export default function FormsPanel({
   // hydroseed lists reflect office approvals + new tickets in near
   // real time without forcing a page reload.
   hydroseedRefreshToken = 0,
+  // Same idea but for hydroseed dailies (HD######). Wakes the dailies
+  // delta-sync effect when sync-status / Realtime says something
+  // changed, so the recently-submitted Hydroseed Dailies list reflects
+  // teammates' submissions in near real time without a full re-fetch.
+  hydroseedDailiesRefreshToken = 0,
   roleCanAdmin = false,
   // When true, the user is an admin/office pretending to be a worker.
   // We filter the recently-submitted + open-ticket lists down to records
@@ -287,6 +292,12 @@ export default function FormsPanel({
   const hydroseedTicketsSinceRef = useRef(null);
   const hydroseedSyncingRef = useRef(false);
   const hydroseedDeltaFailCountRef = useRef(0);
+  // Watermark + busy guard for the dailies delta-sync effect below.
+  // Cold start does ONE slim full-list fetch (deferred daily_data),
+  // every subsequent tick is a delta call.
+  const hydroseedDailiesSinceRef = useRef(null);
+  const hydroseedDailiesSyncingRef = useRef(false);
+  const hydroseedDailiesDeltaFailCountRef = useRef(0);
 
   // Deep-link from the header "Syncing X%" badge: when App bumps
   // `uploadTabSignal`, jump to In Progress → Uploading so the worker
@@ -588,24 +599,70 @@ export default function FormsPanel({
     return () => { cancelled = true; };
   }, [visible, subTab, recTab, hydroseedRefreshToken, tmLocalTick]);
 
-  // Load submitted Hydroseed dailies when Recently Submitted opens.
-  // Tickets now flow through the unified cache above; dailies stay on
-  // their own simple fetch since they don't yet have a delta endpoint
-  // and the payload is small enough that a cold list works fine.
+  // Submitted Hydroseed dailies — delta-sync mirror of the tickets effect
+  // above. Cold start pulls the slim list (`daily_data` deferred backend-
+  // side); every subsequent tick goes through `/api/hydroseed/dailies/delta`
+  // so we only ship rows whose `updated_at > since`. Soft-deletes come
+  // back in `ids_removed` and get pruned locally.
+  //
+  // Triggered by: visible/subTab (user navigation), `tmLocalTick` (30 s
+  // local poll, shared with T&M / hydroseed tickets), `draftsRefreshToken`
+  // (post-submit local nudge), and `hydroseedDailiesRefreshToken` (App's
+  // sync-status poll + Realtime daily events).
   useEffect(() => {
     if (!visible) return;
     if (subTab !== SUB_RECENTS) return;
+    if (hydroseedDailiesSyncingRef.current) return;
+
     let cancelled = false;
+    hydroseedDailiesSyncingRef.current = true;
     (async () => {
       try {
-        const dailies = await api.listHydroseedDailies();
-        if (!cancelled) setHydroseedDailies(dailies || []);
+        const since = hydroseedDailiesSinceRef.current;
+        if (!since) {
+          // Cold start — slim full list. Backend defers `daily_data`,
+          // so this is hundreds of times smaller than the previous
+          // payload. Edit / Duplicate fetch the full record on demand.
+          const list = await api.listHydroseedDailies();
+          if (cancelled) return;
+          hydroseedDailiesDeltaFailCountRef.current = 0;
+          setHydroseedDailies(list || []);
+          hydroseedDailiesSinceRef.current = new Date().toISOString();
+        } else {
+          const delta = await api.getHydroseedDailiesDelta(since);
+          if (cancelled) return;
+          hydroseedDailiesDeltaFailCountRef.current = 0;
+          const items = Array.isArray(delta?.items) ? delta.items : [];
+          const idsRemoved = Array.isArray(delta?.ids_removed) ? delta.ids_removed : [];
+          if (items.length > 0 || idsRemoved.length > 0) {
+            setHydroseedDailies((prev) => {
+              const byId = new Map(prev.map((d) => [d.id, d]));
+              for (const it of items) byId.set(it.id, it);
+              for (const id of idsRemoved) byId.delete(id);
+              // Sort newest first by created_at — list view is rendered
+              // in this order, and Map iteration order is insertion-based
+              // so we have to re-sort after merges.
+              return Array.from(byId.values()).sort((a, b) => {
+                const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+                const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+                if (tb !== ta) return tb - ta;
+                return (b.id || 0) - (a.id || 0);
+              });
+            });
+          }
+          hydroseedDailiesSinceRef.current = delta?.server_time || hydroseedDailiesSinceRef.current;
+        }
       } catch (e) {
-        if (!cancelled) console.warn('[FORMS] hydroseed dailies:', e.message);
+        hydroseedDailiesDeltaFailCountRef.current += 1;
+        if (hydroseedDailiesDeltaFailCountRef.current >= 2) {
+          console.warn('[FORMS] hydroseed dailies sync failed:', e.message);
+        }
+      } finally {
+        hydroseedDailiesSyncingRef.current = false;
       }
     })();
     return () => { cancelled = true; };
-  }, [visible, subTab, tmLocalTick, draftsRefreshToken]);
+  }, [visible, subTab, tmLocalTick, draftsRefreshToken, hydroseedDailiesRefreshToken]);
 
   // Sort helper: newest first by created_at (fall back to id for stable ordering).
   const byNewest = (a, b) => {

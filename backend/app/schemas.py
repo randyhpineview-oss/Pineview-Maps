@@ -768,6 +768,34 @@ class HydroseedDailyRead(BaseModel):
     client_submission_id: str | None = None
 
 
+class HydroseedDailyListRead(BaseModel):
+    """Slim list/delta view of a hydroseed daily. Omits the heavy
+    `daily_data` JSONB blob (loads + crew + ingredients snapshot) and
+    photo URL arrays — list views only render scalar columns. The full
+    record is fetched on demand via `GET /api/hydroseed/dailies/{id}`
+    when the user taps Edit or Duplicate."""
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    record_number: str
+    work_date: date
+    client: str
+    area: str
+    site_name: str | None = None
+    description_of_work: str | None = None
+    mulch_type: str | None = None
+    comments: str | None = None
+    pdf_url: str | None = None
+    site_id: int | None = None
+    hydroseed_ticket_id: int | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    created_by_user_id: int | None = None
+    created_by_name: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    client_submission_id: str | None = None
+
+
 class HydroseedDailyCreate(BaseModel):
     """Submit payload for POST /api/hydroseed/dailies. The full form snapshot
     rides in `daily_data`; top-level fields denormalize for indexing."""
@@ -810,6 +838,9 @@ class HydroseedDailyUpdate(BaseModel):
 
 
 class HydroseedDailyDeltaResponse(BaseModel):
-    items: list[HydroseedDailyRead]
+    # Slim payload — same rationale as HydroseedDailyListRead. Frontend's
+    # delta poll only needs to maintain the lightweight list cache; full
+    # `daily_data` is fetched on demand for edit/duplicate.
+    items: list[HydroseedDailyListRead]
     ids_removed: list[int]
     server_time: datetime

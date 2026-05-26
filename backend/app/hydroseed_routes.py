@@ -16,7 +16,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, or_, text
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, defer, joinedload
 
 from app.auth import get_current_user, require_roles
 from app.database import get_db
@@ -31,6 +31,7 @@ from app.models import (
 from app.schemas import (
     HydroseedDailyCreate,
     HydroseedDailyDeltaResponse,
+    HydroseedDailyListRead,
     HydroseedDailyRead,
     HydroseedDailyUpdate,
     HydroseedTicketCreate,
@@ -79,9 +80,21 @@ def _worker_owns_daily(daily: HydroseedDailyRecord, current_user: User) -> bool:
 
 
 def _visible_tickets_query(db: Session, current_user: User, include_deleted: bool = False):
+    # EGRESS: defer heavy photo URL arrays on the joined daily_records
+    # collection. We CANNOT defer `daily_data` here because the
+    # `HydroseedLinkedDaily._hoist_from_daily_data` validator reads it to
+    # surface customer_rep / crew / payroll-hour scalars at the response
+    # top level — deferring would trigger an N+1 lazy-load per linked
+    # daily and turn the ticket list into multi-second load times. The
+    # response schema (HydroseedLinkedDaily) does NOT echo `daily_data`
+    # back over the wire, so loading it inline costs DB→backend transfer
+    # only, not egress to the client.
     q = db.query(HydroseedTicket).options(
         joinedload(HydroseedTicket.rows),
-        joinedload(HydroseedTicket.daily_records),
+        joinedload(HydroseedTicket.daily_records).options(
+            defer(HydroseedDailyRecord.photo_urls),
+            defer(HydroseedDailyRecord.seed_tag_photo_urls),
+        ),
     )
     if not include_deleted:
         q = q.filter(HydroseedTicket.deleted_at.is_(None))
@@ -624,7 +637,7 @@ def get_my_latest_daily(
 
 # ── List / detail ────────────────────────────────────────────────────────────
 
-@router.get("/dailies", response_model=list[HydroseedDailyRead])
+@router.get("/dailies", response_model=list[HydroseedDailyListRead])
 def list_dailies(
     work_date: date | None = Query(default=None),
     client: str | None = Query(default=None),
@@ -632,7 +645,15 @@ def list_dailies(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    q = _visible_dailies_query(db, current_user)
+    # EGRESS: defer the heavy daily_data JSONB blob + photo URL arrays.
+    # The list view only renders scalar header columns; the full record
+    # is fetched on demand via GET /api/hydroseed/dailies/{id} when the
+    # user taps Edit or Duplicate.
+    q = _visible_dailies_query(db, current_user).options(
+        defer(HydroseedDailyRecord.daily_data),
+        defer(HydroseedDailyRecord.photo_urls),
+        defer(HydroseedDailyRecord.seed_tag_photo_urls),
+    )
     if work_date:
         q = q.filter(HydroseedDailyRecord.work_date == work_date)
     if client:
@@ -640,25 +661,30 @@ def list_dailies(
     if area:
         q = q.filter(HydroseedDailyRecord.area == area)
     dailies = q.order_by(HydroseedDailyRecord.created_at.desc()).limit(200).all()
-    return [HydroseedDailyRead.model_validate(d) for d in dailies]
+    return [HydroseedDailyListRead.model_validate(d) for d in dailies]
 
 
 # Declared BEFORE /dailies/{id} so FastAPI doesn't route 'deleted' as an id.
-@router.get("/dailies/deleted", response_model=list[HydroseedDailyRead])
+@router.get("/dailies/deleted", response_model=list[HydroseedDailyListRead])
 def list_deleted_dailies(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
 ):
     """List soft-deleted hydroseed dailies (admin/office only). Used by
-    AdminPanel → Recent Deletes."""
+    AdminPanel → Recent Deletes. Slim payload — daily_data deferred."""
     dailies = (
         db.query(HydroseedDailyRecord)
+        .options(
+            defer(HydroseedDailyRecord.daily_data),
+            defer(HydroseedDailyRecord.photo_urls),
+            defer(HydroseedDailyRecord.seed_tag_photo_urls),
+        )
         .filter(HydroseedDailyRecord.deleted_at.isnot(None))
         .order_by(HydroseedDailyRecord.deleted_at.desc())
         .limit(500)
         .all()
     )
-    return [HydroseedDailyRead.model_validate(d) for d in dailies]
+    return [HydroseedDailyListRead.model_validate(d) for d in dailies]
 
 
 # Declared BEFORE /dailies/{id} so FastAPI doesn't route 'delta' as an id.
@@ -669,17 +695,24 @@ def dailies_delta(
     current_user: User = Depends(get_current_user),
 ):
     server_time = datetime.utcnow()
-    base = _visible_dailies_query(db, current_user, include_deleted=True).filter(
+    # Slim payload — defer the heavy daily_data JSONB blob + photo URL
+    # arrays. The delta endpoint feeds the FormsPanel list cache; full
+    # records are fetched on demand for edit/duplicate.
+    base = _visible_dailies_query(db, current_user, include_deleted=True).options(
+        defer(HydroseedDailyRecord.daily_data),
+        defer(HydroseedDailyRecord.photo_urls),
+        defer(HydroseedDailyRecord.seed_tag_photo_urls),
+    ).filter(
         HydroseedDailyRecord.updated_at > since
     )
     rows = base.order_by(HydroseedDailyRecord.updated_at.desc()).limit(500).all()
-    items: list[HydroseedDailyRead] = []
+    items: list[HydroseedDailyListRead] = []
     ids_removed: list[int] = []
     for d in rows:
         if d.deleted_at is not None:
             ids_removed.append(d.id)
         else:
-            items.append(HydroseedDailyRead.model_validate(d))
+            items.append(HydroseedDailyListRead.model_validate(d))
     return HydroseedDailyDeltaResponse(items=items, ids_removed=ids_removed, server_time=server_time)
 
 
