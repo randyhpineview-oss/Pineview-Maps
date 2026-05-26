@@ -212,16 +212,28 @@ function findRate(officeLines, label) {
   return 0;
 }
 
-// Best-effort fuzzy rate lookup: matches by label substring. Used when the
-// schedule slot name (e.g. "#1 Seed") doesn't exactly match the office-
-// seeded label (e.g. "Seed: Native Mix"). Pass an array of needle strings
-// in priority order; returns the first match.
+// Best-effort fuzzy rate lookup: matches by label *word boundary*. Used
+// when the schedule slot name (e.g. "#1 Seed") doesn't exactly match the
+// office-seeded label (e.g. "Seed: Native Mix"). Pass an array of needle
+// strings in priority order; returns the first match.
+//
+// Whole-word matching is critical: a raw String.includes() call would
+// let the short needle 'seed' match the substring inside "hydroSEEDer",
+// which silently pulled the office's hydroseeder rate onto every #N
+// Seed schedule row whenever those rows had no exact label match. Same
+// trap with 'lead' inside "misled" / "leader", 'mob' inside "mobile",
+// 'labour' inside "Labourer", etc. Word boundaries avoid all of them
+// without us having to whitelist needles individually.
 function findRateFuzzy(officeLines, needles) {
   for (const needle of needles) {
     const target = (needle || '').toLowerCase().trim();
     if (!target) continue;
+    // Escape regex metacharacters so needles like 'seed: <name>' (colon)
+    // or 'mob/demob' (slash) are matched literally inside the regex.
+    const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`\\b${escaped}\\b`, 'i');
     for (const l of officeLines || []) {
-      if ((l?.label || '').toLowerCase().includes(target)) {
+      if (re.test(l?.label || '')) {
         const r = parseFloat(l.rate);
         if (Number.isFinite(r)) return r;
       }
