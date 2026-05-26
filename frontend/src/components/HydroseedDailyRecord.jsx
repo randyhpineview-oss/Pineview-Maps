@@ -890,7 +890,7 @@ export default function HydroseedDailyRecord({
               />
             </div>
             <div>
-              <label style={labelStyle}>Micronutrients (L)</label>
+              <label style={labelStyle}>Micro Nutrients (L)</label>
               <input
                 type="number" inputMode="decimal" min="0" step="any"
                 value={editingLoad.micronutrients_l}

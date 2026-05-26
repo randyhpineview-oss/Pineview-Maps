@@ -253,7 +253,7 @@ def _aggregate_rows_from_daily(daily: HydroseedDailyRecord) -> list[dict]:
         ("Aqua Gel", total_aqua_gel_kg, "kg"),
         ("Tackifier", total_tackifier_kg, "kg"),
         ("Fertilizer", total_fertilizer_kg, "kg"),
-        ("Micronutrients", total_micronutrients_l, "L"),
+        ("Micro Nutrients", total_micronutrients_l, "L"),
         ("Area covered", total_area_m2, "m²"),
     ]
     for label, qty, unit in material_rows:

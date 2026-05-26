@@ -509,7 +509,11 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
 
   const mulchKg          = sumRowsByLabel(rows, 'Mulch');
   const mulchBales       = sumRowsByLabel(rows, 'Mulch (bales)');
-  const micronutrientsL  = sumRowsByLabel(rows, 'Micronutrients');
+  // Accept both spellings so any rows persisted under the original
+  // one-word 'Micronutrients' label still sum into the same total as
+  // the post-rename 'Micro Nutrients' rows.
+  const micronutrientsL  = sumRowsByLabel(rows, 'Micro Nutrients')
+                         + sumRowsByLabel(rows, 'Micronutrients');
   const fertilizerKg= sumRowsByLabel(rows, 'Fertilizer');
   const tackifierKg = sumRowsByLabel(rows, 'Tackifier');
   const aquagelKg   = sumRowsByLabel(rows, 'Aqua Gel');
@@ -640,10 +644,13 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
   // dedicated column to the schedule.
   if ((Number(micronutrientsL) || 0) !== 0) {
     drawScheduleRow({
-      label: 'Micronutrients',
+      label: 'Micro Nutrients',
       kgsUsed: `${formatQty(micronutrientsL)} L`,
       hours: null,
-      rate: findRateFuzzy(officeLines, ['micronutrients', 'micronutrient']),
+      // Rate lookup tries the two-word form first, then the legacy
+      // one-word spelling so office lines saved before the rename
+      // still match.
+      rate: findRateFuzzy(officeLines, ['micro nutrients', 'micronutrients', 'micronutrient']),
     });
   }
   if (hasData(bioticKg, 0)) {

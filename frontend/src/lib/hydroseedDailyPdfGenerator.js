@@ -341,16 +341,33 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
   doc.text('Loads', pageW / 2, y, { align: 'center' });
   y += 6;
 
-  // Dynamic columns: #, Area (m²), Mulch (kg), Soil Amend (kg), then one per
-  // declared seed type, then Aqua Gel, Tackifier, Fertilizer. Notes is shown
-  // only if any load has a non-empty `notes` string (saves horizontal space
-  // on common daily PDFs).
+  // Dynamic columns: #, Area (m²), Bales, Mulch (kg) are always present.
+  // Each additive (Soil Amend / Aqua Gel / Tackifier / Fertilizer / Micro
+  // Nutrients) only renders if at least one load actually used it — a
+  // typical day uses ~2 additives, so this keeps the table from running
+  // off the page on common dailies (and stops Micro Nutrients getting
+  // truncated in the last column on busy days). Notes column follows
+  // the same any-non-empty rule it always did.
   const loads = (data.loads || []).slice();
   const hasNotes = loads.some(l => (l?.notes || '').trim() !== '');
   const seedNames = seedTypes.map(s => s.name).filter(Boolean);
 
-  // Fixed widths for the first columns, then divide what's left among seed
-  // columns + Aqua/Tackifier/Fertilizer. Bales is its own column now —
+  // Additive column definitions — `key` is the load field the value
+  // comes from. The filtered list `additiveCols` keeps only the
+  // additives that have data on this daily.
+  const ALL_ADDITIVE_COLS = [
+    { key: 'soil_amendment_kg', label: 'Soil Amend', unit: 'kg' },
+    { key: 'aqua_gel_kg',       label: 'Aqua Gel',   unit: 'kg' },
+    { key: 'tackifier_kg',      label: 'Tackifier',  unit: 'kg' },
+    { key: 'fertilizer_kg',     label: 'Fertilizer', unit: 'kg' },
+    { key: 'micronutrients_l',  label: 'Micro Nutrients', unit: 'L' },
+  ];
+  const additiveCols = ALL_ADDITIVE_COLS.filter(c =>
+    loads.some(l => toNum(l?.[c.key]) > 0)
+  );
+
+  // Fixed widths for the first columns, then divide what's left between
+  // seed columns and the additive tail. Bales is its own column now —
   // workers wanted to see bale count separated from the kg total in the
   // loads table for at-a-glance verification.
   const fixedColW = {
@@ -358,32 +375,24 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
     area: 50,
     bales: 34,
     mulch: 48,
-    soilAmend: 50,
   };
-  // Tail columns: granular additives in kg + Micronutrients in litres.
-  // `tailCols` is a parallel list of { label, unit } so the header can
-  // print the right unit per column (paper convention).
-  const tailCols = [
-    { label: 'Aqua Gel', unit: 'kg' },
-    { label: 'Tackifier', unit: 'kg' },
-    { label: 'Fertilizer', unit: 'kg' },
-    { label: 'Micronutrients', unit: 'L' },
-  ];
   const notesW = hasNotes ? 80 : 0;
-  const tailW = 44 * tailCols.length;
-  const fixedTotal = fixedColW.num + fixedColW.area + fixedColW.bales + fixedColW.mulch + fixedColW.soilAmend + tailW + notesW;
+  // Additive columns get a touch more width than before since the table
+  // is usually narrower now (fewer cols means more room per col).
+  const additiveW = 52;
+  const tailW = additiveW * additiveCols.length;
+  const fixedTotal = fixedColW.num + fixedColW.area + fixedColW.bales + fixedColW.mulch + tailW + notesW;
   const seedColTotalW = contentW - fixedTotal;
   const perSeedW = seedNames.length > 0 ? Math.max(34, Math.min(60, seedColTotalW / seedNames.length)) : 0;
 
-  // Header cells in order: # | Area | Bales | Mulch (kg) | Soil Amend (kg) | seeds… | Aqua Gel | Tackifier | Fertilizer | Micronutrients | (Notes)
+  // Header cells in order: # | Area | Bales | Mulch (kg) | seeds… | additives… | (Notes)
   const headerCells = [
     { label: '#', w: fixedColW.num },
     { label: 'Area (m²)', w: fixedColW.area },
     { label: 'Bales', w: fixedColW.bales },
     { label: 'Mulch (kg)', w: fixedColW.mulch },
-    { label: 'Soil Amend (kg)', w: fixedColW.soilAmend },
     ...seedNames.map(n => ({ label: `${n} (kg)`, w: perSeedW })),
-    ...tailCols.map(t => ({ label: `${t.label} (${t.unit})`, w: 44 })),
+    ...additiveCols.map(c => ({ label: `${c.label} (${c.unit})`, w: additiveW })),
     ...(hasNotes ? [{ label: 'Notes', w: notesW }] : []),
   ];
   // Resize so total exactly equals contentW (rounding fudge).
@@ -419,16 +428,14 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
   drawLoadsHeader(false);
 
   // Running totals for the TOTALS row at the bottom of the table.
+  // `additives` is keyed by load-field name (same key used in the col
+  // definition) so the row + totals loops can read it positionally.
   const totals = {
     area_m2: 0,
     bales: 0,
     mulch_kg: 0,
-    soil_amend: 0,
     seed: Object.fromEntries(seedNames.map(n => [n, 0])),
-    aqua_gel: 0,
-    tackifier: 0,
-    fertilizer: 0,
-    micronutrients: 0,
+    additives: Object.fromEntries(additiveCols.map(c => [c.key, 0])),
   };
 
   doc.setFont('helvetica', 'normal');
@@ -445,14 +452,12 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
     totals.area_m2 += toNum(load.area_m2);
     totals.bales += bales;
     totals.mulch_kg += mulchKg;
-    totals.soil_amend += toNum(load.soil_amendment_kg);
     for (const n of seedNames) {
       totals.seed[n] += toNum((load.seed_kgs || {})[n]);
     }
-    totals.aqua_gel += toNum(load.aqua_gel_kg);
-    totals.tackifier += toNum(load.tackifier_kg);
-    totals.fertilizer += toNum(load.fertilizer_kg);
-    totals.micronutrients += toNum(load.micronutrients_l);
+    for (const c of additiveCols) {
+      totals.additives[c.key] += toNum(load[c.key]);
+    }
 
     const cells = [
       String(load.load_number || (r + 1)),
@@ -462,12 +467,8 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
       // crowded into one cell, which workers flagged as confusing).
       bales ? fmtNum(bales, 0) : '',
       mulchKg ? fmtNum(mulchKg, 0) : '',
-      fmtNum(load.soil_amendment_kg),
       ...seedNames.map(n => fmtNum((load.seed_kgs || {})[n])),
-      fmtNum(load.aqua_gel_kg),
-      fmtNum(load.tackifier_kg),
-      fmtNum(load.fertilizer_kg),
-      fmtNum(load.micronutrients_l),
+      ...additiveCols.map(c => fmtNum(load[c.key])),
       ...(hasNotes ? [String(load.notes || '')] : []),
     ];
     let cx = marginL;
@@ -498,12 +499,8 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
       fmtNum(totals.area_m2, 0),
       fmtNum(totals.bales, 0),
       fmtNum(totals.mulch_kg, 0),
-      fmtNum(totals.soil_amend),
       ...seedNames.map(n => fmtNum(totals.seed[n])),
-      fmtNum(totals.aqua_gel),
-      fmtNum(totals.tackifier),
-      fmtNum(totals.fertilizer),
-      fmtNum(totals.micronutrients),
+      ...additiveCols.map(c => fmtNum(totals.additives[c.key])),
       ...(hasNotes ? [''] : []),
     ];
     for (let i = 0; i < headerCells.length; i++) {
