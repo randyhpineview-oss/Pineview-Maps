@@ -104,6 +104,16 @@ function formatMoney(n) {
   return n.toFixed(2);
 }
 
+// Rate values can be sub-cent (e.g. herbicide $/m² priced at $0.035). Render
+// up to 3 decimals, but trim trailing zeros below the standard 2-decimal
+// dollar form so $12.50 still reads "12.50", not "12.500".
+function formatRate(n) {
+  if (!Number.isFinite(n) || n === 0) return '';
+  const fixed3 = n.toFixed(3);
+  // If the 3rd decimal is "0", fall back to 2 decimals for readability.
+  return fixed3.endsWith('0') ? n.toFixed(2) : fixed3;
+}
+
 /**
  * Generate a Time & Materials Ticket PDF.
  *
@@ -365,7 +375,7 @@ export async function generateTMTicketPdf(ticket, options = {}) {
     const cells = [
       line.label || '',
       qtyText,
-      includeOfficeData && Number.isFinite(rate) && rate !== 0 ? `$ ${formatMoney(rate)}` : includeOfficeData ? '$' : '',
+      includeOfficeData && Number.isFinite(rate) && rate !== 0 ? `$ ${formatRate(rate)}` : includeOfficeData ? '$' : '',
       includeOfficeData && sub > 0 ? `$ ${formatMoney(sub)}` : (includeOfficeData ? '$' : ''),
     ];
     for (let i = 0; i < officeColW.length; i++) {

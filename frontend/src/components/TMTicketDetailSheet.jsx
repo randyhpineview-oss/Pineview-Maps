@@ -15,6 +15,30 @@ import PdfPreviewViewer from './PdfPreviewViewer';
 
 const DEFAULT_LABELS_SET = new Set(DEFAULT_OFFICE_LINES.map((l) => l.label));
 
+// Seed the office-lines form state from a saved office_data blob, guaranteeing
+// every default pre-seeded label (including all 7 worker-required ones) is
+// present so the admin/worker UI always shows every required input — even on
+// legacy tickets whose persisted office_data.lines is partial or missing
+// labels that were added to DEFAULT_OFFICE_LINES later. Without this, an admin
+// could be told "fill in qty for H2S Monitors" by the backend submission
+// validator with no corresponding row visible in the form to fill in.
+function seedOfficeLinesFromOfficeData(officeData) {
+  const saved = (officeData?.lines && officeData.lines.length) ? officeData.lines : [];
+  const seedFromSaved = saved.map((l) => ({
+    label: migrateOfficeLineLabel(l.label || ''),
+    qty: l.qty ?? '',
+    rate: l.rate ?? '',
+  }));
+  const presentLabels = new Set(seedFromSaved.map((l) => l.label));
+  // Append any default labels (in their canonical order) that aren't yet
+  // present so every pre-seeded required row is editable. Existing
+  // custom/office-added rows are preserved at their original position.
+  const missingDefaults = DEFAULT_OFFICE_LINES
+    .filter((d) => !presentLabels.has(d.label))
+    .map((d) => ({ ...d }));
+  return [...seedFromSaved, ...missingDefaults];
+}
+
 // Parse herbicide count from a row's herbicides text.
 // '' → 0, 'N Herbicides' → N (capped at 3), anything else (single product name) → 1.
 // 4+ herbicides still follow the 3-Herbicide pricing workflow.
@@ -130,21 +154,10 @@ export default function TMTicketDetailSheet({
         setClient(t.client || '');
         setArea(t.area || '');
         setPoNumber(t.po_approval_number || '');
-        // Seed office lines from saved data, or start from defaults.
-        // Migrate any legacy labels (e.g. renamed roadside line) on the fly.
-        // Falls back to defaults when lines is missing OR an empty array —
-        // the latter guards against legacy tickets saved with `lines: []`
-        // before the backend _merge_worker_office_data first-save seed was
-        // fixed (it used to wipe worker qtys to []). Without `.length`,
-        // `[] || DEFAULT` still evaluates to `[]` because [] is truthy.
-        const seed = (t.office_data?.lines && t.office_data.lines.length)
-          ? t.office_data.lines
-          : DEFAULT_OFFICE_LINES;
-        setOfficeLines(seed.map((l) => ({
-          label: migrateOfficeLineLabel(l.label || ''),
-          qty: l.qty ?? '',
-          rate: l.rate ?? '',
-        })));
+        // Seed office lines from saved data, or start from defaults. Helper
+        // also fills in any default labels missing from a legacy partial
+        // office_data so all 7 worker-required rows are always visible.
+        setOfficeLines(seedOfficeLinesFromOfficeData(t.office_data));
         setGstPercent(Number(t.office_data?.gst_percent ?? 5));
         // gst_enabled defaults true so legacy tickets (which never had this
         // field) still render the GST row exactly like before. Only an
@@ -238,14 +251,7 @@ export default function TMTicketDetailSheet({
       setClient(merged.client || '');
       setArea(merged.area || '');
       setPoNumber(merged.po_approval_number || '');
-      const seed = (merged.office_data?.lines && merged.office_data.lines.length)
-        ? merged.office_data.lines
-        : DEFAULT_OFFICE_LINES;
-      setOfficeLines(seed.map((l) => ({
-        label: migrateOfficeLineLabel(l.label || ''),
-        qty: l.qty ?? '',
-        rate: l.rate ?? '',
-      })));
+      setOfficeLines(seedOfficeLinesFromOfficeData(merged.office_data));
       setGstPercent(Number(merged.office_data?.gst_percent ?? 5));
       setGstEnabled(merged.office_data?.gst_enabled !== false);
       // Clear any pending edits on the source side (rows that were
@@ -1407,7 +1413,7 @@ export default function TMTicketDetailSheet({
               {/* Rate — office/admin only */}
               {canOfficeEdit ? (
                 <input
-                  type="number" inputMode="decimal" step="0.01"
+                  type="number" inputMode="decimal" step="0.001"
                   value={line.rate}
                   onChange={(e) => updateLine(idx, 'rate', e.target.value)}
                   style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
