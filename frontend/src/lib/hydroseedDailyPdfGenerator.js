@@ -82,7 +82,7 @@ function fmtNum(v, decimals = 2) {
  *     mulch_type, soil_amendment, seed_types: [{ name, description }], fertilizer,
  *     loads: [{ id, load_number, area_m2, mulch_bales, soil_amendment_kg,
  *               seed_kgs: { [seedName]: kg }, aqua_gel_kg, tackifier_kg,
- *               fertilizer_kg, notes }],
+ *               fertilizer_kg, micronutrients_l, notes }],
  *     comments
  *   }
  * @param {string[]} photoDataUrls - annotated map / canvas / photo images.
@@ -360,14 +360,22 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
     mulch: 48,
     soilAmend: 50,
   };
-  const tailCols = ['Aqua Gel', 'Tackifier', 'Fertilizer'];
+  // Tail columns: granular additives in kg + Micronutrients in litres.
+  // `tailCols` is a parallel list of { label, unit } so the header can
+  // print the right unit per column (paper convention).
+  const tailCols = [
+    { label: 'Aqua Gel', unit: 'kg' },
+    { label: 'Tackifier', unit: 'kg' },
+    { label: 'Fertilizer', unit: 'kg' },
+    { label: 'Micronutrients', unit: 'L' },
+  ];
   const notesW = hasNotes ? 80 : 0;
   const tailW = 44 * tailCols.length;
   const fixedTotal = fixedColW.num + fixedColW.area + fixedColW.bales + fixedColW.mulch + fixedColW.soilAmend + tailW + notesW;
   const seedColTotalW = contentW - fixedTotal;
   const perSeedW = seedNames.length > 0 ? Math.max(34, Math.min(60, seedColTotalW / seedNames.length)) : 0;
 
-  // Header cells in order: # | Area | Bales | Mulch (kg) | Soil Amend (kg) | seeds… | Aqua Gel | Tackifier | Fertilizer | (Notes)
+  // Header cells in order: # | Area | Bales | Mulch (kg) | Soil Amend (kg) | seeds… | Aqua Gel | Tackifier | Fertilizer | Micronutrients | (Notes)
   const headerCells = [
     { label: '#', w: fixedColW.num },
     { label: 'Area (m²)', w: fixedColW.area },
@@ -375,7 +383,7 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
     { label: 'Mulch (kg)', w: fixedColW.mulch },
     { label: 'Soil Amend (kg)', w: fixedColW.soilAmend },
     ...seedNames.map(n => ({ label: `${n} (kg)`, w: perSeedW })),
-    ...tailCols.map(t => ({ label: `${t} (kg)`, w: 44 })),
+    ...tailCols.map(t => ({ label: `${t.label} (${t.unit})`, w: 44 })),
     ...(hasNotes ? [{ label: 'Notes', w: notesW }] : []),
   ];
   // Resize so total exactly equals contentW (rounding fudge).
@@ -420,6 +428,7 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
     aqua_gel: 0,
     tackifier: 0,
     fertilizer: 0,
+    micronutrients: 0,
   };
 
   doc.setFont('helvetica', 'normal');
@@ -443,6 +452,7 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
     totals.aqua_gel += toNum(load.aqua_gel_kg);
     totals.tackifier += toNum(load.tackifier_kg);
     totals.fertilizer += toNum(load.fertilizer_kg);
+    totals.micronutrients += toNum(load.micronutrients_l);
 
     const cells = [
       String(load.load_number || (r + 1)),
@@ -457,6 +467,7 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
       fmtNum(load.aqua_gel_kg),
       fmtNum(load.tackifier_kg),
       fmtNum(load.fertilizer_kg),
+      fmtNum(load.micronutrients_l),
       ...(hasNotes ? [String(load.notes || '')] : []),
     ];
     let cx = marginL;
@@ -492,6 +503,7 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
       fmtNum(totals.aqua_gel),
       fmtNum(totals.tackifier),
       fmtNum(totals.fertilizer),
+      fmtNum(totals.micronutrients),
       ...(hasNotes ? [''] : []),
     ];
     for (let i = 0; i < headerCells.length; i++) {

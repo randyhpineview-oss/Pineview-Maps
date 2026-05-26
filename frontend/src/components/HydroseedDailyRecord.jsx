@@ -45,6 +45,11 @@ function makeBlankLoad(index) {
     aqua_gel_kg: '',
     tackifier_kg: '',
     fertilizer_kg: '',
+    // Liquid micronutrient additive measured in litres per load. The HT
+    // (T&M ticket) PDF rolls these up across all linked dailies into a
+    // single 'Micronutrients' line item in the materials/installation
+    // section so the office can price per-litre.
+    micronutrients_l: '',
     notes: '',
   };
 }
@@ -101,6 +106,17 @@ export default function HydroseedDailyRecord({
   const { alert } = useDialog();
   const isEditMode = !!editingRecord;
   const initializedRef = useRef(false);
+  // Photo dirty flags. Drive the submit payload's `photos` /
+  // `seed_tag_photos` fields:
+  //   - `true`  → send the full base64 array (current shape).
+  //   - `false` → send `null` so the backend preserves the existing
+  //              Dropbox URLs without re-uploading the same bytes.
+  // Defaults are reset on every open: `true` for create/duplicate flows
+  // (so new records actually get their photos), `false` for edit mode
+  // (so a worker who tweaks the description without touching photos
+  // doesn't burn bandwidth + Dropbox quota re-uploading every photo).
+  const [photosDirty, setPhotosDirty] = useState(true);
+  const [seedTagPhotosDirty, setSeedTagPhotosDirty] = useState(true);
 
   const [form, setForm] = useState(() => ({
     date: localDateISO(),
@@ -278,15 +294,59 @@ export default function HydroseedDailyRecord({
         loads: d.loads || [],
         travel_km: d.travel_km ?? '',
         water_truck_loads: d.water_truck_loads ?? '',
+        // Start the photo arrays empty; the async restore below fills
+        // them from the existing record's Dropbox URLs via the proxy.
         seed_tag_photos: [],
         photos: [],
         comments: d.comments || editingRecord.comments || '',
       });
       setRecordNumber(editingRecord.record_number || '');
+
+      // Restore existing photos by fetching the saved Dropbox URLs back
+      // through the backend proxy (avoids the canvas-tainting + CORS
+      // headache of loading Dropbox shared links directly into the
+      // form's <img> + jsPDF pipeline). Mirrors the lease-sheet edit
+      // flow at `HerbicideLeaseSheet.jsx`. Fire-and-forget so the form
+      // opens immediately — if the worker submits before this finishes,
+      // `photosDirty` stays `false` and the backend keeps the original
+      // photo_urls untouched.
+      const restoreFromUrls = async (urls, formKey) => {
+        if (!Array.isArray(urls) || urls.length === 0) return;
+        const restored = await Promise.all(urls.map(async (url) => {
+          try {
+            const { data, type } = await api.proxyPhoto(url);
+            const mime = type || 'image/jpeg';
+            return {
+              data,
+              type: mime,
+              dataUrl: `data:${mime};base64,${data}`,
+              existingUrl: url,
+            };
+          } catch {
+            // Proxy failed (network blip, Dropbox 404, etc.). Keep the
+            // URL as the <img> preview so the worker still SEES the
+            // photo — submit will skip this slot since `data` is null.
+            return { data: null, type: null, dataUrl: url, existingUrl: url };
+          }
+        }));
+        setForm(prev => ({ ...prev, [formKey]: restored }));
+      };
+      void restoreFromUrls(editingRecord.photo_urls, 'photos');
+      void restoreFromUrls(editingRecord.seed_tag_photo_urls, 'seed_tag_photos');
       return;
     }
     initializedRef.current = true;
   }, [isOpen, duplicateFrom, draft, isEditMode, editingRecord]);
+
+  // Reset the photo dirty flags whenever the form opens. Edit mode
+  // starts clean (only sends photos when the worker touches them);
+  // create + duplicate + draft flows start dirty so the new record
+  // actually persists whatever's in the photo arrays.
+  useEffect(() => {
+    if (!isOpen) return;
+    setPhotosDirty(!isEditMode);
+    setSeedTagPhotosDirty(!isEditMode);
+  }, [isOpen, isEditMode, editingRecord?.id]);
 
   // Reset on close so a future open starts clean.
   useEffect(() => {
@@ -459,14 +519,23 @@ export default function HydroseedDailyRecord({
     reader.readAsDataURL(file);
   });
 
+  // Mark the corresponding photo array as dirty so the submit payload
+  // sends a fresh array (instead of `null`, which would tell the backend
+  // to preserve the existing Dropbox URLs without changes).
+  const markPhotosDirty = (which) => {
+    if (which === 'photos') setPhotosDirty(true);
+    else if (which === 'seed_tag_photos') setSeedTagPhotosDirty(true);
+  };
   const onPhotoFiles = async (which, files) => {
     const arr = Array.from(files || []).filter(Boolean);
     if (arr.length === 0) return;
     const next = await Promise.all(arr.map(readPhotoFile));
     setForm(prev => ({ ...prev, [which]: [...(prev[which] || []), ...next] }));
+    markPhotosDirty(which);
   };
   const removePhoto = (which, idx) => {
     setForm(prev => ({ ...prev, [which]: prev[which].filter((_, i) => i !== idx) }));
+    markPhotosDirty(which);
   };
 
   // ── Validation ───────────────────────────────────────────────────────────
@@ -486,9 +555,22 @@ export default function HydroseedDailyRecord({
     if (!form.mulch_type) missing.push('Mulch Type');
     if (!(form.seed_types || []).some(s => s.name && s.description)) missing.push('At least one Seed Type');
     if ((form.loads || []).length === 0) missing.push('At least one Load');
-    if ((form.seed_tag_photos || []).length === 0) missing.push('At least one Seed Tag photo');
+    // Seed-tag photos are required to submit. In edit mode an already-
+    // submitted record has them on Dropbox (`seed_tag_photo_urls`); the
+    // proxy restore above hydrates the form array, but if the worker
+    // happens to click submit before that finishes we still want the
+    // validator to pass since the existing photos remain on file.
+    const hasExistingSeedTagPhotos = (
+      (editingRecord?.seed_tag_photo_urls || []).length > 0
+    );
+    if (
+      (form.seed_tag_photos || []).length === 0
+      && !hasExistingSeedTagPhotos
+    ) {
+      missing.push('At least one Seed Tag photo');
+    }
     return missing;
-  }, [form]);
+  }, [form, editingRecord]);
 
   // ── Preview ──────────────────────────────────────────────────────────────
   const handlePreview = async () => {
@@ -627,8 +709,21 @@ export default function HydroseedDailyRecord({
         comments: form.comments,
         daily_data: dailyDataSnapshot,
         pdf_base64: base64,
-        photos: (form.photos || []).map(p => ({ data: p.data, type: p.type })),
-        seed_tag_photos: (form.seed_tag_photos || []).map(p => ({ data: p.data, type: p.type })),
+        // Send the photo arrays only when the worker actually touched
+        // them. `null` tells the backend's update path to leave the
+        // existing Dropbox URLs alone; an array tells it to wipe + re-
+        // upload. Items missing `data` (proxy-restore failed earlier)
+        // are filtered out so we don't accidentally serialise nulls.
+        photos: photosDirty
+          ? (form.photos || [])
+              .filter(p => p && p.data)
+              .map(p => ({ data: p.data, type: p.type }))
+          : null,
+        seed_tag_photos: seedTagPhotosDirty
+          ? (form.seed_tag_photos || [])
+              .filter(p => p && p.data)
+              .map(p => ({ data: p.data, type: p.type }))
+          : null,
         client_submission_id: clientSubmissionId,
         hydroseed_ticket_link: htLink,
       };
@@ -794,6 +889,19 @@ export default function HydroseedDailyRecord({
                 style={inputStyle}
               />
             </div>
+            <div>
+              <label style={labelStyle}>Micronutrients (L)</label>
+              <input
+                type="number" inputMode="decimal" min="0" step="any"
+                value={editingLoad.micronutrients_l}
+                onChange={e => setEditingLoad({ ...editingLoad, micronutrients_l: e.target.value })}
+                style={inputStyle}
+              />
+            </div>
+            {/* Spacer so the 2-column grid stays balanced when the seed
+                grid below renders — keeps Micronutrients on its own row
+                with Fertilizer to its left. */}
+            <div />
           </div>
 
           {(form.seed_types || []).length > 0 && (
@@ -1786,6 +1894,7 @@ export default function HydroseedDailyRecord({
           // Treat the saved canvas as a regular annotation photo so the
           // existing upload + PDF pipeline picks it up unchanged.
           setForm(prev => ({ ...prev, photos: [...(prev.photos || []), payload] }));
+          setPhotosDirty(true);
           setAnnotationOpen(false);
         }}
       />
