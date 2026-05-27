@@ -200,6 +200,19 @@ export async function generateTMTicketPdf(ticket, options = {}) {
   doc.text(descLines, marginL + 115, y);
   y += Math.max(14, descLines.length * 12);
 
+  // ── Applicators line (unique names from all rows) ──
+  const allApplicators = [...new Set(
+    (ticket.rows || []).flatMap(r => Array.isArray(r.applicators) ? r.applicators : [])
+  )];
+  if (allApplicators.length > 0) {
+    doc.setFont('helvetica', 'bold');
+    doc.text('Applicators:', marginL, y);
+    doc.setFont('helvetica', 'normal');
+    const appLines = doc.splitTextToSize(allApplicators.join(', '), contentW - 80);
+    doc.text(appLines, marginL + 75, y);
+    y += Math.max(14, appLines.length * 12);
+  }
+
   // ── Sites Treated table ──
   y += 4;
   doc.setFont('helvetica', 'bold');

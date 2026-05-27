@@ -424,6 +424,9 @@ class TimeMaterialsRowRead(BaseModel):
     area_ha: float | None = None
     cost_code: str | None = None
     created_at: datetime
+    # Applicator names from the linked spray record's lease_sheet_data.
+    # Populated server-side at serialization time; not a DB column.
+    applicators: list[str] = Field(default_factory=list)
 
 
 class TimeMaterialsRowUpdate(BaseModel):

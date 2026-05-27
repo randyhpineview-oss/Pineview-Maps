@@ -1137,6 +1137,18 @@ export default function TMTicketDetailSheet({
       <h3 style={{ fontSize: '1rem', margin: '14px 0 6px' }}>
         Sites Treated ({((ticket.rows || []).filter((r) => !rowsToDelete.includes(r.id)).length + newRows.length) || 0})
       </h3>
+      {/* Applicators summary — unique names across all rows */}
+      {(() => {
+        const names = [...new Set(
+          (ticket.rows || []).flatMap(r => Array.isArray(r.applicators) ? r.applicators : [])
+        )];
+        return names.length > 0 ? (
+          <div style={{ fontSize: '0.8rem', color: '#9ca3af', marginBottom: '8px' }}>
+            <span style={{ fontWeight: 600, color: '#d1d5db' }}>Applicators: </span>
+            {names.join(', ')}
+          </div>
+        ) : null;
+      })()}
       <div style={{ background: '#111827', borderRadius: '8px', overflow: 'hidden', border: '1px solid #374151' }}>
         <div style={{
           display: 'grid',

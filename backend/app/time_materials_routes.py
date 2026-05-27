@@ -187,6 +187,34 @@ def _merge_worker_office_data(
     return result
 
 
+def _applicators_for_row(row: TimeMaterialsRow) -> list[str]:
+    """Return the applicator names stored in the linked spray record's
+    lease_sheet_data, or an empty list for manual/admin-added rows."""
+    record = row.spray_record or row.pipeline_spray_record
+    if record is None:
+        return []
+    data = record.lease_sheet_data or {}
+    names = data.get("applicators") or []
+    return [str(n) for n in names if n]
+
+
+def _inject_row_applicators(data: TimeMaterialsTicketRead, ticket: TimeMaterialsTicket) -> TimeMaterialsTicketRead:
+    """Return a copy of `data` where every row's `applicators` list is
+    populated from the linked spray record's lease_sheet_data.
+
+    `model_validate` from ORM cannot reach into the nested relationship to
+    fill computed fields, so we do it here post-serialization by zipping the
+    validated rows with the ORM rows (same order, same length)."""
+    orm_rows = ticket.rows or []
+    enriched = []
+    for read_row, orm_row in zip(data.rows, orm_rows):
+        apps = _applicators_for_row(orm_row)
+        if apps:
+            read_row = read_row.model_copy(update={"applicators": apps})
+        enriched.append(read_row)
+    return data.model_copy(update={"rows": enriched})
+
+
 def _strip_office_fields_for_worker(
     ticket: TimeMaterialsTicket, current_user: User
 ) -> TimeMaterialsTicketRead:
@@ -197,6 +225,7 @@ def _strip_office_fields_for_worker(
     or totals. Signatures stay hidden too.
     """
     data = TimeMaterialsTicketRead.model_validate(ticket)
+    data = _inject_row_applicators(data, ticket)
     if current_user.role == RoleEnum.worker:
         stripped_office_data = None
         if ticket.office_data:
@@ -365,7 +394,7 @@ def list_all_tickets(
     if spray_date:
         q = q.filter(TimeMaterialsTicket.spray_date == spray_date)
     tickets = q.order_by(TimeMaterialsTicket.created_at.desc()).all()
-    return [TimeMaterialsTicketRead.model_validate(t) for t in tickets]
+    return [_inject_row_applicators(TimeMaterialsTicketRead.model_validate(t), t) for t in tickets]
 
 
 @router.get("/deleted", response_model=list[TimeMaterialsTicketRead])
@@ -381,7 +410,7 @@ def list_deleted_tickets(
         .order_by(TimeMaterialsTicket.deleted_at.desc())
         .all()
     )
-    return [TimeMaterialsTicketRead.model_validate(t) for t in tickets]
+    return [_inject_row_applicators(TimeMaterialsTicketRead.model_validate(t), t) for t in tickets]
 
 
 # ── Delta ────────────────────────────────────────────────────────
