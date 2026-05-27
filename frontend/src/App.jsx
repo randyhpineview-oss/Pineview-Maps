@@ -1561,11 +1561,15 @@ export default function App() {
               body: item.payload,
               onProgress: onItemBytes,
             });
-            // Bump the drafts/recents refresh token so FormsPanel re-fetches
-            // its hydroseed lists on the next render — workers see the new
-            // HD###### in Recently Submitted without waiting for the 30 s
-            // poll tick.
+            // Bump all three tokens so FormsPanel refreshes immediately:
+            //   draftsRefreshToken   — hydroseed dailies list (HD######)
+            //   hydroseedRefreshToken — HT ticket list (the backend creates
+            //     or links a ticket on daily submit; without this the worker
+            //     waits up to 30s for the local poll to pick it up)
+            //   hydroseedDailiesRefreshToken — the dailies delta-sync effect
             setDraftsRefreshToken((x) => x + 1);
+            setHydroseedRefreshToken((x) => x + 1);
+            setHydroseedDailiesRefreshToken((x) => x + 1);
           } else if (item.targetType === 'hydroseed_daily_edit') {
             // Edit of an existing HD###### record. PATCH to the same
             // endpoint structure as the lease-sheet `site_spray_edit`
@@ -3198,11 +3202,17 @@ export default function App() {
     }
   }, []);
 
+  // In-flight promise ref — lets handleStartHydroseedDaily await the same
+  // fetch that's already in-flight instead of firing a second network call
+  // when the user taps "Hydroseed Daily" before the background prefetch resolves.
+  const latestDailyFetchRef = useRef(null);
+
   // Pre-fetch the latest Hydroseed Daily in the background whenever the user or drafts refresh
   useEffect(() => {
     if (user) {
-      api.getMyLatestHydroseedDaily()
-        .then((res) => {
+      const p = api.getMyLatestHydroseedDaily();
+      latestDailyFetchRef.current = p;
+      p.then((res) => {
           setLatestHydroseedDaily(res);
           setHasFetchedLatestDaily(true);
         })
@@ -3210,6 +3220,7 @@ export default function App() {
           setHasFetchedLatestDaily(true);
         });
     } else {
+      latestDailyFetchRef.current = null;
       setLatestHydroseedDaily(null);
       setHasFetchedLatestDaily(false);
     }
@@ -4407,8 +4418,13 @@ export default function App() {
     }
     let latest = latestHydroseedDaily;
     if (!hasFetchedLatestDaily) {
+      // A background prefetch is already in-flight — await it instead of
+      // firing a second network call. Falls back to a fresh fetch only if
+      // the ref is somehow null (e.g. user logged in mid-render).
       try {
-        latest = await api.getMyLatestHydroseedDaily();
+        latest = latestDailyFetchRef.current
+          ? await latestDailyFetchRef.current
+          : await api.getMyLatestHydroseedDaily();
       } catch {
         /* offline / new user — silent */
       }
