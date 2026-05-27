@@ -204,7 +204,18 @@ def _inject_row_applicators(data: TimeMaterialsTicketRead, ticket: TimeMaterials
 
     `model_validate` from ORM cannot reach into the nested relationship to
     fill computed fields, so we do it here post-serialization by zipping the
-    validated rows with the ORM rows (same order, same length)."""
+    validated rows with the ORM rows (same order, same length).
+
+    NOTE: This triggers a lazy load of `row.spray_record` /
+    `row.pipeline_spray_record` for every row, plus a read of that record's
+    JSONB `lease_sheet_data`. That's fine for SINGLE-ticket endpoints
+    (detail, create, update, merge) where there are typically 1-3 rows.
+    It is NOT safe to call on LIST endpoints (open / list / all / deleted
+    / delta) where dozens of tickets * dozens of rows can produce hundreds
+    of N+1 SQL queries and time out the 20s frontend request budget. The
+    list-view UI doesn't display applicators anyway — the PDF and detail
+    sheet both go through the detail endpoint, so we only need to enrich
+    there."""
     orm_rows = ticket.rows or []
     enriched = []
     for read_row, orm_row in zip(data.rows, orm_rows):
@@ -225,7 +236,6 @@ def _strip_office_fields_for_worker(
     or totals. Signatures stay hidden too.
     """
     data = TimeMaterialsTicketRead.model_validate(ticket)
-    data = _inject_row_applicators(data, ticket)
     if current_user.role == RoleEnum.worker:
         stripped_office_data = None
         if ticket.office_data:
@@ -394,7 +404,7 @@ def list_all_tickets(
     if spray_date:
         q = q.filter(TimeMaterialsTicket.spray_date == spray_date)
     tickets = q.order_by(TimeMaterialsTicket.created_at.desc()).all()
-    return [_inject_row_applicators(TimeMaterialsTicketRead.model_validate(t), t) for t in tickets]
+    return [TimeMaterialsTicketRead.model_validate(t) for t in tickets]
 
 
 @router.get("/deleted", response_model=list[TimeMaterialsTicketRead])
@@ -410,7 +420,7 @@ def list_deleted_tickets(
         .order_by(TimeMaterialsTicket.deleted_at.desc())
         .all()
     )
-    return [_inject_row_applicators(TimeMaterialsTicketRead.model_validate(t), t) for t in tickets]
+    return [TimeMaterialsTicketRead.model_validate(t) for t in tickets]
 
 
 # ── Delta ────────────────────────────────────────────────────────
@@ -488,7 +498,7 @@ def get_ticket(
     ticket = _visible_query(db, current_user).filter(TimeMaterialsTicket.id == ticket_id).first()
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
-    return _strip_office_fields_for_worker(ticket, current_user)
+    return _inject_row_applicators(_strip_office_fields_for_worker(ticket, current_user), ticket)
 
 
 # ── Create ───────────────────────────────────────────────────────
@@ -521,7 +531,7 @@ def create_ticket(
     db.add(ticket)
     db.commit()
     db.refresh(ticket)
-    return _strip_office_fields_for_worker(ticket, current_user)
+    return _inject_row_applicators(_strip_office_fields_for_worker(ticket, current_user), ticket)
 
 
 # ── Update ───────────────────────────────────────────────────────
@@ -701,7 +711,7 @@ def update_ticket(
     ticket.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(ticket)
-    return _strip_office_fields_for_worker(ticket, current_user)
+    return _inject_row_applicators(_strip_office_fields_for_worker(ticket, current_user), ticket)
 
 
 @router.delete(
@@ -1264,7 +1274,7 @@ def merge_tm_tickets(
     )
     print(logger_audit_msg)
 
-    return _strip_office_fields_for_worker(primary, current_user)
+    return _inject_row_applicators(_strip_office_fields_for_worker(primary, current_user), primary)
 
 
 # ── Row helpers used internally by spray record endpoints ────────
