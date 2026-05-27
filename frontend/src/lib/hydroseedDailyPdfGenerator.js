@@ -494,61 +494,110 @@ export async function generateHydroseedDailyPdf(data, photoDataUrls = [], seedTa
   // starting the section.
   const SECTION_MIN_H = 110;
 
-  // ── Annotated Map / Photos ───────────────────────────────────────────────
-  // Map annotations render FIRST and at 2-up so each one is roughly double
-  // the area of the previous 3-up layout — workers need to see boundary
-  // lines and pin locations clearly to verify where they sprayed.
-  if (photos.length > 0) {
-    // Bigger top-gap (was 6) so the bold section header doesn't overlap
-    // the bottom edge of the preceding loads-totals row when there are no
-    // comments to act as a spacer.
+  // ── Photos: side-by-side layout when both map and seed tags are present ──
+  // Map photos fill the left ~60 % of the content width (1-up so detail is
+  // preserved). Seed tag photos stack vertically in the right ~38 % — they
+  // don't need to be wide, just legible enough to read the batch/lot number.
+  // This keeps the photo block on the same page as the loads table and avoids
+  // the seed tags pushing everything to a second page on busy days (9 loads).
+  // When only one type of photo exists the old single-column layout is used.
+  const COL_GUTTER = 10;
+  const mapColW   = Math.round(contentW * 0.60);
+  const tagColW   = contentW - mapColW - COL_GUTTER;
+  const tagColX   = marginL + mapColW + COL_GUTTER;
+
+  if (photos.length > 0 && seedTags.length > 0) {
     y += 14;
     if (y + SECTION_MIN_H > pageH - marginB) {
       doc.addPage();
       y = 36;
     }
+    // Single shared header centred over the full content width.
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
-    doc.text('Map / Photo Annotations', pageW / 2, y, { align: 'center' });
+    doc.text('Map / Photo Annotations & Seed Tags', pageW / 2, y, { align: 'center' });
     y += 14;
+
+    const mapYRef = { value: y };
+    const tagYRef = { value: y };
+
+    // Left column — map photos, 1-up, tall cap for detail.
     await drawPhotoGrid(doc, photos, {
       labelPrefix: 'Map / Photo',
-      cols: 2,        // 2-up doubles cell area vs. the previous 3-up grid
-      maxCellH: 320,  // taller cap so map detail stays readable
+      cols: 1,
+      maxCellH: 340,
       marginL,
       marginB,
-      contentW,
+      contentW: mapColW,
       pageW,
       pageH,
-      yRef: { value: y },
-    }).then(yEnd => { y = yEnd; });
-  }
+      yRef: mapYRef,
+    });
 
-  // ── Seed Tag Photos ──────────────────────────────────────────────────────
-  // Render BELOW the map at 4-up so each tag is small but the batch number
-  // / lot is still legible. Workers don't need to study these in detail —
-  // they just need to confirm which seed went down.
-  if (seedTags.length > 0) {
-    y += 14;
-    if (y + SECTION_MIN_H > pageH - marginB) {
-      doc.addPage();
-      y = 36;
-    }
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(11);
-    doc.text('Seed Tag Photos', pageW / 2, y, { align: 'center' });
-    y += 14;
+    // Right column — seed tags, 1-per-row (stacked vertically), compact height.
     await drawPhotoGrid(doc, seedTags, {
       labelPrefix: 'Seed Tag',
-      cols: 4,        // 4-up keeps tags compact under the bigger map cells
-      maxCellH: 100,  // hard cap — tags don't need to dominate the page
-      marginL,
+      cols: 1,
+      maxCellH: 110,
+      marginL: tagColX,
       marginB,
-      contentW,
+      contentW: tagColW,
       pageW,
       pageH,
-      yRef: { value: y },
-    }).then(yEnd => { y = yEnd; });
+      yRef: tagYRef,
+    });
+
+    // Advance past whichever column ended lower.
+    y = Math.max(mapYRef.value, tagYRef.value);
+
+  } else {
+    // ── Annotated Map / Photos (no seed tags present) ──────────────────────
+    if (photos.length > 0) {
+      y += 14;
+      if (y + SECTION_MIN_H > pageH - marginB) {
+        doc.addPage();
+        y = 36;
+      }
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.text('Map / Photo Annotations', pageW / 2, y, { align: 'center' });
+      y += 14;
+      await drawPhotoGrid(doc, photos, {
+        labelPrefix: 'Map / Photo',
+        cols: 2,
+        maxCellH: 320,
+        marginL,
+        marginB,
+        contentW,
+        pageW,
+        pageH,
+        yRef: { value: y },
+      }).then(yEnd => { y = yEnd; });
+    }
+
+    // ── Seed Tag Photos (no map photos present) ────────────────────────────
+    if (seedTags.length > 0) {
+      y += 14;
+      if (y + SECTION_MIN_H > pageH - marginB) {
+        doc.addPage();
+        y = 36;
+      }
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.text('Seed Tag Photos', pageW / 2, y, { align: 'center' });
+      y += 14;
+      await drawPhotoGrid(doc, seedTags, {
+        labelPrefix: 'Seed Tag',
+        cols: 4,
+        maxCellH: 100,
+        marginL,
+        marginB,
+        contentW,
+        pageW,
+        pageH,
+        yRef: { value: y },
+      }).then(yEnd => { y = yEnd; });
+    }
   }
 
   const blob = doc.output('blob');
