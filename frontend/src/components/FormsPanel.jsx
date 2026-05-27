@@ -289,6 +289,9 @@ export default function FormsPanel({
   // delta's `ids_removed` and get pruned locally. Mirrors the T&M cache
   // above one-for-one.
   const [hydroseedTickets, setHydroseedTickets] = useState([]);
+  // True once the first cold-start fetch completes (success or error).
+  // Lets the UI show a spinner instead of "Nothing here yet" while loading.
+  const [hydroseedTicketsLoaded, setHydroseedTicketsLoaded] = useState(false);
   const hydroseedTicketsSinceRef = useRef(null);
   const hydroseedSyncingRef = useRef(false);
   const hydroseedDeltaFailCountRef = useRef(0);
@@ -572,6 +575,7 @@ export default function FormsPanel({
           if (cancelled) return;
           hydroseedDeltaFailCountRef.current = 0;
           setHydroseedTickets(list || []);
+          setHydroseedTicketsLoaded(true);
           hydroseedTicketsSinceRef.current = new Date().toISOString();
           try { await upsertHydroseedTickets(list || []); } catch { /* non-fatal */ }
         } else {
@@ -606,6 +610,8 @@ export default function FormsPanel({
         if (hydroseedDeltaFailCountRef.current >= 2) {
           console.warn('[FORMS] hydroseed tickets sync failed:', e.message);
         }
+        // Mark loaded even on error so the UI doesn't stay on the spinner.
+        setHydroseedTicketsLoaded(true);
         // Leave the watermark alone so the next tick retries the same range.
       } finally {
         hydroseedSyncingRef.current = false;
@@ -1528,7 +1534,11 @@ export default function FormsPanel({
           {/* ── Hydroseed (dailies + tickets) ── */}
           {recTab === REC_HYDROSEED && (
             <div className="list-grid">
-              {hydroseedTickets.length === 0 && hydroseedDailies.length === 0 ? (
+              {!hydroseedTicketsLoaded && hydroseedTickets.length === 0 ? (
+                <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: '#9ca3af' }}>
+                  Loading…
+                </div>
+              ) : hydroseedTickets.length === 0 && hydroseedDailies.length === 0 ? (
                 <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: '#9ca3af' }}>
                   Nothing here yet.
                 </div>

@@ -80,21 +80,39 @@ def _worker_owns_daily(daily: HydroseedDailyRecord, current_user: User) -> bool:
 
 
 def _visible_tickets_query(db: Session, current_user: User, include_deleted: bool = False):
-    # EGRESS: defer heavy photo URL arrays on the joined daily_records
-    # collection. We CANNOT defer `daily_data` here because the
-    # `HydroseedLinkedDaily._hoist_from_daily_data` validator reads it to
-    # surface customer_rep / crew / payroll-hour scalars at the response
-    # top level — deferring would trigger an N+1 lazy-load per linked
-    # daily and turn the ticket list into multi-second load times. The
-    # response schema (HydroseedLinkedDaily) does NOT echo `daily_data`
-    # back over the wire, so loading it inline costs DB→backend transfer
-    # only, not egress to the client.
+    # Full query: eager-loads rows + daily_records (with daily_data for the
+    # HydroseedLinkedDaily validator). Used only by get_ticket (single-record
+    # fetch) where the detail sheet needs linked daily scalars.
     q = db.query(HydroseedTicket).options(
         joinedload(HydroseedTicket.rows),
         joinedload(HydroseedTicket.daily_records).options(
             defer(HydroseedDailyRecord.photo_urls),
             defer(HydroseedDailyRecord.seed_tag_photo_urls),
         ),
+    )
+    if not include_deleted:
+        q = q.filter(HydroseedTicket.deleted_at.is_(None))
+    if current_user.role == RoleEnum.worker:
+        q = q.filter(
+            or_(
+                HydroseedTicket.created_by_user_id == current_user.id,
+                and_(
+                    HydroseedTicket.created_by_user_id.is_(None),
+                    HydroseedTicket.created_by_name == current_user.name,
+                ),
+            )
+        )
+    return q
+
+
+def _slim_tickets_query(db: Session, current_user: User, include_deleted: bool = False):
+    # Slim query: loads rows but NOT daily_records. Used by list endpoints
+    # (list_tickets, list_open_tickets, tickets_delta) where the UI only
+    # needs ticket header + row summaries — skipping the daily_records
+    # joinedload avoids pulling daily_data JSONB for every linked daily,
+    # which caused 30-second list load times as the dataset grew.
+    q = db.query(HydroseedTicket).options(
+        joinedload(HydroseedTicket.rows),
     )
     if not include_deleted:
         q = q.filter(HydroseedTicket.deleted_at.is_(None))
@@ -1077,7 +1095,6 @@ def list_open_tickets(
     submit picker). Office/admin who want everyone's tickets use /tickets."""
     q = db.query(HydroseedTicket).options(
         joinedload(HydroseedTicket.rows),
-        joinedload(HydroseedTicket.daily_records),
     ).filter(
         HydroseedTicket.status == TMTicketStatus.open,
         HydroseedTicket.deleted_at.is_(None),
@@ -1106,7 +1123,7 @@ def list_tickets(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    q = _visible_tickets_query(db, current_user)
+    q = _slim_tickets_query(db, current_user)
     if status_filter is not None:
         q = q.filter(HydroseedTicket.status == status_filter)
     if work_date:
@@ -1143,7 +1160,7 @@ def tickets_delta(
     current_user: User = Depends(get_current_user),
 ):
     server_time = datetime.utcnow()
-    base = _visible_tickets_query(db, current_user, include_deleted=True).filter(
+    base = _slim_tickets_query(db, current_user, include_deleted=True).filter(
         HydroseedTicket.updated_at > since
     )
     rows = base.order_by(HydroseedTicket.updated_at.desc()).limit(500).all()
