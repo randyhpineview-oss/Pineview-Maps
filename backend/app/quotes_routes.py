@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import require_roles
 from app.database import get_db
-from app.dropbox_integration import _safe_name, upload_pdf_to_dropbox
+from app.dropbox_integration import _safe_name, delete_dropbox_path, upload_pdf_to_dropbox
 from app.log_util import get_logger
 from app.models import Quote, RoleEnum, User
 
@@ -123,6 +123,27 @@ class QuoteCreate(BaseModel):
     # fresh nextval allocation (their PDF will have a slightly stale
     # number, which is acceptable for a 1-2 admin team).
     expected_quote_number: str | None = None
+
+
+class QuoteUpdate(BaseModel):
+    """Edit-and-resubmit payload. Same shape as QuoteCreate minus the
+    quote-number allocation knobs — the existing `quote_number` is
+    preserved across the update so the Dropbox path stays stable when
+    client/date are unchanged. If client or quote_date *do* change, the
+    PDF is uploaded to the new path and the old file is best-effort
+    deleted so we don't leave orphans behind.
+    """
+    client: str
+    area: str | None = None
+    project_description: str | None = None
+    quote_date: date_type
+    mix_categories: bool = False
+    tax_enabled: bool = False
+    tax_label: str | None = None
+    tax_rate: float | None = None
+    line_items: list[QuoteLineItemPayload] = Field(default_factory=list)
+    notes: str | None = None
+    pdf_base64: str | None = None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -386,6 +407,85 @@ def get_quote(quote_id: int, db: Session = Depends(get_db)):
     quote = db.query(Quote).filter(Quote.id == quote_id).first()
     if not quote:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote not found")
+    return quote
+
+
+# ── Update (edit & resubmit) ───────────────────────────────────────────────
+
+@router.put("/{quote_id}", response_model=QuoteDetail)
+def update_quote(
+    quote_id: int,
+    payload: QuoteUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
+):
+    """Edit a previously-submitted quote and overwrite its Dropbox PDF.
+
+    The existing `quote_number` is preserved so the quote keeps its
+    identity (and the same row on the Recent Quotes list). The PDF is
+    re-rendered client-side with the same number stamped on it and
+    uploaded to the canonical path for the (possibly new) client + date.
+
+    If the client name or quote_date changed, the canonical path moves —
+    we upload to the new path first, then best-effort delete the old
+    file so we don't leave orphans behind. The `pdf_url` shared link
+    is updated to the new path either way.
+
+    Soft-deleted quotes can't be edited; restore first if needed.
+    """
+    quote = (
+        db.query(Quote)
+        .filter(Quote.id == quote_id, Quote.deleted_at.is_(None))
+        .first()
+    )
+    if not quote:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote not found")
+
+    client = (payload.client or "").strip()
+    if not client:
+        raise HTTPException(status_code=400, detail="Client is required")
+    if not payload.line_items:
+        raise HTTPException(status_code=400, detail="Quote must include at least one line item")
+
+    subtotal, tax_amount, grand_total = _compute_totals(
+        payload.line_items, payload.tax_enabled, payload.tax_rate
+    )
+
+    old_path = _build_quote_pdf_path(quote.quote_date, quote.client, quote.quote_number)
+    new_path = _build_quote_pdf_path(payload.quote_date, client, quote.quote_number)
+
+    new_pdf_url: Optional[str] = quote.pdf_url
+    if payload.pdf_base64:
+        try:
+            pdf_bytes = base64.b64decode(payload.pdf_base64)
+            new_pdf_url = upload_pdf_to_dropbox(pdf_bytes, new_path) or new_pdf_url
+            # If the canonical path changed (client/date edited), the
+            # previous file is now orphaned — best-effort clean up.
+            if old_path != new_path:
+                delete_dropbox_path(old_path)
+        except Exception as e:
+            logger.warning(
+                "Quote %s update PDF upload failed: %s",
+                quote.quote_number, type(e).__name__,
+            )
+
+    quote.client = client
+    quote.area = (payload.area or "").strip() or None
+    quote.project_description = payload.project_description
+    quote.quote_date = payload.quote_date
+    quote.mix_categories = payload.mix_categories
+    quote.tax_enabled = payload.tax_enabled
+    quote.tax_label = payload.tax_label
+    quote.tax_rate = payload.tax_rate
+    quote.subtotal = subtotal
+    quote.tax_amount = tax_amount
+    quote.grand_total = grand_total
+    quote.line_items_json = [li.model_dump() for li in payload.line_items]
+    quote.notes = payload.notes
+    quote.pdf_url = new_pdf_url
+    quote.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(quote)
     return quote
 
 

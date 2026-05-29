@@ -411,6 +411,12 @@ export default function QuoteBuilder({
   // ID of the draft currently loaded into the form (null = fresh/unsaved).
   const [activeDraftId, setActiveDraftId] = useState(null);
 
+  // Edit-mode: when non-null, Submit calls PUT /api/quotes/{id} instead of
+  // POST and overwrites the Dropbox PDF in place. The existing Q###### is
+  // preserved and shown on the form / PDF instead of a peeked next-number.
+  const [editingQuoteId, setEditingQuoteId] = useState(null);
+  const [editingQuoteNumber, setEditingQuoteNumber] = useState('');
+
   // Submit / preview / confirmation state
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
@@ -451,6 +457,9 @@ export default function QuoteBuilder({
     setPeekedQuoteNumber('');
     // Clear the active draft tracking so Save Draft creates a new entry.
     setActiveDraftId(null);
+    // Drop edit-mode state so the next Submit creates a brand new quote.
+    setEditingQuoteId(null);
+    setEditingQuoteNumber('');
   }, []);
 
   // ── Draft actions ──────────────────────────────────────────────────────
@@ -849,10 +858,10 @@ export default function QuoteBuilder({
     if (err) { setSubmitError(err); return; }
     setSubmitError('');
     try {
-      // Peek the upcoming Q###### so the preview PDF shows the real
-      // number. If the user closes without submitting, the same number
-      // is reused for the next quote (sequence isn't consumed by peek).
-      const qn = await peekQuoteNumberCached();
+      // In edit mode the existing Q###### is reused — skip the peek and
+      // stamp the original number on the regenerated PDF so the file
+      // overwrites cleanly at the canonical Dropbox path.
+      const qn = editingQuoteId ? editingQuoteNumber : await peekQuoteNumberCached();
       const { base64 } = await generateQuotePdf(buildQuoteForPdf(qn));
       setPreviewBase64(base64);
       setPreviewOpen(true);
@@ -860,7 +869,7 @@ export default function QuoteBuilder({
       setSubmitError(e?.message || 'PDF preview failed');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [buildQuoteForPdf, peekQuoteNumberCached, client, lineItems, quoteDate]);
+  }, [buildQuoteForPdf, peekQuoteNumberCached, editingQuoteId, editingQuoteNumber, client, lineItems, quoteDate]);
 
   const handleSubmit = useCallback(async () => {
     const err = validateForSubmit();
@@ -869,6 +878,20 @@ export default function QuoteBuilder({
     setSubmitting(true);
     setSubmitError('');
     try {
+      if (editingQuoteId) {
+        // Edit-and-resubmit: regenerate the PDF with the original
+        // Q###### baked in and PUT the update. Server overwrites the
+        // Dropbox file at the canonical path (and best-effort deletes
+        // the old file if client/date moved the path).
+        const { base64 } = await generateQuotePdf(buildQuoteForPdf(editingQuoteNumber));
+        const payload = buildSubmitPayload(base64, null);
+        delete payload.expected_quote_number;
+        const updated = await api.updateQuote(editingQuoteId, payload);
+        setSubmittedQuote(updated);
+        loadRecent();
+        onQuotesChanged?.();
+        return;
+      }
       // Render the submit-time PDF with the SAME peeked number we showed
       // the user on Preview, then send `expected_quote_number` so the
       // backend honors that exact value via setval(quote_seq, n) — this
@@ -892,7 +915,7 @@ export default function QuoteBuilder({
       // Notify parent (App.jsx) so any external counters / lists refresh.
       onQuotesChanged?.();
     } catch (e) {
-      setSubmitError(e?.message || 'Submit failed');
+      setSubmitError(e?.message || (editingQuoteId ? 'Update failed' : 'Submit failed'));
     } finally {
       setSubmitting(false);
     }
@@ -903,6 +926,9 @@ export default function QuoteBuilder({
     peekQuoteNumberCached,
     loadRecent,
     onQuotesChanged,
+    editingQuoteId,
+    editingQuoteNumber,
+    activeDraftId,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     client, quoteDate, lineItems,
   ]);
@@ -980,6 +1006,49 @@ export default function QuoteBuilder({
     }
   }, []);
 
+  const handleEdit = useCallback(async (quoteId) => {
+    try {
+      const full = await api.getQuote(quoteId);
+      // Hydrate the form exactly like Duplicate, but preserve the
+      // original quote number so Submit knows this is an edit.
+      setClient(full.client || '');
+      setArea(full.area || '');
+      setProjectDescription(full.project_description || '');
+      setQuoteDate(full.quote_date || localISODate());
+      setTaxEnabled(!!full.tax_enabled);
+      setTaxLabel(full.tax_label || DEFAULT_TAX_LABEL);
+      setTaxRate(full.tax_rate != null ? String(full.tax_rate) : String(DEFAULT_TAX_RATE));
+      setQuoteNotes(full.notes || '');
+      const lines = (full.line_items_json || []).map((li) => ({
+        ...emptyLine(li.kind || LINE_KIND_CATALOG),
+        ...li,
+        _uid: makeUid(),
+      })).map((li) => ({ ...li, subtotal: computeLineSubtotal(li) }));
+      setLineItems(lines);
+      const seen = new Set();
+      const rebuiltSections = [];
+      for (const li of lines) {
+        if (li.category_id == null) continue;
+        const key = String(li.category_id);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        rebuiltSections.push({ uid: makeUid(), categoryId: Number(li.category_id) });
+      }
+      setSections(rebuiltSections);
+      setSubmittedQuote(null);
+      setPeekedQuoteNumber('');
+      setPreviewBase64('');
+      setSubmitError('');
+      setActiveDraftId(null);
+      // Mark this form as an in-place edit so Submit -> PUT /api/quotes/{id}
+      setEditingQuoteId(full.id);
+      setEditingQuoteNumber(full.quote_number || '');
+      setActiveTab(TAB_NEW);
+    } catch (e) {
+      setRecentError(e?.message || 'Failed to load quote for editing');
+    }
+  }, []);
+
   const handleSoftDelete = useCallback(async (quote) => {
     if (!(await confirm({
       title: 'Delete quote',
@@ -1011,7 +1080,7 @@ export default function QuoteBuilder({
           style={activeTab === TAB_NEW ? { ...S.tabBtn, ...S.tabBtnActive } : S.tabBtn}
           onClick={() => setActiveTab(TAB_NEW)}
         >
-          New Quote
+          {editingQuoteId ? 'Edit Quote' : 'New Quote'}
         </button>
         <button
           type="button"
@@ -1103,6 +1172,8 @@ export default function QuoteBuilder({
           activeDraftId={activeDraftId}
           onSaveDraft={handleSaveDraft}
           onOpenDrafts={() => setActiveTab(TAB_DRAFTS)}
+          editingQuoteId={editingQuoteId}
+          editingQuoteNumber={editingQuoteNumber}
         />
       ) : null}
 
@@ -1129,6 +1200,7 @@ export default function QuoteBuilder({
           clients={clients}
           onViewPdf={handleViewPdf}
           onDuplicate={handleDuplicate}
+          onEdit={handleEdit}
           onSoftDelete={handleSoftDelete}
           online={online}
           isMobile={isMobile}
@@ -1181,6 +1253,7 @@ function NewQuoteTab(props) {
     previewOpen, previewBase64, setPreviewOpen,
     onPreview, onSubmit, onReset, online, isMobile,
     activeDraftId, onSaveDraft, onOpenDrafts,
+    editingQuoteId, editingQuoteNumber,
   } = props;
   const { confirm } = useDialog();
 
@@ -1234,7 +1307,7 @@ function NewQuoteTab(props) {
         {submittedQuote ? (
           <div style={{ ...S.banner, ...S.successBanner }}>
             <div style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '6px' }}>
-              ✓ Quote {submittedQuote.quote_number} submitted
+              ✓ Quote {submittedQuote.quote_number} {editingQuoteId ? 'updated' : 'submitted'}
             </div>
             <div style={{ fontSize: '0.85rem', marginBottom: '10px' }}>
               {submittedQuote.pdf_url
@@ -1302,6 +1375,7 @@ function NewQuoteTab(props) {
                 style={{ ...S.input, color: '#9ab1d6', cursor: 'not-allowed' }}
                 value={
                   submittedQuote?.quote_number
+                  || editingQuoteNumber
                   || (peekedQuoteNumber ? `${peekedQuoteNumber} — pending submit` : 'Q###### — auto-assigned on submit')
                 }
                 readOnly
@@ -1466,10 +1540,12 @@ function NewQuoteTab(props) {
           <div style={{ fontSize: '1rem' }}>Grand Total: <strong>{formatMoney(totals.grandTotal)}</strong></div>
         </div>
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-          {activeDraftId ? (
+          {editingQuoteId ? (
+            <span style={{ fontSize: '0.75rem', color: '#6b8ab8' }}>Editing {editingQuoteNumber}</span>
+          ) : activeDraftId ? (
             <span style={{ fontSize: '0.75rem', color: '#6b8ab8' }}>Editing saved draft</span>
           ) : null}
-          <button type="button" onClick={onSaveDraft} style={S.secondary} disabled={!!submittedQuote}>
+          <button type="button" onClick={onSaveDraft} style={S.secondary} disabled={!!submittedQuote || !!editingQuoteId}>
             {activeDraftId ? 'Update Draft' : 'Save Draft'}
           </button>
           <button type="button" onClick={onOpenDrafts} style={S.secondary}>My Drafts</button>
@@ -1487,7 +1563,11 @@ function NewQuoteTab(props) {
             }}
             disabled={submitting || !online || !!submittedQuote}
           >
-            {submitting ? 'Submitting…' : submittedQuote ? 'Submitted ✓' : 'Submit & Upload'}
+            {submitting
+              ? (editingQuoteId ? 'Updating…' : 'Submitting…')
+              : submittedQuote
+                ? (editingQuoteId ? 'Updated ✓' : 'Submitted ✓')
+                : (editingQuoteId ? 'Update & Overwrite' : 'Submit & Upload')}
           </button>
         </div>
       </div>
@@ -2081,7 +2161,7 @@ function RecentQuotesTab({
   recent, recentLoading, recentError, onApplyFilters,
   filterClient, setFilterClient, filterFrom, setFilterFrom, filterTo, setFilterTo,
   clients,
-  onViewPdf, onDuplicate, onSoftDelete, online, isMobile,
+  onViewPdf, onDuplicate, onEdit, onSoftDelete, online, isMobile,
 }) {
   return (
     <div style={isMobile ? S.bodyMobile : S.body}>
@@ -2165,15 +2245,18 @@ function RecentQuotesTab({
                 </div>
                 <div style={{ fontSize: '0.78rem', color: '#9ab1d6' }}>{formatDate(q.quote_date)}</div>
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '4px' }}>
-                  <button type="button" style={{ ...S.iconBtn, flex: 1, minWidth: '90px' }} onClick={() => onViewPdf(q)} disabled={!q.pdf_url}>
+                  <button type="button" style={{ ...S.iconBtn, flex: 1, minWidth: '70px' }} onClick={() => onViewPdf(q)} disabled={!q.pdf_url}>
                     View PDF
                   </button>
-                  <button type="button" style={{ ...S.iconBtn, flex: 1, minWidth: '90px' }} onClick={() => onDuplicate(q.id)}>
+                  <button type="button" style={{ ...S.iconBtn, flex: 1, minWidth: '70px' }} onClick={() => onEdit(q.id)}>
+                    Edit
+                  </button>
+                  <button type="button" style={{ ...S.iconBtn, flex: 1, minWidth: '70px' }} onClick={() => onDuplicate(q.id)}>
                     Duplicate
                   </button>
                   <button
                     type="button"
-                    style={{ ...S.iconBtn, flex: 1, minWidth: '90px', color: '#fca5a5', borderColor: 'rgba(220,38,38,0.4)' }}
+                    style={{ ...S.iconBtn, flex: 1, minWidth: '70px', color: '#fca5a5', borderColor: 'rgba(220,38,38,0.4)' }}
                     onClick={() => onSoftDelete(q)}
                   >
                     Delete
@@ -2209,6 +2292,9 @@ function RecentQuotesTab({
                       <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                         <button type="button" style={S.iconBtn} onClick={() => onViewPdf(q)} disabled={!q.pdf_url}>
                           View PDF
+                        </button>
+                        <button type="button" style={S.iconBtn} onClick={() => onEdit(q.id)}>
+                          Edit
                         </button>
                         <button type="button" style={S.iconBtn} onClick={() => onDuplicate(q.id)}>
                           Duplicate

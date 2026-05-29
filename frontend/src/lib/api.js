@@ -827,6 +827,12 @@ export const api = {
     // mid-flight timeout doesn't burn the sequence value.
     return request('/api/quotes', { method: 'POST', body: payload, timeoutMs: 45_000 });
   },
+  // Edit-and-resubmit. Preserves the existing Q###### and overwrites the
+  // Dropbox PDF at the canonical path. If client/date changed, the old
+  // file is best-effort deleted server-side.
+  updateQuote(id, payload) {
+    return request(`/api/quotes/${id}`, { method: 'PUT', body: payload, timeoutMs: 45_000 });
+  },
   // ── Quote Drafts (per-user, server-side) ──
   listQuoteDrafts() {
     return request('/api/quotes/drafts');
