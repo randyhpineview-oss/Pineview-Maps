@@ -71,6 +71,8 @@ const inputStyle = {
 
 const labelStyle = { display: 'block', fontSize: '0.8rem', color: '#9ca3af', marginBottom: '4px' };
 
+const STRUCTURED_EQ_LABELS = new Set(['crew truck', 'travel (mob/demob)', 'water truck']);
+
 /**
  * Standalone Hydroseed Daily Application Record form.
  *
@@ -250,7 +252,7 @@ export default function HydroseedDailyRecord({
         labour_hours_per_person: d.labour_hours_per_person ?? '',
         crew_truck_count: d.crew_truck_count ?? '',
         crew_truck_hours: d.crew_truck_hours ?? '',
-        equipment: d.equipment || [],
+        equipment: (d.equipment || []).filter(e => !STRUCTURED_EQ_LABELS.has((e?.label || '').toLowerCase().trim())),
         mulch_type: d.mulch_type || duplicateFrom.mulch_type || '',
         soil_amendment: d.soil_amendment || '',
         seed_types: (d.seed_types && d.seed_types.length > 0) ? d.seed_types : [makeBlankSeedType(0)],
@@ -286,7 +288,7 @@ export default function HydroseedDailyRecord({
         labour_hours_per_person: d.labour_hours_per_person ?? '',
         crew_truck_count: d.crew_truck_count ?? '',
         crew_truck_hours: d.crew_truck_hours ?? '',
-        equipment: d.equipment || [],
+        equipment: (d.equipment || []).filter(e => !STRUCTURED_EQ_LABELS.has((e?.label || '').toLowerCase().trim())),
         mulch_type: d.mulch_type || editingRecord.mulch_type || '',
         soil_amendment: d.soil_amendment || '',
         seed_types: (d.seed_types && d.seed_types.length > 0) ? d.seed_types : [makeBlankSeedType(0)],

@@ -329,6 +329,10 @@ def _aggregate_rows_from_daily(daily: HydroseedDailyRecord) -> list[dict]:
         hours = _to_decimal((eq or {}).get("hours"))
         if not label or not hours:
             continue
+        # Skip equipment entries that are handled by dedicated structured fields
+        # to prevent double-billing / duplicate lines on the ticket.
+        if label.lower().strip() in ("crew truck", "travel (mob/demob)", "water truck"):
+            continue
         rows.append({
             "kind": "equipment",
             "label": label,
