@@ -12,7 +12,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import and_, or_, text
+from sqlalchemy import and_, or_, text, func
 from sqlalchemy.orm import Session, joinedload
 
 from app.auth import get_current_user, require_roles
@@ -362,9 +362,9 @@ def list_open_tickets(
         ),
     )
     if client:
-        q = q.filter(TimeMaterialsTicket.client == client)
+        q = q.filter(func.lower(func.trim(TimeMaterialsTicket.client)) == client.strip().lower())
     if area:
-        q = q.filter(TimeMaterialsTicket.area == area)
+        q = q.filter(func.lower(func.trim(TimeMaterialsTicket.area)) == area.strip().lower())
     if spray_date:
         q = q.filter(TimeMaterialsTicket.spray_date == spray_date)
 

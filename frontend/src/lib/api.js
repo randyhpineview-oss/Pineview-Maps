@@ -58,6 +58,7 @@ async function request(path, options = {}) {
         headers: requestHeaders,
         body: requestBody,
         signal: controller.signal,
+        cache: 'no-store',
       });
     } catch (error) {
       clearTimeout(timer);

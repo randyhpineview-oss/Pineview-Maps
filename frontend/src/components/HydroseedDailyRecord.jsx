@@ -11,6 +11,7 @@ import PdfPreviewViewer from './PdfPreviewViewer';
 import AutocompleteInput from './AutocompleteInput';
 import { useDialog } from './DialogProvider';
 import MapAnnotationCanvas from './MapAnnotationCanvas';
+import { normalizeName } from '../lib/mapUtils';
 
 const MULCH_TYPES = ['Wood', 'Wood + Tack', 'BFM', 'FGM'];
 
@@ -653,8 +654,8 @@ export default function HydroseedDailyRecord({
       const TIMEOUT_MS = 2500;
       const tickets = await Promise.race([
         api.listOpenHydroseedTickets({
-          client: form.client || undefined,
-          area: form.area || undefined,
+          client: normalizeName(form.client) || undefined,
+          area: normalizeName(form.area) || undefined,
           work_date: form.date || undefined,
         }),
         new Promise((_, reject) =>

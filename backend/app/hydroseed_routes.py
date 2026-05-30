@@ -15,7 +15,7 @@ from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, or_, text
+from sqlalchemy import and_, or_, text, func
 from sqlalchemy.orm import Session, defer, joinedload
 
 from app.auth import get_current_user, require_roles
@@ -1111,9 +1111,9 @@ def list_open_tickets(
         ),
     )
     if client:
-        q = q.filter(HydroseedTicket.client == client)
+        q = q.filter(func.lower(func.trim(HydroseedTicket.client)) == client.strip().lower())
     if area:
-        q = q.filter(HydroseedTicket.area == area)
+        q = q.filter(func.lower(func.trim(HydroseedTicket.area)) == area.strip().lower())
     if work_date:
         q = q.filter(HydroseedTicket.work_date == work_date)
     tickets = q.order_by(HydroseedTicket.created_at.desc()).all()

@@ -7,6 +7,7 @@ import { useAutoSaveDraft } from '../lib/useAutoSaveDraft';
 import { localDateISO } from '../lib/dateUtil';
 import PdfPreviewViewer from './PdfPreviewViewer';
 import AutocompleteInput from './AutocompleteInput';
+import { normalizeName } from '../lib/mapUtils';
 import { useDialog } from './DialogProvider';
 
 function get12hTime() {
@@ -571,8 +572,8 @@ export default function HerbicideLeaseSheet({
       const TIMEOUT_MS = 2500;
       const tickets = await Promise.race([
         api.listOpenTMTickets({
-          client: form.customer || undefined,
-          area: form.area || undefined,
+          client: normalizeName(form.customer) || undefined,
+          area: normalizeName(form.area) || undefined,
           spray_date: form.date || undefined,
         }),
         new Promise((_, reject) =>
