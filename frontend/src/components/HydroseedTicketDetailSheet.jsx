@@ -172,6 +172,7 @@ export default function HydroseedTicketDetailSheet({
       qty: l.qty ?? '',
       unit: l.unit || '',
       rate: l.rate ?? '',
+      isQtyOverridden: !!l.isQtyOverridden,
     })));
 
     setComments(t.office_data?.comments || '');
@@ -245,6 +246,7 @@ export default function HydroseedTicketDetailSheet({
       qty: l.qty === '' || l.qty == null ? null : Number(l.qty),
       unit: l.unit || '',
       rate: l.rate === '' || l.rate == null ? null : Number(l.rate),
+      isQtyOverridden: !!l.isQtyOverridden,
     })),
     gst_percent: Number(gstPercent) || 0,
     gst_enabled: !!gstEnabled,
@@ -721,7 +723,7 @@ export default function HydroseedTicketDetailSheet({
             <input
               type="number" inputMode="decimal" min="0" step="any"
               value={line.qty}
-              onChange={e => updateLine(idx, { qty: e.target.value })}
+              onChange={e => updateLine(idx, { qty: e.target.value, isQtyOverridden: true })}
               disabled={isReadOnly}
               style={{ ...inputStyle, textAlign: 'right' }}
             />

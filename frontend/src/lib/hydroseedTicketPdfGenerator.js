@@ -139,6 +139,12 @@ export function syncOfficeLineQtysFromRows(existingLines, rows) {
     // entered on the old 'Mulch (bales)' / 'Seed' total lines and the
     // detail sheet decides at render time whether to hide them.
     if (isLegacyAutoSeededLabel(l.label)) return { ...l };
+    if (l.isQtyOverridden) {
+      if (rowByLabel.has(l.label)) {
+        seen.add(l.label);
+      }
+      return { ...l };
+    }
     const match = rowByLabel.get(l.label);
     if (match) {
       seen.add(l.label);
@@ -277,7 +283,8 @@ function collectSeedTypes(rows) {
 // label. So if the worker entered "T400 Hydroseeder" 12hr on one daily and
 // 8hr on another, the PDF shows ONE "T400 Hydroseeder" row with 20 hrs.
 // Different machines (e.g. T400 + T330) stay as separate rows.
-function collectHydroseederRows(rows) {
+// (Exported for test suites).
+export function collectHydroseederRows(rows) {
   const byLabel = new Map();
   for (const r of rows || []) {
     const label = r?.label || '';
@@ -300,6 +307,36 @@ function findRate(officeLines, label) {
     }
   }
   return 0;
+}
+
+// Look up a quantity from the office_data.lines[] by matching label
+// (case-insensitive). Returns null if not found.
+function findQty(officeLines, label) {
+  const target = (label || '').toLowerCase().trim();
+  for (const l of officeLines || []) {
+    if ((l?.label || '').toLowerCase().trim() === target) {
+      const q = parseFloat(l.qty);
+      if (Number.isFinite(q)) return q;
+    }
+  }
+  return null;
+}
+
+// Best-effort fuzzy quantity lookup: matches by label *word boundary*.
+function findQtyFuzzy(officeLines, needles) {
+  for (const needle of needles) {
+    const target = (needle || '').toLowerCase().trim();
+    if (!target) continue;
+    const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`\\b${escaped}\\b`, 'i');
+    for (const l of officeLines || []) {
+      if (re.test(l?.label || '')) {
+        const q = parseFloat(l.qty);
+        if (Number.isFinite(q)) return q;
+      }
+    }
+  }
+  return null;
 }
 
 // Best-effort fuzzy rate lookup: matches by label *word boundary*. Used
@@ -724,7 +761,10 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
     const line = findOfficeLineByLabel(productLabel);
     const unit = line?.unit || 'kg';
     const factor = getOfficeLineKgPerUnit(category, unit) || 1;
-    const qtyInUnit = kgTotal / factor;
+    // Use manual office line qty if it exists and is filled; otherwise use aggregated total.
+    const qtyInUnit = (line && line.qty !== '' && line.qty != null && Number.isFinite(Number(line.qty)))
+      ? Number(line.qty)
+      : (kgTotal / factor);
     // Format qty + suffix for the qty cell. kg keeps the legacy raw-
     // number rendering (the column header already says 'Kgs Used'); any
     // non-kg unit prints '<qty> <unit>' so the office sees what they're
@@ -796,18 +836,20 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
       rateNeedles: [`#${i + 1} seed`],
     });
   }
-  if (hasData(tackifierKg, 0)) {
+  const tackifierQty = findQtyFuzzy(officeLines, ['tackifier']) ?? tackifierKg;
+  if (hasData(tackifierQty, 0)) {
     drawScheduleRow({
       label: 'Tackifier',
-      kgsUsed: tackifierKg,
+      kgsUsed: tackifierQty,
       hours: null,
       rate: findRateFuzzy(officeLines, ['tackifier']),
     });
   }
-  if (hasData(aquagelKg, 0)) {
+  const aquagelQty = findQtyFuzzy(officeLines, ['aqua gel', 'aquagel']) ?? aquagelKg;
+  if (hasData(aquagelQty, 0)) {
     drawScheduleRow({
       label: 'Aquagel',
-      kgsUsed: aquagelKg,
+      kgsUsed: aquagelQty,
       hours: null,
       rate: findRateFuzzy(officeLines, ['aqua gel', 'aquagel']),
     });
@@ -817,10 +859,11 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
   // (paper convention — same trick we use for Travel km / Water Truck
   // loads) so the office can see units at a glance without adding a
   // dedicated column to the schedule.
-  if ((Number(micronutrientsL) || 0) !== 0) {
+  const micronutrientsQty = findQtyFuzzy(officeLines, ['micro nutrients', 'micronutrients', 'micronutrient']) ?? micronutrientsL;
+  if ((Number(micronutrientsQty) || 0) !== 0) {
     drawScheduleRow({
       label: 'Micro Nutrients',
-      kgsUsed: `${formatQty(micronutrientsL)} L`,
+      kgsUsed: `${formatQty(micronutrientsQty)} L`,
       hours: null,
       // Rate lookup tries the two-word form first, then the legacy
       // one-word spelling so office lines saved before the rename
@@ -828,10 +871,11 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
       rate: findRateFuzzy(officeLines, ['micro nutrients', 'micronutrients', 'micronutrient']),
     });
   }
-  if (hasData(bioticKg, 0)) {
+  const bioticQty = findQtyFuzzy(officeLines, ['biotic', 'soil amendment', 'soil media']) ?? bioticKg;
+  if (hasData(bioticQty, 0)) {
     drawScheduleRow({
       label: 'Biotic Soil Media',
-      kgsUsed: bioticKg,
+      kgsUsed: bioticQty,
       hours: null,
       rate: findRateFuzzy(officeLines, ['biotic', 'soil amendment', 'soil media']),
     });
@@ -850,85 +894,94 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
   }
 
   // ── Equipment rows ──────────────────────────────────────────────────
-  if (hasData(0, crewTruckHrs)) {
+  const crewTruckQtyVal = findQtyFuzzy(officeLines, ['crew truck', 'truck/trailer']) ?? crewTruckHrs;
+  if (hasData(0, crewTruckQtyVal)) {
     const countAnnotation = crewTruckMaxN > 0 ? `   ${formatQty(crewTruckMaxN)} # trucks on site` : '';
     drawScheduleRow({
       label: `Crew Truck Truck/Trailer${countAnnotation}`,
       kgsUsed: null,
-      hours: crewTruckHrs,
+      hours: crewTruckQtyVal,
       rate: findRateFuzzy(officeLines, ['crew truck', 'truck/trailer']),
     });
   }
-  if (hasData(0, skidSteerHrs)) {
+  const skidSteerQtyVal = findQtyFuzzy(officeLines, ['skid steer']) ?? skidSteerHrs;
+  if (hasData(0, skidSteerQtyVal)) {
     drawScheduleRow({
       label: 'Skid Steer',
       kgsUsed: null,
-      hours: skidSteerHrs,
+      hours: skidSteerQtyVal,
       rate: findRateFuzzy(officeLines, ['skid steer']),
     });
   }
   // Hydroseeder rows — one per machine (T400 / T330 / etc.) so the client
   // sees each unit as its own line item, matching the user's preference.
   for (const h of hydroseederRows) {
-    if ((Number(h.hours) || 0) === 0) continue;
+    const hQty = findQty(officeLines, h.label) ?? h.hours;
+    if ((Number(hQty) || 0) === 0) continue;
     drawScheduleRow({
       label: h.label,
       kgsUsed: null,
-      hours: h.hours,
+      hours: hQty,
       rate: findRate(officeLines, h.label) || findRateFuzzy(officeLines, ['hydroseeder']),
     });
   }
 
   // ── Labour rows ─────────────────────────────────────────────────────
-  if (hasData(0, supervisorHrs)) {
+  const supervisorQtyVal = findQtyFuzzy(officeLines, ['supervisor']) ?? supervisorHrs;
+  if (hasData(0, supervisorQtyVal)) {
     drawScheduleRow({
       label: 'Supervisor',
       kgsUsed: null,
-      hours: supervisorHrs,
+      hours: supervisorQtyVal,
       rate: findRateFuzzy(officeLines, ['supervisor']),
     });
   }
-  if (hasData(0, leadHandHrs)) {
+  const leadHandQtyVal = findQtyFuzzy(officeLines, ['lead hand', 'lead']) ?? leadHandHrs;
+  if (hasData(0, leadHandQtyVal)) {
     drawScheduleRow({
       label: 'Lead Hand',
       kgsUsed: null,
-      hours: leadHandHrs,
+      hours: leadHandQtyVal,
       rate: findRateFuzzy(officeLines, ['lead hand', 'lead']),
     });
   }
-  if (hasData(0, labourHrs)) {
+  const labourQtyVal = findQtyFuzzy(officeLines, ['total general labour', 'general labour', 'labour', 'labourer']) ?? labourHrs;
+  if (hasData(0, labourQtyVal)) {
     const countAnnotation = labourMaxN > 0 ? `   ${formatQty(labourMaxN)} # of Labourers on site` : '';
     drawScheduleRow({
       label: `Total General Labour${countAnnotation}`,
       kgsUsed: null,
-      hours: labourHrs,
+      hours: labourQtyVal,
       rate: findRateFuzzy(officeLines, ['total general labour', 'general labour', 'labour', 'labourer']),
     });
   }
 
   // ── Travel + Water Truck + Total Area ───────────────────────────────
-  if ((Number(travelKm) || 0) !== 0) {
+  const travelQtyVal = findQtyFuzzy(officeLines, ['travel', 'mob/demob', 'mob']) ?? travelKm;
+  if ((Number(travelQtyVal) || 0) !== 0) {
     // Travel uses the kgs column to display the km figure (paper convention)
     // but the rate is per-km so the sub-total math is qty×rate as usual.
     drawScheduleRow({
       label: 'Travel (Mob/Demob)',
-      kgsUsed: `${formatQty(travelKm)} kms`,
+      kgsUsed: `${formatQty(travelQtyVal)} kms`,
       hours: null,
       rate: findRateFuzzy(officeLines, ['travel', 'mob/demob', 'mob']),
     });
   }
-  if ((Number(waterLoads) || 0) !== 0) {
+  const waterQtyVal = findQtyFuzzy(officeLines, ['water truck']) ?? waterLoads;
+  if ((Number(waterQtyVal) || 0) !== 0) {
     drawScheduleRow({
       label: 'Water Truck',
-      kgsUsed: `${formatQty(waterLoads)} Loads`,
+      kgsUsed: `${formatQty(waterQtyVal)} Loads`,
       hours: null,
       rate: findRateFuzzy(officeLines, ['water truck']),
     });
   }
-  if ((Number(totalAreaM2) || 0) !== 0) {
+  const totalAreaM2QtyVal = findQtyFuzzy(officeLines, ['total area covered (m²)', 'area covered']) ?? totalAreaM2;
+  if ((Number(totalAreaM2QtyVal) || 0) !== 0) {
     drawScheduleRow({
       label: 'Total Area Covered (m²)',
-      kgsUsed: `${formatQty(totalAreaM2)} m²`,
+      kgsUsed: `${formatQty(totalAreaM2QtyVal)} m²`,
       hours: null,
       rate: 0,
     });
@@ -966,13 +1019,14 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
     });
   }
   for (const [label, info] of otherByLabel.entries()) {
-    if (!info.qty) continue;
+    const infoQty = findQty(officeLines, label) ?? info.qty;
+    if (!infoQty) continue;
     const unitLc = (info.unit || '').toLowerCase();
     const isHours = unitLc.startsWith('hr');
     drawScheduleRow({
       label,
-      kgsUsed: !isHours ? info.qty : null,
-      hours: isHours ? info.qty : null,
+      kgsUsed: !isHours ? infoQty : null,
+      hours: isHours ? infoQty : null,
       rate: findRate(officeLines, label),
     });
   }
