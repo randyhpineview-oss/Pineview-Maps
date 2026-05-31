@@ -253,10 +253,16 @@ export default function FormsPanel({
   // processUploadQueue setting `activeUploadItemId` at the start of
   // each iteration and clearing it in the finally block.
   activeUploadItemId = null,
-  // 0..100 byte-progress for the active upload item. Capped at 95 on
-  // the App side during upload (since the server still has PDF/Dropbox
-  // work after the bytes land); jumps to 100 briefly between items.
+  // 0..100 byte-progress for the active upload item. For two-lane targets
+  // (lease sheets, hydroseed dailies) this is just lane 1 (the fast
+  // metadata POST); lane 2 (Dropbox/photos) lives in `uploadLane2Percent`.
+  // For single-lane (edits / status updates) this is the only bar and is
+  // capped at 95% during upload (the 95→99 creep covers the backend stall).
   uploadCurrentItemPercent = 0,
+  // 0..100 byte-progress for the active upload item's lane 2 (Dropbox
+  // uploads). Zero for single-lane targets — the row renders just one
+  // bar in that case.
+  uploadLane2Percent = 0,
   // Bumped by App.jsx when the header "Syncing X%" badge is tapped.
   // An effect below watches this and switches to In Progress →
   // Uploading so the worker lands on the details view.
@@ -921,7 +927,13 @@ export default function FormsPanel({
       .filter((it) => {
         const tt = it?.targetType;
         const isLease = tt === 'site' || tt === 'pipeline' || tt === 'external';
-        return isLease && it?.payload?.time_materials_link?.create === true && it?.status !== 'stalled';
+        // Hide placeholders once lane 1 has committed — the real T&M ticket
+        // now exists via delta-sync, so showing the placeholder alongside
+        // would briefly look like a duplicate row during lane 2 (photos).
+        return isLease
+          && it?.payload?.time_materials_link?.create === true
+          && it?.status !== 'stalled'
+          && it?.lane !== 'files';
       })
       .map((it) => {
         const d = it.payload?.lease_sheet_data || {};
@@ -938,7 +950,8 @@ export default function FormsPanel({
     return (uploadQueue || [])
       .filter((it) => it?.targetType === 'hydroseed_daily'
         && it?.payload?.hydroseed_ticket_link?.create === true
-        && it?.status !== 'stalled')
+        && it?.status !== 'stalled'
+        && it?.lane !== 'files')
       .map((it) => ({
         id: `pending-ht-${it.id}`,
         client: it.payload?.client || '',
@@ -958,9 +971,14 @@ export default function FormsPanel({
       .filter((it) => {
         const tt = it?.targetType;
         const isLeaseCreate = tt === 'site' || tt === 'pipeline' || tt === 'external';
-        // Exclude pure pin-inspection updates ('site' with no lease_sheet_data)
-        // and stalled items (those surface in the Uploading tab instead).
-        return isLeaseCreate && it?.payload?.lease_sheet_data && it?.status !== 'stalled';
+        // Exclude pure pin-inspection updates ('site' with no lease_sheet_data),
+        // stalled items (Uploading tab shows them instead), and items past
+        // lane 1 (the real lease record now shows via delta-sync, so the
+        // placeholder would briefly duplicate it).
+        return isLeaseCreate
+          && it?.payload?.lease_sheet_data
+          && it?.status !== 'stalled'
+          && it?.lane !== 'files';
       })
       .map((it) => {
         const d = it.payload?.lease_sheet_data || {};
@@ -975,7 +993,7 @@ export default function FormsPanel({
 
   const pendingHydroseedDailyPlaceholders = useMemo(() => {
     return (uploadQueue || [])
-      .filter((it) => it?.targetType === 'hydroseed_daily' && it?.status !== 'stalled')
+      .filter((it) => it?.targetType === 'hydroseed_daily' && it?.status !== 'stalled' && it?.lane !== 'files')
       .map((it) => ({
         id: `pending-hyd-daily-${it.id}`,
         client: it.payload?.client || it.payload?.daily_data?.client || '',
@@ -1273,6 +1291,14 @@ export default function FormsPanel({
                   // reads cleanly when 3–5 items are stacked.
                   const isActive = activeUploadItemId === item.id;
                   const pct = isActive ? uploadCurrentItemPercent : 0;
+                  // Two-lane targets get a Dropbox/photos bar alongside the
+                  // form/metadata bar. Single-lane edits / status updates
+                  // render a single combined bar (lane 2 percent stays 0).
+                  const lane2Pct = isActive ? uploadLane2Percent : 0;
+                  const isTwoLaneItem = item.targetType === 'site'
+                    || item.targetType === 'pipeline'
+                    || item.targetType === 'external'
+                    || item.targetType === 'hydroseed_daily';
                   // Stalled = auto-retry has given up on this item
                   // (either burnt the MAX_ATTEMPTS budget or hit a
                   // 400/422 validation failure). Render in a red-tinted
@@ -1307,7 +1333,9 @@ export default function FormsPanel({
                           <div className="small-text" style={{ color: isStalled ? '#fca5a5' : '#9ca3af' }}>
                             {typeLabel} • {
                               isActive
-                                ? `Uploading ${pct}%`
+                                ? (isTwoLaneItem
+                                    ? (lane2Pct > 0 ? 'Uploading photos to Dropbox…' : 'Uploading form…')
+                                    : `Uploading ${pct}%`)
                                 : isStalled
                                   ? (isValidationStall ? '⚠ Failed (data issue)' : '⚠ Failed (network)')
                                   : 'Queued'
@@ -1324,6 +1352,33 @@ export default function FormsPanel({
                           {isActive ? '⟳' : isStalled ? '⚠' : '⏳'}
                         </span>
                       </div>
+                      {/* Live progress bars for the active item. Two-lane
+                          targets render two stacked bars (form / Dropbox);
+                          single-lane targets render one bar. Bars are slim
+                          and live below the metadata row so the worker can
+                          watch both lanes finish independently. */}
+                      {isActive ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '8px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span className="small-text" style={{ color: '#9ca3af', fontSize: '0.7rem', minWidth: isTwoLaneItem ? '128px' : '90px' }}>
+                              {isTwoLaneItem ? `Form ${pct}%` : `Uploading ${pct}%`}
+                            </span>
+                            <div style={{ flex: 1, height: '4px', background: '#1f2937', borderRadius: '2px', overflow: 'hidden' }}>
+                              <div style={{ width: `${pct}%`, height: '100%', background: '#3b82f6', transition: 'width 100ms linear' }} />
+                            </div>
+                          </div>
+                          {isTwoLaneItem ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span className="small-text" style={{ color: '#9ca3af', fontSize: '0.7rem', minWidth: '128px' }}>
+                                Dropbox photos {lane2Pct}%
+                              </span>
+                              <div style={{ flex: 1, height: '4px', background: '#1f2937', borderRadius: '2px', overflow: 'hidden' }}>
+                                <div style={{ width: `${lane2Pct}%`, height: '100%', background: '#22c55e', transition: 'width 100ms linear' }} />
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
                       {/* Captured error + actions, only on stalled rows.
                           Truncate the message so a multi-paragraph 5xx
                           HTML body doesn't blow up the row height; the

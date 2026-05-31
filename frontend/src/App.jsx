@@ -15,6 +15,12 @@ import { shouldForceOverlay } from './lib/compliance';
 import { ensurePushSubscribed, notificationPermission, pushSupported } from './lib/pushClient';
 import { scheduleLocalCheckinNotifications } from './lib/localCheckinNotifications';
 import { requestWithUploadProgress } from './lib/xhrUpload';
+import {
+  buildLane2Payload,
+  isTwoLaneTargetType,
+  lane2EndpointFor,
+  stripFilesForLane1,
+} from './lib/uploadLanes';
 import { nearestFraction } from './lib/mapUtils';
 import { generateLeaseSheetPdf } from './lib/pdfGenerator';
 import { generateTMTicketPdf } from './lib/tmTicketPdfGenerator';
@@ -666,6 +672,11 @@ export default function App() {
   // we cap the displayed value at 95% during upload and let the
   // jump to 100% happen when the API call actually returns.
   const [currentItemPercent, setCurrentItemPercent] = useState(0);
+  // Lane-2 (Dropbox/photos) byte-progress for the active upload item — only
+  // populated for two-lane targets (lease sheets + hydroseed dailies). Lane 1
+  // (the fast metadata POST) reuses `currentItemPercent`; lane 2 lives here
+  // so FormsPanel's Uploading row can render the two bars side-by-side.
+  const [currentItemLane2Percent, setCurrentItemLane2Percent] = useState(0);
   // Queue entry id (from offlineStore.uploadQueue) of the item that's
   // currently being uploaded. Null between items / when idle. FormsPanel
   // uses this to decide which row in its Uploading list should render
@@ -1368,33 +1379,25 @@ export default function App() {
           // end of the branch so the delta fetch happens immediately.
           const bumpsTm = !!item.payload?.time_materials_link;
 
-          // Per-file progress is a TWO-PHASE model:
+          // Per-item upload uses one of two progress models:
           //
-          //   Phase A (bytes 0%→95%): driven by xhr.upload.onprogress.
-          //     Capped at 95% because once the bytes have flushed, the
-          //     backend still has to do PDF generation + parallel
-          //     Dropbox uploads — work we have no client-side signal
-          //     for. 95% says "almost done" without lying.
+          //  • TWO-LANE (lease sheets + hydroseed dailies): real byte
+          //    progress for BOTH lanes. Lane 1 (`currentItemPercent`)
+          //    is the tiny metadata POST — flushes in ms. Lane 2
+          //    (`currentItemLane2Percent`) is the heavy Dropbox upload
+          //    with real bytes 0-100%. No fake creep needed because
+          //    Dropbox work is now in lane 2 with its own bar.
           //
-          //   Phase B (finalising 95%→99%): kicks in the first time
-          //     fraction >= 1 (i.e. xhr.upload.load fired). A 200 ms
-          //     timer linearly drifts the displayed percent from 95
-          //     to 99 over a ~6 s window — calibrated for the typical
-          //     5-photo Dropbox time after parallelisation. Without
-          //     this, the bar parks at 95% for the whole backend
-          //     phase and looks frozen, which is the bug the user
-          //     described as "uploads feel slow even on fast wifi".
-          //
-          // The actual jump to 100% happens via setCurrentItemPercent
-          // and setUploadProgress in the success path below, once the
-          // XHR promise resolves.
+          //  • SINGLE-LANE (edits / status updates): still goes through
+          //    a single request that blocks on backend Dropbox after
+          //    bytes flush. Keeps the 95→99 finalising creep so the
+          //    bar doesn't park at 95% looking frozen.
           const itemsBefore = completed;
-          // Throttle progress to ~10 Hz. XHR upload.onprogress fires every
-          // ~50 ms on Wi-Fi, which causes a React re-render storm in
-          // FormsPanel + interrupts the bar's CSS transition mid-ease,
-          // showing visible jitter on mobile. 100 ms cadence is plenty
-          // for a smooth-looking bar without thrashing the render loop.
-          let lastProgressTs = 0;
+          const twoLane = isTwoLaneTargetType(item.targetType);
+          // Throttle progress to ~10 Hz to avoid React re-render storms
+          // that show as visible jitter on mobile.
+          let lane1LastTs = 0;
+          let lane2LastTs = 0;
           let finalizeTimer = null;
           const clearFinalizeTimer = () => {
             if (finalizeTimer != null) {
@@ -1402,85 +1405,197 @@ export default function App() {
               finalizeTimer = null;
             }
           };
-          const onItemBytes = (fraction) => {
-            // Once bytes are done, hand off to the finalising creep.
-            // We start it ONCE per item (the null-check below) and let
-            // it own the bar until the success/catch path clears it.
-            if (fraction >= 1 && finalizeTimer == null) {
+          const onLane1Bytes = (fraction) => {
+            // Single-lane finalising creep — kept ONLY for the edit /
+            // update branches that still block on backend Dropbox.
+            // Two-lane items skip the creep because their lane 2 has
+            // honest byte progress.
+            if (!twoLane && fraction >= 1 && finalizeTimer == null) {
               const startTs = Date.now();
               finalizeTimer = setInterval(() => {
-                // Linear creep across ~6 s. After that we hold at 99%
-                // until the response actually arrives — better than
-                // claiming 100% when work is still in flight.
                 const t = Math.min(1, (Date.now() - startTs) / 6000);
                 const itemPct = 95 + Math.round(t * 4); // 95 → 99
                 setCurrentItemPercent(itemPct);
                 const overall = ((itemsBefore + 0.95 + t * 0.04) / total) * 100;
                 setUploadProgress(Math.min(99, Math.round(overall)));
               }, 200);
-              return; // skip the byte-phase update for this final beat
+              return;
             }
             const now = Date.now();
-            const isComplete = fraction >= 0.95;
-            if (!isComplete && now - lastProgressTs < 100) return;
-            lastProgressTs = now;
-            const capped = Math.max(0, Math.min(0.95, fraction));
+            if (fraction < 0.95 && now - lane1LastTs < 100) return;
+            lane1LastTs = now;
+            // For two-lane: let lane 1 go to 100% (it's the trivial
+            // metadata POST — no backend stall to hide). For single-
+            // lane: cap at 95% so the creep can take over.
+            const ceiling = twoLane ? 1 : 0.95;
+            const capped = Math.max(0, Math.min(ceiling, fraction));
             setCurrentItemPercent(Math.round(capped * 100));
-            const overall = ((itemsBefore + capped) / total) * 100;
+            if (!twoLane) {
+              const overall = ((itemsBefore + capped) / total) * 100;
+              setUploadProgress(Math.min(99, Math.round(overall)));
+            } else {
+              // Two-lane overall — lane 1 contributes the first 20%,
+              // lane 2 (which is where the bulk of the byte work is)
+              // contributes the remaining 80%. Calibrated so the
+              // overall bar doesn't jump from 0→50% on a tiny lane 1
+              // metadata flush.
+              const overall = ((itemsBefore + capped * 0.2) / total) * 100;
+              setUploadProgress(Math.min(99, Math.round(overall)));
+            }
+          };
+          const onLane2Bytes = (fraction) => {
+            const now = Date.now();
+            if (fraction < 0.95 && now - lane2LastTs < 100) return;
+            lane2LastTs = now;
+            const capped = Math.max(0, Math.min(1, fraction));
+            setCurrentItemLane2Percent(Math.round(capped * 100));
+            const overall = ((itemsBefore + 0.2 + capped * 0.8) / total) * 100;
             setUploadProgress(Math.min(99, Math.round(overall)));
           };
-          // Reset the per-file readout at the start of each item so the
-          // bar visibly restarts "file 2/3 — 0% ..." rather than carrying
-          // the previous file's 95% across the boundary.
+          // Reset both per-file readouts at the start of each item.
           setCurrentItemPercent(0);
+          setCurrentItemLane2Percent(0);
+          // Retry-after-lane-1-success: lane 1 already committed in a
+          // previous pass, so show its bar at 100% from the start —
+          // only lane 2 will visibly progress.
+          if (item.lane === 'files') {
+            setCurrentItemPercent(100);
+          }
           // Mark this queue entry as the active uploader so FormsPanel's
           // Uploading tab can render a live progress bar on just this
           // row (and leave the rest showing "Queued").
           setActiveUploadItemId(item.id);
 
-          if (item.targetType === 'site') {
-            // Offline-queued sheets may not have a ticket / PDF yet —
-            // render and reserve at upload time so Dropbox gets a PDF
-            // with the real ticket number printed on it.
-            const patched = await ensurePdfAndTicket(item);
-            await requestWithUploadProgress(`/api/sites/${item.targetId}/spray`, {
-              method: 'POST',
-              body: patched,
-              onProgress: onItemBytes,
-            });
-            // Refresh the site data in background (including pdf_url from Dropbox)
-            try {
-              let updated = await api.getSite(item.targetId);
-              if (patched.site_status === 'in_progress' && updated.status !== 'in_progress') {
-                updated = await api.updateSiteStatus(item.targetId, {
-                  status: 'in_progress',
-                  note: patched.notes || '',
-                });
+          if (twoLane) {
+            // ════ TWO-LANE PATH ════════════════════════════════════════
+            // Lane 1 — fast metadata POST; the backend creates the DB
+            // row + linked ticket but DOESN'T touch Dropbox (we strip
+            // the files). Returns in well under a second.
+            //
+            // Lane 2 — heavy files POST to /files; backend uploads
+            // PDF + photos to Dropbox in parallel and patches the
+            // record's pdf_url / photo_urls. Idempotent retries.
+            //
+            // The full payload (with files) stays in IDB across lanes,
+            // so a tab close mid-lane-2 or a lane-2 failure never
+            // loses the worker's bytes — next retry picks up where
+            // we left off via `item.lane === 'files'`.
+            let activePayload = item.payload || {};
+            let recordId = item.recordId || null;
+
+            if (item.lane !== 'files') {
+              // ── Lane 1 ──
+              let patched = activePayload;
+              if (item.targetType !== 'hydroseed_daily') {
+                // Lease sheets — allocate ticket number + render PDF
+                // before lane 1 so the persisted payload carries them
+                // for lane 2 even if the tab closes between lanes.
+                patched = await ensurePdfAndTicket(item);
               }
-              setSites((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-              setSelectedSite((prev) => prev && prev.id === updated.id ? updated : prev);
-              await upsertSite(updated);
-            } catch { /* ignore refresh failure */ }
-            if (bumpsTm) setTmRefreshToken((x) => x + 1);
-          } else if (item.targetType === 'pipeline') {
-            const patched = await ensurePdfAndTicket(item);
-            await requestWithUploadProgress(`/api/pipelines/${item.targetId}/spray`, {
-              method: 'POST',
-              body: patched,
-              onProgress: onItemBytes,
-            });
-            try {
-              const updatedPipeline = await api.getPipeline(item.targetId);
-              setPipelines((prev) => prev.map((p) => (p.id === updatedPipeline.id ? updatedPipeline : p)));
-              setSelectedPipeline((prev) => {
-                if (prev && prev.id === updatedPipeline.id) {
-                  setPipelineSprayRecords(updatedPipeline.spray_records || []);
-                  return updatedPipeline;
+              activePayload = patched;
+
+              const lane1Body = stripFilesForLane1(item.targetType, patched);
+              let lane1Endpoint;
+              if (item.targetType === 'site') {
+                lane1Endpoint = `/api/sites/${item.targetId}/spray`;
+              } else if (item.targetType === 'pipeline') {
+                lane1Endpoint = `/api/pipelines/${item.targetId}/spray`;
+              } else if (item.targetType === 'external') {
+                lane1Endpoint = `/api/external-lease-sheet`;
+              } else {
+                lane1Endpoint = `/api/hydroseed/dailies`;
+              }
+
+              let lane1Response;
+              try {
+                lane1Response = await requestWithUploadProgress(lane1Endpoint, {
+                  method: 'POST',
+                  body: lane1Body,
+                  onProgress: onLane1Bytes,
+                });
+              } catch (err) {
+                // External 409 — location already exists on the map.
+                // Same surfacing as the old single-lane path.
+                if (item.targetType === 'external' && err?.status === 409) {
+                  clearFinalizeTimer();
+                  const detail = err?.detail || {};
+                  await alert({
+                    title: 'Location already on map',
+                    message: `This location already exists on the map (site #${detail.site_id || '?'}). Please select it from the Map tab.`,
+                  });
+                  await removeUploadEntry(item.id);
+                  continue;
                 }
-                return prev;
+                throw err;
+              }
+
+              recordId = lane1Response?.id || null;
+
+              // Persist lane state + the patched payload (with the
+              // freshly-allocated ticket_number + generated pdf_base64)
+              // so a crash before lane 2 doesn't re-burn a ticket
+              // number on retry.
+              await updateUploadEntry(item.id, {
+                lane: 'files',
+                recordId,
+                payload: activePayload,
               });
-            } catch { /* ignore refresh failure */ }
-            if (bumpsTm) setTmRefreshToken((x) => x + 1);
+
+              // ── Refresh views NOW — the real record / ticket exists,
+              //    so the worker should see their submit land immediately.
+              //    pdf_url / photo_urls will fill in via delta-sync once
+              //    lane 2 patches them on the server.
+              if (item.targetType === 'site') {
+                try {
+                  let updated = await api.getSite(item.targetId);
+                  if (patched.site_status === 'in_progress' && updated.status !== 'in_progress') {
+                    updated = await api.updateSiteStatus(item.targetId, {
+                      status: 'in_progress',
+                      note: patched.notes || '',
+                    });
+                  }
+                  setSites((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+                  setSelectedSite((prev) => prev && prev.id === updated.id ? updated : prev);
+                  await upsertSite(updated);
+                } catch { /* non-fatal */ }
+              } else if (item.targetType === 'pipeline') {
+                try {
+                  const updatedPipeline = await api.getPipeline(item.targetId);
+                  setPipelines((prev) => prev.map((p) => (p.id === updatedPipeline.id ? updatedPipeline : p)));
+                  setSelectedPipeline((prev) => {
+                    if (prev && prev.id === updatedPipeline.id) {
+                      setPipelineSprayRecords(updatedPipeline.spray_records || []);
+                      return updatedPipeline;
+                    }
+                    return prev;
+                  });
+                } catch { /* non-fatal */ }
+              } else if (item.targetType === 'hydroseed_daily') {
+                setDraftsRefreshToken((x) => x + 1);
+                setHydroseedRefreshToken((x) => x + 1);
+                setHydroseedDailiesRefreshToken((x) => x + 1);
+              }
+              if (bumpsTm) setTmRefreshToken((x) => x + 1);
+            }
+
+            // ── Lane 2 ── (always runs once lane 1 has succeeded; on
+            // retry-after-lane-1-success we skip lane 1 and come
+            // straight here).
+            if (recordId) {
+              const lane2Body = buildLane2Payload(item.targetType, activePayload);
+              if (lane2Body) {
+                const lane2Endpoint = lane2EndpointFor(item.targetType, recordId);
+                if (lane2Endpoint) {
+                  await requestWithUploadProgress(lane2Endpoint, {
+                    method: 'POST',
+                    body: lane2Body,
+                    onProgress: onLane2Bytes,
+                  });
+                }
+              }
+              // Lane 2 done — pdf_url / photo_urls will refresh into
+              // the UI via the regular delta-sync tick within seconds.
+            }
           } else if (item.targetType === 'site_spray_edit') {
             // Fix #2 — offline-queued lease-sheet edits. Mirrors the create
             // path but uses the PATCH endpoint. Edit payloads always carry
@@ -1490,7 +1605,7 @@ export default function App() {
             await requestWithUploadProgress(`/api/site-spray-records/${item.targetId}`, {
               method: 'PATCH',
               body: item.payload,
-              onProgress: onItemBytes,
+              onProgress: onLane1Bytes,
             });
             try {
               const siteId = item.payload?.site_id || 0;
@@ -1516,7 +1631,7 @@ export default function App() {
             await requestWithUploadProgress(`/api/time-materials/${item.targetId}`, {
               method: 'PATCH',
               body: item.payload,
-              onProgress: onItemBytes,
+              onProgress: onLane1Bytes,
             });
             // Nudge FormsPanel to immediately delta-sync its ticket cache.
             // Without this, the worker would see the just-submitted ticket
@@ -1526,59 +1641,6 @@ export default function App() {
             // Bumping the token causes an instant `/api/time-materials/delta`
             // call which overwrites the cached row with status='submitted'.
             setTmRefreshToken((x) => x + 1);
-          } else if (item.targetType === 'external') {
-            // Standalone external lease sheet — backend creates the hidden
-            // placeholder site and spray record. 409 means a matching site
-            // already exists; surface to the user so they can pick from map.
-            const patched = await ensurePdfAndTicket(item);
-            try {
-              await requestWithUploadProgress(`/api/external-lease-sheet`, {
-                method: 'POST',
-                body: patched,
-                onProgress: onItemBytes,
-              });
-            } catch (err) {
-              if (err?.status === 409) {
-                // Stop the finalising creep before the alert blocks; the
-                // bar would otherwise keep drifting while the dialog is up.
-                clearFinalizeTimer();
-                const detail = err?.detail || {};
-                // Block the queue loop on this dialog — same behavior as
-                // the previous native alert (which froze the JS thread).
-                // The await keeps the for-loop paused until the worker
-                // dismisses, so we don't churn through other items while
-                // they're still reading the message.
-                await alert({
-                  title: 'Location already on map',
-                  message: `This location already exists on the map (site #${detail.site_id || '?'}). Please select it from the Map tab.`,
-                });
-                // Remove from queue — the worker must re-submit against the existing site.
-                await removeUploadEntry(item.id);
-                continue;
-              }
-              throw err;
-            }
-            setTmRefreshToken((x) => x + 1);
-          } else if (item.targetType === 'hydroseed_daily') {
-            // Hydroseed daily — backend allocates HD######, uploads PDF
-            // to /{YYYY} Spray Records/{date}/Hydroseed Daily/... and any
-            // photos to /Pineview Maps/Form Photos/. Idempotent via
-            // `client_submission_id`, so retries on transient 5xx never
-            // create duplicate records.
-            await requestWithUploadProgress(`/api/hydroseed/dailies`, {
-              method: 'POST',
-              body: item.payload,
-              onProgress: onItemBytes,
-            });
-            // Bump all three tokens so FormsPanel refreshes immediately:
-            //   draftsRefreshToken   — hydroseed dailies list (HD######)
-            //   hydroseedRefreshToken — HT ticket list (the backend creates
-            //     or links a ticket on daily submit; without this the worker
-            //     waits up to 30s for the local poll to pick it up)
-            //   hydroseedDailiesRefreshToken — the dailies delta-sync effect
-            setDraftsRefreshToken((x) => x + 1);
-            setHydroseedRefreshToken((x) => x + 1);
-            setHydroseedDailiesRefreshToken((x) => x + 1);
           } else if (item.targetType === 'hydroseed_daily_edit') {
             // Edit of an existing HD###### record. PATCH to the same
             // endpoint structure as the lease-sheet `site_spray_edit`
@@ -1586,7 +1648,7 @@ export default function App() {
             await requestWithUploadProgress(`/api/hydroseed/dailies/${item.targetId}`, {
               method: 'PATCH',
               body: item.payload,
-              onProgress: onItemBytes,
+              onProgress: onLane1Bytes,
             });
             setDraftsRefreshToken((x) => x + 1);
           } else if (item.targetType === 'hydroseed_ticket_update') {
@@ -1595,7 +1657,7 @@ export default function App() {
             await requestWithUploadProgress(`/api/hydroseed/tickets/${item.targetId}`, {
               method: 'PATCH',
               body: item.payload,
-              onProgress: onItemBytes,
+              onProgress: onLane1Bytes,
             });
             setDraftsRefreshToken((x) => x + 1);
           }
@@ -1612,6 +1674,7 @@ export default function App() {
           // the bar would jump from 95% (during upload) straight to the
           // next file's 0%, hiding the "this file is done" beat.
           setCurrentItemPercent(100);
+          setCurrentItemLane2Percent(100);
         } catch (err) {
           // Always stop the finalising creep on any error path so the
           // bar doesn't keep drifting while we surface the failure or
@@ -1696,6 +1759,7 @@ export default function App() {
       setUploadTotal(0);
       setUploadCompleted(0);
       setCurrentItemPercent(0);
+      setCurrentItemLane2Percent(0);
       setActiveUploadItemId(null);
       await refreshUploadQueue();
     }
@@ -6534,6 +6598,7 @@ export default function App() {
               // header "Syncing X%" badge).
               activeUploadItemId={activeUploadItemId}
               uploadCurrentItemPercent={currentItemPercent}
+              uploadLane2Percent={currentItemLane2Percent}
               uploadTabSignal={uploadTabSignal}
               // Per-row Retry / Discard for stalled queue items.
               // Retry = un-stall this single entry and kick the queue;
