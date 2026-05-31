@@ -248,7 +248,7 @@ def upload_photo_to_dropbox(photo_content: bytes, file_path: str) -> Optional[st
 def upload_files_parallel(
     jobs: List[Tuple[bytes, str]],
     *,
-    max_workers: int = 5,
+    max_workers: int = 8,
 ) -> List[Optional[str]]:
     """Upload (content, file_path) tuples to Dropbox concurrently.
 
@@ -259,10 +259,12 @@ def upload_files_parallel(
     we don't share an HTTP session across threads.
 
     Performance notes:
-      • `max_workers=5` is a deliberate ceiling — Dropbox's per-app
-        rate-limit kicks in around 12 concurrent calls, and the
-        diminishing-returns curve flattens after ~5 anyway because
-        `_get_or_create_shared_link` does its own internal round-trips.
+      • `max_workers=8` is a deliberate ceiling — Dropbox's per-app
+        rate-limit kicks in around 12 concurrent calls, so 8 leaves
+        headroom while letting photo-heavy lease sheets / hydroseed
+        dailies saturate a fast connection instead of trickling 5 at a
+        time. `_get_or_create_shared_link` adds its own round-trips, so
+        we stay under the limit even with all workers busy.
       • Unique parent folders are pre-created ONCE (sequentially, on
         a single client) before the fan-out, so we don't waste N-1
         redundant `files_create_folder_v2` calls when many photos share
