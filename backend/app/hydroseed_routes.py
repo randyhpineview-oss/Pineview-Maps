@@ -16,7 +16,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, or_, text, func
-from sqlalchemy.orm import Session, defer, joinedload
+from sqlalchemy.orm import Session, defer, joinedload, noload
 
 from app.auth import get_current_user, require_roles
 from app.database import get_db
@@ -111,8 +111,14 @@ def _slim_tickets_query(db: Session, current_user: User, include_deleted: bool =
     # needs ticket header + row summaries — skipping the daily_records
     # joinedload avoids pulling daily_data JSONB for every linked daily,
     # which caused 30-second list load times as the dataset grew.
+    # `noload` on daily_records prevents SQLAlchemy from issuing N+1 lazy
+    # queries (one per ticket) when Pydantic's from_attributes serializer
+    # touches the `daily_records` field on HydroseedTicketRead. The list
+    # endpoints don't need linked-daily detail; the detail sheet uses
+    # _visible_tickets_query (which keeps the joinedload) for that.
     q = db.query(HydroseedTicket).options(
         joinedload(HydroseedTicket.rows),
+        noload(HydroseedTicket.daily_records),
     )
     if not include_deleted:
         q = q.filter(HydroseedTicket.deleted_at.is_(None))
@@ -1099,6 +1105,7 @@ def list_open_tickets(
     submit picker). Office/admin who want everyone's tickets use /tickets."""
     q = db.query(HydroseedTicket).options(
         joinedload(HydroseedTicket.rows),
+        noload(HydroseedTicket.daily_records),
     ).filter(
         HydroseedTicket.status == TMTicketStatus.open,
         HydroseedTicket.deleted_at.is_(None),
