@@ -51,14 +51,15 @@ export default function PdfPreviewViewer({ pdfBase64, pdfBytes }) {
   });
 
   // ── Apply CSS transform to the pages wrapper ──
+  // transformOrigin is '0 0' (top-left), so the transform is simply:
+  //   translate(panX, panY) scale(zoom)
+  // where panX/panY are in CSS pixels relative to the wrapper's own
+  // top-left corner. This makes the pinch math straightforward: no
+  // origin offset needs to be subtracted.
   const applyTransform = useCallback(() => {
     const wrap = pagesWrapperRef.current;
     if (!wrap) return;
     const s = stateRef.current;
-    // Only apply transform when zoomed — at 1x with no pan, remove it
-    // entirely so each page canvas renders at native resolution (no GPU
-    // layer blur). The wrapper covers the whole stack so every page
-    // zooms/pans together.
     if (s.zoom <= 1.001 && Math.abs(s.panX) < 1 && Math.abs(s.panY) < 1) {
       wrap.style.transform = '';
     } else {
@@ -199,15 +200,24 @@ export default function PdfPreviewViewer({ pdfBase64, pdfBytes }) {
         const mid = getMid(e.touches);
         const newZoom = Math.max(0.5, Math.min(5, s.pinchStartZoom * (dist / s.pinchStartDist)));
 
-        // Zoom toward pinch center: adjust pan so the midpoint stays fixed
+        // Zoom toward the pinch midpoint.
+        // With transformOrigin='0 0', the math is:
+        //   newPan = startPan + (midDelta) + pinchMidInWrapperSpace * (1 - zoomRatio)
+        // where pinchMidInWrapperSpace is the midpoint expressed in the
+        // wrapper's pre-transform coordinate space:
+        //   pinchMidInWrapper = (clientMid - wrapperRect.topLeft - startPan) / startZoom
+        // Multiplying back by startZoom and rewriting gives the compact form below.
         const rect = container.getBoundingClientRect();
-        const cx = s.pinchMidX - rect.left - rect.width / 2;
-        const cy = s.pinchMidY - rect.top - rect.height / 2;
+        // Pinch midpoint relative to wrapper origin (in screen px, before transform)
+        const midInContainerX = s.pinchMidX - rect.left;
+        const midInContainerY = s.pinchMidY - rect.top;
         const ratio = newZoom / s.pinchStartZoom;
 
         s.zoom = newZoom;
-        s.panX = s.pinchStartPanX + (mid.x - s.pinchMidX) + cx * (1 - ratio);
-        s.panY = s.pinchStartPanY + (mid.y - s.pinchMidY) + cy * (1 - ratio);
+        // Keep the pinch midpoint anchored in place, and also follow any
+        // translation of the midpoint as both fingers move together.
+        s.panX = midInContainerX - ratio * (midInContainerX - s.pinchStartPanX) + (mid.x - s.pinchMidX);
+        s.panY = midInContainerY - ratio * (midInContainerY - s.pinchStartPanY) + (mid.y - s.pinchMidY);
         applyTransform();
       } else if (s.dragging && e.touches.length === 1) {
         e.preventDefault();
@@ -239,16 +249,16 @@ export default function PdfPreviewViewer({ pdfBase64, pdfBytes }) {
       const factor = e.deltaY > 0 ? 0.9 : 1.1;
       const newZoom = Math.max(0.5, Math.min(5, s.zoom * factor));
 
+      // Same anchor math as pinch — zoom toward the cursor.
       const rect = container.getBoundingClientRect();
-      const cx = e.clientX - rect.left - rect.width / 2;
-      const cy = e.clientY - rect.top - rect.height / 2;
+      const cursorX = e.clientX - rect.left;
+      const cursorY = e.clientY - rect.top;
       const ratio = newZoom / s.zoom;
 
-      s.panX = s.panX * ratio + cx * (1 - ratio);
-      s.panY = s.panY * ratio + cy * (1 - ratio);
+      s.panX = cursorX - ratio * (cursorX - s.panX);
+      s.panY = cursorY - ratio * (cursorY - s.panY);
       s.zoom = newZoom;
 
-      // Snap to 1 only when zooming back IN from above 1.
       if (s.zoom > 1 && s.zoom < 1.05) { s.zoom = 1; s.panX = 0; s.panY = 0; }
       applyTransform();
     };
@@ -290,9 +300,9 @@ export default function PdfPreviewViewer({ pdfBase64, pdfBytes }) {
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
-          // Transform origin at top-center so zoom stays anchored to the
-          // visible top of the PDF regardless of which page the user is on.
-          transformOrigin: 'center top',
+          // transformOrigin '0 0' makes the pinch/zoom math exact —
+          // pan values directly express the wrapper's top-left translation.
+          transformOrigin: '0 0',
         }}
       />
     </div>
