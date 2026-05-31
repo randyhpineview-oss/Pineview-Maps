@@ -58,8 +58,29 @@ export default function PdfPreviewViewer({ pdfBase64, pdfBytes }) {
   // origin offset needs to be subtracted.
   const applyTransform = useCallback(() => {
     const wrap = pagesWrapperRef.current;
-    if (!wrap) return;
+    const container = containerRef.current;
+    if (!wrap || !container) return;
     const s = stateRef.current;
+
+    // Clamp pan so at least `margin` px of the (scaled) wrapper stays
+    // visible inside the container on every edge. This prevents the PDF
+    // from being dragged/pinched completely off-screen.
+    const margin = 60; // px — minimum strip that must remain on-screen
+    const cW = container.clientWidth;
+    const cH = container.clientHeight;
+    const wW = (s.canvasW || wrap.offsetWidth  || cW) * s.zoom;
+    const wH = (s.canvasH || wrap.offsetHeight || cH) * s.zoom;
+
+    // Maximum pan: can slide right/down until left/top edge is `margin` from right/bottom
+    const maxX =  cW - margin;
+    const maxY =  cH - margin;
+    // Minimum pan: can slide left/up until right/bottom edge is `margin` from left/top
+    const minX = -(wW - margin);
+    const minY = -(wH - margin);
+
+    s.panX = Math.max(minX, Math.min(maxX, s.panX));
+    s.panY = Math.max(minY, Math.min(maxY, s.panY));
+
     if (s.zoom <= 1.001 && Math.abs(s.panX) < 1 && Math.abs(s.panY) < 1) {
       wrap.style.transform = '';
     } else {
