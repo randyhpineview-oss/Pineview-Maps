@@ -339,6 +339,37 @@ export default function HydroseedTicketDetailSheet({
     }
   };
 
+  // Approve without drawing a signature — the PDF will have a blank
+  // signature line so office can print and hand-sign after the fact.
+  const handleApproveWithoutSignature = async () => {
+    if (!canOfficeEdit) return;
+    if (!(await confirm({
+      title: 'Approve without signature',
+      message: 'Approve this ticket without a signature? The PDF will have a blank signature line.',
+      okLabel: 'Approve',
+    }))) return;
+    setIsSaving(true);
+    try {
+      const pdf = await regeneratePdf();
+      const payload = {
+        description_of_work: description,
+        client,
+        area,
+        po_approval_number: poNumber,
+        office_data: buildOfficeDataPayload(),
+        approve: true,
+        pdf_base64: pdf,
+      };
+      const updated = await api.updateHydroseedTicket(ticket.id, payload);
+      applyTicket(updated);
+      onSaved?.(updated);
+    } catch (e) {
+      await alert({ title: 'Approval failed', message: String(e?.message || e), severity: 'danger' });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   // Re-open transitions:
   //   Approved → Pending  (mirrors T&M handleUnapprove, so office can
   //                        tweak rates and re-approve in one extra click)
@@ -848,6 +879,12 @@ export default function HydroseedTicketDetailSheet({
             flex: 1, padding: 12, background: '#22c55e', color: 'white',
             border: 'none', borderRadius: 8, fontWeight: 600, cursor: isSaving ? 'not-allowed' : 'pointer',
           }}>Approve & Sign</button>
+        )}
+        {canOfficeEdit && status === 'submitted' && (
+          <button onClick={handleApproveWithoutSignature} disabled={isSaving} style={{
+            flex: 1, padding: 12, background: '#16a34a', color: 'white',
+            border: 'none', borderRadius: 8, fontWeight: 600, cursor: isSaving ? 'not-allowed' : 'pointer',
+          }}>Approve (No Signature)</button>
         )}
         {canOfficeEdit && (status === 'submitted' || isApproved) && (
           <button onClick={handleUnapprove} disabled={isSaving} style={{
