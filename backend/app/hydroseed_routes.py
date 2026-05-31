@@ -31,6 +31,7 @@ from app.models import (
 from app.schemas import (
     HydroseedDailyCreate,
     HydroseedDailyDeltaResponse,
+    HydroseedDailyFilesUpload,
     HydroseedDailyListRead,
     HydroseedDailyRead,
     HydroseedDailyUpdate,
@@ -876,6 +877,78 @@ def create_daily(
             daily.hydroseed_ticket_id = ticket.id
             _resync_ticket_rows_for_daily(db, daily, ticket)
 
+    db.commit()
+    db.refresh(daily)
+    return HydroseedDailyRead.model_validate(daily)
+
+
+@router.post("/dailies/{daily_id}/files", response_model=HydroseedDailyRead)
+def attach_daily_files(
+    daily_id: int,
+    payload: HydroseedDailyFilesUpload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Lane-2 of the two-lane upload path for hydroseed dailies — mirrors
+    `attach_site_spray_record_files` (main.py) and the pipeline equivalent.
+    Lane 1 (the existing `/dailies` create endpoint, with files stripped
+    from the payload) creates the daily row + linked HT ticket and returns
+    fast; lane 2 streams PDF + annotation photos + seed-tag photos to
+    Dropbox and patches `pdf_url` / `photo_urls` / `seed_tag_photo_urls`.
+
+    Idempotent: overwrite-mode Dropbox writes + wholesale field patch.
+    """
+    import base64 as b64
+    from app.dropbox_integration import upload_files_parallel, build_hydroseed_daily_path
+
+    daily = db.query(HydroseedDailyRecord).filter(
+        HydroseedDailyRecord.id == daily_id,
+        HydroseedDailyRecord.deleted_at.is_(None),
+    ).first()
+    if not daily:
+        raise HTTPException(status_code=404, detail="Hydroseed daily not found")
+
+    # Workers can only attach files to dailies they own. Office / admin /
+    # crew_lead can attach to any.
+    if current_user.role == RoleEnum.worker and daily.created_by_user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not your daily")
+
+    ann_jobs = _build_photo_jobs(daily.record_number, payload.photos or [], prefix="ann_")
+    seed_jobs = _build_photo_jobs(daily.record_number, payload.seed_tag_photos or [], prefix="seed_")
+
+    pdf_job: Optional[tuple[bytes, str]] = None
+    if payload.pdf_base64:
+        try:
+            pdf_content = b64.b64decode(payload.pdf_base64)
+            pdf_path = build_hydroseed_daily_path(
+                date_str=str(daily.work_date),
+                client=daily.client or "",
+                area=daily.area or "",
+                ticket=daily.record_number,
+            )
+            pdf_job = (pdf_content, pdf_path)
+        except Exception as e:
+            print(f"[attach_daily_files] PDF decode error: {e}")
+
+    batch: list[tuple[bytes, str]] = (
+        ([pdf_job] if pdf_job else []) + ann_jobs + seed_jobs
+    )
+    if batch:
+        results = upload_files_parallel(batch)
+        cursor = 0
+        if pdf_job:
+            if results[cursor]:
+                daily.pdf_url = results[cursor]
+            cursor += 1
+        if ann_jobs:
+            daily.photo_urls = [u for u in results[cursor:cursor + len(ann_jobs)] if u]
+            cursor += len(ann_jobs)
+        if seed_jobs:
+            daily.seed_tag_photo_urls = [u for u in results[cursor:cursor + len(seed_jobs)] if u]
+
+    # Bump updated_at so delta-sync broadcasts the new URLs to the frontend
+    # list cache and the Recents → Hydroseed → Dailies sub-tab.
+    daily.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(daily)
     return HydroseedDailyRead.model_validate(daily)

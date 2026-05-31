@@ -12,6 +12,7 @@ from app.dropbox_integration import upload_pdf_to_dropbox, upload_files_parallel
 from app.kml_pipeline_import import parse_pipeline_kml, simplify_coordinates, _total_length_km
 from app.models import RoleEnum, User
 from app.pipeline_models import Pipeline, PipelineApprovalState, PipelineStatus, SprayRecord
+from app.schemas import SprayRecordFilesUpload
 from app.pipeline_schemas import (
     PipelineApprovalUpdate,
     PipelineBulkResetRequest,
@@ -756,6 +757,88 @@ def create_spray_record(
         db.commit()
         db.refresh(record)
     
+    return SprayRecordRead.model_validate(record)
+
+
+@router.post("/pipeline-spray-records/{record_id}/files", response_model=SprayRecordRead)
+def attach_pipeline_spray_record_files(
+    record_id: int,
+    payload: SprayRecordFilesUpload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Lane-2 of the two-lane upload path for pipeline spray records — mirrors
+    `attach_site_spray_record_files` in `main.py`. Lane 1 (the existing
+    `create_spray_record` endpoint, with files stripped from the payload)
+    creates the DB row + linked T&M ticket and returns fast; lane 2 streams
+    the bytes to Dropbox and patches `pdf_url` / `photo_urls`.
+
+    Idempotent: overwrite-mode Dropbox writes + wholesale field patch, so
+    retries after a network blip don't produce duplicates or burn a second
+    HL ticket number.
+    """
+    record = db.query(SprayRecord).filter(
+        SprayRecord.id == record_id,
+        SprayRecord.deleted_at.is_(None),
+    ).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Pipeline spray record not found")
+
+    # Workers can only attach files to their own records.
+    if current_user.role == RoleEnum.worker and record.sprayed_by_user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not your record")
+
+    lease_sheet_data = record.lease_sheet_data or {}
+    ticket_number = record.ticket_number or ''
+
+    upload_jobs: list[tuple[bytes, str]] = []
+    has_pdf = False
+
+    if payload.pdf_base64:
+        try:
+            pdf_content = base64.b64decode(payload.pdf_base64)
+            pdf_path = build_pdf_path(
+                date_str=str(record.spray_date),
+                client=lease_sheet_data.get('customer', ''),
+                area=lease_sheet_data.get('area', ''),
+                ticket=ticket_number,
+                lsd_or_pipeline=lease_sheet_data.get('lsdOrPipeline', ''),
+            )
+            upload_jobs.append((pdf_content, pdf_path))
+            has_pdf = True
+        except Exception as e:
+            print(f"[attach_pipeline_spray_record_files] PDF decode error: {e}")
+
+    for i, photo_data in enumerate(payload.photos or []):
+        try:
+            photo_content = base64.b64decode(photo_data.get('data', ''))
+            photo_path = build_photo_path(ticket_number, i + 1)
+            upload_jobs.append((photo_content, photo_path))
+        except Exception as e:
+            print(f"[attach_pipeline_spray_record_files] photo {i+1} decode error: {e}")
+
+    if upload_jobs:
+        results = upload_files_parallel(upload_jobs)
+        if has_pdf:
+            if results[0]:
+                record.pdf_url = results[0]
+            photo_urls = [u for u in results[1:] if u]
+        else:
+            photo_urls = [u for u in results if u]
+        if photo_urls:
+            record.photo_urls = photo_urls
+
+    if payload.tm_pdf_base64 and record.tm_ticket is not None:
+        # Local import — same circular-import dodge as create_spray_record.
+        from app.time_materials_routes import _upload_tm_pdf
+        new_url = _upload_tm_pdf(record.tm_ticket, payload.tm_pdf_base64)
+        if new_url:
+            record.tm_ticket.pdf_url = new_url
+
+    # Bump updated_at so delta-sync broadcasts the new pdf_url / photo_urls.
+    record.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(record)
     return SprayRecordRead.model_validate(record)
 
 

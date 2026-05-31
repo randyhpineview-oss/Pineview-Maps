@@ -108,6 +108,22 @@ class ExternalLeaseSheetCreate(BaseModel):
     longitude: float | None = None
 
 
+class SprayRecordFilesUpload(BaseModel):
+    """Lane-2 payload for the two-lane upload path — the heavy PDF + photos
+    that get pushed to Dropbox AFTER the record has already been created
+    (lane 1). Used by `/api/site-spray-records/{id}/files`, the external
+    lease-sheet equivalent, and the pipeline `/files` endpoint.
+
+    All fields are optional so partial retries are safe — a retry that
+    re-sends the same payload re-uploads to the same Dropbox paths
+    (overwrite mode) and re-patches the record idempotently.
+    """
+    pdf_base64: str | None = None
+    tm_pdf_base64: str | None = None
+    # [{ data: base64, type: 'image/jpeg' }, ...]
+    photos: list[dict] | None = None
+
+
 class RecentSubmissionRead(BaseModel):
     """Lightweight recent-submission row — NO lease_sheet_data.
 
@@ -843,6 +859,15 @@ class HydroseedDailyUpdate(BaseModel):
     photos: list[dict] | None = None
     seed_tag_photos: list[dict] | None = None
     hydroseed_ticket_link: HydroseedTicketLink | None = None
+
+
+class HydroseedDailyFilesUpload(BaseModel):
+    """Lane-2 payload for hydroseed daily uploads — mirrors
+    `SprayRecordFilesUpload` but carries a second bucket of photos for the
+    seed-tag thumbnails the hydroseed daily form supports."""
+    pdf_base64: str | None = None
+    photos: list[dict] | None = None
+    seed_tag_photos: list[dict] | None = None
 
 
 class HydroseedDailyDeltaResponse(BaseModel):

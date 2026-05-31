@@ -98,6 +98,7 @@ from app.schemas import (
     SiteSprayRecordCreate,
     SiteSprayRecordUpdate,
     SiteStatusUpdate,
+    SprayRecordFilesUpload,
     TypeChangeRequest,
 )
 
@@ -1285,6 +1286,106 @@ def create_site_spray_record(
                 if new_url:
                     ticket.pdf_url = new_url
 
+    db.commit()
+    db.refresh(record)
+    return SiteSprayRecordRead.model_validate(record)
+
+
+@app.post("/api/site-spray-records/{record_id}/files", response_model=SiteSprayRecordRead)
+def attach_site_spray_record_files(
+    record_id: int,
+    payload: SprayRecordFilesUpload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Lane-2 of the two-lane upload path — push the heavy PDF + photos to
+    Dropbox for an already-created site spray record. Lane 1 (the existing
+    `create_site_spray_record` endpoint, with files stripped out of the
+    payload) creates the DB row + linked T&M ticket in well under a second
+    so the worker is back at the map immediately; lane 2 streams the bytes
+    to Dropbox in the background and patches `pdf_url` / `photo_urls`.
+
+    Idempotent: Dropbox writes use overwrite mode and the patch overwrites
+    `pdf_url` / `photo_urls` wholesale, so retrying after a network blip
+    re-uploads to the same paths and re-patches the same row without
+    producing duplicate Dropbox entries or burning a second HL ticket
+    number.
+
+    Works for both regular site spray records and the external lease sheet
+    (both are `SiteSprayRecord` rows). Pipeline + hydroseed-daily have
+    their own `/files` endpoints in `pipeline_routes` / `hydroseed_routes`.
+    """
+    import base64
+    from app.dropbox_integration import upload_files_parallel, build_pdf_path, build_photo_path
+
+    record = db.query(SiteSprayRecord).filter(
+        SiteSprayRecord.id == record_id,
+        SiteSprayRecord.deleted_at.is_(None),
+    ).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Site spray record not found")
+
+    # Workers can only attach files to their own records. Office / admin /
+    # crew_lead can attach to any (mirrors the create endpoint's implicit
+    # rule — the existing role gates on `update_site_spray_record` are
+    # tighter than what's needed here because finishing an upload is
+    # never destructive).
+    if current_user.role == RoleEnum.worker and record.sprayed_by_user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not your record")
+
+    lease_sheet_data = record.lease_sheet_data or {}
+    ticket_number = record.ticket_number or ''
+
+    upload_jobs: list[tuple[bytes, str]] = []
+    has_pdf = False
+
+    if payload.pdf_base64:
+        try:
+            pdf_content = base64.b64decode(payload.pdf_base64)
+            pdf_path = build_pdf_path(
+                date_str=str(record.spray_date),
+                client=lease_sheet_data.get('customer', ''),
+                area=lease_sheet_data.get('area', ''),
+                ticket=ticket_number,
+                lsd_or_pipeline=lease_sheet_data.get('lsdOrPipeline', ''),
+            )
+            upload_jobs.append((pdf_content, pdf_path))
+            has_pdf = True
+        except Exception as e:
+            print(f"[attach_site_spray_record_files] PDF decode error: {e}")
+
+    for i, photo_data in enumerate(payload.photos or []):
+        try:
+            photo_content = base64.b64decode(photo_data.get('data', ''))
+            photo_path = build_photo_path(ticket_number, i + 1)
+            upload_jobs.append((photo_content, photo_path))
+        except Exception as e:
+            print(f"[attach_site_spray_record_files] photo {i+1} decode error: {e}")
+
+    if upload_jobs:
+        results = upload_files_parallel(upload_jobs)
+        if has_pdf:
+            if results[0]:
+                record.pdf_url = results[0]
+            photo_urls = [u for u in results[1:] if u]
+        else:
+            photo_urls = [u for u in results if u]
+        if photo_urls:
+            record.photo_urls = photo_urls
+
+    # T&M PDF for the linked ticket (if any + provided). Same idempotency
+    # story as above — the helper builds the same Dropbox path and
+    # overwrite-uploads.
+    if payload.tm_pdf_base64 and record.tm_ticket is not None:
+        from app.time_materials_routes import _upload_tm_pdf
+        new_url = _upload_tm_pdf(record.tm_ticket, payload.tm_pdf_base64)
+        if new_url:
+            record.tm_ticket.pdf_url = new_url
+
+    # Bump updated_at so the next delta-sync tick broadcasts the new
+    # pdf_url / photo_urls to the frontend list cache and the recently
+    # submitted overlay.
+    record.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(record)
     return SiteSprayRecordRead.model_validate(record)
