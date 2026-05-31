@@ -848,6 +848,14 @@ export default function HydroseedTicketDetailSheet({
         </div>
       </div>
 
+      {/* Approval info — mirrors T&M herbicide green banner */}
+      {ticket.status === 'approved' ? (
+        <div style={{ marginTop: 14, background: '#065f46', padding: '10px 12px', borderRadius: 6, fontSize: '0.85rem' }}>
+          ✓ Approved by {ticket.approved_by_name || '—'} on{' '}
+          {ticket.approved_at ? new Date(ticket.approved_at).toLocaleString() : '—'}
+        </div>
+      ) : null}
+
       {/* ── Actions ──
           Workflow mirrors T&M herbicide:
             Open    → 'Submit for Approval'  (worker or office) → Pending
