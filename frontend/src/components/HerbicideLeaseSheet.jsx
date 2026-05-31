@@ -305,55 +305,59 @@ export default function HerbicideLeaseSheet({
         if (restored.length > 0) {
           setPhotos(restored);
         } else {
-          // Photos exist but have no data (stripped by backend migration), use photo_urls fallback
+          // Photos exist but have no data (stripped by backend migration), use photo_urls fallback.
+          // Show placeholder slots immediately so the spinner is visible right away,
+          // then patch each slot as the proxy fetch resolves.
           if (editingRecord.photo_urls && editingRecord.photo_urls.length > 0) {
+            const placeholders = editingRecord.photo_urls.map((url) => ({ file: null, preview: null, url }));
+            setPhotos(placeholders);
             (async () => {
-              const restored = await Promise.all(
-                editingRecord.photo_urls.map(async (url) => {
-                  try {
-                    const { data, type } = await api.proxyPhoto(url);
-                    const dataUrl = `data:${type};base64,${data}`;
-                    return {
-                      file: null,
-                      preview: dataUrl,
-                      existingBase64: {
-                        data: data,
-                        type: type,
-                      },
-                    };
-                  } catch {
-                    // If proxy fails, use original Dropbox URL for preview (works in img tag)
-                    return { file: null, preview: url, existingUrl: url };
-                  }
-                })
-              );
-              setPhotos(restored);
+              for (let i = 0; i < editingRecord.photo_urls.length; i++) {
+                const url = editingRecord.photo_urls[i];
+                try {
+                  const { data, type } = await api.proxyPhoto(url);
+                  const dataUrl = `data:${type};base64,${data}`;
+                  setPhotos((prev) => {
+                    const next = [...prev];
+                    if (next[i]) next[i] = { file: null, preview: dataUrl, existingBase64: { data, type } };
+                    return next;
+                  });
+                } catch {
+                  setPhotos((prev) => {
+                    const next = [...prev];
+                    if (next[i]) next[i] = { file: null, preview: url, existingUrl: url };
+                    return next;
+                  });
+                }
+              }
             })();
           }
         }
       } else if (editingRecord.photo_urls && editingRecord.photo_urls.length > 0) {
-        // Fallback: fetch Dropbox photos via backend proxy to avoid CORS issues
+        // No lease_sheet_data photos — fetch from Dropbox.
+        // Show placeholder slots immediately so the spinner is visible right away,
+        // then patch each slot as the proxy fetch resolves.
+        const placeholders = editingRecord.photo_urls.map((url) => ({ file: null, preview: null, url }));
+        setPhotos(placeholders);
         (async () => {
-          const restored = await Promise.all(
-            editingRecord.photo_urls.map(async (url) => {
-              try {
-                const { data, type } = await api.proxyPhoto(url);
-                const dataUrl = `data:${type};base64,${data}`;
-                return {
-                  file: null,
-                  preview: dataUrl,
-                  existingBase64: {
-                    data: data,
-                    type: type,
-                  },
-                };
-              } catch {
-                // If proxy fails, use original Dropbox URL for preview (works in img tag)
-                return { file: null, preview: url, existingUrl: url };
-              }
-            })
-          );
-          setPhotos(restored);
+          for (let i = 0; i < editingRecord.photo_urls.length; i++) {
+            const url = editingRecord.photo_urls[i];
+            try {
+              const { data, type } = await api.proxyPhoto(url);
+              const dataUrl = `data:${type};base64,${data}`;
+              setPhotos((prev) => {
+                const next = [...prev];
+                if (next[i]) next[i] = { file: null, preview: dataUrl, existingBase64: { data, type } };
+                return next;
+              });
+            } catch {
+              setPhotos((prev) => {
+                const next = [...prev];
+                if (next[i]) next[i] = { file: null, preview: url, existingUrl: url };
+                return next;
+              });
+            }
+          }
         })();
       }
       return;
