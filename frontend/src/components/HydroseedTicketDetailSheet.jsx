@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api';
+import { getHydroseedTicket, upsertHydroseedTicket } from '../lib/offlineStore';
 import {
   seedOfficeLinesFromTicketRows,
   syncOfficeLineQtysFromRows,
@@ -197,17 +198,36 @@ export default function HydroseedTicketDetailSheet({
     ]);
   };
 
+  // Cache-first load — mirrors TMTicketDetailSheet.
+  // 1. Read IDB first: if cached, render immediately and clear the spinner.
+  // 2. In parallel, fetch the latest from the network: on success, replace
+  //    state and warm the cache. On network error, only surface "failed"
+  //    if we also don't have a cached copy.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
       setError(null);
+
+      let haveCached = false;
+      try {
+        const cached = await getHydroseedTicket(ticketId);
+        if (cached) {
+          haveCached = true;
+          applyTicket(cached);
+          if (!cancelled) setLoading(false);
+        }
+      } catch { /* IDB error is non-fatal */ }
+
       try {
         const t = await api.getHydroseedTicket(ticketId);
         if (cancelled) return;
         applyTicket(t);
+        try { await upsertHydroseedTicket(t); } catch { /* non-fatal */ }
       } catch (e) {
-        if (!cancelled) setError(e.message || 'Failed to load ticket');
+        if (!cancelled && !haveCached) {
+          setError(e.message || 'Failed to load ticket');
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }

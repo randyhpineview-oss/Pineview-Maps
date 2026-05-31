@@ -5,6 +5,7 @@ import {
   getLeaseSheetDrafts,
   upsertTMTickets,
   upsertHydroseedTickets,
+  getAllHydroseedTickets,
   getHydroseedDailyDrafts,
   deleteHydroseedDailyDraft,
 } from '../lib/offlineStore';
@@ -389,6 +390,7 @@ export default function FormsPanel({
   const hydroseedTicketsSinceRef = useRef(null);
   const hydroseedSyncingRef = useRef(false);
   const hydroseedDeltaFailCountRef = useRef(0);
+  const hydroseedIdbHydratedRef = useRef(false);
   // Watermark + busy guard for the dailies delta-sync effect below.
   // Cold start does ONE slim full-list fetch (deferred daily_data),
   // every subsequent tick is a delta call.
@@ -655,6 +657,33 @@ export default function FormsPanel({
     })();
     return () => { cancelled = true; };
   }, [visible, subTab, ipTab, draftsRefreshToken]);
+
+  // One-shot IDB boot hydration for hydroseed tickets. Runs once on mount
+  // (empty dep array). If IDB has cached tickets from the previous session,
+  // we seed state + mark loaded immediately so the list renders from cache
+  // while the network sync effect fires its first delta request in the
+  // background. Also seeds the watermark to "now - 1 hour" so the first
+  // delta fetch is narrow (only the last hour of changes) instead of a
+  // full list fetch, matching how sites/pipelines boot.
+  useEffect(() => {
+    if (hydroseedIdbHydratedRef.current) return;
+    hydroseedIdbHydratedRef.current = true;
+    (async () => {
+      try {
+        const cached = await getAllHydroseedTickets();
+        if (!cached || cached.length === 0) return;
+        setHydroseedTickets(cached);
+        setHydroseedTicketsLoaded(true);
+        // Seed watermark just far enough back to catch anything that changed
+        // while the app was closed. 1-hour window is conservative; the delta
+        // endpoint is cheap so any extra rows are harmless.
+        if (!hydroseedTicketsSinceRef.current) {
+          const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+          hydroseedTicketsSinceRef.current = oneHourAgo;
+        }
+      } catch { /* IDB unavailable — fall through to normal full fetch */ }
+    })();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Unified hydroseed-tickets sync — mirror of the T&M sync above. Runs
   // while the panel is visible AND the user is on a sub-tab that could

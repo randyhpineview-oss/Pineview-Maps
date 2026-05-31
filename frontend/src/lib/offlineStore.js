@@ -554,6 +554,11 @@ export async function getHydroseedTicket(id) {
   return db.get('hydroseedTickets', id);
 }
 
+export async function getAllHydroseedTickets() {
+  const db = await dbPromise;
+  return db.getAll('hydroseedTickets');
+}
+
 export async function removeHydroseedTicket(id) {
   if (id == null) return;
   const db = await dbPromise;
