@@ -20,6 +20,83 @@
 // or a lane-2 failure never loses the worker's bytes.
 
 /**
+ * Resize + compress a single base64-encoded photo to at most `maxPx` on its
+ * longest side at the given JPEG quality. Returns the compressed base64 string
+ * (data stripped of the `data:…;base64,` prefix, matching the wire format the
+ * rest of the upload pipeline expects).
+ *
+ * Falls back silently to the original string on any canvas / decode error so
+ * a compression failure is never fatal to the upload.
+ *
+ * Why here rather than at capture time: compressing at capture time would
+ * balloon the draft payload in IDB. Doing it at upload time keeps drafts
+ * lossless while still cutting Dropbox upload size by 5–10× on typical
+ * full-resolution phone camera shots (3–5 MB → 300–600 KB).
+ */
+async function compressPhotoBase64(
+  base64,
+  { maxPx = 1600, quality = 0.78 } = {},
+) {
+  if (!base64) return base64;
+  try {
+    const dataUrl = `data:image/jpeg;base64,${base64}`;
+    const img = await new Promise((resolve, reject) => {
+      const i = new window.Image();
+      i.onload = () => resolve(i);
+      i.onerror = reject;
+      i.src = dataUrl;
+    });
+    const scale = Math.min(1, maxPx / Math.max(img.naturalWidth, img.naturalHeight));
+    const w = Math.round(img.naturalWidth * scale);
+    const h = Math.round(img.naturalHeight * scale);
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, w, h);
+    const compressed = canvas.toDataURL('image/jpeg', quality);
+    const comma = compressed.indexOf(',');
+    return comma >= 0 ? compressed.slice(comma + 1) : base64;
+  } catch {
+    return base64;
+  }
+}
+
+/**
+ * Compress all photo arrays in a lane-2 payload in-place (mutates a shallow
+ * copy). Returns a new payload object — the original (in IDB) is untouched.
+ * Compression is skipped when the browser has no `document` (SSR / workers).
+ */
+export async function compressLane2Photos(targetType, payload) {
+  if (!payload || typeof document === 'undefined') return payload;
+
+  if (targetType === 'site' || targetType === 'pipeline' || targetType === 'external') {
+    const photos = Array.isArray(payload.photos) ? payload.photos : [];
+    if (!photos.length) return payload;
+    const compressed = await Promise.all(
+      photos.map(async (p) => {
+        if (!p?.data) return p;
+        return { ...p, data: await compressPhotoBase64(p.data) };
+      }),
+    );
+    return { ...payload, photos: compressed };
+  }
+
+  if (targetType === 'hydroseed_daily') {
+    const ann = Array.isArray(payload.photos) ? payload.photos : [];
+    const seed = Array.isArray(payload.seed_tag_photos) ? payload.seed_tag_photos : [];
+    if (!ann.length && !seed.length) return payload;
+    const [compAnn, compSeed] = await Promise.all([
+      Promise.all(ann.map(async (p) => p?.data ? { ...p, data: await compressPhotoBase64(p.data) } : p)),
+      Promise.all(seed.map(async (p) => p?.data ? { ...p, data: await compressPhotoBase64(p.data) } : p)),
+    ]);
+    return { ...payload, photos: compAnn, seed_tag_photos: compSeed };
+  }
+
+  return payload;
+}
+
+/**
  * Build the slim lane-1 body by stripping every file field from the queue
  * payload. Does NOT mutate the input (the queue entry keeps the full
  * payload in IDB so lane 2 / lane-2 retries can find the bytes).

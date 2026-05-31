@@ -17,6 +17,7 @@ import { scheduleLocalCheckinNotifications } from './lib/localCheckinNotificatio
 import { requestWithUploadProgress } from './lib/xhrUpload';
 import {
   buildLane2Payload,
+  compressLane2Photos,
   isTwoLaneTargetType,
   lane2EndpointFor,
   stripFilesForLane1,
@@ -1582,19 +1583,54 @@ export default function App() {
             // retry-after-lane-1-success we skip lane 1 and come
             // straight here).
             if (recordId) {
-              const lane2Body = buildLane2Payload(item.targetType, activePayload);
-              if (lane2Body) {
+              const rawLane2Body = buildLane2Payload(item.targetType, activePayload);
+              if (rawLane2Body) {
                 const lane2Endpoint = lane2EndpointFor(item.targetType, recordId);
                 if (lane2Endpoint) {
-                  await requestWithUploadProgress(lane2Endpoint, {
+                  // Compress photos client-side before the network round-trip.
+                  // Full-res phone shots are 3-5 MB each; resizing to 1600px
+                  // longest-edge at q=0.78 cuts them to ~300-600 KB with no
+                  // visible quality loss on a lease sheet. Falls back silently
+                  // to the original bytes on any canvas error.
+                  const lane2Body = await compressLane2Photos(item.targetType, rawLane2Body);
+                  const lane2Response = await requestWithUploadProgress(lane2Endpoint, {
                     method: 'POST',
                     body: lane2Body,
                     onProgress: onLane2Bytes,
                   });
+                  // Cache the Dropbox PDF URL → we already have the base64 in
+                  // activePayload (pdf_base64). Storing it now means the next
+                  // "Preview PDF" tap on this record is an instant IDB hit
+                  // instead of a Dropbox proxy round-trip.
+                  const pdfUrlFromLane2 = lane2Response?.pdf_url;
+                  if (pdfUrlFromLane2 && rawLane2Body?.pdf_base64) {
+                    try { putCachedPdf(`url:${pdfUrlFromLane2}`, rawLane2Body.pdf_base64); } catch { /* non-fatal */ }
+                  }
                 }
               }
-              // Lane 2 done — pdf_url / photo_urls will refresh into
-              // the UI via the regular delta-sync tick within seconds.
+              // Lane 2 done — refresh the site so pdf_url / photo_urls
+              // appear immediately in Spray History without waiting for
+              // the next delta-sync tick (which may be up to 30 s away).
+              if (item.targetType === 'site') {
+                try {
+                  const fresh = await api.getSite(item.targetId);
+                  setSites((prev) => prev.map((s) => (s.id === fresh.id ? fresh : s)));
+                  setSelectedSite((prev) => (prev && prev.id === fresh.id ? fresh : prev));
+                  await upsertSite(fresh);
+                } catch { /* non-fatal */ }
+              } else if (item.targetType === 'pipeline') {
+                try {
+                  const fresh = await api.getPipeline(item.targetId);
+                  setPipelines((prev) => prev.map((p) => (p.id === fresh.id ? fresh : p)));
+                  setSelectedPipeline((prev) => {
+                    if (prev && prev.id === fresh.id) {
+                      setPipelineSprayRecords(fresh.spray_records || []);
+                      return fresh;
+                    }
+                    return prev;
+                  });
+                } catch { /* non-fatal */ }
+              }
             }
           } else if (item.targetType === 'site_spray_edit') {
             // Fix #2 — offline-queued lease-sheet edits. Mirrors the create
