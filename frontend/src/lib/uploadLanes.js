@@ -30,12 +30,13 @@
  *
  * Why here rather than at capture time: compressing at capture time would
  * balloon the draft payload in IDB. Doing it at upload time keeps drafts
- * lossless while still cutting Dropbox upload size by 5–10× on typical
- * full-resolution phone camera shots (3–5 MB → 300–600 KB).
+ * lossless. At the current settings (maxPx=4096, q=0.94) no resizing occurs
+ * on any current phone camera — only a single JPEG re-encode pass runs,
+ * which saves ~20-30% vs the raw capture with no visible quality loss.
  */
 async function compressPhotoBase64(
   base64,
-  { maxPx = 2400, quality = 0.92 } = {},
+  { maxPx = 4096, quality = 0.94 } = {},
 ) {
   if (!base64) return base64;
   try {
