@@ -566,10 +566,6 @@ export default function TMTicketDetailSheet({
     }))) return;
     setIsSaving(true);
     try {
-      // regenerateCurrentPdf honours canOfficeEdit, so worker submissions
-      // upload a QTY-only PDF and admin/office submissions include rates
-      // + totals already.
-      const pdfBase64 = await regenerateCurrentPdf();
       const payload = {
         description_of_work: description,
         office_data: buildOfficeDataPayload(),
@@ -589,28 +585,42 @@ export default function TMTicketDetailSheet({
         const delR = buildRowsToDelete();
         if (delR.length > 0) payload.rows_to_delete = delR;
       }
-      if (pdfBase64) payload.pdf_base64 = pdfBase64;
+      // PDF is only needed for the legacy synchronous path (no queue handler).
+      // When onQueueSubmit is available the PDF is generated in the background
+      // after the sheet closes (via pdfFactory), so we skip the blocking
+      // await here to let onClose fire immediately.
 
       // Preferred path: hand off to the shared upload queue so the worker
       // can get back to the map immediately while Dropbox uploads finish in
       // the background. The Uploading tab shows progress + retries on
       // failure, matching the lease-sheet flow.
+      //
+      // PDF generation (regenerateCurrentPdf) takes 2-3 s on device.
+      // We pass it as a `pdfFactory` so handleQueueTMSubmit can queue
+      // without the PDF first — letting onClose fire NOW — then patch
+      // the IDB entry with the PDF once generation finishes in background.
+      // The queue worker won't reach the item until the next microtask
+      // tick, so the patch always wins the race.
       if (typeof onQueueSubmit === 'function') {
+        setRowsEdits({});
+        setNewRows([]);
+        setRowsToDelete([]);
+        if (onClose) onClose();
         await onQueueSubmit({
           ticketId: ticket.id,
           payload,
           ticketNumber: ticket.ticket_number,
           sprayDate: ticket.spray_date,
+          pdfFactory: regenerateCurrentPdf,
         });
-        setRowsEdits({});
-        setNewRows([]);
-        setRowsToDelete([]);
-        if (onClose) onClose();
         return;
       }
 
       // Fallback: legacy synchronous submit (kept so the sheet still works
-      // if mounted somewhere without a queue handler wired up).
+      // if mounted somewhere without a queue handler wired up). Generate
+      // the PDF here since there's no background worker to do it.
+      const legacyPdf = await regenerateCurrentPdf();
+      if (legacyPdf) payload.pdf_base64 = legacyPdf;
       const updated = await api.updateTMTicket(ticket.id, payload);
       setTicket(updated);
       setRowsEdits({});

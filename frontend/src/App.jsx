@@ -4295,13 +4295,13 @@ export default function App() {
   }
 
   // Worker (and admin/office-impersonating-worker) "Mark as pending" on a
-  // T&M ticket. The sheet builds the full updateTMTicket payload (including
-  // pdf_base64 from regenerateCurrentPdf) and hands it here; we queue it
-  // through the same upload queue used by lease sheets so the user doesn't
-  // sit on a spinner while the backend talks to Dropbox, and the item shows
-  // up in "In Progress → Uploading" with progress.
-  async function handleQueueTMSubmit({ ticketId, payload, ticketNumber, sprayDate }) {
-    await queueUpload({
+  // T&M ticket. Accepts an optional async `pdfFactory` — if provided, the
+  // queue entry is written WITHOUT a PDF first so onClose fires immediately
+  // (worker is back on the map in <1 s), then pdfFactory() runs in the
+  // background and patches the IDB entry before the queue worker picks it up.
+  // This removes the 2-3 s PDF generation delay from the critical path.
+  async function handleQueueTMSubmit({ ticketId, payload, ticketNumber, sprayDate, pdfFactory }) {
+    const queued = await queueUpload({
       targetType: 'tm_ticket',
       targetId: ticketId,
       payload,
@@ -4317,6 +4317,21 @@ export default function App() {
     // away; if offline it stays put and processUploadQueue retries on the
     // back-online handler.
     processUploadQueue();
+    // Generate the PDF in the background AFTER returning so the sheet can
+    // close instantly. updateUploadEntry patches the IDB row before the
+    // queue worker reaches it (processUploadQueue runs on the next tick).
+    if (typeof pdfFactory === 'function') {
+      (async () => {
+        try {
+          const pdfBase64 = await pdfFactory();
+          if (pdfBase64) {
+            await updateUploadEntry(queued.id, {
+              payload: { ...queued.payload, pdf_base64: pdfBase64 },
+            });
+          }
+        } catch { /* non-fatal — upload proceeds without PDF */ }
+      })();
+    }
   }
 
   async function handleLeaseSheetSubmit(payload) {

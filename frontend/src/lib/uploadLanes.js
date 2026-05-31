@@ -35,7 +35,7 @@
  */
 async function compressPhotoBase64(
   base64,
-  { maxPx = 1600, quality = 0.78 } = {},
+  { maxPx = 2000, quality = 0.88 } = {},
 ) {
   if (!base64) return base64;
   try {

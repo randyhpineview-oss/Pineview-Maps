@@ -73,6 +73,11 @@ export default function HerbicideLeaseSheet({
   const savedAndClosingRef = useRef(false);
   // Local-only input for typing custom (Other) weeds. Not persisted.
   const [customWeedInput, setCustomWeedInput] = useState('');
+  // Cache last generated PDF so tapping Preview a second time is instant
+  // when nothing has changed. Keyed on a JSON snapshot of form + photo
+  // identities (we use existingBase64.data length + preview URL as a cheap
+  // identity without hashing full image bytes).
+  const pdfCacheRef = useRef({ key: null, base64: null });
   // GPS state for standalone mode
   const [gpsLat, setGpsLat] = useState('');
   const [gpsLng, setGpsLng] = useState('');
@@ -496,6 +501,22 @@ export default function HerbicideLeaseSheet({
       return;
     }
     try {
+      // Build a cheap cache key from the form fields + photo identities
+      // (file.name+size or existingBase64 data length or preview URL).
+      // If nothing has changed since the last generation, reuse the cached
+      // PDF bytes instantly without re-running jsPDF.
+      const photoKey = photos.map((p) => {
+        if (p?.file) return `f:${p.file.name}:${p.file.size}`;
+        if (p?.existingBase64?.data) return `b:${p.existingBase64.data.length}`;
+        return `u:${p?.preview || ''}`;
+      }).join('|');
+      const cacheKey = JSON.stringify({ form, ticketNumber, photoKey });
+      if (pdfCacheRef.current.key === cacheKey && pdfCacheRef.current.base64) {
+        setPdfBase64(pdfCacheRef.current.base64);
+        setIsPreviewing(true);
+        return;
+      }
+
       // Build photo data URLs for embedding in PDF. FileReader is
       // wrapped with both `onloadend` and `onerror` — without `onerror`
       // a corrupted file silently hangs the await forever, leaving the
@@ -523,6 +544,7 @@ export default function HerbicideLeaseSheet({
         applicatorsLookup: applicators,
       };
       const { base64 } = await generateLeaseSheetPdf(pdfData, photoDataUrls);
+      pdfCacheRef.current = { key: cacheKey, base64 };
       setPdfBase64(base64);
       setIsPreviewing(true);
     } catch (err) {
