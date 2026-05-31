@@ -783,7 +783,7 @@ def list_spray_records(
 def delete_spray_record(
     record_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
+    current_user: User = Depends(require_roles(*MANAGES_PINS)),
 ):
     """Soft-delete a pipeline spray record. Unlinks its T&M rows so they
     become manual rows rather than orphaning them."""
@@ -812,7 +812,7 @@ def delete_spray_record(
 def restore_spray_record(
     record_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(RoleEnum.admin, RoleEnum.office)),
+    current_user: User = Depends(require_roles(*MANAGES_PINS)),
 ):
     """Restore a soft-deleted pipeline spray record."""
     record = db.query(SprayRecord).filter(SprayRecord.id == record_id).first()

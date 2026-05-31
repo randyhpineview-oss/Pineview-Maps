@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import and_, or_, text, func
 from sqlalchemy.orm import Session, joinedload
 
-from app.auth import get_current_user, require_roles
+from app.auth import MANAGES_PINS, get_current_user, require_roles
 from app.database import get_db
 from app.models import (
     RoleEnum,
@@ -236,7 +236,7 @@ def _strip_office_fields_for_worker(
     or totals. Signatures stay hidden too.
     """
     data = TimeMaterialsTicketRead.model_validate(ticket)
-    if current_user.role == RoleEnum.worker:
+    if current_user.role in (RoleEnum.worker, RoleEnum.crew_lead):
         stripped_office_data = None
         if ticket.office_data:
             # Strip `rate` from every line, keep label + qty.
@@ -954,7 +954,7 @@ def _merge_office_data(
 @router.get(
     "/{ticket_id}/possible-duplicates",
     response_model=list[TMDuplicateCandidateRead],
-    dependencies=[Depends(require_roles(RoleEnum.admin, RoleEnum.office))],
+    dependencies=[Depends(require_roles(*MANAGES_PINS))],
 )
 def list_possible_duplicates(
     ticket_id: int,
@@ -1024,7 +1024,7 @@ def list_possible_duplicates(
 @router.get(
     "/{primary_id}/merge-search",
     response_model=list[TMDuplicateCandidateRead],
-    dependencies=[Depends(require_roles(RoleEnum.admin, RoleEnum.office))],
+    dependencies=[Depends(require_roles(*MANAGES_PINS))],
 )
 def search_merge_candidates(
     primary_id: int,
@@ -1126,7 +1126,7 @@ def search_merge_candidates(
 @router.post(
     "/{primary_id}/merge",
     response_model=TimeMaterialsTicketRead,
-    dependencies=[Depends(require_roles(RoleEnum.admin, RoleEnum.office))],
+    dependencies=[Depends(require_roles(*MANAGES_PINS))],
 )
 def merge_tm_tickets(
     primary_id: int,

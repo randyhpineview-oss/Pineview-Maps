@@ -708,7 +708,13 @@ def sync_status(
     # refresh and the pin would stay on their map forever.
     sites_updated = db.execute(text("SELECT MAX(updated_at) FROM sites")).scalar()
     pipelines_updated = db.execute(text("SELECT MAX(updated_at) FROM pipelines")).scalar()
-    spray_records_updated = db.execute(text("SELECT MAX(created_at) FROM site_spray_records")).scalar()
+    spray_records_updated = db.execute(text(
+        "SELECT MAX(ts) FROM ("
+        "  SELECT MAX(updated_at) AS ts FROM site_spray_records"
+        "  UNION ALL"
+        "  SELECT MAX(updated_at) AS ts FROM spray_records"
+        ") t"
+    )).scalar()
     # Cheap watermark for T&M tickets so the frontend can detect "something
     # changed" without re-downloading the full list every poll tick. Matches
     # the sites/pipelines pattern above — single MAX on an indexed column.
@@ -1017,7 +1023,7 @@ def create_site(
 @app.patch(
     "/api/sites/{site_id}",
     response_model=SiteRead,
-    dependencies=[Depends(require_roles(RoleEnum.admin))],
+    dependencies=[Depends(require_roles(*MANAGES_PINS))],
 )
 def update_site(
     site_id: int,
