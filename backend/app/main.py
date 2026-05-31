@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import and_, func, inspect, or_, text
-from sqlalchemy.orm import Session, contains_eager, defer, joinedload
+from sqlalchemy.orm import Session, defer, joinedload
 
 from app.auth import MANAGES_PINS, get_current_user, require_roles, seed_demo_users
 from app.config import get_settings
@@ -648,17 +648,20 @@ def _migrate_add_columns() -> None:
 def get_site_or_404(db: Session, site_id: int) -> Site:
     site = (
         db.query(Site)
-        .options(joinedload(Site.updates))
-        .outerjoin(
-            SiteSprayRecord,
-            (SiteSprayRecord.site_id == Site.id) & SiteSprayRecord.deleted_at.is_(None),
+        .options(
+            joinedload(Site.updates),
+            joinedload(Site.spray_records),
         )
-        .options(contains_eager(Site.spray_records))
         .filter(Site.id == site_id)
         .first()
     )
     if site is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Site not found")
+    # Filter out soft-deleted spray records in Python so we don't need a
+    # custom primaryjoin condition on the relationship. This is safe because
+    # get_site_or_404 is only called from single-site detail endpoints where
+    # the full record set is always small (< a few dozen rows per site).
+    site.spray_records = [r for r in (site.spray_records or []) if r.deleted_at is None]
     return site
 
 
