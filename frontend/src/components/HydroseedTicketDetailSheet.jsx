@@ -431,7 +431,8 @@ export default function HydroseedTicketDetailSheet({
   // ── Render ───────────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div style={{ padding: 24, color: '#9ca3af', textAlign: 'center' }}>
+      <div style={{ padding: 24, color: '#9ca3af', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+        <span aria-hidden="true" style={{ display: 'inline-block', width: 16, height: 16, border: '2px solid #374151', borderTopColor: '#3b82f6', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
         Loading ticket…
       </div>
     );

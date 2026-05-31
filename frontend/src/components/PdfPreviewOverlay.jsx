@@ -1,6 +1,23 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
+import { getCachedPdf, putCachedPdf } from '../lib/offlineStore';
 import PdfPreviewViewer from './PdfPreviewViewer';
+
+function base64ToBytes(b64) {
+  const raw = atob(b64);
+  const u8 = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) u8[i] = raw.charCodeAt(i);
+  return u8;
+}
+
+function bytesToBase64(bytes) {
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
 
 function pdfLink(url) {
   if (!url) return null;
@@ -25,11 +42,6 @@ export default function PdfPreviewOverlay({ record, onClose }) {
   // CORS issues and means we don't have to drag base64 photos through the API).
   useEffect(() => {
     if (!record) return;
-    if (!record.pdf_url) {
-      setError('This record has no uploaded PDF yet.');
-      setLoading(false);
-      return;
-    }
 
     const controller = new AbortController();
     let cancelled = false;
@@ -39,12 +51,37 @@ export default function PdfPreviewOverlay({ record, onClose }) {
     setPdfBytes(null);
 
     (async () => {
+      // 1. Cache-first — by ticket number (cached at generation time, so the
+      //    preview is instant right after submit even before Dropbox has the
+      //    file) then by the Dropbox url (cached after a prior fetch).
+      try {
+        const cachedB64 =
+          (ticket ? await getCachedPdf(`ticket:${ticket}`) : null) ||
+          (record.pdf_url ? await getCachedPdf(`url:${record.pdf_url}`) : null);
+        if (cachedB64 && !cancelled) {
+          setPdfBytes(base64ToBytes(cachedB64));
+          setLoading(false);
+          return;
+        }
+      } catch { /* fall through to network */ }
+
+      // 2. No local copy — need the Dropbox url to fetch via the proxy.
+      if (!record.pdf_url) {
+        if (!cancelled) {
+          setError('This record has no uploaded PDF yet.');
+          setLoading(false);
+        }
+        return;
+      }
+
       try {
         const bytes = await api.fetchPdfBytes(record.pdf_url, controller.signal);
         if (!cancelled) {
           setPdfBytes(bytes);
           setLoading(false);
         }
+        // Cache the fetched bytes so re-opening this record is instant.
+        try { putCachedPdf(`url:${record.pdf_url}`, bytesToBase64(bytes)); } catch { /* non-fatal */ }
       } catch (err) {
         if (cancelled || err?.name === 'AbortError') return;
         console.error('[PdfPreviewOverlay] PDF fetch failed:', err);
@@ -57,7 +94,7 @@ export default function PdfPreviewOverlay({ record, onClose }) {
       cancelled = true;
       controller.abort();
     };
-  }, [record?.id, record?.pdf_url]);
+  }, [record?.id, record?.pdf_url, ticket]);
 
   // Print handler: open PDF in a new window and trigger browser print dialog
   const handlePrint = () => {
@@ -124,7 +161,8 @@ export default function PdfPreviewOverlay({ record, onClose }) {
       ) : pdfBytes ? (
         <PdfPreviewViewer pdfBytes={pdfBytes} />
       ) : loading ? (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af' }}>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', color: '#9ca3af' }}>
+          <span aria-hidden="true" style={{ display: 'inline-block', width: 18, height: 18, border: '2px solid #374151', borderTopColor: '#60a5fa', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
           Loading PDF…
         </div>
       ) : null}

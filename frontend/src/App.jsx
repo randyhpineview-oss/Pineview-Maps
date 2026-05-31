@@ -53,6 +53,7 @@ import {
   upsertRecent,
   upsertSite,
   deleteHydroseedDailyDraft,
+  putCachedPdf,
 } from './lib/offlineStore';
 import { formatDate, nameKey, normalizeName, pinTypeLabel, statusLabel } from './lib/mapUtils';
 import { localDateISO } from './lib/dateUtil';
@@ -1225,7 +1226,12 @@ export default function App() {
   // payload already has a ticket + PDF, returns it unchanged.
   const ensurePdfAndTicket = useCallback(async (item) => {
     const payload = item.payload || {};
-    if (payload.ticket_number && payload.pdf_base64) return payload;
+    if (payload.ticket_number && payload.pdf_base64) {
+      // Cache the already-generated PDF (online submit path) so its preview
+      // opens instantly from IndexedDB instead of round-tripping Dropbox.
+      try { putCachedPdf(`ticket:${payload.ticket_number}`, payload.pdf_base64); } catch { /* non-fatal */ }
+      return payload;
+    }
 
     // Reconstruct the PDF input shape the form used. lease_sheet_data is
     // the full form snapshot; herbicidesLookup / applicatorsLookup come
@@ -1264,6 +1270,9 @@ export default function App() {
         photoDataUrls
       );
       pdfBase64 = out.base64;
+      // Cache by ticket number so the preview opens instantly right after
+      // submit — even before Dropbox has the file (Phase 3).
+      try { putCachedPdf(`ticket:${ticketNumber}`, pdfBase64); } catch { /* non-fatal */ }
     } catch (err) {
       throw new Error(`Could not regenerate lease-sheet PDF: ${err?.message || err}`);
     }
@@ -5671,7 +5680,7 @@ export default function App() {
               admin panel) so it stays reachable in worker view.
               `.topbar-account-inline-only` hides this on mobile; the same
               toggle lives inside the avatar menu below. */}
-          {actualCanAdmin ? (
+          {actualCanManagePins ? (
             <button
               className="badge topbar-account-inline-only"
               onClick={() => setViewAsWorker((v) => !v)}
@@ -5763,7 +5772,7 @@ export default function App() {
                 >
                   🛟 Check-ins
                 </button>
-                {actualCanAdmin ? (
+                {actualCanManagePins ? (
                   <button
                     type="button"
                     role="menuitem"
@@ -6036,6 +6045,7 @@ export default function App() {
                 currentUserEmail={user?.email}
                 onClose={() => setActiveTMTicketId(null)}
                 onQueueSubmit={handleQueueTMSubmit}
+                canMergeTickets={canManagePins}
               />
             </Suspense>
           </div>
@@ -6546,6 +6556,10 @@ export default function App() {
                   severity: 'danger',
                   okLabel: 'Delete',
                 }))) return;
+                // Optimistic: remove immediately so the acting admin doesn't
+                // wait for Realtime (which can lag on iOS PWA / backgrounded tabs).
+                setCachedRecents((prev) => prev.filter((r) => r.id !== record.id));
+                try { void removeRecentById(record.id); } catch { /* ignore */ }
                 try {
                   // Check if it's a site or pipeline lease sheet
                   if (record.site_id != null) {
@@ -6553,10 +6567,16 @@ export default function App() {
                   } else {
                     await api.deleteSprayRecord(record.id);
                   }
-                  // Trigger delta sync to remove from cachedRecents
+                  // Trigger delta sync to reconcile other clients
                   handleRequestSync();
                   setMessage('Lease sheet deleted');
                 } catch (e) {
+                  // Roll back the optimistic removal on failure
+                  setCachedRecents((prev) => {
+                    if (prev.some((r) => r.id === record.id)) return prev;
+                    return [record, ...prev].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+                  });
+                  try { void upsertRecent(record); } catch { /* ignore */ }
                   setMessage('Failed to delete lease sheet: ' + (e.message || 'unknown'));
                 }
               }}

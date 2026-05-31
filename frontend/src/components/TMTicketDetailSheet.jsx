@@ -91,6 +91,7 @@ export default function TMTicketDetailSheet({
   // omitted the sheet falls back to the old synchronous flow (useful for
   // any call site that doesn't want background uploads).
   onQueueSubmit = null,
+  canMergeTickets = false,
 }) {
   const { alert, confirm } = useDialog();
   const canOfficeEdit = roleCanAdmin || roleCanOffice;
@@ -199,10 +200,10 @@ export default function TMTicketDetailSheet({
   // ── Duplicate-candidates fetch (admin/office only) ──
   // Runs after every successful ticket load (and again after a merge,
   // since `ticket?.updated_at` flips when the merged ticket comes back).
-  // The endpoint is admin/office gated server-side; we skip the call
+  // The endpoint is gated server-side; we skip the call
   // entirely for workers so they don't get a 403 toast on every open.
   useEffect(() => {
-    if (!canOfficeEdit) return undefined;
+    if (!canMergeTickets) return undefined;
     if (!ticket?.id) return undefined;
     let cancelled = false;
     (async () => {
@@ -217,7 +218,7 @@ export default function TMTicketDetailSheet({
       }
     })();
     return () => { cancelled = true; };
-  }, [ticket?.id, ticket?.updated_at, canOfficeEdit]);
+  }, [ticket?.id, ticket?.updated_at, canMergeTickets]);
 
   // Confirm + run merge for a candidate. Source ticket gets folded into
   // THIS ticket (current ticket = primary). On success the primary is
@@ -777,7 +778,10 @@ export default function TMTicketDetailSheet({
 
   if (loading) {
     return (
-      <div style={{ padding: '20px', color: '#9ca3af', textAlign: 'center' }}>Loading ticket…</div>
+      <div style={{ padding: '20px', color: '#9ca3af', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+        <span aria-hidden="true" style={{ display: 'inline-block', width: 16, height: 16, border: '2px solid #374151', borderTopColor: '#3b82f6', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+        Loading ticket…
+      </div>
     );
   }
   if (error) {
@@ -903,7 +907,7 @@ export default function TMTicketDetailSheet({
           button that folds that ticket INTO this one. Hidden when no
           candidates exist so the banner doesn't add noise to clean
           tickets. */}
-      {canOfficeEdit && duplicateCandidates.length > 0 ? (
+      {canMergeTickets && duplicateCandidates.length > 0 ? (
         <div style={{
           background: 'rgba(251, 191, 36, 0.10)',
           border: '1px solid rgba(251, 191, 36, 0.35)',
@@ -986,7 +990,7 @@ export default function TMTicketDetailSheet({
             </button>
           </div>
         </div>
-      ) : canOfficeEdit ? (
+      ) : canMergeTickets ? (
         // No auto-detected duplicate, but office/admin still gets a
         // discreet link to the manual picker so they're never blocked
         // when the auto-matcher misses (different worker, off-by-one

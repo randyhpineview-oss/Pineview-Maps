@@ -632,6 +632,16 @@ export default function HydroseedDailyRecord({
     }
   };
 
+  // Explicit "Save Draft" button: persist the device-local draft (fast, no
+  // network) and return to the map immediately. The draft appears in
+  // In Progress → Drafts because onCancel bumps the parent's
+  // draftsRefreshToken. Non-blocking — the worker never waits.
+  const handleSaveDraftAndClose = async () => {
+    try { await handleSaveDraft(); } catch { /* non-fatal */ }
+    savedAndClosingRef.current = true;
+    onCancel?.();
+  };
+
   // ── Continue → HT picker ─────────────────────────────────────────────────
   // In edit mode we skip the picker entirely — re-linking after the fact
   // happens from the HT detail sheet, not the daily form.
@@ -681,6 +691,10 @@ export default function HydroseedDailyRecord({
   // without it we'd race the parent's draft-cleanup and re-create the
   // draft post-submit. Never reset; the component unmounts shortly after.
   const hasSubmittedRef = useRef(false);
+  // Set true when the worker taps "Save Draft" (persists locally + returns to
+  // the map). Guards the autosave hook + the wasOpenRef close-save so the
+  // draft isn't written twice.
+  const savedAndClosingRef = useRef(false);
 
   // ── Submit (called from picker confirm OR directly in edit mode) ─────────
   const submitDaily = async (htLink) => {
@@ -770,6 +784,7 @@ export default function HydroseedDailyRecord({
   const { saveNow: autoSaveDraftNow } = useAutoSaveDraft({
     enabled: autoSaveEnabled,
     hasContent: () => {
+      if (savedAndClosingRef.current) return false;
       const f = form;
       return Boolean(
         (f.photos || []).length > 0 ||
@@ -806,7 +821,7 @@ export default function HydroseedDailyRecord({
   const wasOpenRef = useRef(isOpen);
   useEffect(() => {
     if (wasOpenRef.current && !isOpen) {
-      if (!isEditMode && !isSubmitting && !hasSubmittedRef.current) {
+      if (!isEditMode && !isSubmitting && !hasSubmittedRef.current && !savedAndClosingRef.current) {
         autoSaveDraftNow({ force: true });
       }
     }
@@ -1951,6 +1966,19 @@ export default function HydroseedDailyRecord({
             Cancel
           </button>
         </div>
+        {!isEditMode && (
+          <button
+            onClick={handleSaveDraftAndClose}
+            style={{
+              marginTop: 10, width: '100%', padding: 10,
+              backgroundColor: 'transparent', color: '#9ca3af',
+              border: '1px dashed #374151', borderRadius: 8,
+              fontSize: '0.9rem', cursor: 'pointer',
+            }}
+          >
+            {draftId ? '💾 Update Draft' : '💾 Save Draft'}
+          </button>
+        )}
       </div>
 
       <MapAnnotationCanvas

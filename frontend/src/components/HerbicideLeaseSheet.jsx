@@ -67,6 +67,10 @@ export default function HerbicideLeaseSheet({
   const [isLoadingTMTickets, setIsLoadingTMTickets] = useState(false);
   const [draftId, setDraftId] = useState(draft?.id || null);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
+  // Set true when the worker taps "Save Draft" (which persists locally and
+  // returns to the map). Read by the autosave hook's hasContent guard so the
+  // unmount autosave doesn't re-run the full save after we've already saved.
+  const savedAndClosingRef = useRef(false);
   // Local-only input for typing custom (Other) weeds. Not persisted.
   const [customWeedInput, setCustomWeedInput] = useState('');
   // GPS state for standalone mode
@@ -902,85 +906,90 @@ export default function HerbicideLeaseSheet({
   // We also push each photo to Dropbox (best-effort) as a safety net: if
   // IDB ever loses the local copy, the resume path falls back to fetching
   // the Dropbox URL via the photo proxy.
+  // Serialize current photos to compact [{data, type, url?}] blobs — one copy
+  // of the bytes. Async because fresh (p.file) photos go through FileReader.
+  // Shared by the autosave path and the explicit Save Draft button.
+  const serializeDraftPhotos = async () => {
+    const photoPromises = photos.filter(p => p && (p.file || p.existingBase64?.data || (typeof p.preview === 'string' && p.preview.startsWith('data:')) || p.url)).map(async (p) => {
+      if (p.existingBase64?.data) {
+        return {
+          data: p.existingBase64.data,
+          type: p.existingBase64.type || 'image/jpeg',
+          url: p.url || null,
+        };
+      }
+      if (typeof p.preview === 'string' && p.preview.startsWith('data:')) {
+        const [meta, b64] = p.preview.split(',');
+        const mime = (meta.match(/data:(.*?);base64/) || [])[1] || 'image/jpeg';
+        return { data: b64, type: mime, url: p.url || null };
+      }
+      if (p.file) {
+        return new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve({
+            data: reader.result.split(',')[1],
+            type: p.file.type || 'image/jpeg',
+            url: p.url || null,
+          });
+          reader.readAsDataURL(p.file);
+        });
+      }
+      // Last-resort: photo lives only on Dropbox (no local bytes).
+      if (p.url) return { data: null, type: 'image/jpeg', url: p.url };
+      return null;
+    });
+    return (await Promise.all(photoPromises)).filter(Boolean);
+  };
+
+  const buildDraftPayload = (ensuredDraftId, serializablePhotos, extra = {}) => ({
+    id: ensuredDraftId,
+    site_id: site?.id || null,
+    pipeline_id: pipeline?.id || null,
+    site_status: limitedRequiredFields ? 'issue_not_inspected' : (requireComments ? 'in_progress' : 'inspected'),
+    form,
+    photos: serializablePhotos,
+    ticketNumber,
+    label: `${form.customer || site?.client || '—'} / ${form.area || site?.area || '—'} / ${form.lsdOrPipeline || site?.lsd || '—'}`,
+    ...extra,
+  });
+
+  // Best-effort Dropbox photo backup. Detached from React state so it's safe
+  // to run AFTER the form has closed — the explicit Save Draft path returns
+  // the worker to the map immediately and lets this finish in the background.
+  // On completion it clears the transient `_saving` flag so the Drafts list
+  // swaps "Saving…" for the normal row.
+  const backupDraftPhotos = async (ensuredDraftId, basePayload, serializablePhotos) => {
+    try {
+      if (window.navigator.onLine) {
+        await Promise.all(serializablePhotos.map(async (p, i) => {
+          if (p.url || !p.data) return;
+          try {
+            const { url } = await api.uploadDraftPhoto(ensuredDraftId, i, p.data, p.type);
+            if (url) p.url = url;
+          } catch { /* non-fatal */ }
+        }));
+      }
+    } catch { /* non-fatal */ }
+    // Always clear the saving flag (backup done or skipped) and refresh the
+    // Drafts list so the "Saving…" indicator goes away.
+    try { await saveLeaseSheetDraft({ ...basePayload, photos: serializablePhotos, _saving: false }); } catch { /* non-fatal */ }
+    try { onDraftSaved?.(); } catch { /* non-fatal */ }
+  };
+
+  // Autosave path (tab blur / form close): write the local snapshot and run
+  // the Dropbox backup. Fire-and-forget from the hook's perspective.
   const handleSaveDraft = async () => {
     setIsSavingDraft(true);
     try {
-      // Normalize each photo to {data, type, url?} — one copy of the bytes.
-      const photoPromises = photos.filter(p => p && (p.file || p.existingBase64?.data || (typeof p.preview === 'string' && p.preview.startsWith('data:')) || p.url)).map(async (p) => {
-        if (p.existingBase64?.data) {
-          return {
-            data: p.existingBase64.data,
-            type: p.existingBase64.type || 'image/jpeg',
-            url: p.url || null,
-          };
-        }
-        if (typeof p.preview === 'string' && p.preview.startsWith('data:')) {
-          const [meta, b64] = p.preview.split(',');
-          const mime = (meta.match(/data:(.*?);base64/) || [])[1] || 'image/jpeg';
-          return { data: b64, type: mime, url: p.url || null };
-        }
-        if (p.file) {
-          return new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve({
-              data: reader.result.split(',')[1],
-              type: p.file.type || 'image/jpeg',
-              url: p.url || null,
-            });
-            reader.readAsDataURL(p.file);
-          });
-        }
-        // Last-resort: photo lives only on Dropbox (no local bytes).
-        if (p.url) return { data: null, type: 'image/jpeg', url: p.url };
-        return null;
-      });
-      const serializablePhotos = (await Promise.all(photoPromises)).filter(Boolean);
-
-      // Mint the draft id up-front so the Dropbox path can use it. We pass
-      // it back into saveLeaseSheetDraft so the IDB row keys match.
+      const serializablePhotos = await serializeDraftPhotos();
       const ensuredDraftId = draftId || (
         (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`
       );
-
-      // Write to IndexedDB FIRST so the local snapshot is durable even if
-      // the page unloads (e.g. autosave on pagehide) before the Dropbox
-      // backup network round-trip completes. Phase 3 hook fires on tab
-      // blur / window close, so we can't assume the upload will finish.
-      const draftPayload = {
-        id: ensuredDraftId,
-        site_id: site?.id || null,
-        pipeline_id: pipeline?.id || null,
-        site_status: limitedRequiredFields ? 'issue_not_inspected' : (requireComments ? 'in_progress' : 'inspected'),
-        form,
-        photos: serializablePhotos,
-        ticketNumber,
-        label: `${form.customer || site?.client || '—'} / ${form.area || site?.area || '—'} / ${form.lsdOrPipeline || site?.lsd || '—'}`,
-      };
+      const draftPayload = buildDraftPayload(ensuredDraftId, serializablePhotos);
       const saved = await saveLeaseSheetDraft(draftPayload);
       setDraftId(saved.id);
       onDraftSaved?.(saved);
-
-      // Best-effort Dropbox backup runs AFTER the IDB write. Failures are
-      // silent — IDB already has the data. Successful uploads then re-save
-      // the draft with each photo's Dropbox url for the safety-net resume
-      // path (recovers from a wiped IDB / new device).
-      if (window.navigator.onLine) {
-        try {
-          let mutated = false;
-          await Promise.all(serializablePhotos.map(async (p, i) => {
-            if (p.url || !p.data) return;
-            try {
-              const { url } = await api.uploadDraftPhoto(ensuredDraftId, i, p.data, p.type);
-              if (url) { p.url = url; mutated = true; }
-            } catch { /* non-fatal */ }
-          }));
-          if (mutated) {
-            try {
-              await saveLeaseSheetDraft({ ...draftPayload, photos: serializablePhotos });
-            } catch { /* non-fatal */ }
-          }
-        } catch { /* non-fatal */ }
-      }
+      await backupDraftPhotos(ensuredDraftId, draftPayload, serializablePhotos);
     } catch (err) {
       await alert({
         title: 'Could not save draft',
@@ -989,6 +998,41 @@ export default function HerbicideLeaseSheet({
       });
     } finally {
       setIsSavingDraft(false);
+    }
+  };
+
+  // Explicit "Save Draft" button: persist the local snapshot with a transient
+  // "Saving…" flag, return to the map immediately, then finish the Dropbox
+  // backup in the background. Non-blocking — the worker never waits on the
+  // network, and the Drafts list shows a "Saving…" row until the backup
+  // settles.
+  const handleSaveDraftAndClose = async () => {
+    if (isSavingDraft) return;
+    setIsSavingDraft(true);
+    try {
+      const serializablePhotos = await serializeDraftPhotos();
+      const ensuredDraftId = draftId || (
+        (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+      );
+      // Only show "Saving…" if there's still a Dropbox backup to do; an
+      // offline save or a photo-less draft is already fully persisted.
+      const needsBackup = window.navigator.onLine && serializablePhotos.some((p) => p.data && !p.url);
+      const draftPayload = buildDraftPayload(ensuredDraftId, serializablePhotos);
+      await saveLeaseSheetDraft({ ...draftPayload, _saving: needsBackup });
+      setDraftId(ensuredDraftId);
+      onDraftSaved?.();
+      // Prevent the unmount autosave from re-running the full save.
+      savedAndClosingRef.current = true;
+      // Return to the map now; finish the photo backup detached.
+      onCancel?.();
+      if (needsBackup) void backupDraftPhotos(ensuredDraftId, draftPayload, serializablePhotos);
+    } catch (err) {
+      setIsSavingDraft(false);
+      await alert({
+        title: 'Could not save draft',
+        message: String(err.message || 'Unknown error'),
+        severity: 'danger',
+      });
     }
   };
 
@@ -1013,6 +1057,7 @@ export default function HerbicideLeaseSheet({
   const { saveNow: autoSaveDraftNow } = useAutoSaveDraft({
     enabled: autoSaveEnabled,
     hasContent: () => {
+      if (savedAndClosingRef.current) return false;
       const f = form;
       return Boolean(
         photos.length > 0 ||
@@ -2149,7 +2194,7 @@ export default function HerbicideLeaseSheet({
               </div>
               {!isEditMode && (
                 <button
-                  onClick={handleSaveDraft}
+                  onClick={handleSaveDraftAndClose}
                   disabled={isSavingDraft}
                   style={{
                     padding: '10px',

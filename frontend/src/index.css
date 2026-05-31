@@ -377,6 +377,12 @@ button { cursor: pointer; }
   to   { transform: rotate(360deg); }
 }
 
+/* Generic spinner rotation, shared by inline loading indicators
+   (Open Tickets / Recents / Drafts "Saving…" rows, etc.). */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 /* ───── Floating controls on map ───── */
 .map-float-tl {
   position: absolute;

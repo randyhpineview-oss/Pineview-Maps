@@ -15,7 +15,10 @@ const DB_NAME = 'pineview-offline-db';
 // can run the same delta-sync + offline-detail caching that T&M tickets
 // already use. Fixes the multi-second cold-fetch lag on every visit to
 // 'In Progress → Open Tickets' for hydroseed.
-const DB_VERSION = 9;
+// v10: added `pdfCache` store so generated/proxy-fetched PDFs can be cached
+// (base64, LRU-trimmed) and previews open instantly instead of round-tripping
+// Dropbox via /api/pdf-proxy.
+const DB_VERSION = 10;
 
 function ensureCacheId(site) {
   return {
@@ -61,6 +64,9 @@ const dbPromise = openDB(DB_NAME, DB_VERSION, {
     }
     if (!db.objectStoreNames.contains('hydroseedTickets')) {
       db.createObjectStore('hydroseedTickets', { keyPath: 'id' });
+    }
+    if (!db.objectStoreNames.contains('pdfCache')) {
+      db.createObjectStore('pdfCache', { keyPath: 'key' });
     }
   },
 });
@@ -354,6 +360,41 @@ export async function getHydroseedDailyDraft(id) {
 export async function deleteHydroseedDailyDraft(id) {
   const db = await dbPromise;
   await db.delete('hydroseedDailyDrafts', id);
+}
+
+// ── Generated-PDF cache (instant previews) ──
+// Caches client-generated and proxy-fetched PDFs (base64) keyed by a stable
+// string (e.g. `ticket:HL000123` or `url:<dropbox-url>`) so the preview
+// overlay can open instantly instead of round-tripping Dropbox via
+// /api/pdf-proxy. LRU-trimmed to keep IndexedDB lean on iOS.
+const PDF_CACHE_MAX = 40;
+
+export async function putCachedPdf(key, base64) {
+  if (!key || !base64) return;
+  const db = await dbPromise;
+  try {
+    await db.put('pdfCache', { key: String(key), base64, cachedAt: Date.now() });
+    // LRU trim — keep the newest PDF_CACHE_MAX entries.
+    const rows = await db.getAll('pdfCache');
+    if (rows.length > PDF_CACHE_MAX) {
+      rows.sort((a, b) => (a.cachedAt || 0) - (b.cachedAt || 0));
+      const excess = rows.length - PDF_CACHE_MAX;
+      const tx = db.transaction('pdfCache', 'readwrite');
+      for (let i = 0; i < excess; i++) await tx.store.delete(rows[i].key);
+      await tx.done;
+    }
+  } catch { /* non-fatal — cache is best-effort */ }
+}
+
+export async function getCachedPdf(key) {
+  if (!key) return null;
+  try {
+    const db = await dbPromise;
+    const row = await db.get('pdfCache', String(key));
+    return row?.base64 || null;
+  } catch {
+    return null;
+  }
 }
 
 // ── Pipelines cache ──

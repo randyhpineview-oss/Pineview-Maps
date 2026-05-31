@@ -129,6 +129,66 @@ function renderLeaseRow(record, onViewPdf, onEditRecord, onDeleteRecord, canOffi
   );
 }
 
+// Small inline spinner — reuses the global `@keyframes spin` (index.css).
+function Spinner({ size = 16, color = '#3b82f6' }) {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        display: 'inline-block', width: size, height: size,
+        border: '2px solid #374151', borderTopColor: color,
+        borderRadius: '50%', animation: 'spin 0.8s linear infinite',
+      }}
+    />
+  );
+}
+
+// Centered "loading" placeholder used by lists/tabs while their first
+// fetch is in flight, so a slow load shows a spinner instead of a
+// misleading empty state ("No open tickets" / "Nothing here yet").
+function LoadingRow({ label = 'Loading…' }) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="small-text"
+      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '20px', color: '#9ca3af' }}
+    >
+      <Spinner size={16} />
+      {label}
+    </div>
+  );
+}
+
+// Renders a "Creating…" placeholder row for an in-flight ticket creation
+// (derived from the upload queue). Shown at the top of Open Tickets so the
+// worker sees their new ticket is on the way instead of an empty list.
+function renderPlaceholderRow(p, kind) {
+  return (
+    <div
+      key={p.id}
+      className="site-row"
+      aria-busy="true"
+      style={{ padding: '10px', borderRadius: '6px', background: '#0f172a', border: '1px dashed #374151' }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <div className="small-text" style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px', color: '#cbd5e1' }}>
+            <Spinner size={12} color={kind === 'ht' ? '#34d399' : '#8b5cf6'} />
+            {kind === 'ht' ? '💧 Creating Hydroseed ticket…' : 'Creating T&M ticket…'}
+          </div>
+          <div className="small-text" style={{ color: '#9ca3af', marginTop: '2px' }}>
+            {p.client || '—'} / {p.area || '—'}{p.date ? ` • ${p.date}` : ''}
+          </div>
+          <div className="small-text" style={{ color: '#6b7280', marginTop: '2px', fontSize: '0.75rem' }}>
+            Uploading — it'll appear here when it's done.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function renderTmRow(t, onOpenTMTicket) {
   return (
     <div key={`tm-${t.id}`} className="site-row" style={{ padding: '10px', borderRadius: '6px' }}>
@@ -266,6 +326,10 @@ export default function FormsPanel({
   const tmTicketsSinceRef = useRef(null);
   const tmSyncingRef = useRef(false);
   const tmDeltaFailCountRef = useRef(0);
+  // True once the first cold-start T&M fetch completes (success or error).
+  // Mirrors `hydroseedTicketsLoaded` so Open Tickets / Recents show a
+  // spinner instead of "No open T&M tickets." while the list is loading.
+  const [tmTicketsLoaded, setTmTicketsLoaded] = useState(false);
   // Local ticker that forces a TM delta poll every TM_FAST_POLL_MS while
   // the user is on a TM-relevant sub-tab. Independent of the 5-minute
   // App-level sync-status poll — gives office approvals a near-realtime
@@ -323,21 +387,38 @@ export default function FormsPanel({
   // cache holds every status; the Open Tickets list (In Progress) only
   // wants `status === 'open'`. Sorted newest-first to match the T&M
   // sortedOpenTickets convention.
-  const openHydroseedTickets = useMemo(
-    () => hydroseedTickets
-      .filter((t) => t.status === 'open')
-      .sort((a, b) => {
-        const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
-        const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
-        if (tb !== ta) return tb - ta;
-        return (b.id || 0) - (a.id || 0);
-      }),
-    [hydroseedTickets],
-  );
+  const openHydroseedTickets = useMemo(() => {
+    let base = hydroseedTickets.filter((t) => t.status === 'open');
+    if (viewAsWorker && currentUserName) {
+      base = base.filter((t) => (t.created_by_name || '') === currentUserName);
+    }
+    return base.sort((a, b) => {
+      const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+      if (tb !== ta) return tb - ta;
+      return (b.id || 0) - (a.id || 0);
+    });
+  }, [hydroseedTickets, viewAsWorker, currentUserName]);
   // Alias kept so the existing `filteredTm`/recents code doesn't need to
   // be renamed. It's just the same underlying list — the filter that
   // strips `status === 'open'` lives inside `filteredTm` itself.
   const tmSubmitted = tmTickets;
+
+  // View-as-worker: narrow recents hydroseed tickets + dailies to 'mine only'
+  // (same rule as T&M / lease sheets above).
+  const visibleHydroseedTickets = useMemo(() => {
+    if (viewAsWorker && currentUserName) {
+      return hydroseedTickets.filter((t) => (t.created_by_name || '') === currentUserName);
+    }
+    return hydroseedTickets;
+  }, [hydroseedTickets, viewAsWorker, currentUserName]);
+
+  const visibleHydroseedDailies = useMemo(() => {
+    if (viewAsWorker && currentUserName) {
+      return hydroseedDailies.filter((d) => (d.created_by_name || '') === currentUserName);
+    }
+    return hydroseedDailies;
+  }, [hydroseedDailies, viewAsWorker, currentUserName]);
 
   // "New T&M ticket" modal
   const [newTMOpen, setNewTMOpen] = useState(false);
@@ -444,6 +525,7 @@ export default function FormsPanel({
           if (cancelled) return;
           tmDeltaFailCountRef.current = 0;
           setTmTickets(list || []);
+          setTmTicketsLoaded(true);
           tmTicketsSinceRef.current = new Date().toISOString();
           // Fix #5 — warm the IDB detail cache so TMTicketDetailSheet
           // can open offline. Cheap: a single batched IDB transaction
@@ -481,6 +563,8 @@ export default function FormsPanel({
         if (tmDeltaFailCountRef.current >= 2) {
           console.warn('[FORMS] TM tickets sync failed:', e.message);
         }
+        // Mark loaded even on error so the UI doesn't stay on the spinner.
+        setTmTicketsLoaded(true);
         // Leave the watermark alone so the next tick retries the same range.
       } finally {
         tmSyncingRef.current = false;
@@ -775,6 +859,51 @@ export default function FormsPanel({
     return base.sort(byNewest);
   }, [openTickets, viewAsWorker, currentUserName]);
 
+  // In-flight ticket creations derived from the upload queue. When a worker
+  // submits a lease sheet that creates a NEW T&M ticket (or a hydroseed daily
+  // that creates a NEW HT), the real ticket doesn't exist until the upload
+  // finishes — so we show a "Creating…" placeholder at the top of Open
+  // Tickets, tied to the queue item's lifecycle. It disappears when the
+  // upload completes (queue row removed) and the real ticket arrives via the
+  // immediate delta-sync. Stalled items are excluded — they surface in the
+  // Uploading tab with a retry, so a "Creating…" row there would be misleading.
+  const pendingTmPlaceholders = useMemo(() => {
+    return (uploadQueue || [])
+      .filter((it) => {
+        const tt = it?.targetType;
+        const isLease = tt === 'site' || tt === 'pipeline' || tt === 'external';
+        return isLease && it?.payload?.time_materials_link?.create === true && it?.status !== 'stalled';
+      })
+      .map((it) => {
+        const d = it.payload?.lease_sheet_data || {};
+        return {
+          id: `pending-tm-${it.id}`,
+          client: d.customer || it.payload?.client || '',
+          area: d.area || '',
+          date: it.payload?.spray_date || d.date || '',
+        };
+      });
+  }, [uploadQueue]);
+
+  const pendingHtPlaceholders = useMemo(() => {
+    return (uploadQueue || [])
+      .filter((it) => it?.targetType === 'hydroseed_daily'
+        && it?.payload?.hydroseed_ticket_link?.create === true
+        && it?.status !== 'stalled')
+      .map((it) => ({
+        id: `pending-ht-${it.id}`,
+        client: it.payload?.client || '',
+        area: it.payload?.area || '',
+        date: it.payload?.work_date || '',
+      }));
+  }, [uploadQueue]);
+
+  // Count shown on the Open Tickets tab badge — real open tickets (T&M +
+  // hydroseed) plus the in-flight "Creating…" placeholders so the worker sees
+  // the number bump the instant they submit.
+  const openTabCount = sortedOpenTickets.length + openHydroseedTickets.length
+    + pendingTmPlaceholders.length + pendingHtPlaceholders.length;
+
   // Merged "All" feed: lease sheets + T&M tickets interleaved by created_at desc.
   // Each row keeps its native shape and gets a `_type` tag so the render
   // pass can pick the right card. Re-uses the same `search` filter logic.
@@ -1021,7 +1150,7 @@ export default function FormsPanel({
               Uploading{uploadQueue.length > 0 ? ` (${uploadQueue.length})` : ''}
             </button>
             <button style={innerBtn(ipTab === IP_OPEN)} onClick={() => setIpTab(IP_OPEN)}>
-              Open Tickets{openTickets.length > 0 ? ` (${openTickets.length})` : ''}
+              Open Tickets{openTabCount > 0 ? ` (${openTabCount})` : ''}
             </button>
             <button style={innerBtn(ipTab === IP_DRAFTS)} onClick={() => setIpTab(IP_DRAFTS)}>
               Drafts{drafts.length > 0 ? ` (${drafts.length})` : ''}
@@ -1224,10 +1353,17 @@ export default function FormsPanel({
           {/* Open Tickets */}
           {ipTab === IP_OPEN && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {pendingTmPlaceholders.map((p) => renderPlaceholderRow(p, 'tm'))}
               {sortedOpenTickets.length === 0 ? (
-                <div className="small-text" style={{ textAlign: 'center', padding: '20px', color: '#9ca3af' }}>
-                  No open T&M tickets.
-                </div>
+                pendingTmPlaceholders.length > 0 ? null : (
+                  !tmTicketsLoaded ? (
+                    <LoadingRow label="Loading open tickets…" />
+                  ) : (
+                    <div className="small-text" style={{ textAlign: 'center', padding: '20px', color: '#9ca3af' }}>
+                      No open T&M tickets.
+                    </div>
+                  )
+                )
               ) : (
                 visibleOpen.map((t) => (
                   <button
@@ -1269,11 +1405,12 @@ export default function FormsPanel({
                 </button>
               )}
 
-              {openHydroseedTickets.length > 0 && (
+              {(openHydroseedTickets.length > 0 || pendingHtPlaceholders.length > 0) && (
                 <>
                   <div className="small-text" style={{ color: '#9ca3af', fontWeight: 600, marginTop: 12 }}>
                     Open Hydroseed Tickets
                   </div>
+                  {pendingHtPlaceholders.map((p) => renderPlaceholderRow(p, 'ht'))}
                   {openHydroseedTickets.map((t) => (
                     <button
                       key={`ht-${t.id}`}
@@ -1330,8 +1467,12 @@ export default function FormsPanel({
                     <div className="small-text" style={{ fontWeight: 600 }}>
                       💧 {d.label || d.form?.client || 'Hydroseed Daily Draft'}
                     </div>
-                    <div className="small-text" style={{ color: '#9ca3af', marginTop: '2px' }}>
-                      Updated {new Date(d.updatedAt || d.createdAt).toLocaleString()}
+                    <div className="small-text" style={{ color: '#9ca3af', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      {d._saving ? (
+                        <><Spinner size={12} color="#60a5fa" /> Saving…</>
+                      ) : (
+                        <>Updated {new Date(d.updatedAt || d.createdAt).toLocaleString()}</>
+                      )}
                     </div>
                   </button>
                   <button
@@ -1369,8 +1510,12 @@ export default function FormsPanel({
                       style={{ flex: 1, textAlign: 'left', background: 'transparent', border: 'none', color: '#f9fafb', cursor: 'pointer', padding: 0 }}
                     >
                       <div className="small-text" style={{ fontWeight: 600 }}>{d.label || 'Untitled Draft'}</div>
-                      <div className="small-text" style={{ color: '#9ca3af', marginTop: '2px' }}>
-                        Updated {new Date(d.updatedAt || d.createdAt).toLocaleString()}
+                      <div className="small-text" style={{ color: '#9ca3af', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        {d._saving ? (
+                          <><Spinner size={12} color="#60a5fa" /> Saving…</>
+                        ) : (
+                          <>Updated {new Date(d.updatedAt || d.createdAt).toLocaleString()}</>
+                        )}
                       </div>
                     </button>
                     <button
@@ -1513,9 +1658,13 @@ export default function FormsPanel({
               ) : null}
 
               {filteredTm.length === 0 ? (
-                <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: '#9ca3af' }}>
-                  No T&M tickets.
-                </div>
+                !tmTicketsLoaded ? (
+                  <LoadingRow label="Loading…" />
+                ) : (
+                  <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: '#9ca3af' }}>
+                    No T&M tickets.
+                  </div>
+                )
               ) : (
                 visibleTm.map((t) => renderTmRow(t, onOpenTMTicket))
               )}
@@ -1534,22 +1683,22 @@ export default function FormsPanel({
           {/* ── Hydroseed (dailies + tickets) ── */}
           {recTab === REC_HYDROSEED && (
             <div className="list-grid">
-              {!hydroseedTicketsLoaded && hydroseedTickets.length === 0 ? (
+              {!hydroseedTicketsLoaded && visibleHydroseedTickets.length === 0 ? (
                 <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: '#9ca3af' }}>
                   Loading…
                 </div>
-              ) : hydroseedTickets.length === 0 && hydroseedDailies.length === 0 ? (
+              ) : visibleHydroseedTickets.length === 0 && visibleHydroseedDailies.length === 0 ? (
                 <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: '#9ca3af' }}>
                   Nothing here yet.
                 </div>
               ) : null}
 
-              {hydroseedTickets.length > 0 && (
+              {visibleHydroseedTickets.length > 0 && (
                 <>
                   <div className="small-text" style={{ color: '#9ca3af', fontWeight: 600, marginTop: 4 }}>
-                    Hydroseed Tickets ({hydroseedTickets.length})
+                    Hydroseed Tickets ({visibleHydroseedTickets.length})
                   </div>
-                  {hydroseedTickets.map((t) => (
+                  {visibleHydroseedTickets.map((t) => (
                     <button
                       key={`hyd-tkt-${t.id}`}
                       type="button"
@@ -1578,12 +1727,12 @@ export default function FormsPanel({
                 </>
               )}
 
-              {hydroseedDailies.length > 0 && (
+              {visibleHydroseedDailies.length > 0 && (
                 <>
                   <div className="small-text" style={{ color: '#9ca3af', fontWeight: 600, marginTop: 12 }}>
-                    Hydroseed Dailies ({hydroseedDailies.length})
+                    Hydroseed Dailies ({visibleHydroseedDailies.length})
                   </div>
-                  {hydroseedDailies.map((d) => (
+                  {visibleHydroseedDailies.map((d) => (
                     <div
                       key={`hyd-daily-${d.id}`}
                       className="site-row"
