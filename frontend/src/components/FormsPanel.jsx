@@ -168,10 +168,22 @@ function LoadingRow({ label = 'Loading…' }) {
   );
 }
 
-// Renders a "Creating…" placeholder row for an in-flight ticket creation
-// (derived from the upload queue). Shown at the top of Open Tickets so the
-// worker sees their new ticket is on the way instead of an empty list.
+// Renders a "Creating…" placeholder row for an in-flight upload, derived
+// from the upload queue so it disappears the instant the real record
+// arrives via delta-sync. Source-row kinds ('lease', 'hyd_daily') cover
+// the form-side row the worker just submitted (Recents); ticket kinds
+// ('tm', 'ht') cover the linked ticket auto-created on the backend
+// (Open Tickets). So a single lease-sheet submit can produce both a
+// lease placeholder in Recents AND a T&M placeholder in Open Tickets.
+const PLACEHOLDER_KINDS = {
+  tm:        { color: '#8b5cf6', label: 'Creating T&M ticket…' },
+  ht:        { color: '#34d399', label: '💧 Creating Hydroseed ticket…' },
+  lease:     { color: '#38bdf8', label: 'Creating lease sheet…' },
+  hyd_daily: { color: '#34d399', label: '💧 Creating Hydroseed daily…' },
+};
+
 function renderPlaceholderRow(p, kind) {
+  const { color, label } = PLACEHOLDER_KINDS[kind] || PLACEHOLDER_KINDS.tm;
   return (
     <div
       key={p.id}
@@ -182,8 +194,8 @@ function renderPlaceholderRow(p, kind) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <div className="small-text" style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px', color: '#cbd5e1' }}>
-            <Spinner size={12} color={kind === 'ht' ? '#34d399' : '#8b5cf6'} />
-            {kind === 'ht' ? '💧 Creating Hydroseed ticket…' : 'Creating T&M ticket…'}
+            <Spinner size={12} color={color} />
+            {label}
           </div>
           <div className="small-text" style={{ color: '#9ca3af', marginTop: '2px' }}>
             {p.client || '—'} / {p.area || '—'}{p.date ? ` • ${p.date}` : ''}
@@ -935,6 +947,43 @@ export default function FormsPanel({
       }));
   }, [uploadQueue]);
 
+  // Source-row placeholders — the lease sheet itself / the hydroseed daily
+  // itself that the worker just submitted. These render at the top of the
+  // Recents lists (Lease Sheets, All, Hydroseed → Dailies) so the worker sees
+  // every row their submit will produce while the upload is in flight, not
+  // just the linked ticket. Filtered to view-as-worker so admins impersonating
+  // a worker only see their own pending submits.
+  const pendingLeasePlaceholders = useMemo(() => {
+    return (uploadQueue || [])
+      .filter((it) => {
+        const tt = it?.targetType;
+        const isLeaseCreate = tt === 'site' || tt === 'pipeline' || tt === 'external';
+        // Exclude pure pin-inspection updates ('site' with no lease_sheet_data)
+        // and stalled items (those surface in the Uploading tab instead).
+        return isLeaseCreate && it?.payload?.lease_sheet_data && it?.status !== 'stalled';
+      })
+      .map((it) => {
+        const d = it.payload?.lease_sheet_data || {};
+        return {
+          id: `pending-lease-${it.id}`,
+          client: d.customer || it.payload?.client || '',
+          area: d.area || it.payload?.area || '',
+          date: it.payload?.spray_date || d.date || it.spray_date || '',
+        };
+      });
+  }, [uploadQueue]);
+
+  const pendingHydroseedDailyPlaceholders = useMemo(() => {
+    return (uploadQueue || [])
+      .filter((it) => it?.targetType === 'hydroseed_daily' && it?.status !== 'stalled')
+      .map((it) => ({
+        id: `pending-hyd-daily-${it.id}`,
+        client: it.payload?.client || it.payload?.daily_data?.client || '',
+        area: it.payload?.area || it.payload?.daily_data?.area || '',
+        date: it.payload?.work_date || it.payload?.daily_data?.work_date || it.work_date || '',
+      }));
+  }, [uploadQueue]);
+
   // Count shown on the Open Tickets tab badge — real open tickets (T&M +
   // hydroseed) plus the in-flight "Creating…" placeholders so the worker sees
   // the number bump the instant they submit.
@@ -1613,10 +1662,14 @@ export default function FormsPanel({
               "Lease Sheets" / "T&M Tickets" show a single-type list as before. */}
           {recTab === REC_ALL && (
             <div className="list-grid">
+              {pendingLeasePlaceholders.map((p) => renderPlaceholderRow(p, 'lease'))}
+              {pendingHydroseedDailyPlaceholders.map((p) => renderPlaceholderRow(p, 'hyd_daily'))}
               {filteredAll.length === 0 ? (
-                <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: '#9ca3af' }}>
-                  Nothing here yet.
-                </div>
+                pendingLeasePlaceholders.length === 0 && pendingHydroseedDailyPlaceholders.length === 0 ? (
+                  <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: '#9ca3af' }}>
+                    Nothing here yet.
+                  </div>
+                ) : null
               ) : (
                 visibleAll.map((row) =>
                   row._type === 'lease'
@@ -1638,10 +1691,13 @@ export default function FormsPanel({
 
           {recTab === REC_LEASE && (
             <div className="list-grid">
+              {pendingLeasePlaceholders.map((p) => renderPlaceholderRow(p, 'lease'))}
               {filteredLease.length === 0 ? (
-                <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: '#9ca3af' }}>
-                  No lease sheets.
-                </div>
+                pendingLeasePlaceholders.length === 0 ? (
+                  <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: '#9ca3af' }}>
+                    No lease sheets.
+                  </div>
+                ) : null
               ) : (
                 visibleLease.map((record) => renderLeaseRow(record, onViewPdf, onEditRecord, onDeleteRecord, roleCanAdmin))
               )}
@@ -1799,7 +1855,8 @@ export default function FormsPanel({
               {/* ── Dailies sub-tab ── */}
               {hydSubTab === HYD_SUB_DAILIES && (
                 <>
-                  {visibleHydroseedDailies.length === 0 ? (
+                  {pendingHydroseedDailyPlaceholders.map((p) => renderPlaceholderRow(p, 'hyd_daily'))}
+                  {visibleHydroseedDailies.length === 0 && pendingHydroseedDailyPlaceholders.length === 0 ? (
                     <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: '#9ca3af' }}>
                       No hydroseed dailies yet.
                     </div>
