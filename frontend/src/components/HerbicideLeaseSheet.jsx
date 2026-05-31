@@ -55,6 +55,7 @@ export default function HerbicideLeaseSheet({
   const [photos, setPhotos] = useState([]);
   const [ticketNumber, setTicketNumber] = useState('');
   const [isPreviewing, setIsPreviewing] = useState(false);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [pdfBase64, setPdfBase64] = useState(null);
   // T&M linking step state
   const [isPickingTM, setIsPickingTM] = useState(false);
@@ -500,6 +501,7 @@ export default function HerbicideLeaseSheet({
       });
       return;
     }
+    setIsGeneratingPdf(true);
     try {
       // Build a cheap cache key from the form fields + photo identities
       // (file.name+size or existingBase64 data length or preview URL).
@@ -554,6 +556,8 @@ export default function HerbicideLeaseSheet({
         message: String(err.message || 'Unknown error'),
         severity: 'danger',
       });
+    } finally {
+      setIsGeneratingPdf(false);
     }
   };
 
@@ -2182,7 +2186,7 @@ export default function HerbicideLeaseSheet({
               <div style={{ display: 'flex', gap: '12px' }}>
                 <button
                   onClick={handlePreview}
-                  disabled={requiredMissing.length > 0}
+                  disabled={requiredMissing.length > 0 || isGeneratingPdf}
                   title={requiredMissing.length > 0 ? `Missing: ${requiredMissing.join(', ')}` : ''}
                   style={{
                     flex: 1,
@@ -2193,10 +2197,19 @@ export default function HerbicideLeaseSheet({
                     borderRadius: '8px',
                     fontSize: '1rem',
                     fontWeight: 600,
-                    cursor: requiredMissing.length > 0 ? 'not-allowed' : 'pointer',
+                    cursor: (requiredMissing.length > 0 || isGeneratingPdf) ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
                   }}
                 >
-                  {requiredMissing.length > 0 ? `Preview (${requiredMissing.length} missing)` : 'Preview'}
+                  {isGeneratingPdf ? (
+                    <>
+                      <span style={{ display: 'inline-block', width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.4)', borderTopColor: 'white', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
+                      Generating…
+                    </>
+                  ) : requiredMissing.length > 0 ? `Preview (${requiredMissing.length} missing)` : 'Preview'}
                 </button>
                 <button
                   onClick={onCancel}
