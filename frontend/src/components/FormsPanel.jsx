@@ -39,6 +39,14 @@ const TM_STATUS_ALL = 'all';
 const TM_STATUS_SUBMITTED = 'submitted';
 const TM_STATUS_APPROVED = 'approved';
 
+// Sub-tabs inside the Hydroseed tab of Recently Submitted.
+const HYD_SUB_TICKETS = 'tickets';
+const HYD_SUB_DAILIES = 'dailies';
+// Office-only status filter for the hydroseed tickets sub-tab.
+const HYD_STATUS_ALL = 'all';
+const HYD_STATUS_SUBMITTED = 'submitted';
+const HYD_STATUS_APPROVED = 'approved';
+
 // Format an ISO timestamp as a short, worker-friendly "submitted on" label
 // used in the Recently Submitted list. Falls back to an em dash when the
 // incoming value is missing or invalid so rows never render "Invalid Date".
@@ -314,6 +322,10 @@ export default function FormsPanel({
   // Default "all" so the tab matches what office used to see before this
   // split; they can narrow to "submitted" to triage pending approvals.
   const [tmStatusFilter, setTmStatusFilter] = useState(TM_STATUS_ALL);
+  // Sub-tab inside the Hydroseed section: tickets vs dailies.
+  const [hydSubTab, setHydSubTab] = useState(HYD_SUB_TICKETS);
+  // Office-only status filter for the hydroseed tickets sub-tab.
+  const [hydStatusFilter, setHydStatusFilter] = useState(HYD_STATUS_ALL);
 
   // Unified T&M tickets cache used by BOTH the Open Tickets (In Progress)
   // list and the Recently Submitted (Recents) list. The first load pulls
@@ -466,6 +478,7 @@ export default function FormsPanel({
   // doesn't fight with the per-type counts behind the scenes.
   const [allCount, setAllCount] = useState(PAGE_SIZE);
   const [openCount, setOpenCount] = useState(PAGE_SIZE);
+  const [hydTktCount, setHydTktCount] = useState(PAGE_SIZE);
   // Lease-sheet history fetched on demand by clicking "Load more" past the
   // end of the cached recents. These rows live ONLY in component state
   // (not the IDB recents cache) — that cache is kept lean for boot speed.
@@ -487,6 +500,7 @@ export default function FormsPanel({
   // Resetting tmCount when the office toggles its status filter keeps the
   // "Load more" count honest against the filtered list.
   useEffect(() => { setTmCount(PAGE_SIZE); setAllCount(PAGE_SIZE); }, [tmStatusFilter]);
+  useEffect(() => { setHydTktCount(PAGE_SIZE); }, [hydStatusFilter, hydSubTab]);
 
   // Unified T&M sync — replaces the two prior fetch effects. Runs while the
   // FormsPanel is visible AND the user is on a sub-tab that actually needs
@@ -809,6 +823,29 @@ export default function FormsPanel({
       (r.sprayed_by_name || '').toLowerCase().includes(q)
     );
   }, [cachedRecents, search, viewAsWorker, currentUserName]);
+
+  // Hydroseed tickets for the Recently Submitted tab — mirrors filteredTm.
+  // Excludes `status === 'open'` (those live in In Progress → Open Tickets),
+  // applies view-as-worker narrowing, and applies the office status filter.
+  const filteredHydroseedTickets = useMemo(() => {
+    let base = visibleHydroseedTickets.filter((t) => t.status !== 'open');
+    if (roleCanAdmin) {
+      if (hydStatusFilter === HYD_STATUS_SUBMITTED) {
+        base = base.filter((t) => t.status === 'submitted');
+      } else if (hydStatusFilter === HYD_STATUS_APPROVED) {
+        base = base.filter((t) => t.status === 'approved');
+      }
+    }
+    base = [...base].sort(byNewest);
+    if (!search) return base;
+    const q = search.toLowerCase();
+    return base.filter((t) =>
+      (t.ticket_number || '').toLowerCase().includes(q) ||
+      (t.client || '').toLowerCase().includes(q) ||
+      (t.area || '').toLowerCase().includes(q) ||
+      (t.created_by_name || '').toLowerCase().includes(q)
+    );
+  }, [visibleHydroseedTickets, search, hydStatusFilter, roleCanAdmin]);
 
   const filteredTm = useMemo(() => {
     // Recently Submitted should NEVER include status=open tickets — those
@@ -1680,130 +1717,172 @@ export default function FormsPanel({
             </div>
           )}
 
-          {/* ── Hydroseed (dailies + tickets) ── */}
+          {/* ── Hydroseed (tickets + dailies with sub-tabs) ── */}
           {recTab === REC_HYDROSEED && (
             <div className="list-grid">
-              {!hydroseedTicketsLoaded && visibleHydroseedTickets.length === 0 ? (
-                <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: '#9ca3af' }}>
-                  Loading…
-                </div>
-              ) : visibleHydroseedTickets.length === 0 && visibleHydroseedDailies.length === 0 ? (
-                <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: '#9ca3af' }}>
-                  Nothing here yet.
-                </div>
-              ) : null}
+              {/* Tickets / Dailies toggle */}
+              <div style={{ display: 'flex', gap: '6px', marginBottom: '2px' }}>
+                <button
+                  type="button"
+                  style={innerBtn(hydSubTab === HYD_SUB_TICKETS)}
+                  onClick={() => setHydSubTab(HYD_SUB_TICKETS)}
+                >
+                  Tickets
+                </button>
+                <button
+                  type="button"
+                  style={innerBtn(hydSubTab === HYD_SUB_DAILIES)}
+                  onClick={() => setHydSubTab(HYD_SUB_DAILIES)}
+                >
+                  Dailies
+                </button>
+              </div>
 
-              {visibleHydroseedTickets.length > 0 && (
+              {/* ── Tickets sub-tab ── */}
+              {hydSubTab === HYD_SUB_TICKETS && (
                 <>
-                  <div className="small-text" style={{ color: '#9ca3af', fontWeight: 600, marginTop: 4 }}>
-                    Hydroseed Tickets ({visibleHydroseedTickets.length})
-                  </div>
-                  {visibleHydroseedTickets.map((t) => (
-                    <button
-                      key={`hyd-tkt-${t.id}`}
-                      type="button"
-                      className="site-row"
-                      onClick={() => onOpenHydroseedTicket?.(t.id)}
-                      style={{
-                        textAlign: 'left', padding: '10px',
-                        borderRadius: '6px', background: '#111827',
-                        border: '1px solid #374151', cursor: 'pointer',
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div>
-                          <div className="small-text" style={{ fontWeight: 700 }}>💧 {t.ticket_number}</div>
-                          <div className="small-text" style={{ color: '#9ca3af' }}>
-                            {t.client} / {t.area} • {t.work_date}
-                          </div>
-                          <div className="small-text" style={{ color: '#9ca3af' }}>
-                            Status: {t.status} • {(t.rows?.length || 0)} line(s)
-                          </div>
-                        </div>
-                        <span style={{ color: '#3b82f6' }}>›</span>
+                  {roleCanAdmin && (
+                    <div style={{ display: 'flex', gap: '6px', marginBottom: '2px' }}>
+                      <button type="button" style={innerBtn(hydStatusFilter === HYD_STATUS_ALL)} onClick={() => setHydStatusFilter(HYD_STATUS_ALL)}>All</button>
+                      <button type="button" style={innerBtn(hydStatusFilter === HYD_STATUS_SUBMITTED)} onClick={() => setHydStatusFilter(HYD_STATUS_SUBMITTED)}>Pending</button>
+                      <button type="button" style={innerBtn(hydStatusFilter === HYD_STATUS_APPROVED)} onClick={() => setHydStatusFilter(HYD_STATUS_APPROVED)}>Approved</button>
+                    </div>
+                  )}
+                  {filteredHydroseedTickets.length === 0 ? (
+                    !hydroseedTicketsLoaded ? (
+                      <LoadingRow label="Loading…" />
+                    ) : (
+                      <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: '#9ca3af' }}>
+                        No hydroseed tickets.
                       </div>
+                    )
+                  ) : (
+                    filteredHydroseedTickets.slice(0, hydTktCount).map((t) => (
+                      <button
+                        key={`hyd-tkt-${t.id}`}
+                        type="button"
+                        className="site-row"
+                        onClick={() => onOpenHydroseedTicket?.(t.id)}
+                        style={{
+                          textAlign: 'left', padding: '10px',
+                          borderRadius: '6px', background: '#111827',
+                          border: '1px solid #374151', cursor: 'pointer',
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div>
+                            <div className="small-text" style={{ fontWeight: 700 }}>💧 {t.ticket_number}</div>
+                            <div className="small-text" style={{ color: '#9ca3af' }}>
+                              {t.client} / {t.area} • {t.work_date}
+                            </div>
+                            <div className="small-text" style={{ color: '#9ca3af' }}>
+                              Status: {t.status} • {(t.rows?.length || 0)} line(s)
+                            </div>
+                          </div>
+                          <span style={{ color: '#3b82f6' }}>›</span>
+                        </div>
+                      </button>
+                    ))
+                  )}
+                  {filteredHydroseedTickets.length > hydTktCount && (
+                    <button
+                      type="button"
+                      onClick={() => setHydTktCount((c) => c + PAGE_SIZE)}
+                      style={{ padding: '8px', background: '#1f2937', border: '1px solid #374151', borderRadius: '6px', color: '#60a5fa', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', marginTop: '4px' }}
+                    >
+                      Load more ({filteredHydroseedTickets.length - hydTktCount} remaining)
                     </button>
-                  ))}
+                  )}
                 </>
               )}
 
-              {visibleHydroseedDailies.length > 0 && (
+              {/* ── Dailies sub-tab ── */}
+              {hydSubTab === HYD_SUB_DAILIES && (
                 <>
-                  <div className="small-text" style={{ color: '#9ca3af', fontWeight: 600, marginTop: 12 }}>
-                    Hydroseed Dailies ({visibleHydroseedDailies.length})
-                  </div>
-                  {visibleHydroseedDailies.map((d) => (
-                    <div
-                      key={`hyd-daily-${d.id}`}
-                      className="site-row"
-                      style={{
-                        padding: '10px', borderRadius: '6px',
-                        background: '#111827', border: '1px solid #374151',
-                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                      }}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => d.pdf_url && onViewPdf?.({ ...d, pdf_url: d.pdf_url })}
-                        style={{
-                          flex: 1, textAlign: 'left', background: 'transparent',
-                          border: 'none', color: '#f9fafb', cursor: d.pdf_url ? 'pointer' : 'default', padding: 0,
-                        }}
-                      >
-                        <div className="small-text" style={{ fontWeight: 700 }}>{d.record_number}</div>
-                        <div className="small-text" style={{ color: '#9ca3af' }}>
-                          {d.client} / {d.area} • {d.work_date}
-                        </div>
-                        <div className="small-text" style={{ color: '#9ca3af' }}>
-                          {d.created_by_name || '—'}{d.hydroseed_ticket_id ? ` • → HT#${d.hydroseed_ticket_id}` : ''}
-                        </div>
-                      </button>
-                      <div style={{ display: 'flex', gap: 4 }}>
-                        <button
-                          type="button"
-                          title="Duplicate this daily"
-                          onClick={() => onDuplicateHydroseedDaily?.(d)}
+                  {visibleHydroseedDailies.length === 0 ? (
+                    <div className="small-text" style={{ textAlign: 'center', padding: '10px', color: '#9ca3af' }}>
+                      No hydroseed dailies yet.
+                    </div>
+                  ) : null}
+                  {visibleHydroseedDailies.length > 0 && (
+                    <>
+                      <div className="small-text" style={{ color: '#9ca3af', fontWeight: 600, marginTop: 4 }}>
+                        Hydroseed Dailies ({visibleHydroseedDailies.length})
+                      </div>
+                      {visibleHydroseedDailies.map((d) => (
+                        <div
+                          key={`hyd-daily-${d.id}`}
+                          className="site-row"
                           style={{
-                            padding: '4px 8px', fontSize: '0.75rem',
-                            background: '#1f2937', border: '1px solid #374151',
-                            color: '#f9fafb', borderRadius: 4, cursor: 'pointer',
+                            padding: '10px', borderRadius: '6px',
+                            background: '#111827', border: '1px solid #374151',
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                           }}
-                        >📋</button>
-                        <button
-                          type="button"
-                          title="Edit this daily"
-                          onClick={() => onEditHydroseedDaily?.(d)}
-                          style={{
-                            padding: '4px 8px', fontSize: '0.75rem',
-                            background: '#1f2937', border: '1px solid #374151',
-                            color: '#f9fafb', borderRadius: 4, cursor: 'pointer',
-                          }}
-                        >✏️</button>
-                        {roleCanAdmin && (
+                        >
                           <button
                             type="button"
-                            title="Delete this daily"
-                            className="danger-button"
-                            onClick={async () => {
-                              if (!(await confirm({
-                                message: `Delete ${d.record_number}? This unlinks it from its HT ticket and can be restored later.`,
-                                severity: 'danger',
-                                okLabel: 'Delete',
-                              }))) return;
-                              try {
-                                await api.deleteHydroseedDaily(d.id);
-                                setHydroseedDailies((prev) => prev.filter((x) => x.id !== d.id));
-                              } catch (e) {
-                                /* surface via dialog */
-                                await confirm({ title: 'Delete failed', message: String(e?.message || e), okLabel: 'OK' });
-                              }
+                            onClick={() => d.pdf_url && onViewPdf?.({ ...d, pdf_url: d.pdf_url })}
+                            style={{
+                              flex: 1, textAlign: 'left', background: 'transparent',
+                              border: 'none', color: '#f9fafb', cursor: d.pdf_url ? 'pointer' : 'default', padding: 0,
                             }}
-                            style={{ padding: '4px 8px', fontSize: '0.75rem' }}
-                          >✕</button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                          >
+                            <div className="small-text" style={{ fontWeight: 700 }}>{d.record_number}</div>
+                            <div className="small-text" style={{ color: '#9ca3af' }}>
+                              {d.client} / {d.area} • {d.work_date}
+                            </div>
+                            <div className="small-text" style={{ color: '#9ca3af' }}>
+                              {d.created_by_name || '—'}{d.hydroseed_ticket_id ? ` • → HT#${d.hydroseed_ticket_id}` : ''}
+                            </div>
+                          </button>
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            <button
+                              type="button"
+                              title="Duplicate this daily"
+                              onClick={() => onDuplicateHydroseedDaily?.(d)}
+                              style={{
+                                padding: '4px 8px', fontSize: '0.75rem',
+                                background: '#1f2937', border: '1px solid #374151',
+                                color: '#f9fafb', borderRadius: 4, cursor: 'pointer',
+                              }}
+                            >📋</button>
+                            <button
+                              type="button"
+                              title="Edit this daily"
+                              onClick={() => onEditHydroseedDaily?.(d)}
+                              style={{
+                                padding: '4px 8px', fontSize: '0.75rem',
+                                background: '#1f2937', border: '1px solid #374151',
+                                color: '#f9fafb', borderRadius: 4, cursor: 'pointer',
+                              }}
+                            >✏️</button>
+                            {roleCanAdmin && (
+                              <button
+                                type="button"
+                                title="Delete this daily"
+                                className="danger-button"
+                                onClick={async () => {
+                                  if (!(await confirm({
+                                    message: `Delete ${d.record_number}? This unlinks it from its HT ticket and can be restored later.`,
+                                    severity: 'danger',
+                                    okLabel: 'Delete',
+                                  }))) return;
+                                  try {
+                                    await api.deleteHydroseedDaily(d.id);
+                                    setHydroseedDailies((prev) => prev.filter((x) => x.id !== d.id));
+                                  } catch (e) {
+                                    /* surface via dialog */
+                                    await confirm({ title: 'Delete failed', message: String(e?.message || e), okLabel: 'OK' });
+                                  }
+                                }}
+                                style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                              >✕</button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  )}
                 </>
               )}
             </div>
