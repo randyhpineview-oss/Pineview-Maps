@@ -739,6 +739,11 @@ export default function ReportsDashboard({
           >
             {busy ? 'Generating…' : preview ? 'Refresh Preview' : 'Generate Preview'}
           </button>
+          {downloading && (
+            <span style={{ fontSize: '0.82rem', color: '#60a5fa', alignSelf: 'center', marginRight: '6px' }}>
+              ⌛ Generating CSV...
+            </span>
+          )}
           {downloading ? (
             <button type="button" onClick={handleCancelDownload} style={{ ...S.secondary, color: '#fca5a5', borderColor: '#7f1d1d' }}>
               Cancel download

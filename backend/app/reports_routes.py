@@ -29,7 +29,7 @@ import io
 from datetime import date as date_type, datetime
 from typing import Iterable, Iterator, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import and_, or_, text
 from sqlalchemy.orm import Session
@@ -598,12 +598,7 @@ def export_spray_records_csv(
     weeds_format: str = Query(default="all", pattern="^(all|selected_only)$"),
     db: Session = Depends(get_db),
 ):
-    """Stream a CSV file directly — NO row cap, NO buffering.
-
-    The generator yields one chunk per row (header first), so server memory
-    stays flat at a few KB regardless of result-set size. SQLAlchemy's
-    yield_per(200) keeps DB-side memory flat too.
-    """
+    """Generate and return a CSV file containing the spray records."""
     if end_date < start_date:
         raise HTTPException(status_code=400, detail="end_date must be >= start_date")
 
@@ -621,65 +616,56 @@ def export_spray_records_csv(
         include_avoided=include_avoided,
     )
 
-    def generate() -> Iterator[str]:
-        # csv.writer writes to a StringIO we reset each row so the total
-        # buffered size stays tiny.
-        buffer = io.StringIO()
-        writer = csv.writer(buffer, quoting=csv.QUOTE_MINIMAL, lineterminator="\r\n")
+    # Generate full CSV content in memory to avoid the thread-pool switching overhead
+    # of StreamingResponse for small row sizes.
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, quoting=csv.QUOTE_MINIMAL, lineterminator="\r\n")
 
-        # UTF-8 BOM first so Excel double-click picks the right encoding and
-        # renders accents / ° / ² correctly.
-        yield "\ufeff"
+    # UTF-8 BOM first so Excel double-click picks the right encoding and
+    # renders accents / ° / ² correctly.
+    buffer.write("\ufeff")
 
-        # Header row
-        writer.writerow([COLUMN_CATALOG[k] for k in selected_columns])
-        yield buffer.getvalue()
-        buffer.seek(0)
-        buffer.truncate(0)
+    # Header row
+    writer.writerow([COLUMN_CATALOG[k] for k in selected_columns])
 
-        totals = {"m2_1_herb": 0.0, "m2_2_herb": 0.0, "m2_3_herb": 0.0, "pipeline_roadside_liters": 0.0}
+    totals = {"m2_1_herb": 0.0, "m2_2_herb": 0.0, "m2_3_herb": 0.0, "pipeline_roadside_liters": 0.0}
 
-        for record, is_pipeline in _iter_merged_records(site_q, pipeline_q):
-            for out in _iter_output_rows(record, is_pipeline, split_roadside):
-                row = _build_report_row(
-                    out,
-                    columns=selected_columns,
-                    herbicides_format=herbicides_format,
-                    area_units=area_units,
-                    date_format=date_format,
-                    weeds_format=weeds_format,
-                    pcp_lookup=pcp_lookup,
-                )
-                writer.writerow([row[k] for k in selected_columns])
-                yield buffer.getvalue()
-                buffer.seek(0)
-                buffer.truncate(0)
+    for record, is_pipeline in _iter_merged_records(site_q, pipeline_q):
+        for out in _iter_output_rows(record, is_pipeline, split_roadside):
+            row = _build_report_row(
+                out,
+                columns=selected_columns,
+                herbicides_format=herbicides_format,
+                area_units=area_units,
+                date_format=date_format,
+                weeds_format=weeds_format,
+                pcp_lookup=pcp_lookup,
+            )
+            writer.writerow([row[k] for k in selected_columns])
 
-                if include_totals and split_roadside:
-                    _fold_totals_row(totals, out)
+            if include_totals and split_roadside:
+                _fold_totals_row(totals, out)
 
-        # Optional year-end totals footer — matches the 4 auto-populated
-        # office lines on the T&M ticket.
-        if include_totals and split_roadside:
-            writer.writerow([])
-            writer.writerow(["Totals (T&M office lines)"])
-            writer.writerow(["1 Herbicide (m²)", f"{totals['m2_1_herb']:.0f}"])
-            writer.writerow(["2 Herbicides (m²)", f"{totals['m2_2_herb']:.0f}"])
-            writer.writerow(["3 Herbicides (m²)", f"{totals['m2_3_herb']:.0f}"])
-            writer.writerow(["Roadside/Access Rd/Pipeline Liters Applied", f"{totals['pipeline_roadside_liters']:.0f}"])
-            yield buffer.getvalue()
-            buffer.seek(0)
-            buffer.truncate(0)
+    # Optional year-end totals footer — matches the 4 auto-populated
+    # office lines on the T&M ticket.
+    if include_totals and split_roadside:
+        writer.writerow([])
+        writer.writerow(["Totals (T&M office lines)"])
+        writer.writerow(["1 Herbicide (m²)", f"{totals['m2_1_herb']:.0f}"])
+        writer.writerow(["2 Herbicides (m²)", f"{totals['m2_2_herb']:.0f}"])
+        writer.writerow(["3 Herbicides (m²)", f"{totals['m2_3_herb']:.0f}"])
+        writer.writerow(["Roadside/Access Rd/Pipeline Liters Applied", f"{totals['pipeline_roadside_liters']:.0f}"])
 
+    csv_content = buffer.getvalue()
     filename = f"pineview-spray-report_{start_date.isoformat()}_{end_date.isoformat()}.csv"
-    return StreamingResponse(
-        generate(),
+
+    return Response(
+        content=csv_content,
         media_type="text/csv; charset=utf-8",
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
             # Hint to the browser that this is a one-shot download we don't
-            # want stuffed into the HTTP cache — a year-end report re-run at
-            # 5:01pm should never serve the 5:00pm cached copy.
+            # want stuffed into the HTTP cache.
             "Cache-Control": "no-store",
         },
     )
