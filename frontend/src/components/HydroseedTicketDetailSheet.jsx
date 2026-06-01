@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api';
-import { getHydroseedTicket, upsertHydroseedTicket } from '../lib/offlineStore';
+import { getHydroseedTicket, upsertHydroseedTicket, removeHydroseedTicket } from '../lib/offlineStore';
 import {
   seedOfficeLinesFromTicketRows,
   syncOfficeLineQtysFromRows,
@@ -225,6 +225,17 @@ export default function HydroseedTicketDetailSheet({
         applyTicket(t);
         try { await upsertHydroseedTicket(t); } catch { /* non-fatal */ }
       } catch (e) {
+        if (e.status === 404 || e.status === 400) {
+          try { await removeHydroseedTicket(ticketId); } catch { /* ignore */ }
+          if (!cancelled) {
+            await alert({
+              title: 'Ticket not found',
+              message: 'This ticket no longer exists on the server and has been removed from your offline cache.',
+            });
+            if (onClose) onClose();
+          }
+          return;
+        }
         if (!cancelled && !haveCached) {
           setError(e.message || 'Failed to load ticket');
         }
@@ -458,12 +469,17 @@ export default function HydroseedTicketDetailSheet({
       message: 'Linked dailies will be detached. This can be undone from the deleted tickets list.',
       severity: 'danger',
     }))) return;
-    setIsSaving(true);
     try {
       await api.deleteHydroseedTicket(ticket.id);
+      try { await removeHydroseedTicket(ticket.id); } catch { /* ignore */ }
       onClose?.();
     } catch (e) {
-      await alert({ title: 'Delete failed', message: String(e?.message || e), severity: 'danger' });
+      if (e.status === 404 || e.status === 400) {
+        try { await removeHydroseedTicket(ticket.id); } catch { /* ignore */ }
+        onClose?.();
+      } else {
+        await alert({ title: 'Delete failed', message: String(e?.message || e), severity: 'danger' });
+      }
     } finally {
       setIsSaving(false);
     }

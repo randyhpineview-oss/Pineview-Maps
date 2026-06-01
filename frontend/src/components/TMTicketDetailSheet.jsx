@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api';
-import { getTMTicket as getCachedTMTicket, upsertTMTicket } from '../lib/offlineStore';
+import { getTMTicket as getCachedTMTicket, upsertTMTicket, removeTMTicket } from '../lib/offlineStore';
 import { useDialog } from './DialogProvider';
 import {
   DEFAULT_OFFICE_LINES,
@@ -187,6 +187,17 @@ export default function TMTicketDetailSheet({
         // Warm the cache for the next offline open.
         try { await upsertTMTicket(t); } catch { /* non-fatal */ }
       } catch (e) {
+        if (e.status === 404 || e.status === 400) {
+          try { await removeTMTicket(ticketId); } catch { /* ignore */ }
+          if (!cancelled) {
+            await alert({
+              title: 'Ticket not found',
+              message: 'This ticket no longer exists on the server and has been removed from your offline cache.',
+            });
+            if (onClose) onClose();
+          }
+          return;
+        }
         if (!cancelled && !haveCached) {
           setError(e.message || 'Failed to load ticket');
         }
@@ -730,10 +741,16 @@ export default function TMTicketDetailSheet({
     setIsSaving(true);
     try {
       await api.deleteTMTicket(ticket.id);
+      try { await removeTMTicket(ticket.id); } catch { /* ignore */ }
       if (onClose) onClose();
     } catch (e) {
-      await alert({ title: 'Delete failed', message: String(e.message || 'Unknown error'), severity: 'danger' });
-      setIsSaving(false);
+      if (e.status === 404 || e.status === 400) {
+        try { await removeTMTicket(ticket.id); } catch { /* ignore */ }
+        if (onClose) onClose();
+      } else {
+        await alert({ title: 'Delete failed', message: String(e.message || 'Unknown error'), severity: 'danger' });
+        setIsSaving(false);
+      }
     }
   };
 

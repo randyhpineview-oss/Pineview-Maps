@@ -9,6 +9,8 @@ import {
   getHydroseedDailyDrafts,
   deleteHydroseedDailyDraft,
   getAllTMTickets,
+  removeTMTicket,
+  removeHydroseedTicket,
 } from '../lib/offlineStore';
 import { localDateISO } from '../lib/dateUtil';
 import { useDialog } from './DialogProvider';
@@ -599,12 +601,14 @@ export default function FormsPanel({
               return Array.from(byId.values());
             });
             // Fix #5 — keep the offline detail cache in sync with deltas
-            // (new tickets, edits, status changes). Soft-deleted IDs are
-            // pruned in the parent App store via the existing delta flow;
-            // we don't bother removing them from the detail cache since
-            // it just lazy-loads on demand.
+            // (new tickets, edits, status changes).
             if (items.length > 0) {
               try { await upsertTMTickets(items); } catch { /* non-fatal */ }
+            }
+            if (idsRemoved.length > 0) {
+              for (const id of idsRemoved) {
+                try { await removeTMTicket(id); } catch { /* non-fatal */ }
+              }
             }
           }
           // Advance the watermark. Server sends `server_time` captured
@@ -783,12 +787,14 @@ export default function FormsPanel({
               return Array.from(byId.values());
             });
             // Keep the offline detail cache in sync with deltas (new
-            // tickets, edits, status changes). Same spread-merge that
-            // `upsertHydroseedTickets` does for `upsertTMTickets` so
-            // slim delta rows don't clobber heavy fields a prior full
-            // fetch wrote (office_data, signatures, joined rows).
+            // tickets, edits, status changes).
             if (items.length > 0) {
               try { await upsertHydroseedTickets(items); } catch { /* non-fatal */ }
+            }
+            if (idsRemoved.length > 0) {
+              for (const id of idsRemoved) {
+                try { await removeHydroseedTicket(id); } catch { /* non-fatal */ }
+              }
             }
           }
           // Advance the watermark. Server sends `server_time` captured
