@@ -529,21 +529,10 @@ export default function MapAnnotationCanvas({
     setCaptureCoords(pt);
     setCaptureZoom(zoom);
     setIsPickingMapLocation(false);
-    // Match the aspect ratio of the picker viewport. Static Maps max is
-    // 640px per side (free tier); scale=2 doubles to retina resolution.
-    const container = pickerContainerRef.current;
-    const containerW = container?.clientWidth  || 640;
-    const containerH = container?.clientHeight || 640;
-    const aspect = containerW / containerH;
-    let reqW, reqH;
-    if (aspect >= 1) {
-      reqW = 640;
-      reqH = Math.max(100, Math.round(640 / aspect));
-    } else {
-      reqH = 640;
-      reqW = Math.max(100, Math.round(640 * aspect));
-    }
-    await captureMapFromGoogle(pt, zoom, reqW, reqH);
+    // Always request 640×448 (the largest rectangle that fits the 1000×700
+    // canvas at the Static Maps 640px-per-side free-tier limit). This
+    // fills the canvas without white bars on any device.
+    await captureMapFromGoogle(pt, zoom, 640, 448);
   };
 
   // Recenter the picker on the worker's current GPS. Best-effort — if
@@ -1125,19 +1114,19 @@ export default function MapAnnotationCanvas({
           (Close) so workers always have *some* exit even if a virtual
           keyboard hides this row. */}
       <div style={{
-        display: 'flex', gap: 8, padding: '12px 12px',
-        paddingBottom: 'calc(12px + env(safe-area-inset-bottom, 0px))',
+        display: 'flex', gap: 6, padding: '8px 10px',
+        paddingBottom: 'calc(8px + env(safe-area-inset-bottom, 0px))',
         flexShrink: 0,
         background: '#1f2937', borderTop: '1px solid #374151',
       }}>
         <button onClick={handleSave} style={{
-          flex: 2, padding: 14, background: '#22c55e', color: 'white',
-          border: 'none', borderRadius: 8, fontWeight: 700, fontSize: '1rem',
+          flex: 2, padding: '9px 0', background: '#22c55e', color: 'white',
+          border: 'none', borderRadius: 7, fontWeight: 700, fontSize: '0.9rem',
           cursor: 'pointer',
         }}>✓ Save</button>
         <button onClick={onCancel} style={{
-          flex: 1, padding: 14, background: '#7f1d1d', color: 'white',
-          border: 'none', borderRadius: 8, fontSize: '1rem', fontWeight: 600,
+          flex: 1, padding: '9px 0', background: '#7f1d1d', color: 'white',
+          border: 'none', borderRadius: 7, fontSize: '0.9rem', fontWeight: 600,
           cursor: 'pointer',
         }}>✕ Discard</button>
       </div>
