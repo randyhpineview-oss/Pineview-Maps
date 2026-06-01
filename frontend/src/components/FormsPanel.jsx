@@ -4,7 +4,9 @@ import {
   deleteLeaseSheetDraft,
   getLeaseSheetDrafts,
   upsertTMTickets,
+  replaceTMTickets,
   upsertHydroseedTickets,
+  replaceHydroseedTickets,
   getAllHydroseedTickets,
   getHydroseedDailyDrafts,
   deleteHydroseedDailyDraft,
@@ -583,9 +585,10 @@ export default function FormsPanel({
           setTmTicketsLoaded(true);
           tmTicketsSinceRef.current = new Date().toISOString();
           // Fix #5 — warm the IDB detail cache so TMTicketDetailSheet
-          // can open offline. Cheap: a single batched IDB transaction
-          // per sync, no extra network calls.
-          try { await upsertTMTickets(list || []); } catch { /* non-fatal */ }
+          // can open offline. By using replaceTMTickets, we ensure any
+          // soft-deleted tickets lingering in the local IDB are purged
+          // on a fresh full sync.
+          try { await replaceTMTickets(list || []); } catch { /* non-fatal */ }
         } else {
           // Delta — merges new/updated rows and prunes soft-deleted ones.
           const delta = await api.tmTicketsDelta(since);
@@ -698,10 +701,9 @@ export default function FormsPanel({
         if (!cached || cached.length === 0) return;
         setTmTickets(cached);
         setTmTicketsLoaded(true);
-        if (!tmTicketsSinceRef.current) {
-          const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-          tmTicketsSinceRef.current = oneHourAgo;
-        }
+        // Deliberately NOT seeding tmTicketsSinceRef.current here so the
+        // background sync loop defaults to a full list fetch on boot,
+        // guaranteeing that any tickets deleted while offline are pruned.
       } catch { /* IDB unavailable — fall through to normal full fetch */ }
     })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -722,13 +724,9 @@ export default function FormsPanel({
         if (!cached || cached.length === 0) return;
         setHydroseedTickets(cached);
         setHydroseedTicketsLoaded(true);
-        // Seed watermark just far enough back to catch anything that changed
-        // while the app was closed. 1-hour window is conservative; the delta
-        // endpoint is cheap so any extra rows are harmless.
-        if (!hydroseedTicketsSinceRef.current) {
-          const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-          hydroseedTicketsSinceRef.current = oneHourAgo;
-        }
+        // Deliberately NOT seeding hydroseedTicketsSinceRef.current here so the
+        // background sync loop defaults to a full list fetch on boot,
+        // guaranteeing that any tickets deleted while offline are pruned.
       } catch { /* IDB unavailable — fall through to normal full fetch */ }
     })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -771,7 +769,7 @@ export default function FormsPanel({
           setHydroseedTickets(list || []);
           setHydroseedTicketsLoaded(true);
           hydroseedTicketsSinceRef.current = new Date().toISOString();
-          try { await upsertHydroseedTickets(list || []); } catch { /* non-fatal */ }
+          try { await replaceHydroseedTickets(list || []); } catch { /* non-fatal */ }
         } else {
           // Delta — merges new/updated rows and prunes soft-deleted ones.
           const delta = await api.getHydroseedTicketsDelta(since);

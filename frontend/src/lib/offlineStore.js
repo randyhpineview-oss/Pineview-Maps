@@ -527,6 +527,16 @@ export async function removeTMTicket(id) {
   await db.delete('tmTickets', id);
 }
 
+export async function replaceTMTickets(tickets) {
+  const db = await dbPromise;
+  const tx = db.transaction('tmTickets', 'readwrite');
+  await tx.store.clear();
+  for (const ticket of tickets) {
+    if (ticket && ticket.id) await tx.store.put(ticket);
+  }
+  await tx.done;
+}
+
 // ── Hydroseed Tickets (v9) ──
 // Mirrors the T&M cache: warm full ticket rows here so the
 // HydroseedTicketDetailSheet can open offline and the FormsPanel
@@ -568,4 +578,14 @@ export async function removeHydroseedTicket(id) {
   if (id == null) return;
   const db = await dbPromise;
   await db.delete('hydroseedTickets', id);
+}
+
+export async function replaceHydroseedTickets(tickets) {
+  const db = await dbPromise;
+  const tx = db.transaction('hydroseedTickets', 'readwrite');
+  await tx.store.clear();
+  for (const ticket of tickets) {
+    if (ticket && ticket.id) await tx.store.put(ticket);
+  }
+  await tx.done;
 }
