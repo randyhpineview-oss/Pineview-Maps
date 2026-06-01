@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Marker, OverlayView } from '@react-google-maps/api';
 
 // Side-view pickup truck SVG. The body fills with `color`; everything
@@ -77,16 +77,17 @@ function truckSvg(color) {
   </svg>`;
 }
 
-function buildTruckIcon(colorHex) {
+function buildTruckIcon(colorHex, isSelected) {
   const svg = truckSvg(colorHex || '#1E88E5');
   // Bottom-center anchor so the truck sits ON its position instead of
   // hovering above it.
-  const w = 52;
-  const h = 32;
+  // Selected truck is full size (52x32). Unselected is half size (26x16).
+  const w = isSelected ? 52 : 26;
+  const h = isSelected ? 32 : 16;
   return {
     url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
     scaledSize: window.google ? new window.google.maps.Size(w, h) : undefined,
-    anchor: window.google ? new window.google.maps.Point(w / 2, h - 4) : undefined,
+    anchor: window.google ? new window.google.maps.Point(w / 2, h - (isSelected ? 4 : 2)) : undefined,
   };
 }
 
@@ -127,8 +128,21 @@ function relativeTime(iso) {
  *              from the layer panel). Defaults to true; the App-level
  *              toggle decides what to pass.
  */
-export default function TrucksLayer({ devices = [], visible = true }) {
-  const [popupDevice, setPopupDevice] = useState(null);
+export default function TrucksLayer({
+  devices = [],
+  visible = true,
+  selectedDevice = null,
+  onSelectDevice,
+}) {
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    if (!selectedDevice) return;
+    const interval = setInterval(() => {
+      setTick((t) => t + 1);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [selectedDevice]);
 
   if (!visible) return null;
 
@@ -144,26 +158,30 @@ export default function TrucksLayer({ devices = [], visible = true }) {
   // update (new position, new color, etc.) keeps the popup in sync.
   // Without this, opening the popup snapshots the device and the popup
   // shows stale data until the user closes and reopens it.
-  const activePopup = popupDevice
-    ? devices.find((d) => d.id === popupDevice.id) || null
+  const activePopup = selectedDevice
+    ? devices.find((d) => d.id === selectedDevice.id) || null
     : null;
 
   return (
     <>
       {renderable.map((device) => {
-        // Key includes color_hex so a color change triggers a clean
+        const isSelected = selectedDevice && selectedDevice.id === device.id;
+        // Key includes color_hex and selection status so a toggle triggers a clean
         // unmount/remount. Position updates apply via the `position`
         // prop without a remount.
-        const mKey = `truck-${device.id}-${device.color_hex}`;
+        const mKey = `truck-${device.id}-${device.color_hex}-${isSelected ? 'selected' : 'normal'}`;
         return (
           <Marker
             key={mKey}
             position={{ lat: device.last_lat, lng: device.last_lng }}
-            icon={buildTruckIcon(device.color_hex)}
+            icon={buildTruckIcon(device.color_hex, isSelected)}
             // High zIndex so the truck floats above site pins — moving
             // vehicles are usually what an admin is actively watching.
-            zIndex={500}
-            onClick={() => setPopupDevice(device)}
+            // If selected, float even higher.
+            zIndex={isSelected ? 600 : 500}
+            onClick={() => {
+              if (onSelectDevice) onSelectDevice(device);
+            }}
           />
         );
       })}
@@ -207,7 +225,9 @@ export default function TrucksLayer({ devices = [], visible = true }) {
               <button
                 type="button"
                 aria-label="Close"
-                onClick={() => setPopupDevice(null)}
+                onClick={() => {
+                  if (onSelectDevice) onSelectDevice(null);
+                }}
                 style={{
                   background: 'transparent',
                   border: 'none',

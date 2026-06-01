@@ -546,6 +546,7 @@ export default function App() {
   const [deletedHydroseedTickets, setDeletedHydroseedTickets] = useState([]);
   const [deletedQuotes, setDeletedQuotes] = useState([]);
   const [selectedSite, setSelectedSite] = useState(null);
+  const [selectedDevice, setSelectedDevice] = useState(null);
   const [markerRevision, setMarkerRevision] = useState(0);
   const [message, setMessage] = useState('Loading project data...');
   const [isOnline, setIsOnline] = useState(window.navigator.onLine);
@@ -3513,6 +3514,7 @@ export default function App() {
   }, [selectedAddPinLsdSuggestion, addPinForm.lsd]);
 
   function handleOpenDetail(site, options = {}) {
+    setSelectedDevice(null);
     // Close pipeline detail if open
     if (pipelineDetailOpen) {
       setPipelineDetailOpen(false);
@@ -3833,6 +3835,7 @@ export default function App() {
 
   // ── Pipeline handlers ──
   function handleOpenPipelineDetail(pipeline) {
+    setSelectedDevice(null);
     setSelectedPipeline(pipeline);
     setPipelineDetailOpen(true);
     setDetailOpen(false);
@@ -4942,6 +4945,7 @@ export default function App() {
   setIsEditPickingMode(false);
   setEditPickLocation(null);
   setPreviewSiteLocation(null);
+  setSelectedDevice(null);
   if (activeTab !== TAB_MAP) setActiveTab(TAB_MAP);
 }
 
@@ -6013,6 +6017,8 @@ export default function App() {
             onSprayRecordClick={(record) => setHighlightedSprayRecordId(prev => prev === record.id ? null : record.id)}
             devices={devices}
             showTrucksLayer={layers.trucks ?? true}
+            selectedDevice={selectedDevice}
+            onSelectDevice={setSelectedDevice}
           />
         </div>
 

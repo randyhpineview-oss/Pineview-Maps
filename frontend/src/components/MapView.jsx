@@ -174,6 +174,8 @@ export default function MapView({
   // load device data (e.g. tests).
   devices = [],
   showTrucksLayer = true,
+  selectedDevice = null,
+  onSelectDevice,
 }) {
   const mapRef = useRef(null);
   const lastFittedBoundsKey = useRef('');
@@ -834,6 +836,7 @@ export default function MapView({
           } else {
             setPopupSite(null);
             setPopupPipeline(null);
+            if (onSelectDevice) onSelectDevice(null);
             if (onMapClick) onMapClick();
           }
         }}
@@ -890,11 +893,12 @@ export default function MapView({
           />
         </OverlayView>
 
-        {/* Truck layer (Phase 1 — OwnTracks). Renders one Marker per
-            active device with a last-known position, plus its own popup
-            OverlayView. Owns its own popupDevice state so the heavy
-            popupSite/popupPipeline state in MapView stays untouched. */}
-        <TrucksLayer devices={devices} visible={showTrucksLayer} />
+        <TrucksLayer
+          devices={devices}
+          visible={showTrucksLayer}
+          selectedDevice={selectedDevice}
+          onSelectDevice={onSelectDevice}
+        />
 
         {sites.map((site) => {
           // Marker key includes the site's visual signature (every field
