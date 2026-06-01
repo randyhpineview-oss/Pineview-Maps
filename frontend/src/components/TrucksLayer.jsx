@@ -213,12 +213,18 @@ export default function TrucksLayer({
         if (!isRecent) return null;
         const isSelected = selectedDevice && selectedDevice.id === device.id;
         const size = isSelected ? 60 : 30;
+        const h = isSelected ? 40 : 20;
+        const anchorOffset = isSelected ? 5 : 2.5;
+        const xOffset = -(size / 2);
+        // Mathematically center the pulsing circle on the middle of the truck icon,
+        // compensating for the bottom-center anchor.
+        const yOffset = -(size / 2) - (h / 2 - anchorOffset);
         return (
           <OverlayView
             key={`pulse-${device.id}`}
             position={{ lat: device.last_lat, lng: device.last_lng }}
             mapPaneName={OverlayView.OVERLAY_LAYER}
-            getPixelPositionOffset={() => ({ x: -(size / 2), y: -(size / 2) })}
+            getPixelPositionOffset={() => ({ x: xOffset, y: yOffset })}
           >
             <div
               style={{
@@ -227,6 +233,8 @@ export default function TrucksLayer({
                 borderRadius: '50%',
                 background: `rgba(${hexToRgb(device.color_hex)}, 0.22)`,
                 border: `2px solid ${device.color_hex}`,
+                // High-contrast white halo + color glow makes dark colors pop on dark maps
+                boxShadow: `0 0 6px rgba(${hexToRgb(device.color_hex)}, 0.8), 0 0 10px rgba(255, 255, 255, 0.5)`,
                 animation: 'truckPulse 2.2s infinite ease-out',
                 pointerEvents: 'none',
               }}
