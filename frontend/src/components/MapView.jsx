@@ -755,41 +755,22 @@ export default function MapView({
     if (isZoomGestureActiveRef.current) {
       isZoomGestureActiveRef.current = false;
       lastTapTimeRef.current = 0; // Reset tap timer
-      
-      // Force complete map state reset to clear any stored gesture momentum
+
+      // Simply re-enable normal gesture handling. The previous approach
+      // disabled the map entirely then re-enabled it 50 ms later, which
+      // forced Google Maps to discard its tile cache and re-fetch all
+      // visible tiles — causing the white-block flash on every zoom
+      // gesture. Restoring greedy mode directly avoids the tile purge.
       if (mapRef.current) {
-        // Store current center and zoom
-        const currentCenter = mapRef.current.getCenter();
-        const currentZoom = mapRef.current.getZoom();
-        
-        // Completely disable the map
-        mapRef.current.setOptions({ 
-          gestureHandling: 'none',
-          draggable: false,
-          scrollwheel: false,
-          disableDoubleClickZoom: true,
-          keyboardShortcuts: false
+        mapRef.current.setOptions({
+          gestureHandling: 'greedy',
+          draggable: true,
+          scrollwheel: true,
+          disableDoubleClickZoom: false,
+          keyboardShortcuts: true,
         });
-        
-        // Force re-render to clear internal state
-        setTimeout(() => {
-          if (mapRef.current) {
-            // Re-enable with same center/zoom to ensure no momentum
-            mapRef.current.setOptions({ 
-              gestureHandling: 'greedy',
-              draggable: true,
-              scrollwheel: true,
-              disableDoubleClickZoom: false,
-              keyboardShortcuts: true
-            });
-            
-            // Force set center and zoom again to clear any residual state
-            mapRef.current.setCenter(currentCenter);
-            mapRef.current.setZoom(currentZoom);
-          }
-        }, 50);
       }
-      
+
       e.preventDefault();
       e.stopPropagation();
     }
