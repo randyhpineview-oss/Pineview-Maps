@@ -1190,7 +1190,7 @@ export default function TMTicketDetailSheet({
           <span>Type</span>
           <span>Herbicides</span>
           <span>(L) Used</span>
-          <span>Area</span>
+          <span>Area (ha/km)</span>
           <span>Cost Code</span>
           {canOfficeEdit ? <span></span> : null}
         </div>
@@ -1242,13 +1242,16 @@ export default function TMTicketDetailSheet({
                 />
               ) : <span>{r.liters_used != null && r.liters_used !== '' ? Number(r.liters_used).toFixed(2) : '—'}</span>}
               {canOfficeEdit ? (
-                <input
-                  type="number" inputMode="decimal" step="0.01"
-                  value={rowEdit.area_ha ?? (r.area_ha != null ? r.area_ha : '')}
-                  onChange={(e) => updateRowEdit(r.id, 'area_ha', e.target.value)}
-                  placeholder={unit}
-                  style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
-                />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', width: '100%' }}>
+                  <input
+                    type="number" inputMode="decimal" step="0.01"
+                    value={rowEdit.area_ha ?? (r.area_ha != null ? r.area_ha : '')}
+                    onChange={(e) => updateRowEdit(r.id, 'area_ha', e.target.value)}
+                    placeholder={unit}
+                    style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+                  />
+                  <span style={{ color: '#9ca3af', fontSize: '0.75rem', minWidth: '20px' }}>{unit}</span>
+                </div>
               ) : <span>{r.area_ha != null && r.area_ha !== '' ? `${Number(r.area_ha).toFixed(2)} ${unit}` : '—'}</span>}
               {canOfficeEdit ? (
                 <input
@@ -1306,13 +1309,16 @@ export default function TMTicketDetailSheet({
                 placeholder="—"
                 style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
               />
-              <input
-                type="number" inputMode="decimal" step="0.01"
-                value={r.area_ha}
-                onChange={(e) => updateNewRow(r.tempId, 'area_ha', e.target.value)}
-                placeholder={unit}
-                style={{ width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
-              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', width: '100%' }}>
+                <input
+                  type="number" inputMode="decimal" step="0.01"
+                  value={r.area_ha}
+                  onChange={(e) => updateNewRow(r.tempId, 'area_ha', e.target.value)}
+                  placeholder={unit}
+                  style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', padding: '4px 6px', borderRadius: '4px', border: '1px solid #374151', background: '#0b1220', color: '#f9fafb', fontSize: '0.75rem' }}
+                />
+                <span style={{ color: '#9ca3af', fontSize: '0.75rem', minWidth: '20px' }}>{unit}</span>
+              </div>
               <input
                 value={r.cost_code}
                 onChange={(e) => updateNewRow(r.tempId, 'cost_code', e.target.value)}
