@@ -484,16 +484,16 @@ def _iter_merged_records(site_q, pipeline_q, *, chunk_size: int = 200) -> Iterat
     def _site_key_iter():
         for r in site_records:
             # Yield (spray_date, id, is_pipeline, record)
-            # Third element (is_pipeline=False) serves as a tie-breaker so Python never
-            # tries to compare the SQLAlchemy record objects themselves.
-            yield (r.spray_date, r.id, False, r)
+            # Normalizing to date avoids comparison TypeErrors between datetime and date.
+            d = r.spray_date.date() if hasattr(r.spray_date, "date") else r.spray_date
+            yield (d, r.id, False, r)
 
     def _pipeline_key_iter():
         for r in pipeline_records:
             # Yield (spray_date, id, is_pipeline, record)
-            # Third element (is_pipeline=True) serves as a tie-breaker so Python never
-            # tries to compare the SQLAlchemy record objects themselves.
-            yield (r.spray_date, r.id, True, r)
+            # Normalizing to date avoids comparison TypeErrors between datetime and date.
+            d = r.spray_date.date() if hasattr(r.spray_date, "date") else r.spray_date
+            yield (d, r.id, True, r)
 
     for _d, _id, is_pipeline, record in heapq.merge(_site_key_iter(), _pipeline_key_iter()):
         yield record, is_pipeline
