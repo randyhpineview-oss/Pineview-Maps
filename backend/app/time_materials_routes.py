@@ -1437,7 +1437,10 @@ def _upsert_row(
     if is_roadside:
         q = q.filter(TimeMaterialsRow.site_type == "Roadside")
     else:
-        q = q.filter(TimeMaterialsRow.site_type != "Roadside")
+        if fields.get("site_type") == "Roadside":
+            q = q.filter(TimeMaterialsRow.site_type == "Roadside")
+        else:
+            q = q.filter(TimeMaterialsRow.site_type != "Roadside")
     row = q.first()
 
     if row:
@@ -1477,7 +1480,9 @@ def append_row_for_spray_record(
 
     # Optional roadside row
     roadside_fields = derive_roadside_row_from_spray_record(record)
-    if roadside_fields is not None:
+    # If the main row is already 'Roadside', we skip creating a companion 'Roadside' row
+    # to avoid violating the unique constraint (spray_record_id, site_type).
+    if roadside_fields is not None and main_fields.get("site_type") != "Roadside":
         _upsert_row(db, ticket, record, roadside_fields, is_roadside=True)
 
     record.tm_ticket_id = ticket.id
