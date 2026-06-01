@@ -1291,8 +1291,7 @@ export default function HydroseedDailyRecord({
   return (
     <div className="hydroseed-daily" style={{
       backgroundColor: '#1f2937', color: '#f9fafb',
-      borderRadius: '16px 16px 0 0',
-      maxHeight: '90vh',
+      flex: 1,
       maxWidth: 720, margin: '0 auto', width: '100%', boxSizing: 'border-box',
       display: 'flex', flexDirection: 'column', overflow: 'hidden',
     }}>
