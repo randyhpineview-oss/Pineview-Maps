@@ -4962,6 +4962,16 @@ export default function App() {
     setActiveTab(TAB_MAP);
   }
 
+  function handleLocateDevice(device) {
+    if (!device || device.last_lat == null || device.last_lng == null) return;
+    const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) &&
+                    /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    setSelectedDevice(device);
+    setZoomTarget({ latitude: device.last_lat, longitude: device.last_lng, _ts: Date.now(), _centerOnly: !isPhone });
+    setIsFilterOpen(false);
+    setActiveTab(TAB_MAP);
+  }
+
   async function handleSubmitNewPin() {
     if (!addPinLocation || !addPinType) return;
     setSubmittingPin(true);
@@ -6819,6 +6829,7 @@ export default function App() {
               visible={true}
               devices={devices}
               onRefreshDevices={loadDevices}
+              onLocateDevice={handleLocateDevice}
               canOnlyManagePins={isCrewLeadOnly}
               pendingSites={pendingSites}
               deletedSites={deletedSites}

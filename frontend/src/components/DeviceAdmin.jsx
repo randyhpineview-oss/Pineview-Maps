@@ -263,7 +263,7 @@ function CopyRow({ label, value, onCopy, mono = false }) {
  * Props:
  *   - busy: global busy flag (admin-wide busy state)
  */
-export default function DeviceAdmin({ busy = false, devices = [], onRefreshDevices }) {
+export default function DeviceAdmin({ busy = false, devices = [], onRefreshDevices, onLocateDevice }) {
   const { confirm, alert } = useDialog();
 
   const [loading, setLoading] = useState(false);
@@ -523,11 +523,22 @@ export default function DeviceAdmin({ busy = false, devices = [], onRefreshDevic
       ) : (
         devices.map((device) => {
           const isEditing = editingId === device.id;
+          const hasPosition = Number.isFinite(device.last_lat) && Number.isFinite(device.last_lng);
           return (
             <div key={device.id} className="site-row" style={{ opacity: device.is_active ? 1 : 0.55 }}>
               {!isEditing ? (
                 <>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                  <div
+                    onClick={hasPosition ? () => onLocateDevice?.(device) : undefined}
+                    className={hasPosition ? "locateable-device" : undefined}
+                    title={hasPosition ? "Click to locate on map" : undefined}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.6rem',
+                      cursor: hasPosition ? 'pointer' : 'default',
+                    }}
+                  >
                     <span
                       aria-hidden
                       title={device.color_hex}
@@ -542,12 +553,19 @@ export default function DeviceAdmin({ busy = false, devices = [], onRefreshDevic
                       }}
                     />
                     <div style={{ flexGrow: 1, minWidth: 0 }}>
-                      <strong>{device.label}</strong>
-                      {!device.is_active ? (
-                        <span style={{ marginLeft: '0.4rem', fontSize: '0.7rem', color: '#fbbf24' }}>
-                          (disabled)
-                        </span>
-                      ) : null}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <strong>{device.label}</strong>
+                        {hasPosition ? (
+                          <span style={{ fontSize: '0.75rem', color: '#60a5fa' }} title="Locate on map">
+                            📍
+                          </span>
+                        ) : null}
+                        {!device.is_active ? (
+                          <span style={{ marginLeft: '0.4rem', fontSize: '0.7rem', color: '#fbbf24' }}>
+                            (disabled)
+                          </span>
+                        ) : null}
+                      </div>
                       <div className="small-text" style={{ color: '#9ab1d6' }}>
                         {device.assigned_user_name ? `Assigned to ${device.assigned_user_name}` : 'Unassigned'}
                         {' · '}

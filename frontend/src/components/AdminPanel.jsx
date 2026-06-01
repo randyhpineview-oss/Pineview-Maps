@@ -157,6 +157,7 @@ export default function AdminPanel({
   deletedQuotes = [],
   onRestoreQuote,
   onDeleteQuotePermanent,
+  onLocateDevice,
 }) {
   const { confirm } = useDialog();
   const [file, setFile] = useState(null);
@@ -678,7 +679,7 @@ export default function AdminPanel({
             people/fleet operation rather than a data-import or pin-management
             one. DeviceAdmin renders using the passed real-time devices list. */}
         <CollapsibleSection title="Truck Tracking (iPads)" defaultOpen={false}>
-          <DeviceAdmin busy={busy} devices={devices} onRefreshDevices={onRefreshDevices} />
+          <DeviceAdmin busy={busy} devices={devices} onRefreshDevices={onRefreshDevices} onLocateDevice={onLocateDevice} />
         </CollapsibleSection>
 
         <CollapsibleSection title="Lookup Tables" defaultOpen={false}>

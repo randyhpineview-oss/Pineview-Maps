@@ -1394,3 +1394,10 @@ button[title="Open keyboard shortcuts"],
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   max-width: 460px;
 }
+
+.locateable-device {
+  transition: opacity 0.15s ease;
+}
+.locateable-device:hover {
+  opacity: 0.8;
+}
