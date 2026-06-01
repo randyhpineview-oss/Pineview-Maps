@@ -388,6 +388,7 @@ export default function QuoteBuilder({
   // ── New Quote form state ──────────────────────────────────────────────
   const [client, setClient] = useState('');
   const [area, setArea] = useState('');
+  const [location, setLocation] = useState('');
   const [projectDescription, setProjectDescription] = useState('');
   const [quoteDate, setQuoteDate] = useState(() => localISODate());
   const [taxEnabled, setTaxEnabled] = useState(false);
@@ -395,15 +396,12 @@ export default function QuoteBuilder({
   const [taxRate, setTaxRate] = useState(String(DEFAULT_TAX_RATE));
   const [quoteNotes, setQuoteNotes] = useState('');
   const [lineItems, setLineItems] = useState([]);
-  // Section list — UI-only ordering for the category groups inside the
-  // line-items card. Each section locks to a single category. Lines live
-  // flat in `lineItems` (with their own `category_id`); `sections` only
-  // controls render order and lets empty sections exist transiently
-  // (newly-added section before any lines have been pushed into it).
-  // Persisted indirectly: when a quote is submitted/duplicated the
-  // sections collapse into the implicit category order embedded in
-  // `line_items`, which is reconstructed on load.
-  const [sections, setSections] = useState([]);  // [{ uid, categoryId }]
+  // Section list — each section can use any category, including the same
+  // category as another section (e.g. two "Herbicide Application" sections
+  // for different sites). Lines are keyed to their section via `section_uid`
+  // so sibling sections with the same category stay independent.
+  // Each section carries an optional `locationLabel` shown in the PDF header.
+  const [sections, setSections] = useState([]);  // [{ uid, categoryId, locationLabel }]
 
   // Draft list state — fetched from the server.
   const [drafts, setDrafts] = useState([]);
@@ -441,6 +439,7 @@ export default function QuoteBuilder({
   const resetForm = useCallback(() => {
     setClient('');
     setArea('');
+    setLocation('');
     setProjectDescription('');
     setQuoteDate(localISODate());
     setTaxEnabled(false);
@@ -478,7 +477,7 @@ export default function QuoteBuilder({
 
   const handleSaveDraft = useCallback(async () => {
     const name = client.trim() || 'Untitled';
-    const data = { client, area, projectDescription, quoteDate, taxEnabled, taxLabel, taxRate, quoteNotes, lineItems, sections };
+    const data = { client, area, location, projectDescription, quoteDate, taxEnabled, taxLabel, taxRate, quoteNotes, lineItems, sections };
     try {
       if (activeDraftId) {
         const updated = await api.updateQuoteDraft(activeDraftId, { name, data });
@@ -491,12 +490,13 @@ export default function QuoteBuilder({
     } catch (e) {
       setSubmitError(e?.message || 'Failed to save draft');
     }
-  }, [activeDraftId, client, area, projectDescription, quoteDate, taxEnabled, taxLabel, taxRate, quoteNotes, lineItems, sections]);
+  }, [activeDraftId, client, area, location, projectDescription, quoteDate, taxEnabled, taxLabel, taxRate, quoteNotes, lineItems, sections]);
 
   const handleLoadDraft = useCallback((draft) => {
     const d = draft.data || {};
     setClient(d.client || '');
     setArea(d.area || '');
+    setLocation(d.location || '');
     setProjectDescription(d.projectDescription || '');
     setQuoteDate(d.quoteDate || localISODate());
     setTaxEnabled(!!d.taxEnabled);
@@ -579,18 +579,18 @@ export default function QuoteBuilder({
     [lineItems, taxEnabled, taxRate],
   );
 
-  // Per-section subtotals — keyed by category_id and used by the
-  // CategorySection footer in the form. Note rows still don't count.
+  // Per-section subtotals — keyed by section.uid (new) or category_id
+  // (legacy fallback). Used by CategorySection footer in the form.
   const sectionSubtotals = useMemo(() => {
     const out = new Map();
     for (const li of lineItems) {
       if (!li || li.kind === LINE_KIND_NOTE) continue;
-      const key = li.category_id != null ? String(li.category_id) : '';
+      // Use section_uid when available (new format), otherwise fall back
+      // to category_id (lines saved before the multi-section update).
+      const key = li.section_uid || (li.category_id != null ? String(li.category_id) : '');
       const prev = out.get(key) || 0;
       out.set(key, prev + (Number(li.subtotal) || 0));
     }
-    // Round each section subtotal to 2dp at the end so we don't carry
-    // floating-point creep into the on-screen formatter.
     for (const [k, v] of out.entries()) {
       out.set(k, Math.round(v * 100) / 100);
     }
@@ -646,32 +646,47 @@ export default function QuoteBuilder({
   }, []);
 
   // ── Section helpers ────────────────────────────────────────────────────
-  // Add a new (empty) category section to the bottom of the stack.
-  // No-op if the categoryId is already in the stack — see the dropdown's
-  // "already used" markers; allowing duplicates feels like a footgun.
+  // Add a new (empty) section. The same category can be added multiple times
+  // (e.g. "Herbicide Application" for Site A and again for Site B). Each
+  // section gets its own uid and an optional locationLabel.
   const addSection = useCallback((categoryId) => {
     if (!categoryId) return;
-    setSections((prev) => {
-      if (prev.some((s) => String(s.categoryId) === String(categoryId))) return prev;
-      return [...prev, { uid: makeUid(), categoryId: Number(categoryId) }];
-    });
+    setSections((prev) => [
+      ...prev,
+      { uid: makeUid(), categoryId: Number(categoryId), locationLabel: '' },
+    ]);
+  }, []);
+
+  // Update a section's metadata (locationLabel) without touching its lines.
+  const updateSection = useCallback((uid, patch) => {
+    setSections((prev) => prev.map((s) => s.uid === uid ? { ...s, ...patch } : s));
   }, []);
 
   const removeSection = useCallback((uid) => {
     setSections((prev) => {
       const target = prev.find((s) => s.uid === uid);
       if (!target) return prev;
-      // Remove every line whose category_id matches this section.
-      setLineItems((lines) => lines.filter((l) => String(l.category_id) !== String(target.categoryId)));
+      // Remove only lines that belong to this specific section instance.
+      // Lines keyed by section_uid are filtered precisely; legacy lines
+      // (no section_uid) fall back to category_id matching but only if
+      // no other section with the same categoryId remains.
+      setLineItems((lines) => {
+        const siblingsRemain = prev
+          .filter((s) => s.uid !== uid)
+          .some((s) => String(s.categoryId) === String(target.categoryId));
+        return lines.filter((l) => {
+          if (l.section_uid) return l.section_uid !== uid;
+          // Legacy line: remove only if no sibling section shares the category.
+          if (!siblingsRemain) return String(l.category_id) !== String(target.categoryId);
+          return true;
+        });
+      });
       return prev.filter((s) => s.uid !== uid);
     });
   }, []);
 
-  // Move a section up/down. Lines are kept flat in `lineItems` but their
-  // visual order on the form (and on the PDF) follows the section order
-  // when we render — so reordering sections is a pure-`sections` op AND
-  // a re-shuffle of the flat `lineItems` so the underlying array reflects
-  // the new on-screen order (relevant for the submit payload + duplicate).
+  // Move a section up/down. Reorders both the sections array and the flat
+  // lineItems array so submit payload + PDF order stay in sync.
   const moveSection = useCallback((uid, delta) => {
     setSections((prev) => {
       const idx = prev.findIndex((s) => s.uid === uid);
@@ -681,25 +696,31 @@ export default function QuoteBuilder({
       const next = prev.slice();
       const [row] = next.splice(idx, 1);
       next.splice(target, 0, row);
-      // Reorder flat lineItems so its physical order matches the new
-      // section order. Group lines by category_id, then concat in new
-      // section order. Lines whose category isn't in `sections` (legacy
-      // / orphaned) stay at the end in their original relative order.
+      // Reorder flat lineItems to match new section order.
+      // Lines are grouped by section_uid (new) or category_id (legacy).
       setLineItems((lines) => {
         const buckets = new Map();
         const orphans = [];
         for (const l of lines) {
-          const key = String(l.category_id ?? '');
-          if (next.some((s) => String(s.categoryId) === key)) {
-            if (!buckets.has(key)) buckets.set(key, []);
-            buckets.get(key).push(l);
+          // Prefer section_uid bucket; fall back to category_id for legacy.
+          const key = l.section_uid || String(l.category_id ?? '');
+          const sectionForKey = next.find((s) =>
+            s.uid === key || String(s.categoryId) === String(l.category_id ?? '')
+          );
+          if (sectionForKey) {
+            const bKey = l.section_uid || String(sectionForKey.categoryId);
+            if (!buckets.has(bKey)) buckets.set(bKey, []);
+            buckets.get(bKey).push(l);
           } else {
             orphans.push(l);
           }
         }
         const out = [];
         for (const s of next) {
-          out.push(...(buckets.get(String(s.categoryId)) || []));
+          // Pull lines that belong to this section by uid first, then cat id.
+          const byUid = buckets.get(s.uid) || [];
+          const byCat = buckets.get(String(s.categoryId)) || [];
+          out.push(...byUid, ...(byUid.length === 0 ? byCat : []));
         }
         out.push(...orphans);
         return out;
@@ -708,22 +729,27 @@ export default function QuoteBuilder({
     });
   }, []);
 
-  // Add a line of `kind` to the section identified by `categoryId`.
-  // The line is appended after the last line currently in that section
-  // so the order matches the section header.
-  const addLineToSection = useCallback((categoryId, kind) => {
+  // Add a line of `kind` to a specific section instance (by sectionUid).
+  // The line is stamped with section_uid so it belongs only to that section,
+  // even if another section shares the same categoryId.
+  const addLineToSection = useCallback((categoryId, kind, sectionUid) => {
     if (categoryId == null) return;
     const cat = activeCategories.find((c) => String(c.id) === String(categoryId));
     setLineItems((prev) => {
       const seed = {
         category_id: Number(categoryId),
         category_name: cat?.name || null,
+        section_uid: sectionUid || null,
       };
       const newLine = emptyLine(kind, seed);
-      // Find the last line that belongs to this section; insert after it.
+      // Find the last line that belongs to this specific section; insert after it.
       let lastIdx = -1;
       prev.forEach((l, i) => {
-        if (String(l.category_id) === String(categoryId)) lastIdx = i;
+        if (sectionUid
+          ? l.section_uid === sectionUid
+          : String(l.category_id) === String(categoryId)) {
+          lastIdx = i;
+        }
       });
       if (lastIdx < 0) return [...prev, newLine];
       const next = prev.slice();
@@ -777,23 +803,33 @@ export default function QuoteBuilder({
     quote_date: quoteDate,
     client,
     area,
+    location,
     project_description: projectDescription,
     tax_enabled: taxEnabled,
     tax_label: taxLabel,
     tax_rate: taxEnabled ? Number(taxRate) || 0 : null,
     notes: quoteNotes,
+    // Pass the sections array so the PDF generator can render in correct
+    // order with the right location labels, even for duplicate categories.
+    sections: sections.map((s) => ({
+      uid: s.uid,
+      categoryId: s.categoryId,
+      categoryName: (activeCategories.find((c) => c.id === s.categoryId))?.name || '',
+      locationLabel: s.locationLabel || '',
+    })),
     line_items: lineItems.map((li) => ({
       ...li,
       subtotal: computeLineSubtotal(li),
     })),
   }), [
-    quoteDate, client, area, projectDescription,
-    taxEnabled, taxLabel, taxRate, quoteNotes, lineItems,
+    quoteDate, client, area, location, projectDescription,
+    taxEnabled, taxLabel, taxRate, quoteNotes, lineItems, sections, activeCategories,
   ]);
 
   const buildSubmitPayload = useCallback((pdfBase64, expectedQuoteNumber) => ({
     client: client.trim(),
     area: (area || '').trim() || null,
+    location: (location || '').trim() || null,
     project_description: projectDescription || null,
     quote_date: quoteDate,
     mix_categories: true,
@@ -951,10 +987,9 @@ export default function QuoteBuilder({
   const handleDuplicate = useCallback(async (quoteId) => {
     try {
       const full = await api.getQuote(quoteId);
-      // Hydrate the form from the saved quote. Quote # clears so a fresh
-      // one is allocated on submit.
       setClient(full.client || '');
       setArea(full.area || '');
+      setLocation(full.location || '');
       setProjectDescription(full.project_description || '');
       setQuoteDate(localISODate());  // new date, not the original
       setTaxEnabled(!!full.tax_enabled);
@@ -967,41 +1002,38 @@ export default function QuoteBuilder({
         _uid: makeUid(),
       })).map((li) => ({ ...li, subtotal: computeLineSubtotal(li) }));
       setLineItems(lines);
-      // Rebuild sections by walking the (already-ordered) line array and
-      // recording each unique category_id the first time it's seen. Old
-      // single-category quotes collapse to one section; old mix-mode
-      // quotes get one section per category in their original order.
-      // Empty sections are NOT preserved (no lines = nothing to derive
-      // them from), which is the right behavior — Duplicate clones what
-      // was actually on the saved PDF.
-      const seen = new Set();
+      // Rebuild sections. For new-format quotes each line carries section_uid;
+      // we reconstruct sections in the order they first appear. For old quotes
+      // (no section_uid) we fall back to one section per unique category_id.
+      const seenSectionUids = new Map(); // section_uid → { categoryId, locationLabel }
+      const seenCategoryIds = new Set(); // for legacy fallback
       const rebuiltSections = [];
       for (const li of lines) {
-        if (li.category_id == null) continue;
-        const key = String(li.category_id);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        rebuiltSections.push({ uid: makeUid(), categoryId: Number(li.category_id) });
+        if (li.section_uid) {
+          if (!seenSectionUids.has(li.section_uid)) {
+            seenSectionUids.set(li.section_uid, true);
+            rebuiltSections.push({
+              uid: makeUid(),
+              categoryId: Number(li.category_id),
+              locationLabel: li.section_location || '',
+            });
+          }
+        } else if (li.category_id != null) {
+          const key = String(li.category_id);
+          if (!seenCategoryIds.has(key)) {
+            seenCategoryIds.add(key);
+            rebuiltSections.push({ uid: makeUid(), categoryId: Number(li.category_id), locationLabel: '' });
+          }
+        }
       }
       setSections(rebuiltSections);
       setSubmittedQuote(null);
-      // CRITICAL: drop any cached peek from the previous quote in this
-      // session. Without this, peekQuoteNumberCached() short-circuits on
-      // the stale value, generateQuotePdf() bakes the OLD quote number
-      // into the PDF bytes, and the backend then UNIQUE-collides on
-      // insert and silently retries with nextval — producing a row whose
-      // quote_number (e.g. Q000004) doesn't match the number rendered on
-      // its uploaded PDF (still Q000003). Clearing here forces a fresh
-      // peek on the next Preview/Submit so all three (DB row, Dropbox
-      // path, PDF content) agree.
       setPeekedQuoteNumber('');
       setPreviewBase64('');
       setSubmitError('');
-      // Duplicate starts a fresh quote, not tied to any saved draft.
       setActiveDraftId(null);
       setActiveTab(TAB_NEW);
     } catch (e) {
-      // Surface in the recent tab error banner; the user is still on Recent.
       setRecentError(e?.message || 'Failed to load quote for duplicate');
     }
   }, []);
@@ -1009,10 +1041,9 @@ export default function QuoteBuilder({
   const handleEdit = useCallback(async (quoteId) => {
     try {
       const full = await api.getQuote(quoteId);
-      // Hydrate the form exactly like Duplicate, but preserve the
-      // original quote number so Submit knows this is an edit.
       setClient(full.client || '');
       setArea(full.area || '');
+      setLocation(full.location || '');
       setProjectDescription(full.project_description || '');
       setQuoteDate(full.quote_date || localISODate());
       setTaxEnabled(!!full.tax_enabled);
@@ -1025,14 +1056,27 @@ export default function QuoteBuilder({
         _uid: makeUid(),
       })).map((li) => ({ ...li, subtotal: computeLineSubtotal(li) }));
       setLineItems(lines);
-      const seen = new Set();
+      // Same section rebuild logic as Duplicate.
+      const seenSectionUids = new Map();
+      const seenCategoryIds = new Set();
       const rebuiltSections = [];
       for (const li of lines) {
-        if (li.category_id == null) continue;
-        const key = String(li.category_id);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        rebuiltSections.push({ uid: makeUid(), categoryId: Number(li.category_id) });
+        if (li.section_uid) {
+          if (!seenSectionUids.has(li.section_uid)) {
+            seenSectionUids.set(li.section_uid, true);
+            rebuiltSections.push({
+              uid: makeUid(),
+              categoryId: Number(li.category_id),
+              locationLabel: li.section_location || '',
+            });
+          }
+        } else if (li.category_id != null) {
+          const key = String(li.category_id);
+          if (!seenCategoryIds.has(key)) {
+            seenCategoryIds.add(key);
+            rebuiltSections.push({ uid: makeUid(), categoryId: Number(li.category_id), locationLabel: '' });
+          }
+        }
       }
       setSections(rebuiltSections);
       setSubmittedQuote(null);
@@ -1040,7 +1084,6 @@ export default function QuoteBuilder({
       setPreviewBase64('');
       setSubmitError('');
       setActiveDraftId(null);
-      // Mark this form as an in-place edit so Submit -> PUT /api/quotes/{id}
       setEditingQuoteId(full.id);
       setEditingQuoteNumber(full.quote_number || '');
       setActiveTab(TAB_NEW);
@@ -1132,6 +1175,7 @@ export default function QuoteBuilder({
           // form state + setters
           client={client} setClient={setClient}
           area={area} setArea={setArea}
+          location={location} setLocation={setLocation}
           projectDescription={projectDescription} setProjectDescription={setProjectDescription}
           quoteDate={quoteDate} setQuoteDate={setQuoteDate}
           taxEnabled={taxEnabled} setTaxEnabled={setTaxEnabled}
@@ -1144,6 +1188,7 @@ export default function QuoteBuilder({
           sectionSubtotals={sectionSubtotals}
           // section handlers
           addSection={addSection} removeSection={removeSection} moveSection={moveSection}
+          updateSection={updateSection}
           // line handlers (now keyed by uid, not idx)
           addLineToSection={addLineToSection}
           updateLine={updateLine} removeLine={removeLine} moveLine={moveLine}
@@ -1240,12 +1285,13 @@ export default function QuoteBuilder({
 // ── Sub-component: New Quote tab ──────────────────────────────────────────
 function NewQuoteTab(props) {
   const {
-    client, setClient, area, setArea, projectDescription, setProjectDescription,
+    client, setClient, area, setArea, location, setLocation,
+    projectDescription, setProjectDescription,
     quoteDate, setQuoteDate,
     taxEnabled, setTaxEnabled, taxLabel, setTaxLabel, taxRate, setTaxRate,
     quoteNotes, setQuoteNotes,
     sections, lineItems, sectionSubtotals,
-    addSection, removeSection, moveSection,
+    addSection, removeSection, moveSection, updateSection,
     addLineToSection, updateLine, removeLine, moveLine, selectCatalogItem,
     activeCategories, catalogLoading, catalogError, onReloadCatalog,
     clients, areas, totals,
@@ -1257,17 +1303,14 @@ function NewQuoteTab(props) {
   } = props;
   const { confirm } = useDialog();
 
-  // Holds the value of the "+ Add another category" picker before it's
-  // committed via the Add button. Local to this tab so the parent state
-  // stays scoped to actually-saved sections.
   const [pendingNewSectionId, setPendingNewSectionId] = useState('');
 
-  // Categories that aren't already represented as a section — used to
-  // populate the "+ Add another category" dropdown.
-  const availableCategoriesForNewSection = useMemo(() => {
-    const used = new Set((sections || []).map((s) => String(s.categoryId)));
-    return (activeCategories || []).filter((c) => !used.has(String(c.id)));
-  }, [activeCategories, sections]);
+  // All active categories are available — the same category can be added
+  // multiple times (once per site/location). No deduplication here.
+  const availableCategoriesForNewSection = useMemo(
+    () => (activeCategories || []).filter((c) => c.is_active !== false),
+    [activeCategories],
+  );
 
   const handleAddSection = () => {
     if (!pendingNewSectionId) return;
@@ -1277,11 +1320,16 @@ function NewQuoteTab(props) {
 
   const handleRemoveSection = async (section) => {
     const cat = activeCategories.find((c) => String(c.id) === String(section.categoryId));
-    const linesInSection = lineItems.filter((l) => String(l.category_id) === String(section.categoryId));
+    const linesInSection = lineItems.filter((l) =>
+      l.section_uid ? l.section_uid === section.uid
+                    : String(l.category_id) === String(section.categoryId)
+    );
     if (linesInSection.length > 0) {
+      const catLabel = cat?.name || 'category';
+      const locLabel = section.locationLabel ? ` (${section.locationLabel})` : '';
       const ok = await confirm({
         title: 'Remove section',
-        message: `Remove the "${cat?.name || 'category'}" section and its ${linesInSection.length} line${linesInSection.length === 1 ? '' : 's'}?`,
+        message: `Remove the "${catLabel}${locLabel}" section and its ${linesInSection.length} line${linesInSection.length === 1 ? '' : 's'}?`,
         severity: 'danger',
         okLabel: 'Remove',
       });
@@ -1366,6 +1414,15 @@ function NewQuoteTab(props) {
               </datalist>
             </div>
             <div>
+              <label style={S.label}>Location</label>
+              <input
+                style={S.input}
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                placeholder="Site, lease, or address (optional)"
+              />
+            </div>
+            <div>
               <label style={S.label}>Quote Date</label>
               <input type="date" style={S.input} value={quoteDate} onChange={(e) => setQuoteDate(e.target.value)} />
             </div>
@@ -1406,21 +1463,33 @@ function NewQuoteTab(props) {
           ) : (
             sections.map((section, sectionIdx) => {
               const cat = activeCategories.find((c) => String(c.id) === String(section.categoryId));
-              const sectionLines = lineItems.filter((l) => String(l.category_id) === String(section.categoryId));
+              // Filter lines belonging to this specific section instance.
+              // New lines carry section_uid; legacy lines (no uid) fall back
+              // to category_id so old quotes still render correctly.
+              const sectionLines = lineItems.filter((l) =>
+                l.section_uid
+                  ? l.section_uid === section.uid
+                  : String(l.category_id) === String(section.categoryId)
+              );
+              // Subtotal key matches sectionSubtotals: prefer section.uid.
+              const subtotalKey = sectionLines.some((l) => l.section_uid)
+                ? section.uid
+                : String(section.categoryId);
               return (
                 <CategorySection
                   key={section.uid}
                   section={section}
                   category={cat}
                   lines={sectionLines}
-                  subtotal={sectionSubtotals.get(String(section.categoryId)) || 0}
+                  subtotal={sectionSubtotals.get(subtotalKey) || 0}
                   isMobile={isMobile}
                   isFirst={sectionIdx === 0}
                   isLast={sectionIdx === sections.length - 1}
                   onMoveUp={() => moveSection(section.uid, -1)}
                   onMoveDown={() => moveSection(section.uid, 1)}
                   onRemove={() => handleRemoveSection(section)}
-                  onAddLine={(kind) => addLineToSection(section.categoryId, kind)}
+                  onAddLine={(kind) => addLineToSection(section.categoryId, kind, section.uid)}
+                  onUpdateSection={(patch) => updateSection(section.uid, patch)}
                   // Line-row plumbing
                   activeCategories={activeCategories}
                   totalLineCount={lineItems.length}
@@ -1444,7 +1513,7 @@ function NewQuoteTab(props) {
             borderTop: sections.length > 0 ? '1px solid rgba(143,182,255,0.12)' : 'none',
           }}>
             <label style={{ ...S.label, marginBottom: 0 }}>
-              {sections.length === 0 ? 'Pick a category' : '+ Add another category'}
+              {sections.length === 0 ? 'Pick a category to start' : '+ Add another category section'}
             </label>
             <select
               style={{ ...S.inputSm, minWidth: '180px', width: 'auto' }}
@@ -1453,11 +1522,7 @@ function NewQuoteTab(props) {
               disabled={catalogLoading || availableCategoriesForNewSection.length === 0}
             >
               <option value="">
-                {catalogLoading
-                  ? 'Loading…'
-                  : availableCategoriesForNewSection.length === 0
-                    ? 'All categories already added'
-                    : 'Select a category…'}
+                {catalogLoading ? 'Loading…' : 'Select a category…'}
               </option>
               {availableCategoriesForNewSection.map((c) => (
                 <option key={c.id} value={c.id}>{c.name}</option>
@@ -1663,9 +1728,9 @@ function DraftsTab({ drafts, draftsLoading, activeDraftId, onLoad, onDelete, isM
 // per-section "+ Add catalog/custom/note line" buttons. Lines are
 // addressed by their `_uid`.
 function CategorySection({
-  category, lines, subtotal,
+  section, category, lines, subtotal,
   isMobile, isFirst, isLast,
-  onMoveUp, onMoveDown, onRemove, onAddLine,
+  onMoveUp, onMoveDown, onRemove, onAddLine, onUpdateSection,
   activeCategories,
   updateLine, removeLine, moveLine, selectCatalogItem, onReloadCatalog,
 }) {
@@ -1677,8 +1742,6 @@ function CategorySection({
     marginTop: isFirst ? 0 : '12px',
   };
 
-  // ↑/↓ disabled at edges; same low-opacity treatment as the LineItemRow
-  // buttons so the layout doesn't jitter as sections are added/removed.
   const upStyle = { ...S.iconBtn, opacity: !isFirst ? 1 : 0.3, cursor: !isFirst ? 'pointer' : 'not-allowed' };
   const downStyle = { ...S.iconBtn, opacity: !isLast ? 1 : 0.3, cursor: !isLast ? 'pointer' : 'not-allowed' };
 
@@ -1699,6 +1762,20 @@ function CategorySection({
             · {category.notes}
           </span>
         ) : null}
+        {/* Inline Location input — compact, sits right after the category name.
+            Value shows on the PDF banner as "Category — Location". */}
+        <input
+          style={{
+            ...S.inputSm,
+            width: isMobile ? '100%' : '180px',
+            fontSize: '0.78rem',
+            marginLeft: isMobile ? 0 : '4px',
+          }}
+          value={section?.locationLabel || ''}
+          onChange={(e) => onUpdateSection?.({ locationLabel: e.target.value })}
+          placeholder="Location (optional)"
+          title="Appears on PDF: Category — Location"
+        />
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '4px' }}>
           <button type="button" onClick={!isFirst ? onMoveUp : undefined} disabled={isFirst} style={upStyle} aria-label="Move section up" title="Move section up">↑</button>
           <button type="button" onClick={!isLast ? onMoveDown : undefined} disabled={isLast} style={downStyle} aria-label="Move section down" title="Move section down">↓</button>
@@ -1783,15 +1860,18 @@ function CategorySection({
         </button>
       </div>
 
-      {/* Per-section subtotal — right-aligned strip below the add buttons.
-          Mirrors the on-PDF "(Category) subtotal $X" line. */}
+      {/* Per-section subtotal — right-aligned strip below the add buttons. */}
       <div style={{
         display: 'flex', justifyContent: 'flex-end', alignItems: 'baseline',
         gap: '12px', marginTop: '12px', paddingTop: '8px',
         borderTop: '1px solid rgba(143,182,255,0.10)',
         fontSize: '0.85rem',
       }}>
-        <span style={{ color: '#9ab1d6' }}>{category?.name || 'Section'} subtotal</span>
+        <span style={{ color: '#9ab1d6' }}>
+          {category?.name || 'Section'}
+          {section?.locationLabel ? ` — ${section.locationLabel}` : ''}
+          {' subtotal'}
+        </span>
         <strong style={{ fontVariantNumeric: 'tabular-nums', minWidth: '90px', textAlign: 'right' }}>
           {formatMoney(subtotal)}
         </strong>

@@ -422,6 +422,7 @@ class Quote(Base):
     quote_number: Mapped[str] = mapped_column(String(20), nullable=False, unique=True, index=True)
     client: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
     area: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    location: Mapped[str | None] = mapped_column(Text, nullable=True)
     project_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     quote_date: Mapped[datetime] = mapped_column(Date, nullable=False, index=True)
     mix_categories: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

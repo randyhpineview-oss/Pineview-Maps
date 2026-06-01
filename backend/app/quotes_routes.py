@@ -56,6 +56,7 @@ class QuoteRead(BaseModel):
     quote_number: str
     client: str
     area: str | None = None
+    location: str | None = None
     project_description: str | None = None
     quote_date: date_type
     mix_categories: bool
@@ -107,6 +108,7 @@ class QuoteLineItemPayload(BaseModel):
 class QuoteCreate(BaseModel):
     client: str
     area: str | None = None
+    location: str | None = None
     project_description: str | None = None
     quote_date: date_type
     mix_categories: bool = False
@@ -135,6 +137,7 @@ class QuoteUpdate(BaseModel):
     """
     client: str
     area: str | None = None
+    location: str | None = None
     project_description: str | None = None
     quote_date: date_type
     mix_categories: bool = False
@@ -299,7 +302,8 @@ def submit_quote(
         return Quote(
             quote_number=qn,
             client=client,
-            area=(payload.area or "").strip() or None,
+            area=(payload.area or '').strip() or None,
+            location=(payload.location or '').strip() or None,
             project_description=payload.project_description,
             quote_date=payload.quote_date,
             mix_categories=payload.mix_categories,
@@ -471,6 +475,7 @@ def update_quote(
 
     quote.client = client
     quote.area = (payload.area or "").strip() or None
+    quote.location = (payload.location or '').strip() or None
     quote.project_description = payload.project_description
     quote.quote_date = payload.quote_date
     quote.mix_categories = payload.mix_categories

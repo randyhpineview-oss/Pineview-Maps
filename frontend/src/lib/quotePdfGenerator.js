@@ -76,16 +76,20 @@ export function computeQuoteTotals({ lineItems = [], taxEnabled = false, taxRate
 /**
  * Generate a Quote PDF.
  *
- * @param {object} quote - { quote_number, quote_date, client, area, project_description,
+ * @param {object} quote - { quote_number, quote_date, client, area, location,
+ *                            project_description,
  *                            tax_enabled, tax_label, tax_rate, notes,
+ *                            sections: [{ uid, categoryId, categoryName, locationLabel }],
  *                            line_items: [{ kind, category_id, category_name,
+ *                                           section_uid, section_location,
  *                                           description, unit, qty, rate,
  *                                           markup_enabled, markup_pct, markup_label,
  *                                           subtotal }] }
- *   Lines are grouped by category_id in first-appearance order. Each group
- *   gets a category header + per-category subtotal in the rendered PDF.
- *   `markup_enabled` / `markup_pct` still factor into the printed Subtotal
- *   column but the customer-facing `(cost +pct%)` label is no longer drawn.
+ *
+ *   Lines are grouped by section_uid (when present) or category_id (legacy).
+ *   Each group gets a category header (+ location label if set) and a
+ *   per-section subtotal. The `sections` array (if supplied) controls render
+ *   order; otherwise first-appearance order is used.
  *
  * Returns { blob, base64 }.
  */
@@ -145,20 +149,16 @@ export async function generateQuotePdf(quote) {
 
   drawField('Client:', quote.client || '');
   if (quote.area) drawField('Area:', quote.area);
+  if (quote.location) drawField('Location:', quote.location);
   drawField('Quote Date:', formatQuoteDate(quote.quote_date));
   if (quote.project_description) drawField('Project:', quote.project_description);
 
   y += 6;
 
-  // ── Line items, grouped by category ──
-  // Lines with the same `category_id` render together under a category
-  // header (e.g. "Hydroseeding") and finish with a per-category subtotal.
-  // The customer-facing `(cost +10%)` markup label and the per-line
-  // `— Category` annotation that older quotes used are both gone — the
-  // category is communicated by the section header above the rows, and
-  // the markup math still rolls into the printed Rate × Qty subtotal.
-  // Subtotal column widened from 80 → 90 to keep dollar amounts off the
-  // right edge.
+  // ── Line items, grouped by section ──
+  // Priority: group by section_uid (new multi-section quotes) with fallback
+  // to category_id (legacy single-section quotes saved before this update).
+  // The `sections` array on the payload controls render order when present.
   const colSubW = 90;
   const colRateW = 70;
   const colUnitW = 60;
@@ -167,23 +167,16 @@ export async function generateQuotePdf(quote) {
   const headerH = 20;
   const sectionHeaderH = 22;
 
-  // X-coordinate of the *center* of each non-description column. Used by
-  // both the header and the body so the column heading sits directly
-  // above its data.
   const qtyCenterX = marginL + colDescW + colQtyW / 2;
   const unitCenterX = marginL + colDescW + colQtyW + colUnitW / 2;
   const rateCenterX = marginL + colDescW + colQtyW + colUnitW + colRateW / 2;
   const subCenterX = marginL + colDescW + colQtyW + colUnitW + colRateW + colSubW / 2;
 
-  // Bottom reserve = 80pt: the footer text is at pageH-36, so this
-  // leaves ~44pt clearance for tall multi-line rows + the footer caps
-  // (avoids the overlap risk we'd have at e.g. pageH-60).
   const reserveY = pageH - 80;
 
-  const drawCategoryHeader = (name) => {
-    // Tinted full-width band with the category name. Slightly taller and
-    // a different fill than the column-header band so they read as
-    // distinct strata.
+  const drawCategoryHeader = (name, locationLabel) => {
+    // Compact band: "Category Name — Location Label" (if location set)
+    const headerText = locationLabel ? `${name} \u2014 ${locationLabel}` : (name || 'Category');
     doc.setDrawColor(80);
     doc.setFillColor(218, 230, 246);
     doc.rect(marginL, y, contentW, sectionHeaderH, 'F');
@@ -192,7 +185,7 @@ export async function generateQuotePdf(quote) {
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
     doc.setTextColor(30, 60, 100);
-    doc.text(name || 'Category', marginL + 6, y + 15);
+    doc.text(headerText, marginL + 6, y + 15);
     doc.setTextColor(0);
     y += sectionHeaderH;
     doc.setDrawColor(180);
@@ -200,9 +193,6 @@ export async function generateQuotePdf(quote) {
     doc.setFont('helvetica', 'normal');
   };
 
-  // Drawing the column header is wrapped in a closure so we can call it
-  // again after a page break — otherwise rows on page 2+ would float
-  // without any column labels.
   const drawTableHeader = () => {
     doc.setDrawColor(80);
     doc.setFillColor(235, 240, 250);
@@ -217,58 +207,105 @@ export async function generateQuotePdf(quote) {
     doc.text('Rate',     rateCenterX, y + 13, { align: 'center' });
     doc.text('Subtotal', subCenterX,  y + 13, { align: 'center' });
     y += headerH;
-    // Reset draw color/font for body rows.
     doc.setDrawColor(180);
     doc.setLineWidth(0.3);
     doc.setFont('helvetica', 'normal');
   };
 
-  // `redrawHeader` flag controls whether the column header gets repeated
-  // on the new page. Inside the per-row loop we want it; for the totals
-  // block / quote notes we don't (they aren't tabular). When `redrawHeader`
-  // also fires after a page break we redraw the *current* category header
-  // first so the customer never sees orphan rows on page 2 with no
-  // category label.
   let currentCategoryName = '';
+  let currentLocationLabel = '';
   const newPageIfNeeded = (needed, { redrawHeader = false } = {}) => {
     if (y + needed > reserveY) {
       doc.addPage();
       y = 36;
       if (redrawHeader) {
-        if (currentCategoryName) drawCategoryHeader(currentCategoryName);
+        if (currentCategoryName) drawCategoryHeader(currentCategoryName, currentLocationLabel);
         drawTableHeader();
       }
     }
   };
 
-  // Group lines by category_id in first-appearance order. Lines without
-  // a category_id (defensive — shouldn't happen with the new
-  // section-based UI but old quotes might) get bundled under '' which
-  // renders as an "Other" header.
   const items = Array.isArray(quote.line_items) ? quote.line_items : [];
-  const groupOrder = [];
-  const groupMap = new Map(); // key = String(category_id ?? ''), value = { name, lines }
-  for (const li of items) {
-    if (!li) continue;
-    const key = li.category_id != null ? String(li.category_id) : '';
-    if (!groupMap.has(key)) {
-      const name = li.category_name || (key === '' ? 'Other' : '');
-      groupMap.set(key, { name, lines: [] });
-      groupOrder.push(key);
+
+  // Build ordered groups. Strategy:
+  // 1. If a `sections` array is passed (new format), use it to define order +
+  //    metadata (name, locationLabel). Each section = one group keyed by uid.
+  // 2. Otherwise fall back to first-appearance of category_id (legacy).
+  const groupOrder = [];   // keys in render order
+  const groupMap = new Map(); // key → { name, locationLabel, lines[] }
+
+  const sectionsArray = Array.isArray(quote.sections) ? quote.sections : [];
+
+  if (sectionsArray.length > 0) {
+    // New format: sections array controls order and provides location labels.
+    for (const sec of sectionsArray) {
+      const key = sec.uid || sec.categoryId;
+      if (!groupMap.has(key)) {
+        groupMap.set(key, {
+          name: sec.categoryName || sec.category_name || '',
+          locationLabel: sec.locationLabel || sec.location_label || '',
+          lines: [],
+        });
+        groupOrder.push(key);
+      }
     }
-    groupMap.get(key).lines.push(li);
+    // Place each line into its section bucket.
+    for (const li of items) {
+      if (!li) continue;
+      // Prefer section_uid match first, then fallback to category_id match.
+      let placed = false;
+      if (li.section_uid) {
+        if (groupMap.has(li.section_uid)) {
+          groupMap.get(li.section_uid).lines.push(li);
+          placed = true;
+        }
+      }
+      if (!placed) {
+        // Try matching by category_id against the sections array (partial legacy).
+        const catKey = li.category_id != null ? String(li.category_id) : '';
+        for (const [key, grp] of groupMap.entries()) {
+          const sec = sectionsArray.find((s) => (s.uid || s.categoryId) === key);
+          if (sec && String(sec.categoryId || sec.category_id) === catKey) {
+            grp.lines.push(li);
+            placed = true;
+            break;
+          }
+        }
+      }
+      if (!placed) {
+        // Orphan — put into a catch-all group.
+        const orphanKey = '__orphan__';
+        if (!groupMap.has(orphanKey)) {
+          groupMap.set(orphanKey, { name: 'Other', locationLabel: '', lines: [] });
+          groupOrder.push(orphanKey);
+        }
+        groupMap.get(orphanKey).lines.push(li);
+      }
+    }
+  } else {
+    // Legacy format: group by category_id, first-appearance order.
+    for (const li of items) {
+      if (!li) continue;
+      const key = li.category_id != null ? String(li.category_id) : '';
+      if (!groupMap.has(key)) {
+        const name = li.category_name || (key === '' ? 'Other' : '');
+        // Per-line section_location used for legacy lines that carry it.
+        const locationLabel = li.section_location || '';
+        groupMap.set(key, { name, locationLabel, lines: [] });
+        groupOrder.push(key);
+      }
+      groupMap.get(key).lines.push(li);
+    }
   }
 
   for (const key of groupOrder) {
     const group = groupMap.get(key);
     if (!group || group.lines.length === 0) continue;
 
-    // Don't strand a category header at the very bottom of a page. If
-    // there's not enough room for header + col-header + at least one
-    // average row, push the header onto the next page.
     newPageIfNeeded(sectionHeaderH + headerH + 24);
     currentCategoryName = group.name;
-    drawCategoryHeader(group.name);
+    currentLocationLabel = group.locationLabel;
+    drawCategoryHeader(group.name, group.locationLabel);
     drawTableHeader();
 
     let groupSubtotal = 0;
@@ -291,9 +328,6 @@ export async function generateQuotePdf(quote) {
         continue;
       }
 
-      // Priced row (catalog or custom). The markup `(label +pct%)` and
-      // category sub-lines are deliberately omitted — markup math still
-      // applies to the subtotal column, just not surfaced to the client.
       const descBase = line.description || '';
       const wrappedDesc = doc.splitTextToSize(descBase || '', colDescW - 8);
       const rowH = Math.max(18, wrappedDesc.length * 11 + 6);
@@ -301,7 +335,6 @@ export async function generateQuotePdf(quote) {
 
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(9);
-      // Cell outlines (single rect spanning all columns + verticals for grid feel)
       doc.rect(marginL, y, contentW, rowH);
       let vx = marginL + colDescW;
       doc.line(vx, y, vx, y + rowH); vx += colQtyW;
@@ -309,13 +342,8 @@ export async function generateQuotePdf(quote) {
       doc.line(vx, y, vx, y + rowH); vx += colRateW;
       doc.line(vx, y, vx, y + rowH);
 
-      // Description (multi-line, left-aligned)
       doc.text(wrappedDesc, marginL + 4, y + 12);
 
-      // Numeric / unit cells — all centered so the value sits directly
-      // beneath its centered column heading. Decimal-alignment on currency
-      // is sacrificed for visual cleanliness; the per-line subtotals are
-      // bold so they still scan vertically.
       const numY = y + 13;
       const qtyText = line.qty != null && line.qty !== '' ? formatNumber(line.qty, 4) : '';
       const unitText = String(line.unit || '');
@@ -334,33 +362,29 @@ export async function generateQuotePdf(quote) {
       y += rowH;
     }
 
-    // Per-category subtotal — right-aligned strip below the last row,
-    // with breathing room from the next section's category header.
+    // Per-section subtotal — label includes location if set.
     newPageIfNeeded(22);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(10);
-    const subLabel = `${group.name || 'Category'} subtotal`;
+    const subLabel = group.locationLabel
+      ? `${group.name || 'Section'} (${group.locationLabel}) subtotal`
+      : `${group.name || 'Category'} subtotal`;
     doc.text(subLabel, subCenterX - colSubW / 2 - 4, y + 12, { align: 'right' });
     doc.text(formatMoney(Math.round(groupSubtotal * 100) / 100), pageW - marginR - 4, y + 12, { align: 'right' });
     doc.setFont('helvetica', 'normal');
     y += 18;
-    // Spacer between category groups so each block reads as its own zone.
     y += 6;
   }
 
-  // ── Totals block (right-aligned, similar to TM ticket footer) ──
-  // Grand total is the sum across every category — same arithmetic as
-  // before, just re-derived from the flat line_items array.
+  // ── Totals block ──
   currentCategoryName = '';
+  currentLocationLabel = '';
   const totals = computeQuoteTotals({
     lineItems: items,
     taxEnabled: !!quote.tax_enabled,
     taxRate: quote.tax_rate,
   });
 
-  // Breathing room between the last table row and the totals block.
-  // Was 8pt — looked cramped against the row stroke. 28pt ≈ 0.4" gives
-  // the totals their own visual zone.
   y += 28;
   newPageIfNeeded(70);
   const totalsLabelX = pageW - marginR - 180;
@@ -378,11 +402,6 @@ export async function generateQuotePdf(quote) {
     const taxLabel = `${quote.tax_label || 'Tax'} (${formatNumber(quote.tax_rate, 3)}%)`;
     drawTotalRow(taxLabel, totals.taxAmount);
   }
-  // Divider with proper clearance.
-  // After the last regular row, `y` is one line-height past the previous
-  // baseline. We add 4pt padding before the divider, then 14pt before the
-  // Grand Total baseline so the 11pt bold caps don't overlap the line
-  // (was: line at y-4 → 6pt above GT caps → visible overlap on the descender).
   y += 4;
   doc.setDrawColor(60);
   doc.setLineWidth(0.5);
@@ -404,10 +423,7 @@ export async function generateQuotePdf(quote) {
     y += 12 * noteLines.length;
   }
 
-  // ── Footer (every page, including page 1 when content overflows) ──
-  // Loop over every page added by jsPDF and stamp the footer + page
-  // number. Drawing in a single pass at the end means we know the final
-  // page count so "Page X of Y" can be accurate.
+  // ── Footer (every page) ──
   const totalPages = doc.internal.getNumberOfPages();
   doc.setFont('helvetica', 'italic');
   doc.setFontSize(7.5);
@@ -433,7 +449,6 @@ export async function generateQuotePdf(quote) {
 function formatQuoteDate(value) {
   if (!value) return '';
   if (typeof value === 'string') {
-    // ISO YYYY-MM-DD — render as Mon DD, YYYY for the PDF without timezone drift.
     const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
     if (m) {
       const [, y, mm, dd] = m;
