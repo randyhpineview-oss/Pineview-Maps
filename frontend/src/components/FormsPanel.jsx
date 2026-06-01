@@ -8,9 +8,11 @@ import {
   getAllHydroseedTickets,
   getHydroseedDailyDrafts,
   deleteHydroseedDailyDraft,
+  getAllTMTickets,
 } from '../lib/offlineStore';
 import { localDateISO } from '../lib/dateUtil';
 import { useDialog } from './DialogProvider';
+import { normalizeName } from '../lib/mapUtils';
 
 /**
  * The Forms panel replaces the old Recents panel.
@@ -356,6 +358,8 @@ export default function FormsPanel({
   const [tmTickets, setTmTickets] = useState([]);
   const tmTicketsSinceRef = useRef(null);
   const tmSyncingRef = useRef(false);
+  const [tmSyncing, setTmSyncing] = useState(false);
+  const tmIdbHydratedRef = useRef(false);
   const tmDeltaFailCountRef = useRef(0);
   // True once the first cold-start T&M fetch completes (success or error).
   // Mirrors `hydroseedTicketsLoaded` so Open Tickets / Recents show a
@@ -389,6 +393,7 @@ export default function FormsPanel({
   const [hydroseedTicketsLoaded, setHydroseedTicketsLoaded] = useState(false);
   const hydroseedTicketsSinceRef = useRef(null);
   const hydroseedSyncingRef = useRef(false);
+  const [hydroseedSyncing, setHydroseedSyncing] = useState(false);
   const hydroseedDeltaFailCountRef = useRef(0);
   const hydroseedIdbHydratedRef = useRef(false);
   // Watermark + busy guard for the dailies delta-sync effect below.
@@ -452,13 +457,26 @@ export default function FormsPanel({
     return hydroseedDailies;
   }, [hydroseedDailies, viewAsWorker, currentUserName]);
 
-  // "New T&M ticket" modal
   const [newTMOpen, setNewTMOpen] = useState(false);
   const [newTMDate, setNewTMDate] = useState(() => localDateISO());
   const [newTMClient, setNewTMClient] = useState('');
   const [newTMArea, setNewTMArea] = useState('');
   const [newTMDesc, setNewTMDesc] = useState('');
   const [newTMBusy, setNewTMBusy] = useState(false);
+
+  const existingDupTicket = useMemo(() => {
+    if (!newTMClient || !newTMArea || !newTMDate) return null;
+    const normClient = normalizeName(newTMClient);
+    const normArea = normalizeName(newTMArea);
+    return tmTickets.find((t) => {
+      return (
+        !t.deleted_at &&
+        t.spray_date === newTMDate &&
+        normalizeName(t.client) === normClient &&
+        normalizeName(t.area) === normArea
+      );
+    });
+  }, [tmTickets, newTMClient, newTMArea, newTMDate]);
 
   // Areas scoped to the currently-selected client in the New T&M modal.
   // When no client is picked yet, fall back to the full list so the
@@ -546,6 +564,7 @@ export default function FormsPanel({
 
     let cancelled = false;
     tmSyncingRef.current = true;
+    setTmSyncing(true);
     (async () => {
       try {
         const since = tmTicketsSinceRef.current;
@@ -602,6 +621,7 @@ export default function FormsPanel({
         // Leave the watermark alone so the next tick retries the same range.
       } finally {
         tmSyncingRef.current = false;
+        if (!cancelled) setTmSyncing(false);
       }
     })();
     return () => { cancelled = true; };
@@ -658,6 +678,30 @@ export default function FormsPanel({
     return () => { cancelled = true; };
   }, [visible, subTab, ipTab, draftsRefreshToken]);
 
+  // One-shot IDB boot hydration for T&M tickets. Runs once on mount
+  // (empty dep array). If IDB has cached tickets from the previous session,
+  // we seed state + mark loaded immediately so the list renders from cache
+  // while the network sync effect fires its first delta request in the
+  // background. Also seeds the watermark to "now - 1 hour" so the first
+  // delta fetch is narrow (only the last hour of changes) instead of a
+  // full list fetch, matching how sites/pipelines boot.
+  useEffect(() => {
+    if (tmIdbHydratedRef.current) return;
+    tmIdbHydratedRef.current = true;
+    (async () => {
+      try {
+        const cached = await getAllTMTickets();
+        if (!cached || cached.length === 0) return;
+        setTmTickets(cached);
+        setTmTicketsLoaded(true);
+        if (!tmTicketsSinceRef.current) {
+          const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+          tmTicketsSinceRef.current = oneHourAgo;
+        }
+      } catch { /* IDB unavailable — fall through to normal full fetch */ }
+    })();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // One-shot IDB boot hydration for hydroseed tickets. Runs once on mount
   // (empty dep array). If IDB has cached tickets from the previous session,
   // we seed state + mark loaded immediately so the list renders from cache
@@ -710,6 +754,7 @@ export default function FormsPanel({
 
     let cancelled = false;
     hydroseedSyncingRef.current = true;
+    setHydroseedSyncing(true);
     (async () => {
       try {
         const since = hydroseedTicketsSinceRef.current;
@@ -760,6 +805,7 @@ export default function FormsPanel({
         // Leave the watermark alone so the next tick retries the same range.
       } finally {
         hydroseedSyncingRef.current = false;
+        if (!cancelled) setHydroseedSyncing(false);
       }
     })();
     return () => { cancelled = true; };
@@ -1523,6 +1569,14 @@ export default function FormsPanel({
           {/* Open Tickets */}
           {ipTab === IP_OPEN && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {(tmSyncing || hydroseedSyncing) && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '10px', background: '#0b1220', borderRadius: '6px', border: '1px solid #1e293b', marginBottom: '4px' }}>
+                  <Spinner size={12} color="#3b82f6" />
+                  <span className="small-text" style={{ color: '#9ca3af', fontSize: '0.75rem' }}>
+                    Syncing tickets with server…
+                  </span>
+                </div>
+              )}
               {pendingTmPlaceholders.map((p) => renderPlaceholderRow(p, 'tm'))}
               {sortedOpenTickets.length === 0 ? (
                 pendingTmPlaceholders.length > 0 ? null : (
@@ -1834,6 +1888,15 @@ export default function FormsPanel({
                 </div>
               ) : null}
 
+              {tmSyncing && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '10px', background: '#0b1220', borderRadius: '6px', border: '1px solid #1e293b', marginBottom: '6px' }}>
+                  <Spinner size={12} color="#3b82f6" />
+                  <span className="small-text" style={{ color: '#9ca3af', fontSize: '0.75rem' }}>
+                    Syncing tickets with server…
+                  </span>
+                </div>
+              )}
+
               {filteredTm.length === 0 ? (
                 !tmTicketsLoaded ? (
                   <LoadingRow label="Loading…" />
@@ -1886,6 +1949,14 @@ export default function FormsPanel({
                       <button type="button" style={innerBtn(hydStatusFilter === HYD_STATUS_ALL)} onClick={() => setHydStatusFilter(HYD_STATUS_ALL)}>All</button>
                       <button type="button" style={innerBtn(hydStatusFilter === HYD_STATUS_SUBMITTED)} onClick={() => setHydStatusFilter(HYD_STATUS_SUBMITTED)}>Pending</button>
                       <button type="button" style={innerBtn(hydStatusFilter === HYD_STATUS_APPROVED)} onClick={() => setHydStatusFilter(HYD_STATUS_APPROVED)}>Approved</button>
+                    </div>
+                  )}
+                  {hydroseedSyncing && (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '10px', background: '#0b1220', borderRadius: '6px', border: '1px solid #1e293b', marginBottom: '6px' }}>
+                      <Spinner size={12} color="#22c55e" />
+                      <span className="small-text" style={{ color: '#9ca3af', fontSize: '0.75rem' }}>
+                        Syncing tickets with server…
+                      </span>
                     </div>
                   )}
                   {filteredHydroseedTickets.length === 0 ? (
@@ -2120,6 +2191,21 @@ export default function FormsPanel({
                 ))}
               </select>
             </label>
+
+            {existingDupTicket ? (
+              <div style={{
+                fontSize: '0.8rem',
+                color: '#fcd34d',
+                background: '#78350f',
+                padding: '10px',
+                borderRadius: '6px',
+                border: '1px solid #b45309',
+                lineHeight: '1.4',
+              }}>
+                ⚠ <strong>Note:</strong> A T&M ticket already exists for this client, area, and date ({existingDupTicket.ticket_number}). 
+                Normally, you should reuse the existing ticket. Only create a new one if separate billing is required.
+              </div>
+            ) : null}
 
             <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
               <span className="small-text" style={{ color: '#9ca3af' }}>Description of Work (optional)</span>

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { generateLeaseSheetPdf } from '../lib/pdfGenerator';
 import { generateTMTicketPdf } from '../lib/tmTicketPdfGenerator';
 import { api } from '../lib/api';
-import { saveLeaseSheetDraft, deleteLeaseSheetDraft } from '../lib/offlineStore';
+import { saveLeaseSheetDraft, deleteLeaseSheetDraft, getAllTMTickets } from '../lib/offlineStore';
 import { useAutoSaveDraft } from '../lib/useAutoSaveDraft';
 import { localDateISO } from '../lib/dateUtil';
 import PdfPreviewViewer from './PdfPreviewViewer';
@@ -598,7 +598,34 @@ export default function HerbicideLeaseSheet({
 
     // Offline short-circuit — don't even attempt the fetch.
     const isOffline = typeof window !== 'undefined' && window.navigator?.onLine === false;
-    if (isOffline) return;
+    if (isOffline) {
+      setIsLoadingTMTickets(true);
+      try {
+        const cached = await getAllTMTickets();
+        const normClient = normalizeName(form.customer);
+        const normArea = normalizeName(form.area);
+        const matching = (cached || []).filter((t) => {
+          return (
+            t.status === 'open' &&
+            !t.deleted_at &&
+            normalizeName(t.client) === normClient &&
+            normalizeName(t.area) === normArea &&
+            t.spray_date === form.date
+          );
+        });
+        setOpenTMTickets(matching);
+        if (matching.length === 1) {
+          setTmChoice((current) => (current?.create ? { ticket_id: matching[0].id } : current));
+        } else if (matching.length > 1) {
+          setTmChoice((current) => (current?.create ? null : current));
+        }
+      } catch (cacheErr) {
+        console.warn('[LEASE] Offline T&M lookup failed:', cacheErr?.message);
+      } finally {
+        setIsLoadingTMTickets(false);
+      }
+      return;
+    }
 
     // 2. Background fetch with hard timeout.
     setIsLoadingTMTickets(true);
@@ -627,8 +654,31 @@ export default function HerbicideLeaseSheet({
         setTmChoice((current) => (current?.create ? null : current));
       }
     } catch (err) {
-      // 4. Timeout / network error — stay on create-new (already defaulted above).
-      console.warn('[LEASE] T&M tickets lookup failed/timed out (continuing with create-new):', err?.message);
+      console.warn('[LEASE] T&M tickets lookup failed/timed out, checking local cache:', err?.message);
+      try {
+        const cached = await getAllTMTickets();
+        const normClient = normalizeName(form.customer);
+        const normArea = normalizeName(form.area);
+        const matching = (cached || []).filter((t) => {
+          return (
+            t.status === 'open' &&
+            !t.deleted_at &&
+            normalizeName(t.client) === normClient &&
+            normalizeName(t.area) === normArea &&
+            t.spray_date === form.date
+          );
+        });
+        if (matching.length > 0) {
+          setOpenTMTickets(matching);
+          if (matching.length === 1) {
+            setTmChoice((current) => (current?.create ? { ticket_id: matching[0].id } : current));
+          } else if (matching.length > 1) {
+            setTmChoice((current) => (current?.create ? null : current));
+          }
+        }
+      } catch (cacheErr) {
+        console.warn('[LEASE] Cache lookup fallback failed:', cacheErr?.message);
+      }
     } finally {
       setIsLoadingTMTickets(false);
     }
@@ -1271,6 +1321,22 @@ export default function HerbicideLeaseSheet({
                 boxSizing: 'border-box',
               }}
             />
+          </div>
+        ) : null}
+
+        {tmChoice?.create && openTMTickets.length > 0 ? (
+          <div style={{
+            fontSize: '0.8rem',
+            color: '#fcd34d',
+            background: '#78350f',
+            padding: '10px',
+            borderRadius: '6px',
+            marginBottom: '14px',
+            border: '1px solid #b45309',
+            lineHeight: '1.4',
+          }}>
+            ⚠ <strong>Note:</strong> There is already at least one open T&M ticket for this client and area today ({openTMTickets.map(t => t.ticket_number).join(', ')}). 
+            Normally, you should link your work to the existing ticket. Only start a new one if the client explicitly requested separate tickets for each site.
           </div>
         ) : null}
 

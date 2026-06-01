@@ -516,6 +516,11 @@ export async function getTMTicket(id) {
   return db.get('tmTickets', id);
 }
 
+export async function getAllTMTickets() {
+  const db = await dbPromise;
+  return db.getAll('tmTickets');
+}
+
 export async function removeTMTicket(id) {
   if (id == null) return;
   const db = await dbPromise;
