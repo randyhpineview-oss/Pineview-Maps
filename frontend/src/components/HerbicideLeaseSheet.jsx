@@ -197,9 +197,9 @@ export default function HerbicideLeaseSheet({
       missing.push(isRoadsideSite ? 'Roadside km Sprayed' : 'Total Distance (km)');
     }
     if (hasAccessRoad) {
-      if (isBlank(form.roadsideKm)) missing.push('Roadside km Sprayed');
-      if (!form.roadsideHerbicides?.length) missing.push('Roadside Herbicides Used');
-      if (isBlank(form.roadsideLiters)) missing.push('Roadside Liters');
+      if (isBlank(form.roadsideKm)) missing.push('Access Road km Sprayed');
+      if (!form.roadsideHerbicides?.length) missing.push('Access Road Herbicides Used');
+      if (isBlank(form.roadsideLiters)) missing.push('Access Road Liters');
     }
     if (requireComments && !String(form.comments || '').trim()) missing.push('Comments');
     if (photos.length < 2) missing.push('Photos (both slots)');
@@ -2102,10 +2102,10 @@ export default function HerbicideLeaseSheet({
                 backgroundColor: '#111827',
                 border: '1px solid #374151',
               }}>
-                <h3 style={{ margin: '0 0 12px 0', fontSize: '1rem', color: '#f9fafb' }}>Roadside Details</h3>
+                <h3 style={{ margin: '0 0 12px 0', fontSize: '1rem', color: '#f9fafb' }}>Access Road Details</h3>
                 
                 <div style={{ marginBottom: '12px' }}>
-                  <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Roadside km Sprayed {form.roadsideKm === '' || form.roadsideKm === null || form.roadsideKm === undefined ? <span style={{ color: '#f87171', display: limitedRequiredFields ? 'none' : 'inline' }}>*</span> : null}</label>
+                  <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Access Road km Sprayed {form.roadsideKm === '' || form.roadsideKm === null || form.roadsideKm === undefined ? <span style={{ color: '#f87171', display: limitedRequiredFields ? 'none' : 'inline' }}>*</span> : null}</label>
                   <input
                     type="number"
                     value={form.roadsideKm}
@@ -2122,7 +2122,7 @@ export default function HerbicideLeaseSheet({
                 </div>
 
                 <div style={{ marginBottom: '12px' }}>
-                  <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '8px' }}>Roadside Herbicides Used {!form.roadsideHerbicides?.length && <span style={{ color: '#f87171', display: limitedRequiredFields ? 'none' : 'inline' }}>*</span>}</label>
+                  <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '8px' }}>Access Road Herbicides Used {!form.roadsideHerbicides?.length && <span style={{ color: '#f87171', display: limitedRequiredFields ? 'none' : 'inline' }}>*</span>}</label>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                     {herbicides.map(herb => (
                       <label key={herb.id} style={{
@@ -2149,7 +2149,7 @@ export default function HerbicideLeaseSheet({
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Roadside Liters {form.roadsideLiters === '' || form.roadsideLiters === null || form.roadsideLiters === undefined ? <span style={{ color: '#f87171', display: limitedRequiredFields ? 'none' : 'inline' }}>*</span> : null}</label>
+                    <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Access Road Liters {form.roadsideLiters === '' || form.roadsideLiters === null || form.roadsideLiters === undefined ? <span style={{ color: '#f87171', display: limitedRequiredFields ? 'none' : 'inline' }}>*</span> : null}</label>
                     <input
                       type="number"
                       value={form.roadsideLiters}
@@ -2165,7 +2165,7 @@ export default function HerbicideLeaseSheet({
                     />
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Roadside Area (ha) {!form.roadsideAreaTreated && <span style={{ color: '#f87171', display: limitedRequiredFields ? 'none' : 'inline' }}>*</span>}</label>
+                    <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Access Road Area (ha) {!form.roadsideAreaTreated && <span style={{ color: '#f87171', display: limitedRequiredFields ? 'none' : 'inline' }}>*</span>}</label>
                     <input
                       type="text"
                       value={form.roadsideAreaTreated}

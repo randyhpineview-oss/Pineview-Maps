@@ -137,9 +137,9 @@ def generate_lease_sheet_pdf(data: Dict[str, Any]) -> bytes:
     if data.get('isAccessRoad'):
         road_info = [
             ["ACCESS ROAD", ""],
-            ["Roadside Distance:", f"{data.get('roadsideKm', '')} km", ""],
-            ["Roadside Herbicides:", ', '.join(data.get('roadsideHerbicides', [])), ""],
-            ["Roadside Liters:", data.get('roadsideLiters', ''), "Roadside Area:", data.get('roadsideAreaTreated', '')],
+            ["Access Road Distance:", f"{data.get('roadsideKm', '')} km", ""],
+            ["Access Road Herbicides:", ', '.join(data.get('roadsideHerbicides', [])), ""],
+            ["Access Road Liters:", data.get('roadsideLiters', ''), "Access Road Area:", data.get('roadsideAreaTreated', '')],
         ]
         
         road_table = Table(road_info, colWidths=[1.5*inch, 2.5*inch, 1.5*inch, 2.5*inch])

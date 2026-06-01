@@ -287,11 +287,11 @@ export async function generateLeaseSheetPdf(data, photoDataUrls = []) {
   y += spH;
 
   // ── Access Road (if applicable) ──
-  if (data.isAccessRoad || (data.locationTypes || []).some(t => ['Access Road', 'Roadside'].includes(t))) {
+  if (data.isAccessRoad || (data.locationTypes || []).includes('Access Road')) {
     const roadH = 36;
     drawRect(marginL, y, contentW, roadH);
     doc.setFont('helvetica', 'bold');
-    doc.text('Roadside Details:', marginL + 3, y + 11);
+    doc.text('Access Road Details:', marginL + 3, y + 11);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
     const roadsideHerbDisplay = formatHerbicidesWithPcp(data.roadsideHerbicides, data.herbicidesLookup);
