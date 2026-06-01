@@ -1089,7 +1089,7 @@ export default function App() {
   // positions would be more misleading than a brief blank state. Realtime
   // keeps the in-memory array fresh after this initial load.
   const loadDevices = useCallback(async () => {
-    if (!window.navigator.onLine) return;
+    if (!window.navigator.onLine || !actualCanManagePins) return;
     try {
       const data = await api.listDevices({ includeInactive: true });
       setDevices(Array.isArray(data) ? data : []);
@@ -1099,7 +1099,7 @@ export default function App() {
       // don't show until the next successful load / Realtime event.
       console.warn('[DEVICES] Failed to load devices from server:', e);
     }
-  }, []);
+  }, [actualCanManagePins]);
 
   // Pipelines: cached from IndexedDB instantly, then refreshed from server
   // when online. Mirror of loadCachedSites/loadServerSites so the boot path
@@ -3046,6 +3046,7 @@ export default function App() {
     //    We just upsert; the map's TrucksLayer filters out is_active=false
     //    and rows missing a last_lat/last_lng on render.
     const onDevices = (payload) => {
+      if (!actualCanManagePins) return;
       const row = rowOf(payload);
       if (!row || row.id == null) return;
       setDevices((prev) => {
@@ -6016,7 +6017,7 @@ export default function App() {
             highlightedSprayRecordId={highlightedSprayRecordId}
             onSprayRecordClick={(record) => setHighlightedSprayRecordId(prev => prev === record.id ? null : record.id)}
             devices={devices}
-            showTrucksLayer={layers.trucks ?? true}
+            showTrucksLayer={canManagePins && (layers.trucks ?? true)}
             selectedDevice={selectedDevice}
             onSelectDevice={setSelectedDevice}
           />
@@ -6041,6 +6042,7 @@ export default function App() {
               onClearAll={() => setFilters(DEFAULT_FILTERS)}
               layers={layers}
               onLayerToggle={handleLayerToggle}
+              showTrucksOption={canManagePins}
             />
           </div>
         ) : null}

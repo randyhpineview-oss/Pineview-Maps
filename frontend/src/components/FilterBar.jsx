@@ -21,10 +21,18 @@ export default function FilterBar({
   onClearAll,
   layers = { lsd: true, water: true, quad_access: true, reclaimed: true, pipelines: true, trucks: true },
   onLayerToggle,
+  showTrucksOption = true,
 }) {
   const [focused, setFocused] = useState(false);
   const [layersOpen, setLayersOpen] = useState(false);
   const wrapRef = useRef(null);
+
+  const layerOptions = useMemo(() => {
+    if (!showTrucksOption) {
+      return LAYER_OPTIONS.filter((opt) => opt.key !== 'trucks');
+    }
+    return LAYER_OPTIONS;
+  }, [showTrucksOption]);
 
   const query = filters.search.trim().toLowerCase();
 
@@ -167,7 +175,7 @@ export default function FilterBar({
         </button>
         {layersOpen ? (
           <div style={{ padding: '0 0.35rem 0.5rem', display: 'grid', gap: '2px' }}>
-            {LAYER_OPTIONS.map(({ key, label }) => {
+            {layerOptions.map(({ key, label }) => {
               const isOn = layers[key] ?? true;
               return (
                 <div
