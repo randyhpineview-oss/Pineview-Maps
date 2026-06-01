@@ -9,24 +9,79 @@ import { Marker, OverlayView } from '@react-google-maps/api';
 // moving vehicle is easy to spot on a satellite view of a 160-acre lease
 // alongside a bunch of stationary pins.
 function truckSvg(color) {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="32" viewBox="0 0 48 32">
-    <ellipse cx="24" cy="29" rx="20" ry="2.2" fill="rgba(0,0,0,0.35)"/>
-    <path d="M3 20 L3 13 L20 13 L24 7 L36 7 L41 13 L45 13 L45 20 L42 20 A4.5 4.5 0 0 0 33 20 L15 20 A4.5 4.5 0 0 0 6 20 Z"
-          fill="${color}" stroke="#0f172a" stroke-width="1.6" stroke-linejoin="round"/>
-    <path d="M24 9 L35 9 L39 13 L26 13 Z" fill="#ffffff" fill-opacity="0.78"/>
-    <circle cx="10.5" cy="22" r="4.5" fill="#1f2937" stroke="#0f172a" stroke-width="1.2"/>
-    <circle cx="10.5" cy="22" r="2.2" fill="#9ca3af"/>
-    <circle cx="37.5" cy="22" r="4.5" fill="#1f2937" stroke="#0f172a" stroke-width="1.2"/>
-    <circle cx="37.5" cy="22" r="2.2" fill="#9ca3af"/>
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="52" height="32" viewBox="0 0 52 32">
+    <!-- Ground Shadow -->
+    <ellipse cx="26" cy="29" rx="22" ry="2.5" fill="rgba(0,0,0,0.35)"/>
+    
+    <!-- Truck Body (Silverado Crew Cab profile) -->
+    <path d="M 2 20 
+             L 2 13.5 
+             L 16 13.5 
+             L 18.5 7.8 
+             L 33 7.8 
+             L 38 13.5 
+             L 47.5 13.5 
+             L 48.5 14 
+             L 48.5 19.5 
+             L 47 20 
+             L 45.5 20 
+             A 4.8 4.8 0 0 0 36.5 20 
+             L 16.5 20 
+             A 4.8 4.8 0 0 0 7.5 20 
+             Z" 
+          fill="${color}" stroke="#0f172a" stroke-width="1.5" stroke-linejoin="round"/>
+          
+    <!-- Black Fenders / Wheel Arches -->
+    <path d="M 6.5 20 A 5.5 5.5 0 0 1 18.5 20" fill="none" stroke="#1e293b" stroke-width="1.8"/>
+    <path d="M 35.5 20 A 5.5 5.5 0 0 1 47.5 20" fill="none" stroke="#1e293b" stroke-width="1.8"/>
+
+    <!-- Crew Cab Windows (divided, dark tinted like photo) -->
+    <path d="M 19 9 
+             L 25 9 
+             L 25 13 
+             L 17.5 13 
+             Z" 
+          fill="#1f2937" fill-opacity="0.88" stroke="#0f172a" stroke-width="0.8"/>
+    <path d="M 26 9 
+             L 32.2 9 
+             L 36.2 13 
+             L 26 13 
+             Z" 
+          fill="#1f2937" fill-opacity="0.88" stroke="#0f172a" stroke-width="0.8"/>
+
+    <!-- Aggressive Black Front Grille / Bumper -->
+    <path d="M 46.5 13.5 L 48.5 14 L 48.5 18 L 47 19.5 L 45.5 19.5 Z" fill="#1e293b" stroke="#0f172a" stroke-width="1"/>
+    <!-- Front C-clamp LED Headlight -->
+    <path d="M 47.5 14.5 L 47.5 17 M 46.5 15.5 L 47.5 15.5" stroke="#ffffff" stroke-width="1.2"/>
+
+    <!-- Silverado Hood Scoop Line -->
+    <path d="M 39.5 13.5 L 43.5 13.5 L 42.5 12.5 Z" fill="#0f172a" fill-opacity="0.6"/>
+
+    <!-- Big Black dual-arm towing mirrors (from the photo!) -->
+    <path d="M 31.5 12 L 29 12 M 31.5 11 L 29 11" stroke="#0f172a" stroke-width="1.2"/>
+    <rect x="28" y="9.5" width="2" height="4.5" rx="0.5" fill="#0f172a" stroke="#0f172a" stroke-width="0.5"/>
+
+    <!-- Black Running Boards / Side Steps -->
+    <rect x="17.5" y="20.5" width="18" height="1.2" rx="0.5" fill="#0f172a"/>
+
+    <!-- Off-road Black Wheels (Rims + Tires) -->
+    <!-- Rear Wheel -->
+    <circle cx="12" cy="21.5" r="5" fill="#111827" stroke="#0f172a" stroke-width="1.5"/>
+    <circle cx="12" cy="21.5" r="3.2" fill="#1f2937"/>
+    <circle cx="12" cy="21.5" r="1.2" fill="#9ca3af"/>
+    
+    <!-- Front Wheel -->
+    <circle cx="41.5" cy="21.5" r="5" fill="#111827" stroke="#0f172a" stroke-width="1.5"/>
+    <circle cx="41.5" cy="21.5" r="3.2" fill="#1f2937"/>
+    <circle cx="41.5" cy="21.5" r="1.2" fill="#9ca3af"/>
   </svg>`;
 }
 
 function buildTruckIcon(colorHex) {
   const svg = truckSvg(colorHex || '#1E88E5');
   // Bottom-center anchor so the truck sits ON its position instead of
-  // hovering above it. Without this the wheels float 16px north of the
-  // actual GPS coordinate.
-  const w = 48;
+  // hovering above it.
+  const w = 52;
   const h = 32;
   return {
     url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
