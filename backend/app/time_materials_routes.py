@@ -1370,12 +1370,14 @@ def derive_row_from_spray_record(record) -> dict:
         # pin_type → display-name map. The fallback keeps legacy rows that
         # predate the mainSiteType key rendering the same as before.
         site_type = data.get("mainSiteType") or _site_type_from_site(site)
+    
+    area_val = _to_float(data.get("totalDistanceSprayed")) if (is_pipeline_sheet or site_type == "Roadside") else _to_float(data.get("areaTreated"))
     return {
         "location": location,
         "site_type": site_type,
         "herbicides": _herbicides_text(data.get("herbicidesUsed") or []),
         "liters_used": _to_float(data.get("totalLiters")),
-        "area_ha": _to_float(data.get("areaTreated")),
+        "area_ha": area_val,
     }
 
 

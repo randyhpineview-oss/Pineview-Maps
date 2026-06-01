@@ -254,17 +254,20 @@ def _iter_output_rows(record, is_pipeline: bool, split_roadside: bool) -> Iterat
                 "herbicides_source": data.get("roadsideHerbicides") or [],
             }
     else:
+        main_site_type = data.get("mainSiteType") or ""
+        site_type_for_units = main_site_type if main_site_type in ("Pipeline", "Roadside") else source_type
+        area_val = _to_float(data.get("totalDistanceSprayed")) if main_site_type in ("Pipeline", "Roadside") else _to_float(data.get("areaTreated"))
         yield {
             "_record": record,
             "_data": data,
-            "_site_type_for_units": source_type,
+            "_site_type_for_units": site_type_for_units,
             "_is_roadside_row": False,
             "source_type": source_type,
             "lsd_or_pipeline": lsd_or_pipeline,
             "customer": customer,
             "area": area,
-            "main_site_type": data.get("mainSiteType") or "",
-            "area_ha_for_render": _to_float(data.get("areaTreated")),
+            "main_site_type": main_site_type,
+            "area_ha_for_render": area_val,
             "total_liters": _to_float(data.get("totalLiters")),
             "herbicides_source": data.get("herbicidesUsed") or [],
         }

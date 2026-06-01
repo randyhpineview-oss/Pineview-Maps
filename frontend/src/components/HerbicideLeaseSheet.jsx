@@ -157,6 +157,10 @@ export default function HerbicideLeaseSheet({
     pipelineTypes.includes(mainSiteType),
   [mainSiteType, pipelineTypes]);
 
+  const isRoadsideSite = useMemo(() =>
+    mainSiteType === 'Roadside',
+  [mainSiteType]);
+
   // List of required fields that are currently empty. Used both to disable the
   // Preview button and to surface a specific error message when the worker
   // taps it anyway.
@@ -189,7 +193,9 @@ export default function HerbicideLeaseSheet({
     }
     if (!form.herbicidesUsed?.length) missing.push('Herbicides Used');
     if (isBlank(form.totalLiters)) missing.push('Total Liters');
-    if (hasPipeline && isBlank(form.totalDistanceSprayed)) missing.push('Total Distance (km)');
+    if ((hasPipeline || isRoadsideSite) && isBlank(form.totalDistanceSprayed)) {
+      missing.push(isRoadsideSite ? 'Roadside km Sprayed' : 'Total Distance (km)');
+    }
     if (hasAccessRoad) {
       if (isBlank(form.roadsideKm)) missing.push('Roadside km Sprayed');
       if (!form.roadsideHerbicides?.length) missing.push('Roadside Herbicides Used');
@@ -198,7 +204,7 @@ export default function HerbicideLeaseSheet({
     if (requireComments && !String(form.comments || '').trim()) missing.push('Comments');
     if (photos.length < 2) missing.push('Photos (both slots)');
     return missing;
-  }, [form, hasPipeline, hasAccessRoad, mainSiteType, photos, requireComments, limitedRequiredFields]);
+  }, [form, hasPipeline, isRoadsideSite, hasAccessRoad, mainSiteType, photos, requireComments, limitedRequiredFields]);
 
   // Auto-populate from site, pipeline, draft, or editing record (run once)
   useEffect(() => {
@@ -2033,7 +2039,7 @@ export default function HerbicideLeaseSheet({
                 The Metres input only shows when a pipeline-flagged location
                 type is selected; for wellsite/roadside/etc. sprays it would
                 just confuse workers into thinking it's required. */}
-            <div style={{ display: 'grid', gridTemplateColumns: hasPipeline ? '1fr 1fr' : '1fr', gap: '12px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: (hasPipeline || isRoadsideSite) ? '1fr 1fr' : '1fr', gap: '12px' }}>
               <div>
                 <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Total Liters {form.totalLiters === '' || form.totalLiters === null || form.totalLiters === undefined ? <span style={{ color: '#f87171', display: limitedRequiredFields ? 'none' : 'inline' }}>*</span> : null}</label>
                 <input
@@ -2051,9 +2057,9 @@ export default function HerbicideLeaseSheet({
                   }}
                 />
               </div>
-              {hasPipeline && (
+              {(hasPipeline || isRoadsideSite) && (
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>Total Distance (km) {form.totalDistanceSprayed === '' || form.totalDistanceSprayed === null || form.totalDistanceSprayed === undefined ? <span style={{ color: '#f87171', display: limitedRequiredFields ? 'none' : 'inline' }}>*</span> : null}</label>
+                  <label style={{ display: 'block', fontSize: '0.875rem', color: '#9ca3af', marginBottom: '4px' }}>{isRoadsideSite ? 'Roadside km Sprayed' : 'Total Distance (km)'} {form.totalDistanceSprayed === '' || form.totalDistanceSprayed === null || form.totalDistanceSprayed === undefined ? <span style={{ color: '#f87171', display: limitedRequiredFields ? 'none' : 'inline' }}>*</span> : null}</label>
                   <input
                     type="number"
                     value={form.totalDistanceSprayed}
