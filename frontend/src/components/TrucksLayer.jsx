@@ -144,12 +144,11 @@ export default function TrucksLayer({
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
-    if (!selectedDevice) return;
     const interval = setInterval(() => {
       setTick((t) => t + 1);
     }, 30000);
     return () => clearInterval(interval);
-  }, [selectedDevice]);
+  }, []);
 
   if (!visible) return null;
 
@@ -206,25 +205,35 @@ export default function TrucksLayer({
         );
       })}
 
-      {activePopup ? (
-        <OverlayView
-          position={{ lat: activePopup.last_lat, lng: activePopup.last_lng }}
-          mapPaneName={OverlayView.OVERLAY_LAYER}
-          getPixelPositionOffset={(w, h) => ({ x: -(w / 2), y: -(h / 2) })}
-        >
-          <div
-            style={{
-              width: '40px',
-              height: '40px',
-              borderRadius: '50%',
-              background: `rgba(${hexToRgb(activePopup.color_hex)}, 0.22)`,
-              border: `2px solid ${activePopup.color_hex}`,
-              animation: 'truckPulse 2.2s infinite ease-out',
-              pointerEvents: 'none',
-            }}
-          />
-        </OverlayView>
-      ) : null}
+      {/* Render a pulsing circle for any truck active/seen in the last 15 minutes.
+          If selected, the pulse is larger (60px) to match the enlarged truck icon.
+          Otherwise, it is smaller (30px). */}
+      {renderable.map((device) => {
+        const isRecent = device.last_seen_at && (Date.now() - new Date(device.last_seen_at).getTime() < 15 * 60000);
+        if (!isRecent) return null;
+        const isSelected = selectedDevice && selectedDevice.id === device.id;
+        const size = isSelected ? 60 : 30;
+        return (
+          <OverlayView
+            key={`pulse-${device.id}`}
+            position={{ lat: device.last_lat, lng: device.last_lng }}
+            mapPaneName={OverlayView.OVERLAY_LAYER}
+            getPixelPositionOffset={() => ({ x: -(size / 2), y: -(size / 2) })}
+          >
+            <div
+              style={{
+                width: `${size}px`,
+                height: `${size}px`,
+                borderRadius: '50%',
+                background: `rgba(${hexToRgb(device.color_hex)}, 0.22)`,
+                border: `2px solid ${device.color_hex}`,
+                animation: 'truckPulse 2.2s infinite ease-out',
+                pointerEvents: 'none',
+              }}
+            />
+          </OverlayView>
+        );
+      })}
 
       {activePopup ? (
         <OverlayView
