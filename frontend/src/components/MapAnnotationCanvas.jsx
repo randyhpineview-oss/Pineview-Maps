@@ -128,6 +128,7 @@ export default function MapAnnotationCanvas({
   // maptype and pipes them through the same Static Maps flow.
   const [isPickingMapLocation, setIsPickingMapLocation] = useState(false);
   const pickerMapRef = useRef(null);
+  const pickerContainerRef = useRef(null);
 
   // Display zoom for the drawing canvas itself. 1.0 = fit-in-viewport;
   // higher values scale the canvas CSS size up so the worker can scroll
@@ -466,7 +467,7 @@ export default function MapAnnotationCanvas({
   // `coords` (optional) lets the worker re-capture with a different zoom
   // without re-prompting for geolocation each time. First call leaves it
   // null → we ask the browser; subsequent calls reuse the cached point.
-  const captureMapFromGoogle = async (coords, zoomOverride) => {
+  const captureMapFromGoogle = async (coords, zoomOverride, reqW = 640, reqH = 640) => {
     if (!GOOGLE_MAPS_API_KEY) {
       setCaptureError('Google Maps API key is not configured on this build.');
       return;
@@ -480,14 +481,12 @@ export default function MapAnnotationCanvas({
         setCaptureCoords(pt);
       }
       const zoom = zoomOverride ?? captureZoom;
-      // 640×640 @ 2x = 1280×1280 native pixels — sharp on retina + big
-      // enough that strokes don't bleed across small features. The free
-      // Static Maps tier supports up to 640×640 base; `scale=2` doubles
-      // it for retina without extra request cost.
+      // Scale=2 doubles native pixels for retina. Static Maps max is 640
+      // per side on the free tier. reqW/reqH are pre-clamped by the caller.
       const params = new URLSearchParams({
         center: `${pt.lat},${pt.lng}`,
         zoom: String(zoom),
-        size: '640x640',
+        size: `${reqW}x${reqH}`,
         scale: '2',
         maptype: captureType,
         key: GOOGLE_MAPS_API_KEY,
@@ -517,8 +516,9 @@ export default function MapAnnotationCanvas({
 
   // Capture whatever the worker is currently looking at in the map picker.
   // Reads the live map's center + zoom from the underlying google.maps.Map
-  // instance (held in pickerMapRef) and pipes those through the same
-  // Static Maps pipeline as the "use my location" button.
+  // instance and uses the picker container's actual pixel dimensions to
+  // request a Static Maps image with the same aspect ratio — so the
+  // screenshot matches what was visible in the picker.
   const captureFromPicker = async () => {
     const map = pickerMapRef.current;
     if (!map) return;
@@ -526,12 +526,24 @@ export default function MapAnnotationCanvas({
     const zoom = map.getZoom();
     if (!center || zoom == null) return;
     const pt = { lat: center.lat(), lng: center.lng() };
-    // Cache the picked coords so the post-capture zoom +/− buttons can
-    // re-fetch without re-opening the picker.
     setCaptureCoords(pt);
     setCaptureZoom(zoom);
     setIsPickingMapLocation(false);
-    await captureMapFromGoogle(pt, zoom);
+    // Match the aspect ratio of the picker viewport. Static Maps max is
+    // 640px per side (free tier); scale=2 doubles to retina resolution.
+    const container = pickerContainerRef.current;
+    const containerW = container?.clientWidth  || 640;
+    const containerH = container?.clientHeight || 640;
+    const aspect = containerW / containerH;
+    let reqW, reqH;
+    if (aspect >= 1) {
+      reqW = 640;
+      reqH = Math.max(100, Math.round(640 / aspect));
+    } else {
+      reqH = 640;
+      reqW = Math.max(100, Math.round(640 * aspect));
+    }
+    await captureMapFromGoogle(pt, zoom, reqW, reqH);
   };
 
   // Recenter the picker on the worker's current GPS. Best-effort — if
@@ -815,54 +827,45 @@ export default function MapAnnotationCanvas({
           flexShrink: 0,
         }}>
           {mode === 'map' && GOOGLE_MAPS_API_KEY && (
-            <div style={{ marginBottom: 10, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-              {/* Primary path — opens the interactive picker so the worker
-                  can pan/zoom Google Maps to ANY location (not just their
-                  current GPS) and grab the framing they want. */}
+            <div style={{ marginBottom: 8, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
               <button
                 onClick={() => { setCaptureError(null); setIsPickingMapLocation(true); }}
                 style={{
-                  padding: '10px 14px',
+                  padding: '7px 12px',
                   background: '#22c55e', color: 'white',
                   border: 'none', borderRadius: 6, cursor: 'pointer',
-                  fontSize: '0.9rem', fontWeight: 600,
+                  fontSize: '0.85rem', fontWeight: 600,
                 }}
               >
                 🗺️ Pick on Google Maps
               </button>
-              {/* Secondary quick-path — one-tap "use my GPS" for workers
-                  who are already on-site and just want the framing
-                  centred on their phone. */}
               <button
                 onClick={() => captureMapFromGoogle()}
                 disabled={isCapturing}
                 style={{
-                  padding: '10px 14px',
+                  padding: '7px 12px',
                   background: isCapturing ? '#374151' : '#1f2937',
                   color: '#f9fafb', border: '1px solid #374151', borderRadius: 6,
                   cursor: isCapturing ? 'wait' : 'pointer',
-                  fontSize: '0.9rem',
+                  fontSize: '0.85rem',
                 }}
               >
                 {isCapturing ? 'Capturing…' : '📍 Use my location'}
               </button>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#9ca3af', fontSize: '0.8rem' }}>
-                Type:
-                <select
-                  value={captureType}
-                  onChange={e => setCaptureType(e.target.value)}
-                  style={{
-                    background: '#111827', color: '#f9fafb',
-                    border: '1px solid #374151', borderRadius: 4,
-                    padding: '4px 6px', fontSize: '0.8rem',
-                  }}
-                >
-                  <option value="satellite">Satellite</option>
-                  <option value="hybrid">Hybrid (satellite + labels)</option>
-                  <option value="roadmap">Road Map</option>
-                  <option value="terrain">Terrain</option>
-                </select>
-              </label>
+              <select
+                value={captureType}
+                onChange={e => setCaptureType(e.target.value)}
+                style={{
+                  background: '#111827', color: '#f9fafb',
+                  border: '1px solid #374151', borderRadius: 4,
+                  padding: '5px 6px', fontSize: '0.8rem',
+                }}
+              >
+                <option value="satellite">Satellite</option>
+                <option value="hybrid">Hybrid</option>
+                <option value="roadmap">Road Map</option>
+                <option value="terrain">Terrain</option>
+              </select>
             </div>
           )}
           <label style={{
@@ -933,25 +936,24 @@ export default function MapAnnotationCanvas({
           background: '#0f172a',
         }}>
           <div style={{
-            padding: '8px 12px', background: '#1f2937',
+            padding: '5px 10px', background: '#1f2937',
             borderBottom: '1px solid #374151',
-            display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center',
-            flexShrink: 0, fontSize: '0.85rem', color: '#9ca3af',
+            display: 'flex', gap: 6, alignItems: 'center',
+            flexShrink: 0, fontSize: '0.78rem', color: '#9ca3af',
           }}>
-            <span style={{ color: '#f9fafb', fontWeight: 600 }}>Pick a location</span>
-            <span>Pan + zoom the map, then tap Capture.</span>
+            <span style={{ color: '#d1d5db', marginRight: 2 }}>Pan &amp; zoom, then capture</span>
             <div style={{ flex: 1 }} />
             <button onClick={recenterPickerOnGps} style={{
-              padding: '6px 10px', background: '#374151', color: '#f9fafb',
-              border: 'none', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer',
-            }}>📍 My location</button>
+              padding: '4px 8px', background: '#374151', color: '#f9fafb',
+              border: 'none', borderRadius: 5, fontSize: '0.75rem', cursor: 'pointer',
+            }}>📍 Me</button>
             <select
               value={captureType}
               onChange={e => setCaptureType(e.target.value)}
               style={{
                 background: '#111827', color: '#f9fafb',
                 border: '1px solid #374151', borderRadius: 4,
-                padding: '4px 6px', fontSize: '0.8rem',
+                padding: '3px 5px', fontSize: '0.75rem',
               }}
             >
               <option value="satellite">Satellite</option>
@@ -961,7 +963,7 @@ export default function MapAnnotationCanvas({
             </select>
           </div>
 
-          <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+          <div ref={pickerContainerRef} style={{ flex: 1, minHeight: 0, position: 'relative' }}>
             {mapsApiLoadError ? (
               <div style={{
                 padding: 20, color: '#fee2e2', background: '#7f1d1d',
@@ -999,7 +1001,7 @@ export default function MapAnnotationCanvas({
           )}
 
           <div style={{
-            display: 'flex', gap: 8, padding: 12,
+            display: 'flex', gap: 6, padding: '8px 10px',
             background: '#1f2937', borderTop: '1px solid #374151',
             flexShrink: 0,
           }}>
@@ -1007,10 +1009,10 @@ export default function MapAnnotationCanvas({
               onClick={captureFromPicker}
               disabled={isCapturing || !isMapsApiLoaded}
               style={{
-                flex: 1, padding: 12,
+                flex: 1, padding: '9px 12px',
                 background: isCapturing ? '#374151' : '#22c55e',
-                color: 'white', border: 'none', borderRadius: 8,
-                fontWeight: 600, fontSize: '1rem',
+                color: 'white', border: 'none', borderRadius: 7,
+                fontWeight: 600, fontSize: '0.9rem',
                 cursor: isCapturing ? 'wait' : 'pointer',
               }}
             >
@@ -1019,8 +1021,8 @@ export default function MapAnnotationCanvas({
             <button
               onClick={() => setIsPickingMapLocation(false)}
               style={{
-                padding: '12px 18px', background: '#374151', color: '#f9fafb',
-                border: 'none', borderRadius: 8, fontSize: '1rem', cursor: 'pointer',
+                padding: '9px 14px', background: '#374151', color: '#f9fafb',
+                border: 'none', borderRadius: 7, fontSize: '0.9rem', cursor: 'pointer',
               }}
             >Back</button>
           </div>
