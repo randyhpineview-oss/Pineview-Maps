@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, status
@@ -224,7 +224,7 @@ def create_device(
         assigned_user_id=payload.assigned_user_id,
         assigned_user_name=assigned_name,
         token_hash=token_hash,
-        token_rotated_at=datetime.utcnow(),
+        token_rotated_at=datetime.now(timezone.utc),
     )
     _stamp_create(device, current_user)
     db.add(device)
@@ -286,7 +286,7 @@ def rotate_device_token(
 
     raw_token = _mint_token()
     device.token_hash = _hash_token(raw_token)
-    device.token_rotated_at = datetime.utcnow()
+    device.token_rotated_at = datetime.now(timezone.utc)
     _stamp_update(device, current_user)
     db.commit()
     db.refresh(device)
@@ -369,12 +369,12 @@ def _parse_owntracks_timestamp(tst: Any) -> datetime:
     still creates an ingestable row instead of 400ing the device."""
     try:
         if tst is None:
-            return datetime.utcnow()
+            return datetime.now(timezone.utc)
         # Both 1.7.x (int seconds) and some older clients (str) get coerced
         # the same way.
-        return datetime.utcfromtimestamp(int(float(tst)))
+        return datetime.fromtimestamp(int(float(tst)), tz=timezone.utc)
     except (TypeError, ValueError, OverflowError, OSError):
-        return datetime.utcnow()
+        return datetime.now(timezone.utc)
 
 
 @ingest_router.post("/ping")
