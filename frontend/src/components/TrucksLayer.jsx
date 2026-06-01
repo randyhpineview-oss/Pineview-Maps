@@ -221,13 +221,16 @@ export default function TrucksLayer({
         const yOffset = -(size / 2) - (h / 2 - anchorOffset);
         return (
           <OverlayView
-            key={`pulse-${device.id}-${isSelected ? 'selected' : 'normal'}`}
+            key={`pulse-${device.id}`}
             position={{ lat: device.last_lat, lng: device.last_lng }}
             mapPaneName={OverlayView.OVERLAY_LAYER}
-            getPixelPositionOffset={() => ({ x: xOffset, y: yOffset })}
+            getPixelPositionOffset={() => ({ x: 0, y: 0 })}
           >
             <div
               style={{
+                position: 'absolute',
+                left: `${xOffset}px`,
+                top: `${yOffset}px`,
                 width: `${size}px`,
                 height: `${size}px`,
                 borderRadius: '50%',
