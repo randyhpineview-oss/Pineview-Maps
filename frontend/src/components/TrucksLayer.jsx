@@ -77,17 +77,24 @@ function truckSvg(color) {
   </svg>`;
 }
 
+function hexToRgb(hex) {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result
+    ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}`
+    : '59, 130, 246';
+}
+
 function buildTruckIcon(colorHex, isSelected) {
   const svg = truckSvg(colorHex || '#1E88E5');
   // Bottom-center anchor so the truck sits ON its position instead of
   // hovering above it.
-  // Selected truck is full size (52x32). Unselected is half size (26x16).
-  const w = isSelected ? 52 : 26;
-  const h = isSelected ? 32 : 16;
+  // Selected truck is full size (64x40). Unselected is half size (32x20).
+  const w = isSelected ? 64 : 32;
+  const h = isSelected ? 40 : 20;
   return {
     url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
     scaledSize: window.google ? new window.google.maps.Size(w, h) : undefined,
-    anchor: window.google ? new window.google.maps.Point(w / 2, h - (isSelected ? 4 : 2)) : undefined,
+    anchor: window.google ? new window.google.maps.Point(w / 2, h - (isSelected ? 5 : 2.5)) : undefined,
   };
 }
 
@@ -164,6 +171,19 @@ export default function TrucksLayer({
 
   return (
     <>
+      <style>{`
+        @keyframes truckPulse {
+          0% {
+            transform: scale(0.5);
+            opacity: 0.85;
+          }
+          100% {
+            transform: scale(2.2);
+            opacity: 0;
+          }
+        }
+      `}</style>
+
       {renderable.map((device) => {
         const isSelected = selectedDevice && selectedDevice.id === device.id;
         // Key includes color_hex and selection status so a toggle triggers a clean
@@ -189,10 +209,30 @@ export default function TrucksLayer({
       {activePopup ? (
         <OverlayView
           position={{ lat: activePopup.last_lat, lng: activePopup.last_lng }}
+          mapPaneName={OverlayView.OVERLAY_LAYER}
+          getPixelPositionOffset={(w, h) => ({ x: -(w / 2), y: -(h / 2) })}
+        >
+          <div
+            style={{
+              width: '40px',
+              height: '40px',
+              borderRadius: '50%',
+              background: `rgba(${hexToRgb(activePopup.color_hex)}, 0.22)`,
+              border: `2px solid ${activePopup.color_hex}`,
+              animation: 'truckPulse 2.2s infinite ease-out',
+              pointerEvents: 'none',
+            }}
+          />
+        </OverlayView>
+      ) : null}
+
+      {activePopup ? (
+        <OverlayView
+          position={{ lat: activePopup.last_lat, lng: activePopup.last_lng }}
           mapPaneName={OverlayView.FLOAT_PANE}
           // Center horizontally, anchor above the truck so the tooltip
           // doesn't cover the marker the user just tapped.
-          getPixelPositionOffset={(w, h) => ({ x: -(w / 2), y: -(h + 36) })}
+          getPixelPositionOffset={(w, h) => ({ x: -(w / 2), y: -(h + 44) })}
         >
           <div
             style={{
