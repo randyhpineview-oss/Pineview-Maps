@@ -263,10 +263,9 @@ function CopyRow({ label, value, onCopy, mono = false }) {
  * Props:
  *   - busy: global busy flag (admin-wide busy state)
  */
-export default function DeviceAdmin({ busy = false }) {
+export default function DeviceAdmin({ busy = false, devices = [], onRefreshDevices }) {
   const { confirm, alert } = useDialog();
 
-  const [devices, setDevices] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   // Locally fetched — see component docstring for why this can't reuse
@@ -302,18 +301,7 @@ export default function DeviceAdmin({ busy = false }) {
 
   const usedColors = useMemo(() => devices.map((d) => d.color_hex), [devices]);
 
-  async function loadDevices() {
-    setLoading(true);
-    setError(null);
-    try {
-      const rows = await api.listDevices({ includeInactive: true });
-      setDevices(Array.isArray(rows) ? rows : []);
-    } catch (err) {
-      setError(err.message || 'Failed to load devices');
-    } finally {
-      setLoading(false);
-    }
-  }
+
 
   async function loadAssignableUsers() {
     // Failure here is non-blocking — the form still works, the dropdown
@@ -328,7 +316,7 @@ export default function DeviceAdmin({ busy = false }) {
   }
 
   useEffect(() => {
-    loadDevices();
+    onRefreshDevices?.();
     loadAssignableUsers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -370,7 +358,7 @@ export default function DeviceAdmin({ busy = false }) {
       setNewLabel('');
       setNewAssignedUserId('');
       setShowAddForm(false);
-      await loadDevices();
+      await onRefreshDevices?.();
     } catch (err) {
       await alert({
         title: 'Could not create device',
@@ -395,7 +383,7 @@ export default function DeviceAdmin({ busy = false }) {
       }
       await api.updateDevice(deviceId, payload);
       setEditingId(null);
-      await loadDevices();
+      await onRefreshDevices?.();
     } catch (err) {
       await alert({
         title: 'Could not update device',
@@ -415,7 +403,7 @@ export default function DeviceAdmin({ busy = false }) {
     try {
       const resp = await api.rotateDeviceToken(device.id);
       setTokenReveal({ device, rawToken: resp.raw_token });
-      await loadDevices();
+      await onRefreshDevices?.();
     } catch (err) {
       await alert({ title: 'Could not rotate token', message: err.message || String(err) });
     }
@@ -434,7 +422,7 @@ export default function DeviceAdmin({ busy = false }) {
     if (!ok) return;
     try {
       await api.deleteDevice(device.id, { hard });
-      await loadDevices();
+      await onRefreshDevices?.();
     } catch (err) {
       await alert({ title: 'Could not remove device', message: err.message || String(err) });
     }

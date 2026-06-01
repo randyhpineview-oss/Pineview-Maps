@@ -106,6 +106,8 @@ export default function AdminPanel({
   onDeletePermanent,
   onSelectSite,
   currentUserEmail,
+  devices = [],
+  onRefreshDevices,
   // Pipeline props
   pendingPipelines = [],
   onApprovePipeline,
@@ -674,10 +676,9 @@ export default function AdminPanel({
         {/* Truck Tracking sits next to User Management because device admin
             (register iPad, assign driver, rotate token) is conceptually a
             people/fleet operation rather than a data-import or pin-management
-            one. DeviceAdmin self-loads its own users + devices lists so the
-            parent doesn't need to thread additional props. */}
+            one. DeviceAdmin renders using the passed real-time devices list. */}
         <CollapsibleSection title="Truck Tracking (iPads)" defaultOpen={false}>
-          <DeviceAdmin busy={busy} />
+          <DeviceAdmin busy={busy} devices={devices} onRefreshDevices={onRefreshDevices} />
         </CollapsibleSection>
 
         <CollapsibleSection title="Lookup Tables" defaultOpen={false}>

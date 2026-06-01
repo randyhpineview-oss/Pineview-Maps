@@ -1090,7 +1090,7 @@ export default function App() {
   const loadDevices = useCallback(async () => {
     if (!window.navigator.onLine) return;
     try {
-      const data = await api.listDevices();
+      const data = await api.listDevices({ includeInactive: true });
       setDevices(Array.isArray(data) ? data : []);
     } catch (e) {
       // Soft-fail: an offline boot or transient 5xx shouldn't blow up
@@ -6809,12 +6809,8 @@ export default function App() {
             <Suspense fallback={<div className="small-text" style={{ padding: '1rem' }}>Loading admin tools…</div>}>
             <AdminPanel
               visible={true}
-              // Crew leads see ONLY pin-related sections in the Admin
-              // panel — no User Management, Lookups, Truck Tracking,
-              // KML import, Bulk Reset, or T&M/hydroseed/quote recent
-              // deletes. AdminPanel reads this flag and strips those
-              // sections defensively in case any handler/list is
-              // accidentally passed.
+              devices={devices}
+              onRefreshDevices={loadDevices}
               canOnlyManagePins={isCrewLeadOnly}
               pendingSites={pendingSites}
               deletedSites={deletedSites}
