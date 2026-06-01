@@ -670,6 +670,36 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/db-check")
+def db_check(db: Session = Depends(get_db)):
+    if db is None:
+        return {"error": "db is None"}
+    try:
+        # Query constraints on time_materials_rows
+        constraints_result = db.execute(text("""
+            SELECT conname, pg_get_constraintdef(oid)
+            FROM pg_constraint
+            WHERE conrelid = 'time_materials_rows'::regclass;
+        """))
+        constraints = [{"name": row[0], "definition": row[1]} for row in constraints_result.fetchall()]
+        
+        # Query sequences
+        seq_result = db.execute(text("""
+            SELECT c.relname
+            FROM pg_class c
+            WHERE c.relkind = 'S' AND c.relname IN ('herb_lease_seq', 'tm_ticket_seq', 'ticket_seq');
+        """))
+        sequences = [row[0] for row in seq_result.fetchall()]
+        
+        return {
+            "constraints": constraints,
+            "sequences": sequences
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+
 @app.api_route("/health", methods=["GET", "HEAD"])
 def health_check() -> dict[str, str]:
     return {
