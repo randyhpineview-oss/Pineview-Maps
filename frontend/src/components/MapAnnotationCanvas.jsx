@@ -598,30 +598,34 @@ export default function MapAnnotationCanvas({
           the worker can ALWAYS find the close button no matter how small
           their screen or how full the tool toolbar gets below. */}
       <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '10px 14px', background: '#1f2937',
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '8px 12px', background: '#1f2937',
         borderBottom: '1px solid #374151', flexShrink: 0,
       }}>
-        <div style={{ color: '#f9fafb', fontWeight: 600, fontSize: '1rem' }}>
+        <div style={{ color: '#f9fafb', fontWeight: 600, fontSize: '0.95rem', marginRight: 4 }}>
           Annotate
         </div>
-        {/* Prominent close button — minimum 44 × 44 hit area, distinct
-            background, sits in the top-right of every state (toolbar,
-            map picker, canvas) so the worker always has a guaranteed
-            way out even when the bottom action bar gets covered by the
-            mobile keyboard / system gesture bar. */}
+        <div style={{ flex: 1 }} />
+        {/* Save + Discard moved to header so the canvas has full height */}
+        <button
+          onClick={handleSave}
+          style={{
+            background: '#22c55e', color: 'white',
+            border: 'none', borderRadius: 6,
+            padding: '6px 14px', cursor: 'pointer',
+            fontSize: '0.85rem', fontWeight: 700,
+          }}
+        >✓ Save</button>
         <button
           onClick={onCancel}
-          aria-label="Close annotation"
+          aria-label="Discard annotation"
           style={{
             background: '#7f1d1d', color: 'white',
             border: 'none', borderRadius: 6,
-            minWidth: 44, minHeight: 36,
             padding: '6px 12px', cursor: 'pointer',
-            fontSize: '1rem', fontWeight: 600,
-            display: 'inline-flex', alignItems: 'center', gap: 6,
+            fontSize: '0.85rem', fontWeight: 600,
           }}
-        >✕ Close</button>
+        >✕ Discard</button>
       </div>
 
       {/* ── Compact mobile-first tool bar ──
@@ -1104,32 +1108,9 @@ export default function MapAnnotationCanvas({
         </div>
       )}
 
-      {/* ── Bottom action bar ──
-          `flexShrink: 0` so the buttons stay anchored to the bottom
-          regardless of canvas height — the original "can't find Cancel"
-          bug was caused by this row getting squeezed out. The bottom
-          padding uses `env(safe-area-inset-bottom)` so the buttons clear
-          the iOS gesture bar / Android nav bar on phones with a notch.
-          The Save / Discard buttons are duplicated up in the header
-          (Close) so workers always have *some* exit even if a virtual
-          keyboard hides this row. */}
-      <div style={{
-        display: 'flex', gap: 6, padding: '8px 10px',
-        paddingBottom: 'calc(8px + env(safe-area-inset-bottom, 0px))',
-        flexShrink: 0,
-        background: '#1f2937', borderTop: '1px solid #374151',
-      }}>
-        <button onClick={handleSave} style={{
-          flex: 2, padding: '9px 0', background: '#22c55e', color: 'white',
-          border: 'none', borderRadius: 7, fontWeight: 700, fontSize: '0.9rem',
-          cursor: 'pointer',
-        }}>✓ Save</button>
-        <button onClick={onCancel} style={{
-          flex: 1, padding: '9px 0', background: '#7f1d1d', color: 'white',
-          border: 'none', borderRadius: 7, fontSize: '0.9rem', fontWeight: 600,
-          cursor: 'pointer',
-        }}>✕ Discard</button>
-      </div>
+      {/* Bottom safe-area spacer for iOS gesture bar — no buttons needed
+          now that Save/Discard live in the header. */}
+      <div style={{ flexShrink: 0, height: 'env(safe-area-inset-bottom, 0px)', background: '#1f2937' }} />
     </div>
   );
 }
