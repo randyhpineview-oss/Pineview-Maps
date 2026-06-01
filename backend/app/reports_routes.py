@@ -395,7 +395,7 @@ def _build_queries(
     herbicide: Optional[str],
     include_avoided: bool,
 ):
-    """Return (site_q, pipeline_q) filtered+ordered ready for .yield_per().
+    """Return (site_q, pipeline_q) filtered+ordered.
 
     Both queries eager-join their parent Site/Pipeline so the downstream
     formatter can read .site.lsd / .pipeline.name without a per-row lookup.
@@ -424,14 +424,20 @@ def _build_queries(
         site_q = site_q.filter(SiteSprayRecord.is_avoided.is_(False))
         pipeline_q = pipeline_q.filter(SprayRecord.is_avoided.is_(False))
 
-    if customer:
-        site_q = site_q.join(Site, SiteSprayRecord.site_id == Site.id).filter(Site.client == customer)
-        pipeline_q = pipeline_q.join(Pipeline, SprayRecord.pipeline_id == Pipeline.id).filter(Pipeline.client == customer)
-    if area:
-        # .join() above may already be applied; use .filter() with the class,
-        # SQLAlchemy dedupes join chains automatically.
-        site_q = site_q.join(Site, SiteSprayRecord.site_id == Site.id).filter(Site.area == area)
-        pipeline_q = pipeline_q.join(Pipeline, SprayRecord.pipeline_id == Pipeline.id).filter(Pipeline.area == area)
+    if customer or area:
+        site_q = site_q.join(Site, SiteSprayRecord.site_id == Site.id)
+        if customer:
+            site_q = site_q.filter(Site.client == customer)
+        if area:
+            site_q = site_q.filter(Site.area == area)
+
+    if customer or area:
+        pipeline_q = pipeline_q.join(Pipeline, SprayRecord.pipeline_id == Pipeline.id)
+        if customer:
+            pipeline_q = pipeline_q.filter(Pipeline.client == customer)
+        if area:
+            pipeline_q = pipeline_q.filter(Pipeline.area == area)
+
     if applicator:
         # Applicator is inside lease_sheet_data.applicators (JSONB array of
         # strings). Postgres `?` operator checks for element presence.
@@ -468,19 +474,28 @@ def _build_queries(
 def _iter_merged_records(site_q, pipeline_q, *, chunk_size: int = 200) -> Iterator[tuple]:
     """Stream records from both tables in chronological order.
 
-    Each yielded tuple is `(record, is_pipeline)`. Uses SQLAlchemy
-    `yield_per()` on both queries + Python `heapq.merge()` so server memory
-    stays flat regardless of result-set size.
+    Each yielded tuple is `(record, is_pipeline)`.
+    Uses .all() to load rows into memory, avoiding PgBouncer transaction-mode cursor
+    timeouts on Supabase, while utilizing `heapq.merge` with a tie-breaker.
     """
+    site_records = site_q.all()
+    pipeline_records = pipeline_q.all()
+
     def _site_key_iter():
-        for r in site_q.yield_per(chunk_size):
-            yield (r.spray_date, r.id, r, False)
+        for r in site_records:
+            # Yield (spray_date, id, is_pipeline, record)
+            # Third element (is_pipeline=False) serves as a tie-breaker so Python never
+            # tries to compare the SQLAlchemy record objects themselves.
+            yield (r.spray_date, r.id, False, r)
 
     def _pipeline_key_iter():
-        for r in pipeline_q.yield_per(chunk_size):
-            yield (r.spray_date, r.id, r, True)
+        for r in pipeline_records:
+            # Yield (spray_date, id, is_pipeline, record)
+            # Third element (is_pipeline=True) serves as a tie-breaker so Python never
+            # tries to compare the SQLAlchemy record objects themselves.
+            yield (r.spray_date, r.id, True, r)
 
-    for _d, _id, record, is_pipeline in heapq.merge(_site_key_iter(), _pipeline_key_iter()):
+    for _d, _id, is_pipeline, record in heapq.merge(_site_key_iter(), _pipeline_key_iter()):
         yield record, is_pipeline
 
 
