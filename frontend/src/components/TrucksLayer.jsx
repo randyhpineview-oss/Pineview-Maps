@@ -255,6 +255,10 @@ export default function TrucksLayer({
           getPixelPositionOffset={(w, h) => ({ x: -(w / 2), y: -(h + 44) })}
         >
           <div
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            onTouchEnd={(e) => e.stopPropagation()}
             style={{
               background: '#0f1c33',
               color: '#e5eefb',

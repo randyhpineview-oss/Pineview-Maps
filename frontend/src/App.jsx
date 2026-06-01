@@ -2532,6 +2532,8 @@ export default function App() {
                                 syncStatus.hydroseed_tickets_last_updated !== lastSyncStatusRef.current.hydroseed_tickets_last_updated;
         const hydroseedDailiesChanged = !lastSyncStatusRef.current?.hydroseed_dailies_last_updated ||
                                 syncStatus.hydroseed_dailies_last_updated !== lastSyncStatusRef.current.hydroseed_dailies_last_updated;
+        const devicesChanged = !lastSyncStatusRef.current?.devices_last_updated ||
+                              syncStatus.devices_last_updated !== lastSyncStatusRef.current.devices_last_updated;
 
         // Snapshot prev pending counts BEFORE overwriting the ref so the
         // pending-list re-fetch guard below sees the real delta.
@@ -2543,6 +2545,7 @@ export default function App() {
         if (sitesChanged) await syncSitesIncrementally(syncStatus);
         if (pipelinesChanged) await syncPipelinesIncrementally(syncStatus);
         if (recentsChanged) await syncRecentsIncrementally(syncStatus);
+        if (devicesChanged) await loadDevices();
         // Don't fetch tickets here — bumping the token lets the visible
         // FormsPanel decide whether to fetch (it only does when the
         // relevant tab is in view, saving egress when nobody's looking).
@@ -2658,7 +2661,7 @@ export default function App() {
       document.removeEventListener('visibilitychange', onVisibilityChange);
       runPollTickRef.current = null;
     };
-  }, [isOnline, serverFilters, canManagePins, selectedSite, processUploadQueue, realtimeStatus]);
+  }, [isOnline, serverFilters, canManagePins, selectedSite, processUploadQueue, realtimeStatus, loadDevices]);
 
   // ── Mirror selectedSite / selectedPipeline into refs ────────────────────
   // The Realtime subscription useEffect below opens a single long-lived
