@@ -58,7 +58,7 @@ function herbicideCount(text) {
 //   whose site_type is Roadside OR Pipeline.
 function derivedQtyFor(label, rows) {
   const safe = rows || [];
-  const main = safe.filter((r) => r.site_type !== 'Roadside' && r.site_type !== 'Pipeline');
+  const main = safe.filter((r) => r.site_type !== 'Roadside' && r.site_type !== 'Pipeline' && r.site_type !== 'Access Road');
   const sumAreaM2 = (count) =>
     main.filter((r) => herbicideCount(r.herbicides) === count)
       .reduce((s, r) => s + (Number(r.area_ha) || 0), 0) * 10000;
@@ -67,7 +67,7 @@ function derivedQtyFor(label, rows) {
     case '2 Herbicides (m²)': return sumAreaM2(2);
     case '3 Herbicides (m²)': return sumAreaM2(3);
     case 'Roadside/Access Rd/Pipeline Liters Applied':
-      return safe.filter((r) => r.site_type === 'Roadside' || r.site_type === 'Pipeline')
+      return safe.filter((r) => r.site_type === 'Roadside' || r.site_type === 'Pipeline' || r.site_type === 'Access Road')
         .reduce((s, r) => s + (Number(r.liters_used) || 0), 0);
     default: return null;
   }
@@ -1200,7 +1200,7 @@ export default function TMTicketDetailSheet({
         {/* Existing rows */}
         {(ticket.rows || []).filter((r) => !rowsToDelete.includes(r.id)).map((r) => {
           const rowEdit = rowsEdits[r.id] || {};
-          const isKmUnit = (rowEdit.site_type ?? r.site_type) === 'Roadside' || (rowEdit.site_type ?? r.site_type) === 'Pipeline';
+          const isKmUnit = (rowEdit.site_type ?? r.site_type) === 'Roadside' || (rowEdit.site_type ?? r.site_type) === 'Pipeline' || (rowEdit.site_type ?? r.site_type) === 'Access Road';
           const unit = isKmUnit ? 'km' : 'ha';
           return (
             <div key={r.id} style={{
@@ -1274,7 +1274,7 @@ export default function TMTicketDetailSheet({
         })}
         {/* New manual rows */}
         {canOfficeEdit && newRows.map((r) => {
-          const isKmUnit = r.site_type === 'Roadside' || r.site_type === 'Pipeline';
+          const isKmUnit = r.site_type === 'Roadside' || r.site_type === 'Pipeline' || r.site_type === 'Access Road';
           const unit = isKmUnit ? 'km' : 'ha';
           return (
             <div key={r.tempId} style={{

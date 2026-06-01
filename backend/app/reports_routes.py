@@ -159,7 +159,7 @@ def _fmt_area(area_ha: Optional[float], site_type: str, units: str) -> str:
     """
     if area_ha is None:
         return ""
-    is_km = site_type in ("Pipeline", "Roadside")
+    is_km = site_type in ("Pipeline", "Roadside", "Access Road")
     if is_km:
         return f"{area_ha:.2f} km"
     if units == "m2":
@@ -242,21 +242,21 @@ def _iter_output_rows(record, is_pipeline: bool, split_roadside: bool) -> Iterat
             yield {
                 "_record": record,
                 "_data": data,
-                "_site_type_for_units": "Roadside",
+                "_site_type_for_units": "Access Road",
                 "_is_roadside_row": True,
-                "source_type": "Roadside",
+                "source_type": "Access Road",
                 "lsd_or_pipeline": roadside.get("location") or lsd_or_pipeline,
                 "customer": customer,
                 "area": area,
-                "main_site_type": "Roadside",
+                "main_site_type": "Access Road",
                 "area_ha_for_render": _to_float(roadside.get("area_ha")),
                 "total_liters": _to_float(roadside.get("liters_used")),
                 "herbicides_source": data.get("roadsideHerbicides") or [],
             }
     else:
         main_site_type = data.get("mainSiteType") or ""
-        site_type_for_units = main_site_type if main_site_type in ("Pipeline", "Roadside") else source_type
-        area_val = _to_float(data.get("totalDistanceSprayed")) if main_site_type in ("Pipeline", "Roadside") else _to_float(data.get("areaTreated"))
+        site_type_for_units = main_site_type if main_site_type in ("Pipeline", "Roadside", "Access Road") else source_type
+        area_val = _to_float(data.get("totalDistanceSprayed")) if main_site_type in ("Pipeline", "Roadside", "Access Road") else _to_float(data.get("areaTreated"))
         yield {
             "_record": record,
             "_data": data,
@@ -374,7 +374,7 @@ def _fold_totals_row(totals: dict, out: dict):
     area_ha = out["area_ha_for_render"] or 0
     liters = out["total_liters"] or 0
     site_type = out["_site_type_for_units"]
-    if site_type in ("Pipeline", "Roadside"):
+    if site_type in ("Pipeline", "Roadside", "Access Road"):
         totals["pipeline_roadside_liters"] += liters
         return
     # Main row — bucket by herbicide count (1/2/3+, capped at 3).

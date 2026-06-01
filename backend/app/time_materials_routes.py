@@ -1392,10 +1392,10 @@ def _has_roadside(data: dict) -> bool:
 
 
 def derive_roadside_row_from_spray_record(record) -> dict | None:
-    """Derive a second 'Roadside' T&M row from a lease sheet if applicable.
+    """Derive a second 'Access Road' T&M row from a lease sheet if applicable.
 
     The roadside row uses `area_ha` to store the roadsideKm value (unit is
-    swapped to 'km' at render time by inspecting site_type == 'Roadside').
+    swapped to 'km' at render time by inspecting site_type == 'Access Road').
     Supports both site and pipeline spray records.
     """
     data = record.lease_sheet_data or {}
@@ -1409,7 +1409,7 @@ def derive_roadside_row_from_spray_record(record) -> dict | None:
         location = data.get("lsdOrPipeline") or (site.lsd if site else None)
     return {
         "location": location,
-        "site_type": "Roadside",
+        "site_type": "Access Road",
         "herbicides": _herbicides_text(data.get("roadsideHerbicides") or []),
         "liters_used": _to_float(data.get("roadsideLiters")),
         "area_ha": _to_float(data.get("roadsideKm")),
@@ -1425,7 +1425,7 @@ def _upsert_row(
 ) -> TimeMaterialsRow:
     """Upsert a single row keyed by (spray_record_id or
     pipeline_spray_record_id, is_roadside). Roadside vs main is disambiguated
-    via site_type == 'Roadside'. Picks the correct FK column based on which
+    via site_type == 'Access Road'. Picks the correct FK column based on which
     kind of spray record was passed in.
     """
     is_pipeline = _is_pipeline_record(record)
@@ -1435,12 +1435,9 @@ def _upsert_row(
     )
     q = db.query(TimeMaterialsRow).filter(fk_col == record.id)
     if is_roadside:
-        q = q.filter(TimeMaterialsRow.site_type == "Roadside")
+        q = q.filter(TimeMaterialsRow.site_type == "Access Road")
     else:
-        if fields.get("site_type") == "Roadside":
-            q = q.filter(TimeMaterialsRow.site_type == "Roadside")
-        else:
-            q = q.filter(TimeMaterialsRow.site_type != "Roadside")
+        q = q.filter(TimeMaterialsRow.site_type != "Access Road")
     row = q.first()
 
     if row:
@@ -1472,7 +1469,7 @@ def append_row_for_spray_record(
 
     Always upserts the main row. If the lease sheet has an access-road portion
     (isAccessRoad or roadside values filled), also upserts a companion
-    'Roadside' row so it gets its own line in the Sites Treated table.
+    'Access Road' row so it gets its own line in the Sites Treated table.
     """
     # Main row
     main_fields = derive_row_from_spray_record(record)
@@ -1480,10 +1477,21 @@ def append_row_for_spray_record(
 
     # Optional roadside row
     roadside_fields = derive_roadside_row_from_spray_record(record)
-    # If the main row is already 'Roadside', we skip creating a companion 'Roadside' row
-    # to avoid violating the unique constraint (spray_record_id, site_type).
-    if roadside_fields is not None and main_fields.get("site_type") != "Roadside":
+    if roadside_fields is not None:
         _upsert_row(db, ticket, record, roadside_fields, is_roadside=True)
+    else:
+        # Delete companion row if it exists
+        is_pipeline = _is_pipeline_record(record)
+        fk_col = (
+            TimeMaterialsRow.pipeline_spray_record_id if is_pipeline
+            else TimeMaterialsRow.spray_record_id
+        )
+        row_to_del = db.query(TimeMaterialsRow).filter(
+            fk_col == record.id,
+            TimeMaterialsRow.site_type == "Access Road"
+        ).first()
+        if row_to_del:
+            db.delete(row_to_del)
 
     record.tm_ticket_id = ticket.id
     ticket.updated_at = datetime.utcnow()

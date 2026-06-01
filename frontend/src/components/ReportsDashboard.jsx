@@ -59,7 +59,7 @@ const HERBICIDE_FORMAT_OPTIONS = [
 const AREA_UNIT_OPTIONS = [
   { value: 'ha',   label: 'Hectares (ha)' },
   { value: 'm2',   label: 'Square meters (m²)' },
-  { value: 'auto', label: 'Auto (km for Pipeline/Roadside)' },
+  { value: 'auto', label: 'Auto (km for Pipeline/Roadside/Access Rd)' },
 ];
 const DATE_FORMAT_OPTIONS = [
   { value: 'iso',   label: 'ISO (2025-03-14)' },
@@ -630,7 +630,7 @@ export default function ReportsDashboard({
             <div>
               <div style={{ fontSize: '0.85rem' }}>Split access-road work into a separate row <span style={{ color: '#9ab1d6' }}>(T&amp;M style)</span></div>
               <div style={{ fontSize: '0.72rem', color: '#9ab1d6', marginTop: '2px' }}>
-                When a lease sheet includes access-road spraying, emit one row for the main site and a second "Roadside" row — matches the T&amp;M ticket's Sites Treated table exactly.
+                When a lease sheet includes access-road spraying, emit one row for the main site and a second "Access Road" row — matches the T&amp;M ticket's Sites Treated table exactly.
               </div>
             </div>
           </label>

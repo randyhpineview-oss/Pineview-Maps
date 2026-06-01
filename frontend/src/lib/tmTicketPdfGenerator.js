@@ -280,10 +280,10 @@ export async function generateTMTicketPdf(ticket, options = {}) {
 
     const row = rows[r] || {};
     let cx = marginL;
-    // Pipeline rows reuse the area_ha column to store km (converted from
-    // totalDistanceSprayed on submit), so they get the same 'km' suffix
+    // Pipeline and Access Road rows reuse the area_ha column to store km (converted from
+    // totalDistanceSprayed/roadsideKm on submit), so they get the same 'km' suffix
     // as Roadside rows. All other site_type values render as hectares.
-    const isKmUnit = row.site_type === 'Roadside' || row.site_type === 'Pipeline';
+    const isKmUnit = row.site_type === 'Roadside' || row.site_type === 'Pipeline' || row.site_type === 'Access Road';
     const areaValue = row.area_ha != null && row.area_ha !== '' ? Number(row.area_ha).toFixed(2) : '';
     const areaText = areaValue ? `${areaValue} ${isKmUnit ? 'km' : 'ha'}` : '';
     const cells = [
