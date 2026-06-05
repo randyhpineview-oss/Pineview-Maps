@@ -6235,7 +6235,7 @@ export default function App() {
         {hydroseedDailyOpen && (
           <div style={{
             position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-            zIndex: 40,
+            zIndex: 40, background: '#0b1220',
             display: 'flex', flexDirection: 'column',
           }}>
             <Suspense fallback={null}>
