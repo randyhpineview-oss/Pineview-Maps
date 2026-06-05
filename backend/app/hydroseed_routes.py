@@ -924,7 +924,8 @@ def attach_daily_files(
                 date_str=str(daily.work_date),
                 client=daily.client or "",
                 area=daily.area or "",
-                ticket=daily.record_number,
+                record=daily.record_number or "",
+                site_name=daily.site_name or "",
             )
             pdf_job = (pdf_content, pdf_path)
         except Exception as e:
