@@ -564,7 +564,14 @@ export default function HydroseedTicketDetailSheet({
     <div style={{
       backgroundColor: '#1f2937', color: '#f9fafb',
       flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden',
-      padding: 20, maxWidth: 880, margin: '0 auto', width: '100%', boxSizing: 'border-box',
+      // Pad the scrollable area's bottom so on iPhone Safari (where the
+      // dynamic toolbar / home indicator overlap the bottom of a fixed
+      // 100vh container) the action buttons (Approve / Save / Re-open)
+      // stay scrollable into view above the unsafe area. Matches the
+      // sticky-action-bar effect the Daily form gets via its internal
+      // flex layout.
+      padding: '20px 20px calc(env(safe-area-inset-bottom, 0px) + 32px)',
+      maxWidth: 880, margin: '0 auto', width: '100%', boxSizing: 'border-box',
       borderRadius: '16px 16px 0 0',
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
