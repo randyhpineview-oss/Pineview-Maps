@@ -6,13 +6,11 @@ import FilterBar from './components/FilterBar';
 import InstallAppPrompt from './components/InstallAppPrompt';
 import LoginPage from './components/LoginPage';
 import MapView from './components/MapView';
-import SignupPage from './components/SignupPage';
 import PipelineDetailSheet from './components/PipelineDetailSheet';
 import SiteDetailSheet from './components/SiteDetailSheet';
 import CheckinCountdown from './components/CheckinCountdown';
 import { api } from './lib/api';
 import { shouldForceOverlay } from './lib/compliance';
-import { ensurePushSubscribed, notificationPermission, pushSupported } from './lib/pushClient';
 import { scheduleLocalCheckinNotifications } from './lib/localCheckinNotifications';
 import { requestWithUploadProgress } from './lib/xhrUpload';
 import {
@@ -23,8 +21,6 @@ import {
   stripFilesForLane1,
 } from './lib/uploadLanes';
 import { nearestFraction } from './lib/mapUtils';
-import { generateLeaseSheetPdf } from './lib/pdfGenerator';
-import { generateTMTicketPdf } from './lib/tmTicketPdfGenerator';
 import { onAuthStateChange, signOut, supabase } from './lib/supabaseClient';
 import { APP_VERSION, APP_VERSION_LABEL } from './version';
 import {
@@ -114,6 +110,23 @@ const MyCheckInsOverlay = lazy(() => import('./components/MyCheckInsOverlay'));
 // Settings tabs). Same lazy/admin pattern as ReportsDashboard etc.
 const CheckInsOverlay = lazy(() => import('./components/CheckInsOverlay'));
 const LinkLeaseSheetModal = lazy(() => import('./components/LinkLeaseSheetModal'));
+// SignupPage is only reached via a `?invite=...` URL (rare). Lazy so the
+// invite-only chunk doesn't sit in the cold-start main bundle for every
+// returning login. Suspense fallback shows a tiny "Loading…" placeholder.
+const SignupPage = lazy(() => import('./components/SignupPage'));
+
+// Small retry helper for dynamic chunk loads. Transient Vercel edge / network
+// blips occasionally make a single import() reject; one retry with backoff
+// covers ~all of those cases. Used for the PDF-generator imports below.
+async function importWithRetry(loader, retries = 1) {
+  try {
+    return await loader();
+  } catch (err) {
+    if (retries <= 0) throw err;
+    await new Promise((r) => setTimeout(r, 800));
+    return importWithRetry(loader, retries - 1);
+  }
+}
 
 const DEFAULT_FILTERS = { search: '', client: '', area: '', status: '', approval_state: '' };
 const DEFAULT_LAYERS = { lsd: true, water: true, quad_access: true, reclaimed: true, pipelines: true, trucks: true };
@@ -691,6 +704,11 @@ export default function App() {
   // drill down manually.
   const [uploadTabSignal, setUploadTabSignal] = useState(0);
   const uploadingRef = useRef(false);
+  // Memoize the dynamic-import promises for the PDF-generator chunks so
+  // processUploadQueue only triggers the network fetch once per session
+  // (subsequent queue ticks re-await the resolved promise instantly).
+  const pdfGenPromiseRef = useRef(null);
+  const tmPdfGenPromiseRef = useRef(null);
   // Lease-sheet record preview state
   const [previewingRecord, setPreviewingRecord] = useState(null);
   // Edit spray record state
@@ -1278,6 +1296,10 @@ export default function App() {
 
     let pdfBase64 = payload.pdf_base64;
     try {
+      const { generateLeaseSheetPdf } = await (
+        pdfGenPromiseRef.current
+        || (pdfGenPromiseRef.current = importWithRetry(() => import('./lib/pdfGenerator')))
+      );
       const out = await generateLeaseSheetPdf(
         { ...leaseData, ticket_number: ticketNumber, herbicidesLookup, applicatorsLookup },
         photoDataUrls
@@ -1322,6 +1344,10 @@ export default function App() {
           description_of_work: tmLink.description_of_work || '',
           rows: [tentativeMainRow],
         };
+        const { generateTMTicketPdf } = await (
+          tmPdfGenPromiseRef.current
+          || (tmPdfGenPromiseRef.current = importWithRetry(() => import('./lib/tmTicketPdfGenerator')))
+        );
         const out = await generateTMTicketPdf(tentativeTicket, { includeOfficeData: false });
         tmLink = { ...tmLink, tm_pdf_base64: out.base64 };
       } catch (err) {
@@ -1352,6 +1378,14 @@ export default function App() {
   const processUploadQueue = useCallback(async () => {
     if (uploadingRef.current || !window.navigator.onLine) return;
     uploadingRef.current = true;
+    // Pre-warm the PDF-generator chunks once at queue start so N items
+    // don't each await a module resolution. These are dynamic imports
+    // (chunks were evicted from the main bundle for cold-start perf);
+    // the promises resolve once and ensurePdfAndTicket awaits them.
+    pdfGenPromiseRef.current = pdfGenPromiseRef.current
+      || importWithRetry(() => import('./lib/pdfGenerator'));
+    tmPdfGenPromiseRef.current = tmPdfGenPromiseRef.current
+      || importWithRetry(() => import('./lib/tmTicketPdfGenerator'));
     try {
       const items = await getUploadQueue();
       if (items.length === 0) { uploadingRef.current = false; return; }
@@ -2724,6 +2758,12 @@ export default function App() {
       void import('./components/HerbicideLeaseSheet');
       void import('./components/PdfPreviewOverlay');
       void import('./components/TMTicketDetailSheet');
+      // Warm the PDF-generator chunks too so the first lease-sheet /
+      // T&M PDF render after login feels instant. These were evicted
+      // from the main bundle (cold-start win) and are otherwise loaded
+      // on demand by ensurePdfAndTicket / HerbicideLeaseSheet.
+      void import('./lib/pdfGenerator');
+      void import('./lib/tmTicketPdfGenerator');
       if (canManagePins) {
         void import('./components/AdminPanel');
         void import('./components/ApproveEditModal');
@@ -3285,10 +3325,16 @@ export default function App() {
   // prefs panel. iOS PWA + 16.4+ also gates this via pushSupported().
   useEffect(() => {
     if (!user?.id) return;
-    if (!pushSupported() || notificationPermission() !== 'granted') return;
     let cancelled = false;
     (async () => {
       try {
+        // pushClient is lazy-loaded so its (small) module doesn't sit in
+        // the cold-start main bundle. We still gate on the synchronous
+        // platform checks inside the loaded module before subscribing.
+        const { ensurePushSubscribed, notificationPermission, pushSupported } =
+          await import('./lib/pushClient');
+        if (cancelled) return;
+        if (!pushSupported() || notificationPermission() !== 'granted') return;
         const prefs = await api.getMyCheckinPrefs();
         if (cancelled) return;
         if (prefs?.notify_push) {
@@ -5656,21 +5702,23 @@ export default function App() {
     })();
     if (inviteCode) {
       return (
-        <SignupPage
-          inviteCode={inviteCode}
-          onDone={() => {
-            // Strip ?invite= so a back-button / refresh from "Check your email"
-            // returns to the normal login screen rather than re-opening signup.
-            try {
-              const url = new URL(window.location.href);
-              url.searchParams.delete('invite');
-              window.history.replaceState({}, '', url.toString());
-            } catch { /* ignore */ }
-            // Force a re-render by kicking App back through its auth check;
-            // easiest path is a full reload since we're not using a router.
-            window.location.reload();
-          }}
-        />
+        <Suspense fallback={<div style={{ padding: 24, textAlign: 'center', color: '#9ab1d6' }}>Loading…</div>}>
+          <SignupPage
+            inviteCode={inviteCode}
+            onDone={() => {
+              // Strip ?invite= so a back-button / refresh from "Check your email"
+              // returns to the normal login screen rather than re-opening signup.
+              try {
+                const url = new URL(window.location.href);
+                url.searchParams.delete('invite');
+                window.history.replaceState({}, '', url.toString());
+              } catch { /* ignore */ }
+              // Force a re-render by kicking App back through its auth check;
+              // easiest path is a full reload since we're not using a router.
+              window.location.reload();
+            }}
+          />
+        </Suspense>
       );
     }
     return <LoginPage onLoginSuccess={() => void refreshAllData()} />;
