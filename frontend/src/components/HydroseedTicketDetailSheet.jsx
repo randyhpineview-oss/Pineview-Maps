@@ -563,7 +563,7 @@ export default function HydroseedTicketDetailSheet({
   return (
     <div style={{
       backgroundColor: '#1f2937', color: '#f9fafb',
-      maxHeight: '90vh', overflowY: 'auto', overflowX: 'hidden',
+      flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden',
       padding: 20, maxWidth: 880, margin: '0 auto', width: '100%', boxSizing: 'border-box',
       borderRadius: '16px 16px 0 0',
     }}>
