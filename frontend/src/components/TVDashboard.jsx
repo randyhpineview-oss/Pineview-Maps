@@ -226,6 +226,10 @@ export default function TVDashboard({ onClose }) {
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [now, setNow] = useState(() => new Date());
+  // Track viewport width so the TV/desktop two-column layout collapses to a
+  // single scrollable column on phones (iPhone PWA "glance" mode).
+  const [vw, setVw] = useState(() => (typeof window !== 'undefined' ? window.innerWidth : 1280));
+  const isNarrow = vw < 760;
 
   const overviewTimerRef = useRef(null);
   const statsTimerRef = useRef(null);
@@ -360,6 +364,14 @@ export default function TVDashboard({ onClose }) {
     return () => clearInterval(id);
   }, []);
 
+  // Track viewport width for the responsive (phone) layout switch.
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const onResize = () => setVw(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   // Server already sorts worst-tier-first; preserve that order.
   const visibleEntries = useMemo(() => entries, [entries]);
 
@@ -394,30 +406,36 @@ export default function TVDashboard({ onClose }) {
     }}>
       {/* ── Top bar ─────────────────────────────────────────────── */}
       <header style={{
-        display: 'flex', alignItems: 'center', gap: 16,
-        padding: '12px 22px', background: t.cardBgRaised,
+        display: 'flex', alignItems: 'center', gap: isNarrow ? 10 : 16,
+        flexWrap: isNarrow ? 'wrap' : 'nowrap',
+        padding: isNarrow
+          ? 'calc(10px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 10px calc(12px + env(safe-area-inset-left))'
+          : 'calc(12px + env(safe-area-inset-top)) 22px 12px',
+        background: t.cardBgRaised,
         borderBottom: `1px solid ${t.border}`, flexShrink: 0,
       }}>
-        <h1 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 12, fontSize: 'clamp(18px, 2vw, 26px)', fontWeight: 800, letterSpacing: 0.3 }}>
+        <h1 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: isNarrow ? 8 : 12, fontSize: 'clamp(17px, 2vw, 26px)', fontWeight: 800, letterSpacing: 0.3 }}>
           <img
             src="/logo.png"
             alt="Pineview"
-            style={{ height: 'clamp(28px, 3vw, 42px)', width: 'auto', display: 'block' }}
+            style={{ height: isNarrow ? 26 : 'clamp(28px, 3vw, 42px)', width: 'auto', display: 'block' }}
           />
           Pineview Operations
         </h1>
         <div style={{ flex: 1 }} />
         <div style={{ textAlign: 'right', lineHeight: 1.15 }}>
-          <div style={{ fontSize: 'clamp(20px, 2.4vw, 34px)', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
-            {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          <div style={{ fontSize: isNarrow ? 18 : 'clamp(20px, 2.4vw, 34px)', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
+            {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', ...(isNarrow ? {} : { second: '2-digit' }) })}
           </div>
-          <div style={{ fontSize: 'clamp(11px, 1vw, 14px)', color: t.textMuted }}>
-            {now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}
-          </div>
+          {!isNarrow ? (
+            <div style={{ fontSize: 'clamp(11px, 1vw, 14px)', color: t.textMuted }}>
+              {now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}
+            </div>
+          ) : null}
         </div>
         <div style={{
           display: 'flex', alignItems: 'center', gap: 6,
-          padding: '6px 10px', borderRadius: 999,
+          padding: isNarrow ? '5px 8px' : '6px 10px', borderRadius: 999,
           background: error ? t.dangerBg : t.successBg,
           border: `1px solid ${error ? t.dangerBorder : t.successBorder}`,
           fontSize: 12, color: error ? t.danger : t.success, whiteSpace: 'nowrap',
@@ -426,7 +444,9 @@ export default function TVDashboard({ onClose }) {
             width: 8, height: 8, borderRadius: '50%',
             background: error ? t.danger : '#22c55e', display: 'inline-block',
           }} />
-          {error ? 'Connection issue' : (updatedAgo == null ? 'Loading…' : `Updated ${updatedAgo}s ago`)}
+          {isNarrow
+            ? (error ? 'Offline' : 'Live')
+            : (error ? 'Connection issue' : (updatedAgo == null ? 'Loading…' : `Updated ${updatedAgo}s ago`))}
         </div>
         {isOverlay ? (
           <button
@@ -434,19 +454,32 @@ export default function TVDashboard({ onClose }) {
             onClick={onClose}
             style={{
               background: t.dangerStrong, color: '#fff', border: 'none',
-              borderRadius: 8, padding: '8px 14px', fontSize: 14,
+              borderRadius: 8, padding: isNarrow ? '6px 10px' : '8px 14px', fontSize: 14,
               cursor: 'pointer', fontWeight: 700,
             }}
-          >× Close</button>
+          >× {isNarrow ? '' : 'Close'}</button>
         ) : null}
       </header>
 
       {/* ── Body ───────────────────────────────────────────────── */}
-      <div style={{ flex: 1, display: 'flex', gap: 16, padding: 16, minHeight: 0 }}>
-        {/* Left: check-ins safety board */}
+      {/* Desktop/TV: two columns, each scrolls internally. Phone: one column
+          that scrolls as a page, with the at-a-glance progress + throughput
+          pulled to the top (order) above the check-ins list. */}
+      <div style={{
+        flex: 1, display: 'flex',
+        flexDirection: isNarrow ? 'column' : 'row',
+        gap: isNarrow ? 14 : 16,
+        padding: isNarrow
+          ? '12px 12px calc(16px + env(safe-area-inset-bottom)) 12px'
+          : 16,
+        minHeight: 0,
+        overflowY: isNarrow ? 'auto' : 'hidden',
+        WebkitOverflowScrolling: 'touch',
+      }}>
+        {/* Check-ins safety board */}
         <section style={{
-          flex: '1 1 60%', display: 'flex', flexDirection: 'column',
-          minWidth: 0, minHeight: 0,
+          flex: isNarrow ? '0 0 auto' : '1 1 60%', display: 'flex', flexDirection: 'column',
+          minWidth: 0, minHeight: 0, order: isNarrow ? 2 : 0,
         }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 10 }}>
             <h2 style={{ margin: 0, fontSize: 'clamp(15px, 1.5vw, 20px)', fontWeight: 700 }}>🛟 Check-ins</h2>
@@ -461,20 +494,25 @@ export default function TVDashboard({ onClose }) {
               </span>
             )}
           </div>
-          <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+          <div style={{
+            flex: isNarrow ? 'none' : 1,
+            overflowY: isNarrow ? 'visible' : 'auto',
+            minHeight: 0,
+          }}>
             {loading && entries.length === 0 ? (
               <div style={{ padding: 24, color: t.textMuted }}>Loading…</div>
             ) : visibleEntries.length === 0 ? (
               <div style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                height: '100%', color: t.textMuted, fontSize: 16, textAlign: 'center',
+                height: isNarrow ? 'auto' : '100%', padding: isNarrow ? 24 : 0,
+                color: t.textMuted, fontSize: 16, textAlign: 'center',
               }}>
                 No active shifts or truck assignments today.
               </div>
             ) : (
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+                gridTemplateColumns: isNarrow ? '1fr' : 'repeat(auto-fill, minmax(280px, 1fr))',
                 gap: 12, alignContent: 'start',
               }}>
                 {visibleEntries.map((entry) => (
@@ -485,20 +523,22 @@ export default function TVDashboard({ onClose }) {
           </div>
         </section>
 
-        {/* Right: progress donut + throughput */}
+        {/* Progress donut + throughput */}
         <aside style={{
-          flex: '1 1 40%', display: 'flex', flexDirection: 'column',
-          gap: 16, minWidth: 300, minHeight: 0,
+          flex: isNarrow ? '0 0 auto' : '1 1 40%', display: 'flex', flexDirection: 'column',
+          gap: isNarrow ? 14 : 16, minWidth: isNarrow ? 0 : 300, minHeight: 0,
+          order: isNarrow ? 1 : 0,
         }}>
           <div style={{
             background: t.cardBg, border: `1px solid ${t.border}`, borderRadius: 14,
-            padding: 18, display: 'flex', flexDirection: 'column', alignItems: 'center',
+            padding: isNarrow ? 14 : 18, display: 'flex', flexDirection: 'column', alignItems: 'center',
           }}>
             <h2 style={{ margin: '0 0 12px', fontSize: 'clamp(15px, 1.5vw, 20px)', fontWeight: 700, alignSelf: 'flex-start' }}>
               Site inspection progress
             </h2>
             <Donut
               segments={siteSegments}
+              size={isNarrow ? 190 : 230}
               centerTop={`${pctComplete}%`}
               centerBottom={`${inspectedCount} / ${siteTotal} inspected`}
             />
