@@ -229,7 +229,6 @@ export default function TVDashboard({ onClose }) {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [lastUpdated, setLastUpdated] = useState(null);
   const [now, setNow] = useState(() => new Date());
   // Track viewport width so the TV/desktop two-column layout collapses to a
   // single scrollable column on phones (iPhone PWA "glance" mode).
@@ -248,7 +247,6 @@ export default function TVDashboard({ onClose }) {
     try {
       const rows = await api.getTvCheckinOverview();
       setEntries(Array.isArray(rows) ? rows : []);
-      setLastUpdated(new Date());
       setError(null);
     } catch (err) {
       setError(err.message || String(err));
@@ -261,7 +259,6 @@ export default function TVDashboard({ onClose }) {
     try {
       const statRes = await api.getTvStats({ day: localDateISO() });
       setStats(statRes || null);
-      setLastUpdated(new Date());
       setError(null);
     } catch (err) {
       setError(err.message || String(err));
@@ -398,10 +395,6 @@ export default function TVDashboard({ onClose }) {
   const inspectedCount = Number(stats?.site_status?.inspected || 0);
   const pctComplete = siteTotal > 0 ? Math.round((inspectedCount / siteTotal) * 100) : 0;
 
-  const updatedAgo = lastUpdated
-    ? Math.max(0, Math.round((now.getTime() - lastUpdated.getTime()) / 1000))
-    : null;
-
   return (
     <div style={{
       position: 'fixed', inset: 0, zIndex: isOverlay ? 95 : 50,
@@ -449,9 +442,7 @@ export default function TVDashboard({ onClose }) {
             width: 8, height: 8, borderRadius: '50%',
             background: error ? t.danger : '#22c55e', display: 'inline-block',
           }} />
-          {isNarrow
-            ? (error ? 'Offline' : 'Live')
-            : (error ? 'Connection issue' : (updatedAgo == null ? 'Loading…' : `Updated ${updatedAgo}s ago`))}
+          {error ? 'Offline' : 'Live'}
         </div>
         {isOverlay ? (
           <button
