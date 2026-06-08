@@ -153,6 +153,9 @@ export default function AdminPanel({
   // Settings tabs). Admin/office only — workers use the avatar-menu
   // "🛟 Check-ins" item for their own personal page.
   onOpenCheckins,
+  // Opens the Operations TV dashboard as a dismissible overlay.
+  // Admin/office only — only rendered when a handler is supplied.
+  onOpenTvDashboard,
   // Soft-deleted quotes (same Recent Deletes pattern as lease sheets / TM).
   deletedQuotes = [],
   onRestoreQuote,
@@ -692,7 +695,7 @@ export default function AdminPanel({
             office-only and lazy-load their target overlay on tap. The
             tooltips on each button preserve the long-form descriptions
             that previously lived in dedicated cards. */}
-        {(onOpenReports || onOpenQuotes || onOpenCalendar || onOpenCheckins) ? (
+        {(onOpenReports || onOpenQuotes || onOpenCalendar || onOpenCheckins || onOpenTvDashboard) ? (
           <div className="site-row" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
             <strong style={{ marginRight: '0.25rem' }}>Tools</strong>
             {onOpenReports ? (
@@ -723,6 +726,16 @@ export default function AdminPanel({
                 title="Live worker check-in dashboard — Overview, Active, History, and Settings (recipient list)."
               >
                 🛟 Check-ins Dashboard
+              </button>
+            ) : null}
+            {onOpenTvDashboard ? (
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={onOpenTvDashboard}
+                title="Operations TV — full-screen office overview: live check-ins, site inspection progress, and today's throughput. Closeable."
+              >
+                📺 Operations TV
               </button>
             ) : null}
             {onOpenCalendar ? (

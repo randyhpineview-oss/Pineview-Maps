@@ -37,6 +37,7 @@ from app.checkin_routes import (
     admin_router as checkin_admin_router,
     cron_router as checkin_cron_router,
 )
+from app.tv_routes import tv_router
 from app.pipeline_models import Pipeline, SprayRecord  # noqa: F401 — ensure tables are registered
 from app.calendar_models import (  # noqa: F401 — ensure tables are registered
     CalendarBid,
@@ -168,6 +169,9 @@ app.include_router(devices_ingest_router)
 app.include_router(checkin_me_router)
 app.include_router(checkin_admin_router)
 app.include_router(checkin_cron_router)
+# Operations TV dashboard (read-only): /api/tv/checkin-overview + /api/tv/stats.
+# Admitted roles: admin / office (overlay) and tv (kiosk account).
+app.include_router(tv_router)
 
 
 # Global exception handler. Logs the full traceback server-side and
@@ -347,6 +351,14 @@ def _migrate_add_columns() -> None:
                 conn.execute(text("ALTER TYPE sitestatus ADD VALUE IF NOT EXISTS 'issue_not_inspected'"))
             except Exception as e:
                 print(f"Warning: sitestatus enum migration failed: {e}")
+
+            # Operations TV kiosk role. Read-only account that boots into the
+            # TV dashboard. Adding the value to the Postgres enum lets a
+            # tv-role user's row be upserted into `users` on first login.
+            try:
+                conn.execute(text("ALTER TYPE roleenum ADD VALUE IF NOT EXISTS 'tv'"))
+            except Exception as e:
+                print(f"Warning: roleenum enum migration failed: {e}")
 
         # Sites migrations
         if insp.has_table("sites"):

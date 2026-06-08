@@ -109,6 +109,11 @@ const MyCheckInsOverlay = lazy(() => import('./components/MyCheckInsOverlay'));
 // Admin/office Check-ins Dashboard (Overview / Active / History /
 // Settings tabs). Same lazy/admin pattern as ReportsDashboard etc.
 const CheckInsOverlay = lazy(() => import('./components/CheckInsOverlay'));
+// Operations TV dashboard. Used two ways: the dedicated `tv` role boots
+// straight into it (full-screen), and admin/office can open it as a
+// dismissible overlay from the AdminPanel Tools row. Lazy so only those
+// paths download the chunk.
+const TVDashboard = lazy(() => import('./components/TVDashboard'));
 const LinkLeaseSheetModal = lazy(() => import('./components/LinkLeaseSheetModal'));
 // SignupPage is only reached via a `?invite=...` URL (rare). Lazy so the
 // invite-only chunk doesn't sit in the cold-start main bundle for every
@@ -760,6 +765,10 @@ export default function App() {
   // Admin dashboard overlay (Overview / Active / History / Settings).
   // Same role gating as Calendar/Reports/Quotes via roleCanAdmin guard.
   const [showCheckinsDashboard, setShowCheckinsDashboard] = useState(false);
+  // Operations TV dashboard overlay (admin/office only). The dedicated
+  // `tv` role gets it full-screen via the boot short-circuit; this is the
+  // "open it on my own desktop for a glance" path.
+  const [showTvDashboard, setShowTvDashboard] = useState(false);
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [linkModalTargetSite, setLinkModalTargetSite] = useState(null);
   // The calling user's currently-active shift (or null). Loaded after
@@ -5724,6 +5733,18 @@ export default function App() {
     return <LoginPage onLoginSuccess={() => void refreshAllData()} />;
   }
 
+  // Dedicated "Operations TV" kiosk account: boots straight into the
+  // full-screen TV dashboard and nothing else. Bypasses the entire normal
+  // app shell (map, tabs, overlays, push prompts, worker sign-in-day
+  // reset) so the read-only `tv` role can only ever see the board.
+  if (userRole === 'tv') {
+    return (
+      <Suspense fallback={<div style={{ padding: 24, textAlign: 'center', color: '#9ab1d6' }}>Loading…</div>}>
+        <TVDashboard />
+      </Suspense>
+    );
+  }
+
   return (
     <div className="app-shell">
       {/* One-time post-login "Add to Home Screen" instructions. Component
@@ -7067,6 +7088,9 @@ export default function App() {
               // Workers manage their own shift via the avatar-menu
               // "🛟 Check-ins" item which opens MyCheckInsOverlay.
               onOpenCheckins={canManagePins ? () => setShowCheckinsDashboard(true) : undefined}
+              // Operations TV dashboard overlay. Admin/office only (the
+              // read-only board with check-ins + progress donut + throughput).
+              onOpenTvDashboard={roleCanAdmin ? () => setShowTvDashboard(true) : undefined}
               deletedQuotes={deletedQuotes}
               onRestoreQuote={handleRestoreQuote}
               onDeleteQuotePermanent={handleDeleteQuotePermanent}
@@ -7169,6 +7193,16 @@ export default function App() {
             onClose={() => setShowCheckinsDashboard(false)}
             isAdmin={actualCanAdmin}
           />
+        </Suspense>
+      ) : null}
+
+      {/* ── Operations TV dashboard (admin/office overlay) ──
+          Same component the dedicated `tv` kiosk role boots into, but
+          opened here as a dismissible overlay. Gated on roleCanAdmin so it
+          closes automatically if an admin flips on "View as Worker". */}
+      {showTvDashboard && roleCanAdmin ? (
+        <Suspense fallback={null}>
+          <TVDashboard onClose={() => setShowTvDashboard(false)} />
         </Suspense>
       ) : null}
 

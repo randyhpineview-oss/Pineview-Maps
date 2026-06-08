@@ -169,6 +169,8 @@ const ROLES = [
   { value: 'office', label: 'Office' },
   { value: 'crew_lead', label: 'Crew Lead' },
   { value: 'worker', label: 'Worker' },
+  // Read-only kiosk account for the always-on office Operations TV.
+  { value: 'tv', label: 'TV Dashboard' },
 ];
 
 function roleBadgeStyle(role) {
@@ -179,6 +181,8 @@ function roleBadgeStyle(role) {
       return { background: '#2563eb', color: '#fff' };
     case 'crew_lead':
       return { background: '#0891b2', color: '#fff' };
+    case 'tv':
+      return { background: '#0d9488', color: '#fff' };
     default:
       return { background: '#475569', color: '#fff' };
   }

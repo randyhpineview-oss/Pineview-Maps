@@ -1078,6 +1078,19 @@ export const api = {
     return request('/api/admin/checkins/vapid-status');
   },
 
+  // ── Operations TV dashboard (admin/office/tv) ──────────────────────
+  // Same overview payload, served on a route the read-only `tv` role can
+  // reach. Used by TVDashboard for both the kiosk login and the overlay.
+  getTvCheckinOverview() {
+    return request('/api/tv/checkin-overview');
+  },
+  // Site-status breakdown + today's throughput. `day` is the client's
+  // local YYYY-MM-DD so the "today" window is timezone-correct.
+  getTvStats({ day } = {}) {
+    const q = day ? `?day=${encodeURIComponent(day)}` : '';
+    return request(`/api/tv/stats${q}`);
+  },
+
   // ── Admin / office (CheckInsOverlay tabs) ──────────────────────────
   // Single-round-trip data source for the Overview tab.
   getCheckinOverview() {

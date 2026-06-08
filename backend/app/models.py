@@ -23,6 +23,11 @@ class RoleEnum(str, enum.Enum):
     office = "office"
     crew_lead = "crew_lead"
     worker = "worker"
+    # Read-only kiosk account for the always-on office "Operations TV"
+    # dashboard. Has no write access anywhere (no endpoint grants it
+    # mutating rights); it can only read the check-ins overview and the
+    # TV stats summary. Boots straight into TVDashboard on login.
+    tv = "tv"
 
 
 class SiteStatus(str, enum.Enum):
