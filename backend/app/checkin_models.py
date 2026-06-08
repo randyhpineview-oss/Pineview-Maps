@@ -155,6 +155,20 @@ class Shift(Base):
     # for mode='off' rows it's set far in the future as a sentinel.
     next_deadline_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Passive "last known location" for the worker/truck. Updated by the
+    # foreground location reporter (POST /api/checkins/me/location) while
+    # the app is open. DELIBERATELY separate from check-ins: a passive GPS
+    # ping must NOT reset last_checkin_at / next_deadline_at, otherwise a
+    # phone pinging from a pocket would falsely satisfy the lone-worker
+    # safety deadline. Last-writer-wins across a crew (they share a truck).
+    last_loc_lat: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    last_loc_lon: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    last_loc_accuracy_m: Mapped[Optional[float]] = mapped_column(
+        Numeric(8, 2), nullable=True
+    )
+    last_loc_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
 
     __table_args__ = (
         CheckConstraint(

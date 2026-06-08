@@ -3,6 +3,7 @@ import { GoogleMap, Marker, OverlayView, Polyline, useJsApiLoader } from '@react
 
 import { buildMarkerIcon, pinTypeLabel, nearestFraction } from '../lib/mapUtils';
 import TrucksLayer from './TrucksLayer';
+import CrewLayer from './CrewLayer';
 
 const mapContainerStyle = { width: '100%', height: '100%' };
 
@@ -176,6 +177,14 @@ export default function MapView({
   showTrucksLayer = true,
   selectedDevice = null,
   onSelectDevice,
+  // Crew-tracking props. `crewShifts` is the array of active check-in
+  // shifts with a passive last-known location (shifts.last_loc_*).
+  // `showCrewLayer` is the layer-toggle bool. Both default empty/false
+  // so MapView still works where crew data isn't loaded (e.g. tests).
+  crewShifts = [],
+  showCrewLayer = true,
+  selectedCrewShiftId = null,
+  onSelectCrewShift,
 }) {
   const mapRef = useRef(null);
   const lastFittedBoundsKey = useRef('');
@@ -898,6 +907,13 @@ export default function MapView({
           visible={showTrucksLayer}
           selectedDevice={selectedDevice}
           onSelectDevice={onSelectDevice}
+        />
+
+        <CrewLayer
+          shifts={crewShifts}
+          visible={showCrewLayer}
+          selectedShiftId={selectedCrewShiftId}
+          onSelectShift={onSelectCrewShift}
         />
 
         {sites.map((site) => {

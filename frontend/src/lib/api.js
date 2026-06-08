@@ -1013,6 +1013,21 @@ export const api = {
       },
     });
   },
+  // Passive location ping from the foreground reporter (app open + active
+  // shift). Updates shifts.last_loc_* ONLY -- does NOT count as a safety
+  // check-in or reset the deadline. Throws (400) when there's no active
+  // shift so the caller can stop pinging after checkout. Returns the
+  // updated ShiftRead.
+  postMyLocation({ lat, lon, accuracyM } = {}) {
+    return request('/api/checkins/me/location', {
+      method: 'POST',
+      body: {
+        lat,
+        lon,
+        accuracy_m: accuracyM ?? null,
+      },
+    });
+  },
   // Notification prefs for the calling user (push/email toggles + email
   // override). Returns the auth email too so the prefs panel can offer
   // "Use my login email" as a one-tap option.

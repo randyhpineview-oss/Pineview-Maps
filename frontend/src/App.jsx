@@ -134,7 +134,7 @@ async function importWithRetry(loader, retries = 1) {
 }
 
 const DEFAULT_FILTERS = { search: '', client: '', area: '', status: '', approval_state: '' };
-const DEFAULT_LAYERS = { lsd: true, water: true, quad_access: true, reclaimed: true, pipelines: true, trucks: true };
+const DEFAULT_LAYERS = { lsd: true, water: true, quad_access: true, reclaimed: true, pipelines: true, trucks: true, crew: true };
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
 
 const TAB_MAP = 'map';
@@ -633,6 +633,13 @@ export default function App() {
   // Hydrated from /api/devices on boot, then kept fresh via Supabase
   // Realtime on the `devices` table (added to the channel chain below).
   const [devices, setDevices] = useState([]);
+  // Active check-in shifts with a passive last-known location, for the
+  // map's CrewLayer (live worker/truck positions). Only populated for
+  // pin-managers (admin/office/crew_lead) -- the source endpoint is gated
+  // to MANAGES_PINS. Refreshed on the same triggers as the active-shift
+  // load (mount, focus/visibility, Realtime shifts/checkins).
+  const [crewShifts, setCrewShifts] = useState([]);
+  const [selectedCrewShiftId, setSelectedCrewShiftId] = useState(null);
   // Drawing pipeline state
   const [isDrawingPipeline, setIsDrawingPipeline] = useState(false);
   const [drawingPoints, setDrawingPoints] = useState([]);
@@ -3226,18 +3233,46 @@ export default function App() {
     }
   }, [user?.id]);
 
+  // Active shifts (with passive last_loc) for the map's CrewLayer. Only
+  // pin-managers can read this -- workers don't see other people's
+  // positions. Keeps only shifts that actually have a position so the
+  // map never plots a (0,0) pin off the coast of Africa.
+  const loadCrewShifts = useCallback(async () => {
+    if (!window.navigator.onLine || !actualCanManagePins) {
+      setCrewShifts([]);
+      return;
+    }
+    try {
+      const data = await api.listAdminActiveShifts();
+      const withLoc = (Array.isArray(data) ? data : []).filter(
+        (s) =>
+          !s.ended_at &&
+          s.mode !== 'off' &&
+          Number.isFinite(s.last_loc_lat) &&
+          Number.isFinite(s.last_loc_lon),
+      );
+      setCrewShifts(withLoc);
+    } catch (err) {
+      // Soft-fail: the map keeps rendering everything else.
+      console.warn('[checkin] loadCrewShifts failed:', err);
+    }
+  }, [actualCanManagePins]);
+
   useEffect(() => {
     if (!user?.id) {
       setActiveShift(null);
+      setCrewShifts([]);
       return undefined;
     }
     loadActiveShift();
+    loadCrewShifts();
     let debounceTimer = null;
     const scheduleRefresh = () => {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         debounceTimer = null;
         loadActiveShift();
+        loadCrewShifts();
       }, 400);
     };
     // iPad/iOS-PWA safety net: iOS aggressively freezes service
@@ -3268,7 +3303,72 @@ export default function App() {
         try { supabase.removeChannel(channel); } catch { /* ignore */ }
       }
     };
-  }, [user?.id, loadActiveShift]);
+  }, [user?.id, loadActiveShift, loadCrewShifts]);
+
+  // ── Foreground location reporter ──────────────────────────────────
+  // While the app is OPEN and the user has an ACTIVE shift, push the
+  // device's location to the server so the office sees a fresh "last
+  // known location" (truck position). Fires immediately on open, when
+  // the app returns to the foreground (focus/visibility), and every
+  // 5 min while it stays open.
+  //
+  // Privacy: this is a deliberately PASSIVE, foreground-only ping. The
+  // moment the worker checks out (no active shift) the effect stops
+  // running AND the backend rejects the ping with 400 -- so location
+  // never updates off-shift. The last known spot is preserved but goes
+  // stale. iOS can't report in the background anyway, which actually
+  // reinforces the privacy boundary here.
+  useEffect(() => {
+    const shift = activeShift;
+    const onShift =
+      shift && !shift.ended_at && shift.mode !== 'off';
+    if (!user?.id || !onShift) return undefined;
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const reportLocation = () => {
+      // Skip while offline -- the request would just fail; the next
+      // foreground/interval tick retries once back online.
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          if (cancelled) return;
+          api
+            .postMyLocation({
+              lat: pos.coords.latitude,
+              lon: pos.coords.longitude,
+              accuracyM: pos.coords.accuracy,
+            })
+            .catch(() => {
+              /* 400 (checked out) or transient -- ignore, effect
+                 re-gates on the next activeShift change. */
+            });
+        },
+        () => {
+          /* permission denied / unavailable -- nothing to report */
+        },
+        { timeout: 8000, maximumAge: 30_000, enableHighAccuracy: false },
+      );
+    };
+
+    // Fire right away so opening the app refreshes the position.
+    reportLocation();
+    const id = setInterval(reportLocation, 5 * 60_000);
+    const onFocus = () => reportLocation();
+    const onVis = () => { if (!document.hidden) reportLocation(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [user?.id, activeShift?.id, activeShift?.ended_at, activeShift?.mode]);
 
   // ── Forced overlay watcher ────────────────────────────────────────
   // Recomputes shouldForceOverlay() every 30 s + on focus / visibility
@@ -6102,6 +6202,10 @@ export default function App() {
             showTrucksLayer={canManagePins && (layers.trucks ?? true)}
             selectedDevice={selectedDevice}
             onSelectDevice={setSelectedDevice}
+            crewShifts={crewShifts}
+            showCrewLayer={canManagePins && (layers.crew ?? true)}
+            selectedCrewShiftId={selectedCrewShiftId}
+            onSelectCrewShift={setSelectedCrewShiftId}
           />
         </div>
 
@@ -6125,6 +6229,7 @@ export default function App() {
               layers={layers}
               onLayerToggle={handleLayerToggle}
               showTrucksOption={canManagePins}
+              showCrewOption={canManagePins}
             />
           </div>
         ) : null}

@@ -309,7 +309,7 @@ def startup_event() -> None:
 # Format: an opaque-but-meaningful string. Date-prefix + initial keeps
 # bumps obvious in git blame. The exact value doesn't matter as long as
 # it differs from any prior committed value.
-_MIGRATION_VERSION = "2026-05-25-requester-name-scalars"
+_MIGRATION_VERSION = "2026-06-08-shift-last-location"
 
 
 def _migrate_add_columns() -> None:
@@ -625,6 +625,20 @@ def _migrate_add_columns() -> None:
                 ))
             except Exception as e:
                 print(f"Warning: ix_spray_records_client_submission_id index drop failed: {e}")
+
+        # shifts: passive last-known-location columns (foreground location
+        # reporter). Separate from check-ins so a GPS ping never resets the
+        # safety deadline. All nullable -- no backfill needed.
+        if insp.has_table("shifts"):
+            existing_shifts = {col["name"] for col in insp.get_columns("shifts")}
+            if "last_loc_lat" not in existing_shifts:
+                conn.execute(text("ALTER TABLE shifts ADD COLUMN last_loc_lat DOUBLE PRECISION"))
+            if "last_loc_lon" not in existing_shifts:
+                conn.execute(text("ALTER TABLE shifts ADD COLUMN last_loc_lon DOUBLE PRECISION"))
+            if "last_loc_accuracy_m" not in existing_shifts:
+                conn.execute(text("ALTER TABLE shifts ADD COLUMN last_loc_accuracy_m NUMERIC(8,2)"))
+            if "last_loc_at" not in existing_shifts:
+                conn.execute(text("ALTER TABLE shifts ADD COLUMN last_loc_at TIMESTAMP"))
 
     # ── Stamp schema_meta so subsequent cold starts can short-circuit.
     # Done in its own transaction so the migrations above commit even if

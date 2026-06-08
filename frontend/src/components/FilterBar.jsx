@@ -9,6 +9,7 @@ const LAYER_OPTIONS = [
   { key: 'reclaimed', label: 'Reclaimed' },
   { key: 'pipelines', label: 'Pipelines' },
   { key: 'trucks', label: 'Trucks' },
+  { key: 'crew', label: 'Crew (live)' },
 ];
 
 export default function FilterBar({
@@ -19,20 +20,22 @@ export default function FilterBar({
   onChange,
   onSearchSelect,
   onClearAll,
-  layers = { lsd: true, water: true, quad_access: true, reclaimed: true, pipelines: true, trucks: true },
+  layers = { lsd: true, water: true, quad_access: true, reclaimed: true, pipelines: true, trucks: true, crew: true },
   onLayerToggle,
   showTrucksOption = true,
+  showCrewOption = true,
 }) {
   const [focused, setFocused] = useState(false);
   const [layersOpen, setLayersOpen] = useState(false);
   const wrapRef = useRef(null);
 
   const layerOptions = useMemo(() => {
-    if (!showTrucksOption) {
-      return LAYER_OPTIONS.filter((opt) => opt.key !== 'trucks');
-    }
-    return LAYER_OPTIONS;
-  }, [showTrucksOption]);
+    const hidden = new Set();
+    if (!showTrucksOption) hidden.add('trucks');
+    if (!showCrewOption) hidden.add('crew');
+    if (hidden.size === 0) return LAYER_OPTIONS;
+    return LAYER_OPTIONS.filter((opt) => !hidden.has(opt.key));
+  }, [showTrucksOption, showCrewOption]);
 
   const query = filters.search.trim().toLowerCase();
 

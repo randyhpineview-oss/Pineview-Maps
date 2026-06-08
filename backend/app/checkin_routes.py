@@ -305,6 +305,13 @@ def _serialize_shift(
         "minutes_to_deadline": minutes_to,
         "status_tier": compute_tier(shift, now=now),
         "notes": shift.notes or "",
+        "last_loc_lat": shift.last_loc_lat,
+        "last_loc_lon": shift.last_loc_lon,
+        "last_loc_accuracy_m": (
+            float(shift.last_loc_accuracy_m)
+            if shift.last_loc_accuracy_m is not None else None
+        ),
+        "last_loc_at": _aware(shift.last_loc_at),
     }
 
 
@@ -556,6 +563,12 @@ class ShiftRead(BaseModel):
     minutes_to_deadline: Optional[float] = None
     status_tier: Optional[str] = None
     notes: str = ""
+    # Passive last-known location (foreground reporter). Distinct from the
+    # check-in lat/lon -- updated without touching the safety deadline.
+    last_loc_lat: Optional[float] = None
+    last_loc_lon: Optional[float] = None
+    last_loc_accuracy_m: Optional[float] = None
+    last_loc_at: Optional[datetime] = None
     # Populated only by the admin History endpoint (passes
     # ``include_events=True`` to ``_serialize_shift``). Empty on
     # active-tab / overview / worker-self responses to keep the
@@ -960,6 +973,46 @@ def create_checkin(
     db.commit()
     db.refresh(checkin)
     return CheckinRead(**_serialize_checkin(checkin))
+
+
+class LocationPing(BaseModel):
+    # A passive GPS sample from the foreground location reporter. lat/lon
+    # required; accuracy optional. NOT a safety check-in.
+    lat: float
+    lon: float
+    accuracy_m: Optional[float] = None
+
+
+@me_router.post("/api/checkins/me/location", response_model=ShiftRead)
+def update_my_location(
+    payload: LocationPing,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ShiftRead:
+    """Record the caller's current device location against their active shift.
+
+    This is a PASSIVE location ping from the foreground reporter (app
+    open) — it updates ``shifts.last_loc_*`` only. It DELIBERATELY does
+    NOT touch ``last_checkin_at`` or ``next_deadline_at``: a phone
+    auto-reporting from a pocket must never satisfy the lone-worker
+    safety deadline. Returns 400 when there's no active shift so the
+    client can stop pinging.
+
+    Last-writer-wins across a crew (teammates share one truck/shift).
+    """
+    shift = _get_user_today_shift(db, current_user.id)
+    if shift is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No active shift. Start a shift before reporting location.",
+        )
+    shift.last_loc_lat = payload.lat
+    shift.last_loc_lon = payload.lon
+    shift.last_loc_accuracy_m = payload.accuracy_m
+    shift.last_loc_at = _now()
+    db.commit()
+    db.refresh(shift)
+    return ShiftRead(**_serialize_shift(shift))
 
 
 @me_router.get("/api/checkins/me/preferences", response_model=PreferencesRead)
