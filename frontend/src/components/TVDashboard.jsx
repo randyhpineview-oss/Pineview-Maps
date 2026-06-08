@@ -262,16 +262,30 @@ export default function TVDashboard({ onClose }) {
     };
   }, [fetchAll]);
 
-  // Realtime: shifts/checkins/devices drive the board; sites drives the donut.
+  // Realtime: every table feeding the board refetches on change (debounced).
+  //   board   -> shifts, checkins, devices
+  //   donut   -> sites, pipelines
+  //   throughput -> site_spray_records, time_materials_tickets, hydroseed_daily_records
+  // NOTE: instant updates require each table to be in the Supabase
+  // `supabase_realtime` publication. Any table not in it simply won't emit
+  // events here — the 60 s poll + visibility refetch still keep it current.
   useEffect(() => {
     if (!supabase) return undefined;
-    const channel = supabase
-      .channel('tv-dashboard')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'shifts' }, scheduleRefetch)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'checkins' }, scheduleRefetch)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'devices' }, scheduleRefetch)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sites' }, scheduleRefetch)
-      .subscribe();
+    const tables = [
+      'shifts',
+      'checkins',
+      'devices',
+      'sites',
+      'pipelines',
+      'site_spray_records',
+      'time_materials_tickets',
+      'hydroseed_daily_records',
+    ];
+    let channel = supabase.channel('tv-dashboard');
+    for (const table of tables) {
+      channel = channel.on('postgres_changes', { event: '*', schema: 'public', table }, scheduleRefetch);
+    }
+    channel.subscribe();
     return () => {
       try { supabase.removeChannel(channel); } catch { /* ignore */ }
     };
