@@ -13,6 +13,7 @@ import { supabase } from '../../lib/supabaseClient';
 import { hashToHslColor, initials } from '../../lib/avatarColor';
 import { tier as computeTier, tierColors, tierLabel, formatCountdown } from '../../lib/compliance';
 import { t } from '../../lib/checkinTheme';
+import { useCheckinFlash, CheckinList } from './shiftCardBits';
 
 const POLL_MS = 60_000;
 const REFETCH_DEBOUNCE_MS = 500;
@@ -82,12 +83,36 @@ export default function ActiveTab({ isAdmin = true }) {
     return () => { try { supabase.removeChannel(channel); } catch { /* ignore */ } };
   }, [scheduleRefetch]);
 
-  // 30 s local tick for tier transitions. Note we name the updater
-  // arg `prev` (not `t`) so it doesn't shadow the imported theme module.
+  // 1 s local tick so the h:mm:ss countdown actually counts. Pauses
+  // when there are no active shifts to avoid pointless re-renders.
+  // Updater is named `prev` (not `t`) so it doesn't shadow the
+  // imported theme module.
   useEffect(() => {
-    const id = setInterval(() => setTick((prev) => prev + 1), 30_000);
+    if (shifts.length === 0) return undefined;
+    const id = setInterval(() => setTick((prev) => prev + 1), 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [shifts.length]);
+
+  // Visibility-driven refetch + SW push listener. Mirrors OverviewTab
+  // so the TV/dashboard refreshes immediately when a check-in event
+  // fires, not on the 60 s safety-net poll.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') fetchAll();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [fetchAll]);
+
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !navigator.serviceWorker) return undefined;
+    const onMessage = (event) => {
+      const data = event && event.data;
+      if (data && data.type === 'CHECKIN_ALERT') scheduleRefetch();
+    };
+    navigator.serviceWorker.addEventListener('message', onMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', onMessage);
+  }, [scheduleRefetch]);
 
   const handleEnd = async (s) => {
     const who = s.user_name || `user #${s.user_id}`;
@@ -111,25 +136,40 @@ export default function ActiveTab({ isAdmin = true }) {
     <div className="active-tab-root">
       {error ? <div style={{ padding: 8, background: t.dangerBg, color: t.danger, border: `1px solid ${t.dangerBorder}`, borderRadius: 6, fontSize: 13, marginBottom: 10 }}>{error}</div> : null}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12 }}>
-        {shifts.map((s) => {
-          // Backend embeds user_name + crew_members in every admin shift
-          // row, so we don't need any local lookup. Numeric fallback only
-          // for cases where the embedding was somehow missed.
-          const name = s.user_name || `User #${s.user_id}`;
-          const email = s.user_email || '';
-          const tier = computeTier(s, new Date());
-          const colors = tierColors(tier);
-          const av = hashToHslColor(email || name);
-          const crewMembers = Array.isArray(s.crew_members) ? s.crew_members : [];
-          const crewCount = crewMembers.length
-            || (Array.isArray(s.crew_user_ids) ? s.crew_user_ids.length : 0);
-          return (
-            <div key={s.id} style={{
-              background: t.cardBg, borderRadius: 10, padding: 14,
-              border: `2px solid ${colors.accent}`,
-              boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
-              color: t.text,
-            }}>
+        {shifts.map((s) => (
+          <ActiveShiftCard
+            key={s.id}
+            s={s}
+            isAdmin={isAdmin}
+            onForce={() => handleForce(s)}
+            onEnd={() => handleEnd(s)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ActiveShiftCard({ s, isAdmin, onForce, onEnd }) {
+  // Backend embeds user_name + crew_members in every admin shift row,
+  // so we don't need any local lookup. Numeric fallback only for cases
+  // where the embedding was somehow missed.
+  const name = s.user_name || `User #${s.user_id}`;
+  const email = s.user_email || '';
+  const tier = computeTier(s, new Date());
+  const colors = tierColors(tier);
+  const av = hashToHslColor(email || name);
+  const crewMembers = Array.isArray(s.crew_members) ? s.crew_members : [];
+  const crewCount = crewMembers.length
+    || (Array.isArray(s.crew_user_ids) ? s.crew_user_ids.length : 0);
+  const flashClass = useCheckinFlash(s.last_checkin_at, s.id);
+  return (
+    <div className={flashClass} style={{
+      background: t.cardBg, borderRadius: 10, padding: 14,
+      border: `2px solid ${colors.accent}`,
+      boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
+      color: t.text,
+    }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
                 <span style={{
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -181,22 +221,19 @@ export default function ActiveTab({ isAdmin = true }) {
               <div style={{ fontSize: 13, color: t.textSubtle }}>
                 <strong style={{ color: t.text }}>Next deadline:</strong> {fmtTime(s.next_deadline_at)} ({formatCountdown(s, new Date()) || '—'})
               </div>
+              <CheckinList shift={s} leadName={name} />
               {isAdmin ? (
                 <div style={{ marginTop: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  <button type="button" onClick={() => handleForce(s)} style={{
+                  <button type="button" onClick={onForce} style={{
                     padding: '6px 10px', background: t.accentStrong, color: t.textOnAccent, border: 'none',
                     borderRadius: 6, fontSize: 12, cursor: 'pointer', fontWeight: 600,
                   }}>Force check-in</button>
-                  <button type="button" onClick={() => handleEnd(s)} style={{
+                  <button type="button" onClick={onEnd} style={{
                     padding: '6px 10px', background: t.dangerStrong, color: t.textOnAccent, border: 'none',
                     borderRadius: 6, fontSize: 12, cursor: 'pointer', fontWeight: 600,
                   }}>End shift</button>
                 </div>
               ) : null}
             </div>
-          );
-        })}
-      </div>
-    </div>
   );
 }

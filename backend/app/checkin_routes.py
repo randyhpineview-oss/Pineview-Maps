@@ -1170,6 +1170,23 @@ def get_overview(db: Session = Depends(get_db)) -> list[OverviewEntry]:
     users = db.query(User).filter(User.id.in_(lookup_ids)).all()
     user_by_id = {u.id: u for u in users}
 
+    # Pre-serialize and batch-embed checkins for every shift so the
+    # Overview cards can render today's check-in list (live TV feed).
+    shift_serials_by_user: dict[int, dict] = {}
+    for uid, sh in shift_by_user.items():
+        user = user_by_id.get(uid)
+        if user is None:
+            continue
+        if user.email and user.email.lower().endswith("@pineview.local"):
+            continue
+        shift_serials_by_user[uid] = _serialize_shift(
+            sh, user=user, users_by_id=user_by_id
+        )
+    if shift_serials_by_user:
+        _embed_shift_events(
+            db, list(shift_serials_by_user.values()), users_by_id=user_by_id
+        )
+
     out: list[OverviewEntry] = []
     for uid in user_ids:
         user = user_by_id.get(uid)
@@ -1181,12 +1198,8 @@ def get_overview(db: Session = Depends(get_db)) -> list[OverviewEntry]:
         # noise. Defensive: in normal operation they have neither.
         if user.email and user.email.lower().endswith("@pineview.local"):
             continue
-        shift = shift_by_user.get(uid)
         truck = truck_by_user.get(uid)
-        shift_serial = (
-            _serialize_shift(shift, user=user, users_by_id=user_by_id)
-            if shift else None
-        )
+        shift_serial = shift_serials_by_user.get(uid)
         # Tier: if there's a live shift, use compliance tier.
         # Else 'idle' (truck-assigned but not started).
         tier_value = shift_serial["status_tier"] if shift_serial else "idle"
@@ -1232,12 +1245,14 @@ def list_active_shifts(db: Session = Depends(get_db)) -> list[ShiftRead]:
         all_ids.append(s.user_id)
         all_ids.extend(s.crew_user_ids or [])
     user_map = _users_by_id(db, all_ids)
-    return [
-        ShiftRead(**_serialize_shift(
-            s, user=user_map.get(s.user_id), users_by_id=user_map,
-        ))
+    serialized = [
+        _serialize_shift(s, user=user_map.get(s.user_id), users_by_id=user_map)
         for s in resolved_rows
     ]
+    # Embed full check-in list per shift so the dashboard can render
+    # today's tap history right on each card (live feed for the office TV).
+    _embed_shift_events(db, serialized, users_by_id=user_map)
+    return [ShiftRead(**s) for s in serialized]
 
 
 @admin_router.get("/api/admin/shifts", response_model=list[ShiftRead])

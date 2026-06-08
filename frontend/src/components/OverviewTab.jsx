@@ -40,6 +40,7 @@ import { supabase } from '../lib/supabaseClient';
 import { hashToHslColor, initials } from '../lib/avatarColor';
 import { tier as computeTier, tierColors, tierLabel, formatCountdown } from '../lib/compliance';
 import { t } from '../lib/checkinTheme';
+import { useCheckinFlash, CheckinList } from './CheckInsTabs/shiftCardBits';
 
 const POLL_MS = 60_000;
 const REFETCH_DEBOUNCE_MS = 500;
@@ -151,14 +152,17 @@ export default function OverviewTab({ isAdmin = false }) {
     };
   }, [scheduleRefetch]);
 
-  // Local 30 s tick so green->yellow transitions visually without
-  // waiting for the next poll/realtime event. Updater is named `prev`
-  // (not `t`) so it doesn't shadow the imported theme module.
+  // Local 1 s tick so the h:mm:ss countdown counts smoothly and
+  // green->yellow->red transitions happen without waiting for a poll.
+  // Pauses when no entry has an active shift (nothing time-based to
+  // render). Updater named `prev` (not `t`) to avoid shadowing theme.
   const [, setTick] = useState(0);
+  const hasActive = entries.some((e) => e.shift && !e.shift.ended_at);
   useEffect(() => {
-    const id = setInterval(() => setTick((prev) => prev + 1), 30_000);
+    if (!hasActive) return undefined;
+    const id = setInterval(() => setTick((prev) => prev + 1), 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [hasActive]);
 
   // Server-side sort is already correct (red->yellow->blue->green->idle->off).
   const visible = useMemo(() => entries, [entries]);
@@ -271,8 +275,9 @@ function OverviewCard({ entry, isAdmin, onForce, onEnd }) {
   const crewMembers = Array.isArray(s.crew_members) ? s.crew_members : [];
   const crewCount = crewMembers.length
     || (Array.isArray(s.crew_user_ids) ? s.crew_user_ids.length : 0);
+  const flashClass = useCheckinFlash(s.last_checkin_at, s.id);
   return (
-    <div style={{
+    <div className={flashClass} style={{
       background: t.cardBg, borderRadius: 10, padding: 14,
       border: `2px solid ${colors.accent}`,
       boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
@@ -330,6 +335,7 @@ function OverviewCard({ entry, isAdmin, onForce, onEnd }) {
       {entry.truck_label ? (
         <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>🚚 {entry.truck_label}</div>
       ) : null}
+      <CheckinList shift={s} leadName={entry.display_name} />
       {isAdmin ? (
         <div style={{ marginTop: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <button type="button" onClick={onForce} style={{
