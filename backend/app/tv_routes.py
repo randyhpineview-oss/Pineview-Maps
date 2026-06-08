@@ -108,9 +108,16 @@ def _resolve_day(day: Optional[str]) -> date_type:
 
 
 @tv_router.get("/checkin-overview", response_model=list[OverviewEntry])
-def tv_checkin_overview(db: Session = Depends(get_db)) -> list[OverviewEntry]:
-    """Same payload as the admin Check-ins Dashboard Overview tab."""
-    return get_overview(db=db)
+def tv_checkin_overview(
+    day: Optional[str] = Query(
+        default=None, description="Client local date YYYY-MM-DD for the checked-out window"
+    ),
+    db: Session = Depends(get_db),
+) -> list[OverviewEntry]:
+    """Same payload as the admin Check-ins Dashboard Overview tab, plus
+    workers who CHECKED OUT earlier today (greyed, sorted last) so the
+    board shows who was on today even after they end their shift."""
+    return get_overview(db=db, include_ended_day=_resolve_day(day))
 
 
 @tv_router.get("/stats", response_model=TVStatsResponse)

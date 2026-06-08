@@ -1121,9 +1121,19 @@ def unsubscribe_push(
 
 
 @admin_router.get("/api/admin/checkin-overview", response_model=list[OverviewEntry])
-def get_overview(db: Session = Depends(get_db)) -> list[OverviewEntry]:
+def get_overview(
+    db: Session = Depends(get_db),
+    include_ended_day: Optional[date] = None,
+) -> list[OverviewEntry]:
     """Overview tab: anyone with an active shift today OR assigned to an
     active truck. One row per user. Single round-trip.
+
+    When ``include_ended_day`` is set (the Operations TV passes the
+    client's local date), shifts that ENDED on that day are also returned
+    as ``checked_out`` entries so a worker who tapped "End shift" stays on
+    the board (greyed, sorted last) for the rest of the day rather than
+    the card vanishing. The admin Overview tab omits the param, so its
+    behaviour is unchanged.
     """
     # Set 1: users with an active shift (auto-end resolved on the way in).
     active_shifts = (
@@ -1134,6 +1144,30 @@ def get_overview(db: Session = Depends(get_db)) -> list[OverviewEntry]:
     shift_by_user: dict[int, Shift] = {
         s.user_id: s for s in active_shifts if s.ended_at is None
     }
+
+    # Set 1b (TV only): shifts that ENDED earlier today. Skip users who
+    # already have an active shift (a fresh shift supersedes an earlier
+    # checkout); keep only the most-recently-ended shift per user.
+    ended_shift_by_user: dict[int, Shift] = {}
+    if include_ended_day is not None:
+        day_start, day_end = _local_day_window(include_ended_day)
+        ended_rows = (
+            db.query(Shift)
+            .filter(
+                Shift.ended_at.is_not(None),
+                Shift.ended_at >= day_start,
+                Shift.ended_at < day_end,
+            )
+            .all()
+        )
+        for s in ended_rows:
+            if s.user_id in shift_by_user:
+                continue
+            existing = ended_shift_by_user.get(s.user_id)
+            if existing is None or (
+                s.ended_at and existing.ended_at and s.ended_at > existing.ended_at
+            ):
+                ended_shift_by_user[s.user_id] = s
 
     # Set 2: users assigned to an active device (truck).
     assigned_rows = (
@@ -1154,16 +1188,24 @@ def get_overview(db: Session = Depends(get_db)) -> list[OverviewEntry]:
         ):
             truck_by_user[d.assigned_user_id] = d
 
-    user_ids = set(shift_by_user.keys()) | set(truck_by_user.keys())
+    user_ids = (
+        set(shift_by_user.keys())
+        | set(truck_by_user.keys())
+        | set(ended_shift_by_user.keys())
+    )
     if not user_ids:
         return []
+
+    # Active shift wins over an earlier ended one for the same user.
+    all_shift_by_user: dict[int, Shift] = dict(ended_shift_by_user)
+    all_shift_by_user.update(shift_by_user)
 
     # Widen the user lookup to also include every crew teammate so the
     # serializer can embed their names into ShiftRead.crew_members. A
     # crew teammate doesn't necessarily have their own shift today, so
     # they won't already be in user_ids.
     lookup_ids: set[int] = set(user_ids)
-    for sh in shift_by_user.values():
+    for sh in all_shift_by_user.values():
         for cid in (sh.crew_user_ids or []):
             lookup_ids.add(cid)
 
@@ -1173,7 +1215,7 @@ def get_overview(db: Session = Depends(get_db)) -> list[OverviewEntry]:
     # Pre-serialize and batch-embed checkins for every shift so the
     # Overview cards can render today's check-in list (live TV feed).
     shift_serials_by_user: dict[int, dict] = {}
-    for uid, sh in shift_by_user.items():
+    for uid, sh in all_shift_by_user.items():
         user = user_by_id.get(uid)
         if user is None:
             continue
@@ -1200,9 +1242,14 @@ def get_overview(db: Session = Depends(get_db)) -> list[OverviewEntry]:
             continue
         truck = truck_by_user.get(uid)
         shift_serial = shift_serials_by_user.get(uid)
-        # Tier: if there's a live shift, use compliance tier.
-        # Else 'idle' (truck-assigned but not started).
-        tier_value = shift_serial["status_tier"] if shift_serial else "idle"
+        # Tier: ended-today shift -> 'checked_out' (greyed, sorted last);
+        # live shift -> compliance tier; truck-only -> 'idle'.
+        if uid in ended_shift_by_user and uid not in shift_by_user:
+            tier_value = "checked_out"
+        elif shift_serial:
+            tier_value = shift_serial["status_tier"]
+        else:
+            tier_value = "idle"
         out.append(
             OverviewEntry(
                 user_id=uid,
@@ -1220,7 +1267,7 @@ def get_overview(db: Session = Depends(get_db)) -> list[OverviewEntry]:
             )
         )
     # Sort: red -> yellow -> blue -> green -> idle -> off, then name.
-    rank = {"red": 0, "yellow": 1, "blue": 2, "green": 3, "idle": 4, "off": 5}
+    rank = {"red": 0, "yellow": 1, "blue": 2, "green": 3, "idle": 4, "off": 5, "checked_out": 6}
     out.sort(key=lambda e: (rank.get(e.status_tier, 9), e.display_name.lower()))
     return out
 

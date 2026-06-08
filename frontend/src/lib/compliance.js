@@ -117,6 +117,7 @@ export function tierLabel(t) {
     case 'blue': return 'Just started';
     case 'idle': return 'Not started yet';
     case 'off': return 'Off shift';
+    case 'checked_out': return 'Checked out';
     default: return t || '';
   }
 }
@@ -134,6 +135,7 @@ export function tierColors(t) {
     case 'blue':   return { bg: '#2563eb', fg: '#ffffff', accent: '#1d4ed8' };
     case 'idle':   return { bg: '#9ca3af', fg: '#ffffff', accent: '#6b7280' };
     case 'off':    return { bg: '#6b7280', fg: '#ffffff', accent: '#374151' };
+    case 'checked_out': return { bg: '#4b5563', fg: '#e5e7eb', accent: '#374151' };
     default:       return { bg: '#9ca3af', fg: '#ffffff', accent: '#6b7280' };
   }
 }

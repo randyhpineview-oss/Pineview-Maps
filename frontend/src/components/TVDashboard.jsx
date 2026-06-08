@@ -151,7 +151,10 @@ function ThroughputTile({ value, label, accent }) {
 
 function CheckinCard({ entry }) {
   const s = entry.shift;
-  const tierValue = s ? computeTier(s, new Date()) : 'idle';
+  // A shift that ended earlier today shows as a dimmed "Checked out" card
+  // (sorted last by the server) so the board still shows who was on today.
+  const ended = !!(s && s.ended_at);
+  const tierValue = ended ? 'checked_out' : (s ? computeTier(s, new Date()) : 'idle');
   const colors = tierColors(tierValue);
   const av = hashToHslColor(entry.avatar_seed || entry.display_name);
   // Registered crew (resolved {id,name,email}) + freeform crew (newline-
@@ -176,6 +179,7 @@ function CheckinCard({ entry }) {
       display: 'flex',
       flexDirection: 'column',
       gap: 8,
+      opacity: ended ? 0.6 : 1,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span style={{
@@ -198,7 +202,11 @@ function CheckinCard({ entry }) {
       {s ? (
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 13, color: t.textSubtle }}>
           <span><strong style={{ color: t.text }}>Last:</strong> {fmtRelative(s.last_checkin_at)}</span>
-          <span style={{ fontWeight: 700, color: colors.bg }}>{formatCountdown(s, new Date()) || '—'}</span>
+          {ended ? (
+            <span style={{ fontWeight: 700 }}>Out {fmtTime(s.ended_at)}</span>
+          ) : (
+            <span style={{ fontWeight: 700, color: colors.bg }}>{formatCountdown(s, new Date()) || '—'}</span>
+          )}
         </div>
       ) : (
         <div style={{ fontSize: 13, color: t.textMuted }}>No shift started yet today.</div>
@@ -245,7 +253,7 @@ export default function TVDashboard({ onClose }) {
   // roughly halves per-event egress on busy days.
   const fetchOverview = useCallback(async () => {
     try {
-      const rows = await api.getTvCheckinOverview();
+      const rows = await api.getTvCheckinOverview({ day: localDateISO() });
       setEntries(Array.isArray(rows) ? rows : []);
       setError(null);
     } catch (err) {
