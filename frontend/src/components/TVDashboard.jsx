@@ -142,7 +142,16 @@ function CheckinCard({ entry }) {
   const tierValue = s ? computeTier(s, new Date()) : 'idle';
   const colors = tierColors(tierValue);
   const av = hashToHslColor(entry.avatar_seed || entry.display_name);
-  const crewMembers = s && Array.isArray(s.crew_members) ? s.crew_members : [];
+  // Registered crew (resolved {id,name,email}) + freeform crew (newline-
+  // separated custom names typed by the worker). Show first names only.
+  const registeredCrew = s && Array.isArray(s.crew_members) ? s.crew_members : [];
+  const freeformCrew = s && s.crew_freeform
+    ? String(s.crew_freeform).split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+    : [];
+  const crewNames = [
+    ...registeredCrew.map((m, i) => ({ key: `u${m.id ?? i}`, name: firstName(m.name) })),
+    ...freeformCrew.map((n, i) => ({ key: `f${i}`, name: firstName(n) })),
+  ].filter((c) => c.name);
 
   return (
     <div style={{
@@ -183,17 +192,17 @@ function CheckinCard({ entry }) {
         <div style={{ fontSize: 13, color: t.textMuted }}>No shift started yet today.</div>
       )}
 
-      {crewMembers.length > 0 ? (
+      {crewNames.length > 0 ? (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px 5px', alignItems: 'center' }}>
           <span style={{ fontSize: 10, fontWeight: 700, color: t.textMuted, textTransform: 'uppercase', letterSpacing: 0.4 }}>Crew</span>
-          {crewMembers.map((m) => (
+          {crewNames.map((c) => (
             <span
-              key={m.id}
+              key={c.key}
               style={{
                 fontSize: 11, lineHeight: 1.3, color: t.textSubtle,
                 background: 'rgba(143,182,255,0.08)', borderRadius: 4, padding: '1px 6px',
               }}
-            >{firstName(m.name)}</span>
+            >{c.name}</span>
           ))}
         </div>
       ) : null}
@@ -324,8 +333,13 @@ export default function TVDashboard({ onClose }) {
         padding: '12px 22px', background: t.cardBgRaised,
         borderBottom: `1px solid ${t.border}`, flexShrink: 0,
       }}>
-        <h1 style={{ margin: 0, fontSize: 'clamp(18px, 2vw, 26px)', fontWeight: 800, letterSpacing: 0.3 }}>
-          📺 Pineview Operations
+        <h1 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 12, fontSize: 'clamp(18px, 2vw, 26px)', fontWeight: 800, letterSpacing: 0.3 }}>
+          <img
+            src="/logo.png"
+            alt="Pineview"
+            style={{ height: 'clamp(28px, 3vw, 42px)', width: 'auto', display: 'block' }}
+          />
+          Pineview Operations
         </h1>
         <div style={{ flex: 1 }} />
         <div style={{ textAlign: 'right', lineHeight: 1.15 }}>
