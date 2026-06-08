@@ -34,10 +34,15 @@ import { tier as computeTier, tierColors, tierLabel, formatCountdown } from '../
 import { localDateISO } from '../lib/dateUtil';
 import { t } from '../lib/checkinTheme';
 
-// Safety-net poll only — real-time websocket events drive instant updates,
-// so this just catches anything missed if the socket drops. Kept long to
-// minimize egress on always-on TVs, and paused entirely while hidden.
-const POLL_MS = 5 * 60_000;
+// Two poll cadences, both paused while the screen is hidden:
+//   - Overview (check-ins): SAFETY-CRITICAL and realtime delivery for
+//     shifts/checkins is unreliable for a passive viewer (same reason the
+//     admin OverviewTab keeps a 60 s poll + SW push alongside realtime), so
+//     poll it fast. This is what makes "last check-in" feel live.
+//   - Stats (donut + throughput): realtime works reliably for these tables,
+//     so the poll is just a dropped-socket fallback — kept long for egress.
+const OVERVIEW_POLL_MS = 30_000;
+const STATS_POLL_MS = 5 * 60_000;
 const REFETCH_DEBOUNCE_MS = 500;
 
 // Site-status display config for the donut + legend. Order = ring order.
@@ -233,7 +238,8 @@ export default function TVDashboard({ onClose }) {
 
   const overviewTimerRef = useRef(null);
   const statsTimerRef = useRef(null);
-  const pollTimerRef = useRef(null);
+  const overviewPollRef = useRef(null);
+  const statsPollRef = useRef(null);
 
   // Two independent fetchers so a real-time event only re-pulls the half of
   // the board it affects (a check-in doesn't refetch the donut, etc.) —
@@ -280,42 +286,41 @@ export default function TVDashboard({ onClose }) {
     }, REFETCH_DEBOUNCE_MS);
   }, [fetchStats]);
 
-  // Initial fetch + safety-net poll. The poll only runs while the screen is
-  // visible — an always-on TV that's asleep/backgrounded burns no egress,
-  // and we do one immediate refetch the moment it wakes.
+  // Initial fetch + two safety-net polls (fast for check-ins, slow for
+  // stats). Both only run while the screen is visible — an always-on TV
+  // that's asleep/backgrounded burns no egress, and we do one immediate
+  // full refetch the moment it wakes.
   useEffect(() => {
     fetchAll();
 
-    const startPoll = () => {
-      if (pollTimerRef.current) return;
-      pollTimerRef.current = setInterval(fetchAll, POLL_MS);
+    const startPolls = () => {
+      if (!overviewPollRef.current) overviewPollRef.current = setInterval(fetchOverview, OVERVIEW_POLL_MS);
+      if (!statsPollRef.current) statsPollRef.current = setInterval(fetchStats, STATS_POLL_MS);
     };
-    const stopPoll = () => {
-      if (pollTimerRef.current) {
-        clearInterval(pollTimerRef.current);
-        pollTimerRef.current = null;
-      }
+    const stopPolls = () => {
+      if (overviewPollRef.current) { clearInterval(overviewPollRef.current); overviewPollRef.current = null; }
+      if (statsPollRef.current) { clearInterval(statsPollRef.current); statsPollRef.current = null; }
     };
 
     const onVisible = () => {
       if (document.visibilityState === 'visible') {
         fetchAll();
-        startPoll();
+        startPolls();
       } else {
-        stopPoll();
+        stopPolls();
       }
     };
 
-    if (document.visibilityState === 'visible') startPoll();
+    if (document.visibilityState === 'visible') startPolls();
     document.addEventListener('visibilitychange', onVisible);
 
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
-      stopPoll();
+      stopPolls();
       if (overviewTimerRef.current) clearTimeout(overviewTimerRef.current);
       if (statsTimerRef.current) clearTimeout(statsTimerRef.current);
     };
-  }, [fetchAll]);
+  }, [fetchAll, fetchOverview, fetchStats]);
 
   // Realtime: each table only refetches the half of the board it feeds.
   //   board (overview) -> shifts, checkins, devices
