@@ -170,6 +170,8 @@ function ActiveShiftCard({ s, isAdmin, onForce, onEnd }) {
       boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
       color: t.text,
     }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+        <div style={{ flex: '1 1 60%', minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
                 <span style={{
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -221,19 +223,23 @@ function ActiveShiftCard({ s, isAdmin, onForce, onEnd }) {
               <div style={{ fontSize: 13, color: t.textSubtle }}>
                 <strong style={{ color: t.text }}>Next deadline:</strong> {fmtTime(s.next_deadline_at)} ({formatCountdown(s, new Date()) || '—'})
               </div>
-              <CheckinList shift={s} leadName={name} />
-              {isAdmin ? (
-                <div style={{ marginTop: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  <button type="button" onClick={onForce} style={{
-                    padding: '6px 10px', background: t.accentStrong, color: t.textOnAccent, border: 'none',
-                    borderRadius: 6, fontSize: 12, cursor: 'pointer', fontWeight: 600,
-                  }}>Force check-in</button>
-                  <button type="button" onClick={onEnd} style={{
-                    padding: '6px 10px', background: t.dangerStrong, color: t.textOnAccent, border: 'none',
-                    borderRadius: 6, fontSize: 12, cursor: 'pointer', fontWeight: 600,
-                  }}>End shift</button>
-                </div>
-              ) : null}
-            </div>
+        </div>
+        <div style={{ flex: '1 1 40%', minWidth: 130 }}>
+          <CheckinList shift={s} leadName={name} />
+        </div>
+      </div>
+      {isAdmin ? (
+        <div style={{ marginTop: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <button type="button" onClick={onForce} style={{
+            padding: '6px 10px', background: t.accentStrong, color: t.textOnAccent, border: 'none',
+            borderRadius: 6, fontSize: 12, cursor: 'pointer', fontWeight: 600,
+          }}>Force check-in</button>
+          <button type="button" onClick={onEnd} style={{
+            padding: '6px 10px', background: t.dangerStrong, color: t.textOnAccent, border: 'none',
+            borderRadius: 6, fontSize: 12, cursor: 'pointer', fontWeight: 600,
+          }}>End shift</button>
+        </div>
+      ) : null}
+    </div>
   );
 }

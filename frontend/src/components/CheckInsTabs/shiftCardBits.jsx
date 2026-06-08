@@ -77,7 +77,7 @@ export function CheckinList({ shift, leadName }) {
     return bt - at;
   });
   return (
-    <div style={{ marginTop: 8 }}>
+    <div>
       <div style={{
         fontSize: 12, color: t.text, fontWeight: 600,
         marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6,

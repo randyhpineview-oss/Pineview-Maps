@@ -283,6 +283,8 @@ function OverviewCard({ entry, isAdmin, onForce, onEnd }) {
       boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
       color: t.text,
     }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+        <div style={{ flex: '1 1 60%', minWidth: 0 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
         <span style={{
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -335,7 +337,11 @@ function OverviewCard({ entry, isAdmin, onForce, onEnd }) {
       {entry.truck_label ? (
         <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>🚚 {entry.truck_label}</div>
       ) : null}
-      <CheckinList shift={s} leadName={entry.display_name} />
+        </div>
+        <div style={{ flex: '1 1 40%', minWidth: 130 }}>
+          <CheckinList shift={s} leadName={entry.display_name} />
+        </div>
+      </div>
       {isAdmin ? (
         <div style={{ marginTop: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <button type="button" onClick={onForce} style={{
