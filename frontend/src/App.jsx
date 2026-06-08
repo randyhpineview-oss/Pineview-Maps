@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import AutocompleteInput from './components/AutocompleteInput';
+import CrewSidebar from './components/CrewSidebar';
 import { useDialog } from './components/DialogProvider';
 import FilterBar from './components/FilterBar';
 import InstallAppPrompt from './components/InstallAppPrompt';
@@ -640,6 +641,8 @@ export default function App() {
   // load (mount, focus/visibility, Realtime shifts/checkins).
   const [crewShifts, setCrewShifts] = useState([]);
   const [selectedCrewShiftId, setSelectedCrewShiftId] = useState(null);
+  // Toggles the manager-only "Crew on shift" list overlay on the map.
+  const [showCrewPanel, setShowCrewPanel] = useState(false);
   // Drawing pipeline state
   const [isDrawingPipeline, setIsDrawingPipeline] = useState(false);
   const [drawingPoints, setDrawingPoints] = useState([]);
@@ -3233,10 +3236,11 @@ export default function App() {
     }
   }, [user?.id]);
 
-  // Active shifts (with passive last_loc) for the map's CrewLayer. Only
+  // Active shifts for the map's CrewLayer + the Crew sidebar. Only
   // pin-managers can read this -- workers don't see other people's
-  // positions. Keeps only shifts that actually have a position so the
-  // map never plots a (0,0) pin off the coast of Africa.
+  // positions. We keep ALL active (non-off) shifts so the sidebar can
+  // list everyone on shift; the map's CrewLayer filters to those that
+  // actually have a position so it never plots a (0,0) pin.
   const loadCrewShifts = useCallback(async () => {
     if (!window.navigator.onLine || !actualCanManagePins) {
       setCrewShifts([]);
@@ -3244,14 +3248,10 @@ export default function App() {
     }
     try {
       const data = await api.listAdminActiveShifts();
-      const withLoc = (Array.isArray(data) ? data : []).filter(
-        (s) =>
-          !s.ended_at &&
-          s.mode !== 'off' &&
-          Number.isFinite(s.last_loc_lat) &&
-          Number.isFinite(s.last_loc_lon),
+      const active = (Array.isArray(data) ? data : []).filter(
+        (s) => !s.ended_at && s.mode !== 'off',
       );
-      setCrewShifts(withLoc);
+      setCrewShifts(active);
     } catch (err) {
       // Soft-fail: the map keeps rendering everything else.
       console.warn('[checkin] loadCrewShifts failed:', err);
@@ -5130,6 +5130,20 @@ export default function App() {
     setActiveTab(TAB_MAP);
   }
 
+  // Pan/zoom the map to a crew's last-known location and open its pin
+  // popup. Triggered from the Crew sidebar's "Locate" button.
+  function handleLocateCrew(shift) {
+    if (!shift || !Number.isFinite(shift.last_loc_lat) || !Number.isFinite(shift.last_loc_lon)) return;
+    const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) &&
+                    /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    setSelectedCrewShiftId(shift.id);
+    setZoomTarget({ latitude: shift.last_loc_lat, longitude: shift.last_loc_lon, _ts: Date.now(), _centerOnly: !isPhone });
+    setActiveTab(TAB_MAP);
+    // On phones the panel covers the map -- close it so the worker can
+    // see the pin they just located. On desktop/iPad keep it open.
+    if (isPhone) setShowCrewPanel(false);
+  }
+
   async function handleSubmitNewPin() {
     if (!addPinLocation || !addPinType) return;
     setSubmittingPin(true);
@@ -6211,10 +6225,42 @@ export default function App() {
 
         {/* floating filter button */}
         <div className="map-float-tl">
-          <button className="float-btn" type="button" onClick={() => setIsFilterOpen((c) => !c)}>
+          <button
+            className="float-btn"
+            type="button"
+            onClick={() => setIsFilterOpen((c) => {
+              const next = !c;
+              if (next) setShowCrewPanel(false);
+              return next;
+            })}
+          >
             ☰ Filters
           </button>
+          {canManagePins ? (
+            <button
+              className="float-btn"
+              type="button"
+              onClick={() => {
+                setShowCrewPanel((c) => {
+                  const next = !c;
+                  if (next) setIsFilterOpen(false);
+                  return next;
+                });
+              }}
+            >
+              🛟 Crew{crewShifts.length ? ` (${crewShifts.length})` : ''}
+            </button>
+          ) : null}
         </div>
+
+        {canManagePins && showCrewPanel ? (
+          <CrewSidebar
+            shifts={crewShifts}
+            selectedShiftId={selectedCrewShiftId}
+            onLocate={handleLocateCrew}
+            onClose={() => setShowCrewPanel(false)}
+          />
+        ) : null}
 
         {isFilterOpen ? (
           <div className="filter-overlay">

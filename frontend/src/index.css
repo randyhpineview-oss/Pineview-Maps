@@ -438,6 +438,28 @@ button { cursor: pointer; }
   backdrop-filter: blur(12px);
 }
 
+/* ───── Crew (live) list overlay ───── */
+/* Sits below BOTH floating buttons (Filters + Crew, stacked) so they
+   stay visible/clickable while the list is open. */
+.crew-overlay {
+  position: absolute;
+  top: 100px;
+  left: 12px;
+  z-index: 12;
+  background: rgba(9, 17, 31, 0.95);
+  border: 1px solid rgba(143, 182, 255, 0.14);
+  border-radius: 14px;
+  padding: 0.75rem;
+  width: 280px;
+  max-height: 60vh;
+  overflow-y: auto;
+  backdrop-filter: blur(12px);
+}
+
+@media (min-width: 769px) {
+  .crew-overlay { width: 320px; }
+}
+
 .filter-overlay input,
 .filter-overlay select {
   width: 100%;
