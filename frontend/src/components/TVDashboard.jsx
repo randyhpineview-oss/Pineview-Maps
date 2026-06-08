@@ -38,12 +38,16 @@ const POLL_MS = 60_000;
 const REFETCH_DEBOUNCE_MS = 500;
 
 // Site-status display config for the donut + legend. Order = ring order.
+// Colours mirror the map pins exactly (see statusFill in lib/mapUtils.js):
+//   inspected   -> green  #22c55e
+//   in_progress -> orange #f59e0b
+//   not_inspected -> red  #ef4444
+//   issue       -> gray   #94a3b8  (merges issue + issue_not_inspected)
 const STATUS_META = [
-  { key: 'inspected', label: 'Inspected', color: '#16a34a' },
-  { key: 'in_progress', label: 'In progress', color: '#2563eb' },
-  { key: 'not_inspected', label: 'Not inspected', color: '#475569' },
-  { key: 'issue', label: 'Issue', color: '#dc2626' },
-  { key: 'issue_not_inspected', label: 'Issue · not inspected', color: '#f59e0b' },
+  { key: 'inspected', label: 'Inspected', color: '#22c55e' },
+  { key: 'in_progress', label: 'In progress', color: '#f59e0b' },
+  { key: 'not_inspected', label: 'Not inspected', color: '#ef4444' },
+  { key: 'issue', label: 'Issue', color: '#94a3b8', sumKeys: ['issue', 'issue_not_inspected'] },
 ];
 
 function firstName(name) {
@@ -309,7 +313,11 @@ export default function TVDashboard({ onClose }) {
 
   const siteSegments = useMemo(() => {
     const ss = stats?.site_status || {};
-    return STATUS_META.map((m) => ({ ...m, value: Number(ss[m.key] || 0) }));
+    return STATUS_META.map((m) => {
+      const keys = m.sumKeys || [m.key];
+      const value = keys.reduce((acc, k) => acc + Number(ss[k] || 0), 0);
+      return { ...m, value };
+    });
   }, [stats]);
 
   const siteTotal = Number(stats?.site_status?.total || 0);
