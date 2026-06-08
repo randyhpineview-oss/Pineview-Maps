@@ -34,7 +34,10 @@ import { tier as computeTier, tierColors, tierLabel, formatCountdown } from '../
 import { localDateISO } from '../lib/dateUtil';
 import { t } from '../lib/checkinTheme';
 
-const POLL_MS = 60_000;
+// Safety-net poll only — real-time websocket events drive instant updates,
+// so this just catches anything missed if the socket drops. Kept long to
+// minimize egress on always-on TVs, and paused entirely while hidden.
+const POLL_MS = 5 * 60_000;
 const REFETCH_DEBOUNCE_MS = 500;
 
 // Site-status display config for the donut + legend. Order = ring order.
@@ -224,17 +227,17 @@ export default function TVDashboard({ onClose }) {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [now, setNow] = useState(() => new Date());
 
-  const refetchTimerRef = useRef(null);
+  const overviewTimerRef = useRef(null);
+  const statsTimerRef = useRef(null);
   const pollTimerRef = useRef(null);
 
-  const fetchAll = useCallback(async () => {
+  // Two independent fetchers so a real-time event only re-pulls the half of
+  // the board it affects (a check-in doesn't refetch the donut, etc.) —
+  // roughly halves per-event egress on busy days.
+  const fetchOverview = useCallback(async () => {
     try {
-      const [rows, statRes] = await Promise.all([
-        api.getTvCheckinOverview(),
-        api.getTvStats({ day: localDateISO() }),
-      ]);
+      const rows = await api.getTvCheckinOverview();
       setEntries(Array.isArray(rows) ? rows : []);
-      setStats(statRes || null);
       setLastUpdated(new Date());
       setError(null);
     } catch (err) {
@@ -244,37 +247,83 @@ export default function TVDashboard({ onClose }) {
     }
   }, []);
 
-  const scheduleRefetch = useCallback(() => {
-    if (refetchTimerRef.current) clearTimeout(refetchTimerRef.current);
-    refetchTimerRef.current = setTimeout(() => {
-      refetchTimerRef.current = null;
-      fetchAll();
-    }, REFETCH_DEBOUNCE_MS);
-  }, [fetchAll]);
+  const fetchStats = useCallback(async () => {
+    try {
+      const statRes = await api.getTvStats({ day: localDateISO() });
+      setStats(statRes || null);
+      setLastUpdated(new Date());
+      setError(null);
+    } catch (err) {
+      setError(err.message || String(err));
+    }
+  }, []);
 
-  // Initial fetch + 60 s poll.
+  const fetchAll = useCallback(() => Promise.all([fetchOverview(), fetchStats()]), [fetchOverview, fetchStats]);
+
+  const scheduleOverview = useCallback(() => {
+    if (overviewTimerRef.current) clearTimeout(overviewTimerRef.current);
+    overviewTimerRef.current = setTimeout(() => {
+      overviewTimerRef.current = null;
+      fetchOverview();
+    }, REFETCH_DEBOUNCE_MS);
+  }, [fetchOverview]);
+
+  const scheduleStats = useCallback(() => {
+    if (statsTimerRef.current) clearTimeout(statsTimerRef.current);
+    statsTimerRef.current = setTimeout(() => {
+      statsTimerRef.current = null;
+      fetchStats();
+    }, REFETCH_DEBOUNCE_MS);
+  }, [fetchStats]);
+
+  // Initial fetch + safety-net poll. The poll only runs while the screen is
+  // visible — an always-on TV that's asleep/backgrounded burns no egress,
+  // and we do one immediate refetch the moment it wakes.
   useEffect(() => {
     fetchAll();
-    pollTimerRef.current = setInterval(fetchAll, POLL_MS);
+
+    const startPoll = () => {
+      if (pollTimerRef.current) return;
+      pollTimerRef.current = setInterval(fetchAll, POLL_MS);
+    };
+    const stopPoll = () => {
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+    };
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        fetchAll();
+        startPoll();
+      } else {
+        stopPoll();
+      }
+    };
+
+    if (document.visibilityState === 'visible') startPoll();
+    document.addEventListener('visibilitychange', onVisible);
+
     return () => {
-      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-      if (refetchTimerRef.current) clearTimeout(refetchTimerRef.current);
+      document.removeEventListener('visibilitychange', onVisible);
+      stopPoll();
+      if (overviewTimerRef.current) clearTimeout(overviewTimerRef.current);
+      if (statsTimerRef.current) clearTimeout(statsTimerRef.current);
     };
   }, [fetchAll]);
 
-  // Realtime: every table feeding the board refetches on change (debounced).
-  //   board   -> shifts, checkins, devices
-  //   donut   -> sites, pipelines
-  //   throughput -> site_spray_records, time_materials_tickets, hydroseed_daily_records
-  // NOTE: instant updates require each table to be in the Supabase
-  // `supabase_realtime` publication. Any table not in it simply won't emit
-  // events here — the 60 s poll + visibility refetch still keep it current.
+  // Realtime: each table only refetches the half of the board it feeds.
+  //   board (overview) -> shifts, checkins, devices
+  //   donut + throughput (stats) -> sites, pipelines, site_spray_records,
+  //                                 time_materials_tickets, hydroseed_daily_records
+  // All of these are already in the Supabase `supabase_realtime` publication
+  // (see database/enable_realtime.sql + hydroseed_setup.sql), so events
+  // stream instantly; the poll above is just a dropped-socket fallback.
   useEffect(() => {
     if (!supabase) return undefined;
-    const tables = [
-      'shifts',
-      'checkins',
-      'devices',
+    const overviewTables = ['shifts', 'checkins', 'devices'];
+    const statsTables = [
       'sites',
       'pipelines',
       'site_spray_records',
@@ -282,34 +331,28 @@ export default function TVDashboard({ onClose }) {
       'hydroseed_daily_records',
     ];
     let channel = supabase.channel('tv-dashboard');
-    for (const table of tables) {
-      channel = channel.on('postgres_changes', { event: '*', schema: 'public', table }, scheduleRefetch);
+    for (const table of overviewTables) {
+      channel = channel.on('postgres_changes', { event: '*', schema: 'public', table }, scheduleOverview);
+    }
+    for (const table of statsTables) {
+      channel = channel.on('postgres_changes', { event: '*', schema: 'public', table }, scheduleStats);
     }
     channel.subscribe();
     return () => {
       try { supabase.removeChannel(channel); } catch { /* ignore */ }
     };
-  }, [scheduleRefetch]);
+  }, [scheduleOverview, scheduleStats]);
 
-  // Refetch when the tab/display becomes visible again.
-  useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') fetchAll();
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [fetchAll]);
-
-  // Service-worker push → instant refresh (same as OverviewTab).
+  // Service-worker push (check-in alert) → refresh the board half only.
   useEffect(() => {
     if (typeof navigator === 'undefined' || !navigator.serviceWorker) return undefined;
     const onMessage = (event) => {
       const data = event && event.data;
-      if (data && data.type === 'CHECKIN_ALERT') scheduleRefetch();
+      if (data && data.type === 'CHECKIN_ALERT') scheduleOverview();
     };
     navigator.serviceWorker.addEventListener('message', onMessage);
     return () => navigator.serviceWorker.removeEventListener('message', onMessage);
-  }, [scheduleRefetch]);
+  }, [scheduleOverview]);
 
   // 1 s tick: drives the wall clock + countdown digits + tier colours.
   useEffect(() => {
