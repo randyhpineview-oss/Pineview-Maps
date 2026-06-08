@@ -37,12 +37,19 @@ from app.database import get_db
 from app.models import (
     ApprovalState,
     HydroseedDailyRecord,
+    PinType,
     RoleEnum,
     Site,
     SiteSprayRecord,
     SiteStatus,
     TimeMaterialsTicket,
 )
+from app.pipeline_models import Pipeline
+
+# Pin types that represent an actual inspection site. Water sources and
+# quad/access points are reference markers, not sites to inspect, so they
+# are excluded from the inspection-progress donut.
+INSPECTABLE_PIN_TYPES = (PinType.lsd, PinType.reclaimed)
 
 # Admin + office can open the overlay from their own login; tv is the
 # dedicated kiosk account. crew_lead is intentionally excluded — the
@@ -117,27 +124,51 @@ def tv_stats(
     day_start = datetime(target_day.year, target_day.month, target_day.day)
     day_end = day_start + timedelta(days=1)
 
-    # ── Site-status breakdown ────────────────────────────────────────
+    # ── Inspection-progress breakdown ────────────────────────────────
+    # Only real inspection sites count: LSD/reclaimed pins + pipelines.
+    # Water + quad/access pins are reference markers, not inspected.
     # Mirror the default /api/sites visibility filter: approved, not
-    # soft-deleted, not hidden. Grouped count = one round-trip.
-    rows = (
+    # soft-deleted, not hidden.
+    breakdown = SiteStatusBreakdown()
+
+    def _add(key: str, count: int) -> None:
+        if count <= 0:
+            return
+        if hasattr(breakdown, key):
+            setattr(breakdown, key, getattr(breakdown, key) + count)
+        breakdown.total += count
+
+    site_rows = (
         db.query(Site.status, func.count(Site.id))
         .filter(
             Site.approval_state == ApprovalState.approved,
             Site.deleted_at.is_(None),
             Site.is_hidden.is_(False),
+            Site.pin_type.in_(INSPECTABLE_PIN_TYPES),
         )
         .group_by(Site.status)
         .all()
     )
-    breakdown = SiteStatusBreakdown()
-    for status_value, count in rows:
+    for status_value, count in site_rows:
         # status_value is a SiteStatus enum (or its .value string depending
         # on the driver); normalize to the plain string key.
         key = status_value.value if isinstance(status_value, SiteStatus) else str(status_value)
-        if hasattr(breakdown, key):
-            setattr(breakdown, key, int(count))
-        breakdown.total += int(count)
+        _add(key, int(count))
+
+    # Pipelines only carry a two-state status (sprayed / not_sprayed), so
+    # fold them into the matching donut buckets.
+    pipeline_rows = (
+        db.query(Pipeline.status, func.count(Pipeline.id))
+        .filter(
+            Pipeline.approval_state == "approved",
+            Pipeline.deleted_at.is_(None),
+        )
+        .group_by(Pipeline.status)
+        .all()
+    )
+    for status_value, count in pipeline_rows:
+        key = "inspected" if str(status_value) == "sprayed" else "not_inspected"
+        _add(key, int(count))
 
     # ── Today's throughput ───────────────────────────────────────────
     # spray_date is a DateTime → use a half-open range. The T&M and

@@ -46,6 +46,10 @@ const STATUS_META = [
   { key: 'issue_not_inspected', label: 'Issue · not inspected', color: '#f59e0b' },
 ];
 
+function firstName(name) {
+  const s = String(name ?? '').trim();
+  return s ? s.split(/\s+/)[0] : '';
+}
 function fmtTime(iso) {
   if (!iso) return '—';
   try { return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); } catch { return '—'; }
@@ -138,10 +142,7 @@ function CheckinCard({ entry }) {
   const tierValue = s ? computeTier(s, new Date()) : 'idle';
   const colors = tierColors(tierValue);
   const av = hashToHslColor(entry.avatar_seed || entry.display_name);
-  const crewCount = s
-    ? (Array.isArray(s.crew_members) ? s.crew_members.length
-      : (Array.isArray(s.crew_user_ids) ? s.crew_user_ids.length : 0))
-    : 0;
+  const crewMembers = s && Array.isArray(s.crew_members) ? s.crew_members : [];
 
   return (
     <div style={{
@@ -162,7 +163,7 @@ function CheckinCard({ entry }) {
           background: av.bg, color: av.fg, fontWeight: 700, fontSize: 16, flexShrink: 0,
         }}>{initials(entry.display_name)}</span>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 18, color: t.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.display_name}</div>
+          <div style={{ fontWeight: 700, fontSize: 18, color: t.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{firstName(entry.display_name)}</div>
           <div style={{ fontSize: 12, color: t.textMuted }}>
             {s ? `Started ${fmtTime(s.started_at)}` : (entry.truck_label ? `🚚 ${entry.truck_label}` : 'Not started yet')}
           </div>
@@ -182,8 +183,19 @@ function CheckinCard({ entry }) {
         <div style={{ fontSize: 13, color: t.textMuted }}>No shift started yet today.</div>
       )}
 
-      {s && s.mode === 'crew' && crewCount > 0 ? (
-        <div style={{ fontSize: 12, color: t.textMuted }}>Crew of {crewCount + 1}</div>
+      {crewMembers.length > 0 ? (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px 5px', alignItems: 'center' }}>
+          <span style={{ fontSize: 10, fontWeight: 700, color: t.textMuted, textTransform: 'uppercase', letterSpacing: 0.4 }}>Crew</span>
+          {crewMembers.map((m) => (
+            <span
+              key={m.id}
+              style={{
+                fontSize: 11, lineHeight: 1.3, color: t.textSubtle,
+                background: 'rgba(143,182,255,0.08)', borderRadius: 4, padding: '1px 6px',
+              }}
+            >{firstName(m.name)}</span>
+          ))}
+        </div>
       ) : null}
     </div>
   );
