@@ -19,7 +19,7 @@ from app.log_util import get_logger
 from app.password_reset import router as password_reset_router
 from app.rate_limit import limiter
 from app.signup import router as signup_router
-from app.user_management import router as user_management_router
+from app.user_management import roster_router, router as user_management_router
 from app.pipeline_routes import router as pipeline_router
 from app.lookup_routes import router as lookup_router
 from app.reports_routes import router as reports_router
@@ -145,6 +145,7 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 
 # Include routers AFTER middleware is set up
 app.include_router(user_management_router)
+app.include_router(roster_router)
 app.include_router(password_reset_router)
 app.include_router(signup_router)
 app.include_router(pipeline_router)

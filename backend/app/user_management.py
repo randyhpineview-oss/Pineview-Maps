@@ -12,14 +12,52 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 from supabase import create_client
 
-from app.auth import require_roles
+from app.auth import get_current_user, require_roles
 from app.config import get_settings
 from app.database import get_db
 from app.email_service import send_password_setup_link
 from app.log_util import get_logger, mask_email, short_id
-from app.models import PasswordResetCode, RoleEnum
+from app.models import PasswordResetCode, RoleEnum, User
 
 router = APIRouter(prefix="/api/admin/users", tags=["user-management"])
+
+# Roster router: minimal user list available to ANY authenticated user.
+# Powers crew-pickers (Hydroseed Daily roster, T&M crew, etc.) for non-admin
+# roles that can't hit /api/admin/users. Returns only the local `users` table
+# (id/name/email/role/created_at) — no Supabase-Auth metadata, so this is
+# both cheap and information-light.
+roster_router = APIRouter(prefix="/api/users", tags=["user-roster"])
+
+
+class RosterUser(BaseModel):
+    id: int
+    name: str
+    email: str
+    role: str
+    created_at: str
+
+
+@roster_router.get("/roster", response_model=list[RosterUser])
+def list_roster(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[RosterUser]:
+    """Minimal user list for in-app pickers (any authenticated role).
+
+    Mirrors the shape `cachedUsers` consumers expect (HydroseedDailyRecord,
+    crew picker, etc.) without exposing Supabase-Auth fields.
+    """
+    rows = db.query(User).order_by(User.name.asc()).all()
+    return [
+        RosterUser(
+            id=u.id,
+            name=u.name or "",
+            email=u.email or "",
+            role=u.role.value if hasattr(u.role, "value") else str(u.role),
+            created_at=u.created_at.isoformat() if u.created_at else "",
+        )
+        for u in rows
+    ]
 
 settings = get_settings()
 logger = get_logger(__name__)

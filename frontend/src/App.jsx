@@ -1126,11 +1126,17 @@ export default function App() {
 
   const loadServerUsers = useCallback(async () => {
     if (!window.navigator.onLine) return;
-    // Only admins can list users — skip the call for office/worker to avoid
-    // a 403 on every page load (harmless but noisy in the Render logs).
-    if (userRole !== 'admin') return;
+    if (!userRole) return;
+    // Admins get the full Supabase-Auth list (includes last_sign_in_at,
+    // email_confirmed_at, etc. for the User Management panel).
+    // Non-admins fall back to the lightweight roster endpoint so crew
+    // pickers (Hydroseed Daily roster, T&M crew picker) get populated for
+    // worker / crew_lead / office roles too. Without this, those pickers
+    // were empty for non-admins because /api/admin/users 403s.
     try {
-      const data = await api.listUsers();
+      const data = userRole === 'admin'
+        ? await api.listUsers()
+        : await api.listRoster();
       setCachedUsers(data);
       await replaceUsers(data);
     } catch {
@@ -3026,6 +3032,33 @@ export default function App() {
         try { void removeRecentById(row.id); } catch { /* ignore */ }
       } else {
         void upsertRecent(row);
+      }
+
+      // Patch the affected pipeline's `spray_records` array in-place so the
+      // green/grey segment appears (or disappears) on every viewer's map
+      // immediately, instead of waiting for the next 30s pipelines delta
+      // poll. The Postgres realtime payload for the `pipelines` row only
+      // carries base columns (no relationships), so without this branch
+      // `MapView` never sees the new SprayRecord entry on remote devices.
+      const pipelineId = row.pipeline_id;
+      if (pipelineId != null) {
+        const patchSprayRecords = (records) => {
+          const arr = Array.isArray(records) ? records.slice() : [];
+          if (isHardDelete) return arr.filter((r) => r.id !== row.id);
+          const idx = arr.findIndex((r) => r.id === row.id);
+          if (idx === -1) return [row, ...arr];
+          arr[idx] = { ...arr[idx], ...row };
+          return arr;
+        };
+        setPipelines((prev) => prev.map((p) => (
+          p.id === pipelineId ? { ...p, spray_records: patchSprayRecords(p.spray_records) } : p
+        )));
+        if (selectedPipelineRef.current && selectedPipelineRef.current.id === pipelineId) {
+          setSelectedPipeline((prev) => (
+            prev ? { ...prev, spray_records: patchSprayRecords(prev.spray_records) } : prev
+          ));
+          setPipelineSprayRecords((prev) => patchSprayRecords(prev));
+        }
       }
 
       // T&M aggregates can change when a spray record's status moves;

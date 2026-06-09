@@ -49,10 +49,22 @@ class Pipeline(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     deleted_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 
+    # Only non-deleted spray records flow through this relationship — the
+    # frontend renders every record returned here as a green/grey overlay
+    # on the polyline, and `_update_pipeline_spray_status` sums these
+    # ranges for coverage. Including soft-deleted rows would (a) leave
+    # phantom segments on the map after a delete, and (b) keep a pipeline
+    # marked `sprayed` after its only spray record was deleted. Use a
+    # direct `db.query(SprayRecord)` (without this filter) for admin
+    # restore / audit flows that need the deleted rows too.
     spray_records: Mapped[list["SprayRecord"]] = relationship(
         back_populates="pipeline",
         cascade="all, delete-orphan",
         order_by="desc(SprayRecord.created_at)",
+        primaryjoin=(
+            "and_(Pipeline.id == SprayRecord.pipeline_id, "
+            "SprayRecord.deleted_at.is_(None))"
+        ),
     )
 
 

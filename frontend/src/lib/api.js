@@ -181,6 +181,12 @@ export const api = {
   listUsers() {
     return request('/api/admin/users');
   },
+  // Minimal roster (any authenticated user) — powers crew pickers like the
+  // Hydroseed Daily roster for non-admin roles. Returns only id/name/email/
+  // role/created_at from the local users table.
+  listRoster() {
+    return request('/api/users/roster');
+  },
   createUser(payload) {
     return request('/api/admin/users', { method: 'POST', body: payload });
   },

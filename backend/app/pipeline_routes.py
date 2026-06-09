@@ -969,8 +969,21 @@ def bulk_reset_pipelines(
 
 
 def _update_pipeline_spray_status(db: Session, pipeline: Pipeline):
-    """Update pipeline status based on spray coverage."""
-    records = db.query(SprayRecord).filter(SprayRecord.pipeline_id == pipeline.id).all()
+    """Update pipeline status based on spray coverage.
+
+    Soft-deleted spray records are excluded — otherwise deleting the only
+    record on a pipeline would leave it stuck at status='sprayed', and
+    deleting a partial record would leave its fraction range still
+    counting toward the >=95% coverage threshold below.
+    """
+    records = (
+        db.query(SprayRecord)
+        .filter(
+            SprayRecord.pipeline_id == pipeline.id,
+            SprayRecord.deleted_at.is_(None),
+        )
+        .all()
+    )
     if not records:
         pipeline.status = "not_sprayed"
         return

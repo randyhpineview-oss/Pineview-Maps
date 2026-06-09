@@ -1025,7 +1025,7 @@ export default function MapView({
 
         {/* Spray record overlays (green sections on pipelines) */}
         {pipelines.map((pipeline) =>
-          (pipeline.spray_records || []).map((record) => {
+          (pipeline.spray_records || []).filter((r) => !r.deleted_at).map((record) => {
             const coords = pipeline.coordinates;
             if (!coords || coords.length < 2) return null;
             // Extract the interpolated sub-path for this spray record

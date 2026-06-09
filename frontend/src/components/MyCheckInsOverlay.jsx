@@ -293,21 +293,17 @@ export default function MyCheckInsOverlay({
     setSubmitting(true);
     setError(null);
     try {
-      // HARD GATE: starting a shift requires location permission so the
-      // office can actually track the crew. We trigger the system
-      // prompt up front (if not already answered) and refuse to start
-      // the shift when permission is denied. "Position unavailable"
-      // (no GPS fix yet, indoors, etc.) is NOT a block -- the worker
-      // has permission and the foreground reporter will land a fix as
-      // soon as the device gets one.
+      // SOFT GATE: we trigger the system prompt up front so workers who
+      // grant access get tracked, but we DO NOT block shift start when
+      // location is denied/unavailable -- some workers were getting
+      // stuck unable to check in at all. The denied banner still shows
+      // as a nudge so they can fix it from Settings.
       const probe = await requestPosition();
-      if (!probe.ok && probe.denied) {
+      if (probe.ok) {
+        setGeoPermState('granted');
+      } else if (probe.denied) {
         setGeoPermState('denied');
-        setError(LOCATION_REQUIRED_MESSAGE);
-        setSubmitting(false);
-        return;
       }
-      if (probe.ok) setGeoPermState('granted');
       // If they previously marked today as off, end that shift first so
       // the backend's "already active" guard doesn't 409.
       if (shift && shift.mode === 'off' && !shift.ended_at) {
@@ -354,26 +350,22 @@ export default function MyCheckInsOverlay({
     setSubmitting(true);
     setError(null);
     try {
-      // HARD GATE: require location PERMISSION to record a check-in.
-      // We DON'T require a successful fix (indoors / dead spot must
-      // not block a safety tap) -- only the permission itself. If the
-      // probe fails with code !== PERMISSION_DENIED we proceed without
-      // coords; if it's denied, we refuse.
+      // SOFT GATE: try to attach coords if available, but never block
+      // a safety check-in when location is denied/unavailable. Some
+      // workers were getting stuck unable to check in at all when
+      // their device location was off. The denied banner still shows
+      // as a nudge so they can fix it from Settings.
       let lat = null;
       let lon = null;
       let accuracyM = null;
       const probe = await requestPosition({ timeout: 5000 });
-      if (!probe.ok && probe.denied) {
-        setGeoPermState('denied');
-        setError(LOCATION_REQUIRED_MESSAGE);
-        setSubmitting(false);
-        return;
-      }
       if (probe.ok) {
         setGeoPermState('granted');
         lat = probe.position.coords.latitude;
         lon = probe.position.coords.longitude;
         accuracyM = probe.position.coords.accuracy;
+      } else if (probe.denied) {
+        setGeoPermState('denied');
       }
       const createdCheckin = await api.createCheckin({ lat, lon, accuracyM });
       setCheckins((prev) => [createdCheckin, ...prev]);
