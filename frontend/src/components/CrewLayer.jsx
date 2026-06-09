@@ -73,6 +73,13 @@ export default function CrewLayer({
   visible = true,
   selectedPointKey = null,
   onSelectPoint,
+  // Shift ids whose crew member pins should also render. When a crew
+  // shift is NOT in this set we only show the lead pin so the map
+  // doesn't get buried under 5 stacked pins for one truck. Expanding
+  // via the sidebar chevron or the popup's "Show crew" toggle adds
+  // the shift's id to the set.
+  expandedShiftIds = null,
+  onToggleShiftExpanded,
 }) {
   // 30 s tick so "X min ago" + the stale/dim treatment stay current
   // without a network call.
@@ -89,13 +96,22 @@ export default function CrewLayer({
   // those with a known location. Each point inherits its tier from the
   // shift (safety status is shift-wide) but carries its own coords +
   // updated_at so the stale dimming is per-member.
+  //
+  // Collapsing: for crew shifts we show ONLY the lead pin by default --
+  // expanding the shift (via the sidebar chevron or the lead popup's
+  // "Show crew" toggle) reveals the other members' pins. Solo shifts
+  // are unaffected; they only have one member to show.
   const points = [];
   for (const shift of shifts) {
     if (!shift || shift.ended_at || shift.mode === 'off') continue;
     const tier = shift.status_tier || computeTier(shift, now);
+    const crewSize = (shift.crew_members && shift.crew_members.length)
+      || (1 + (shift.crew_user_ids || []).length);
+    const isExpanded = !!(expandedShiftIds && expandedShiftIds.has(shift.id));
     for (const p of crewMemberPoints(shift)) {
       if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) continue;
-      points.push({ ...p, tier });
+      if (shift.mode === 'crew' && !isExpanded && !p.isLead) continue;
+      points.push({ ...p, tier, crewSize, isExpanded });
     }
   }
 
@@ -194,11 +210,33 @@ export default function CrewLayer({
                 {Number.isFinite(activePopup.accuracyM) ? (
                   <div>🎯 ±{Math.round(activePopup.accuracyM)} m</div>
                 ) : null}
-                {activePopup.mode === 'crew' ? <div>👥 Crew member</div> : <div>🧍 Solo</div>}
+                {activePopup.mode === 'crew' ? <div>👥 Crew of {activePopup.crewSize}</div> : <div>🧍 Solo</div>}
                 {stale ? (
                   <div style={{ marginTop: '0.3rem', color: '#fbbf24', fontSize: '0.72rem' }}>
                     App backgrounded — location not updating.
                   </div>
+                ) : null}
+                {activePopup.mode === 'crew' && activePopup.isLead && activePopup.crewSize > 1 ? (
+                  <button
+                    type="button"
+                    onClick={() => onToggleShiftExpanded?.(activePopup.shiftId)}
+                    style={{
+                      marginTop: '0.45rem',
+                      width: '100%',
+                      background: 'rgba(143,182,255,0.16)',
+                      color: '#dbe7ff',
+                      border: '1px solid rgba(143,182,255,0.25)',
+                      borderRadius: 8,
+                      padding: '0.32rem 0.55rem',
+                      fontSize: '0.74rem',
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                    }}
+                  >
+                    {activePopup.isExpanded
+                      ? `Hide crew (${activePopup.crewSize - 1})`
+                      : `Show crew (${activePopup.crewSize - 1})`}
+                  </button>
                 ) : null}
               </div>
             </div>

@@ -29,41 +29,124 @@ function relativeTime(iso) {
   return `${Math.round(hr / 24)} d ago`;
 }
 
+function MemberRow({ p, isSelected, colors, tier, isCrew, crewSize, isExpanded, onLocate, onToggle, isMate = false }) {
+  if (!p) return null;
+  const hasLoc = Number.isFinite(p.lat) && Number.isFinite(p.lon);
+  const stale = p.updatedAt && Date.now() - new Date(p.updatedAt).getTime() > STALE_MS;
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 7,
+        padding: isMate ? '0.4rem 0.55rem' : '0.5rem 0.6rem',
+        borderRadius: 10,
+        background: isSelected ? 'rgba(143,182,255,0.14)' : 'rgba(9,17,31,0.6)',
+        border: `1px solid ${isSelected ? 'rgba(143,182,255,0.4)' : 'rgba(143,182,255,0.12)'}`,
+      }}
+    >
+      <span
+        aria-hidden
+        title={tierLabel(tier)}
+        style={{
+          width: isMate ? 8 : 11,
+          height: isMate ? 8 : 11,
+          borderRadius: '50%',
+          background: colors.bg,
+          border: '1px solid rgba(255,255,255,0.25)',
+          flexShrink: 0,
+          opacity: isMate ? 0.75 : 1,
+        }}
+      />
+      <div style={{ flexGrow: 1, minWidth: 0 }}>
+        <div style={{
+          color: isMate ? '#9ab1d6' : '#e5eefb',
+          fontSize: isMate ? '0.78rem' : '0.84rem',
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {p.name}
+          {isCrew && !isMate ? (
+            <span style={{ color: '#9ab1d6', fontSize: '0.7rem', marginLeft: 4 }}>
+              (lead · crew of {crewSize})
+            </span>
+          ) : null}
+        </div>
+        <div style={{ color: colors.bg, fontSize: '0.7rem' }}>
+          📍 {relativeTime(p.updatedAt)}{stale ? ' (stale)' : ''}
+        </div>
+      </div>
+      {/* Locate button */}
+      <button
+        type="button"
+        disabled={!hasLoc}
+        onClick={() => hasLoc && onLocate?.(p)}
+        style={{
+          flexShrink: 0, borderRadius: 7,
+          border: '1px solid rgba(143,182,255,0.2)',
+          background: hasLoc ? 'rgba(143,182,255,0.16)' : 'rgba(9,17,31,0.6)',
+          color: hasLoc ? '#dbe7ff' : '#5f7396',
+          padding: '0.28rem 0.45rem', fontSize: '0.72rem',
+          cursor: hasLoc ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap',
+        }}
+      >
+        Locate
+      </button>
+      {/* Expand/collapse chevron — only on lead row of a crew shift */}
+      {onToggle ? (
+        <button
+          type="button"
+          aria-label={isExpanded ? 'Collapse crew' : 'Expand crew'}
+          onClick={onToggle}
+          style={{
+            flexShrink: 0, background: 'transparent', border: 'none',
+            color: '#9ab1d6', cursor: 'pointer',
+            fontSize: '0.75rem', padding: '0 0.1rem', lineHeight: 1,
+            transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+            transition: 'transform 0.18s',
+          }}
+        >
+          ▼
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export default function CrewSidebar({
   shifts = [],
   selectedKey = null,
   onLocate,
   onClose,
+  expandedShiftIds = null,
+  onToggleShiftExpanded,
 }) {
   const now = new Date();
-  // Flatten active shifts into per-member rows so the office can locate
-  // anyone on the crew individually -- not just the lead. Each row
-  // inherits the shift's safety tier (compliance is shift-wide) but
-  // carries that member's own last-known location + time.
   const tierRank = { red: 0, yellow: 1, blue: 2, green: 3 };
-  const rows = [];
+
+  // Build one group per active shift (sorted by worst tier first, then
+  // name). Within each group the lead comes first, then crew mates
+  // alphabetically. Crew mates are hidden until the chevron is clicked.
+  const groups = [];
   for (const shift of shifts) {
     if (!shift || shift.ended_at || shift.mode === 'off') continue;
     const tier = shift.status_tier || computeTier(shift, now);
-    const crewSize = (shift.crew_members && shift.crew_members.length)
-      || (1 + (shift.crew_user_ids || []).length);
-    for (const p of crewMemberPoints(shift)) {
-      rows.push({ ...p, tier, crewSize });
-    }
+    const members = crewMemberPoints(shift).map((p) => ({ ...p, tier }));
+    // lead first, then rest by name
+    members.sort((a, b) => {
+      if (a.isLead !== b.isLead) return a.isLead ? -1 : 1;
+      return String(a.name).localeCompare(String(b.name));
+    });
+    const lead = members.find((m) => m.isLead) || members[0];
+    const crewSize = members.length;
+    groups.push({ shift, tier, lead, members, crewSize });
   }
-  // Sort: located first, then worst tier first, then lead first within
-  // a shift, then by name. This puts "who needs attention AND we know
-  // where they are" at the top.
-  rows.sort((a, b) => {
-    const aLoc = Number.isFinite(a.lat) ? 0 : 1;
-    const bLoc = Number.isFinite(b.lat) ? 0 : 1;
-    if (aLoc !== bLoc) return aLoc - bLoc;
+  groups.sort((a, b) => {
     const t = (tierRank[a.tier] ?? 9) - (tierRank[b.tier] ?? 9);
     if (t !== 0) return t;
-    if (a.shiftId !== b.shiftId) return a.shiftId - b.shiftId;
-    if (a.isLead !== b.isLead) return a.isLead ? -1 : 1;
-    return String(a.name).localeCompare(String(b.name));
+    return String(a.lead?.name || '').localeCompare(String(b.lead?.name || ''));
   });
+
+  const totalPeople = groups.reduce((s, g) => s + g.crewSize, 0);
 
   return (
     <div className="crew-overlay">
@@ -76,7 +159,7 @@ export default function CrewSidebar({
         }}
       >
         <strong style={{ color: '#f5f8ff', fontSize: '0.9rem' }}>
-          Crew on shift ({rows.length})
+          Crew on shift ({totalPeople})
         </strong>
         <button
           type="button"
@@ -96,86 +179,51 @@ export default function CrewSidebar({
         </button>
       </div>
 
-      {rows.length === 0 ? (
+      {groups.length === 0 ? (
         <div style={{ color: '#9ab1d6', fontSize: '0.82rem', padding: '0.5rem 0' }}>
           No one is checked in right now.
         </div>
       ) : (
         <div style={{ display: 'grid', gap: 6 }}>
-          {rows.map((p) => {
-            const colors = tierColors(p.tier);
-            const hasLoc = Number.isFinite(p.lat) && Number.isFinite(p.lon);
-            const stale =
-              p.updatedAt && Date.now() - new Date(p.updatedAt).getTime() > STALE_MS;
-            const isSelected = selectedKey === p.key;
+          {groups.map(({ shift, tier, lead, members, crewSize }) => {
+            const colors = tierColors(tier);
+            const isExpanded = !!(expandedShiftIds && expandedShiftIds.has(shift.id));
+            const isCrew = shift.mode === 'crew' && crewSize > 1;
+            // crew mates only (everyone except lead)
+            const mates = members.filter((m) => !m.isLead);
+
             return (
-              <div
-                key={p.key}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  padding: '0.5rem 0.6rem',
-                  borderRadius: 10,
-                  background: isSelected
-                    ? 'rgba(143,182,255,0.14)'
-                    : 'rgba(9,17,31,0.6)',
-                  border: `1px solid ${isSelected ? 'rgba(143,182,255,0.4)' : 'rgba(143,182,255,0.12)'}`,
-                }}
-              >
-                <span
-                  aria-hidden
-                  title={tierLabel(p.tier)}
-                  style={{
-                    width: 12,
-                    height: 12,
-                    borderRadius: '50%',
-                    background: colors.bg,
-                    border: '1px solid rgba(255,255,255,0.25)',
-                    flexShrink: 0,
-                  }}
+              <div key={shift.id}>
+                {/* ── Lead / solo row (always visible) ── */}
+                <MemberRow
+                  p={lead}
+                  isSelected={selectedKey === lead?.key}
+                  colors={colors}
+                  tier={tier}
+                  isCrew={isCrew}
+                  crewSize={crewSize}
+                  isExpanded={isExpanded}
+                  onLocate={onLocate}
+                  onToggle={isCrew ? () => onToggleShiftExpanded?.(shift.id) : null}
                 />
-                <div style={{ flexGrow: 1, minWidth: 0 }}>
-                  <div
-                    style={{
-                      color: '#e5eefb',
-                      fontSize: '0.84rem',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                    }}
-                  >
-                    {p.name}
-                    {p.mode === 'crew' && p.isLead ? ' (lead)' : ''}
-                    {p.mode === 'crew' && !p.isLead ? ` (crew of ${p.crewSize})` : ''}
+
+                {/* ── Crew mates (shown when expanded) ── */}
+                {isExpanded && mates.map((m) => (
+                  <div key={m.key} style={{ paddingLeft: 14, marginTop: 4 }}>
+                    <MemberRow
+                      p={m}
+                      isSelected={selectedKey === m.key}
+                      colors={colors}
+                      tier={tier}
+                      isCrew={false}
+                      crewSize={crewSize}
+                      isExpanded={false}
+                      onLocate={onLocate}
+                      onToggle={null}
+                      isMate
+                    />
                   </div>
-                  <div style={{ color: colors.bg, fontSize: '0.72rem' }}>
-                    {tierLabel(p.tier)}
-                    <span style={{ color: '#9ab1d6' }}>
-                      {' · '}
-                      📍 {relativeTime(p.updatedAt)}
-                      {stale ? ' (stale)' : ''}
-                    </span>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  disabled={!hasLoc}
-                  onClick={() => hasLoc && onLocate?.(p)}
-                  style={{
-                    flexShrink: 0,
-                    borderRadius: 8,
-                    border: '1px solid rgba(143,182,255,0.2)',
-                    background: hasLoc ? 'rgba(143,182,255,0.16)' : 'rgba(9,17,31,0.6)',
-                    color: hasLoc ? '#dbe7ff' : '#5f7396',
-                    padding: '0.32rem 0.55rem',
-                    fontSize: '0.74rem',
-                    cursor: hasLoc ? 'pointer' : 'not-allowed',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  Locate
-                </button>
+                ))}
               </div>
             );
           })}

@@ -647,6 +647,20 @@ export default function App() {
   const [selectedCrewKey, setSelectedCrewKey] = useState(null);
   // Toggles the manager-only "Crew on shift" list overlay on the map.
   const [showCrewPanel, setShowCrewPanel] = useState(false);
+  // Shift ids whose crew members are expanded in the sidebar AND on the
+  // map. Collapsed (default) = only the lead pin/row is shown so a
+  // 5-crew shift doesn't bury the office in 5 stacked pins. Toggled from
+  // the sidebar chevron and from a "Show crew (N)" button in the lead's
+  // map popup. Set kept on the App so both surfaces stay in sync.
+  const [expandedCrewShiftIds, setExpandedCrewShiftIds] = useState(() => new Set());
+  const toggleCrewShiftExpanded = useCallback((shiftId) => {
+    setExpandedCrewShiftIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(shiftId)) next.delete(shiftId);
+      else next.add(shiftId);
+      return next;
+    });
+  }, []);
   // Drawing pipeline state
   const [isDrawingPipeline, setIsDrawingPipeline] = useState(false);
   const [drawingPoints, setDrawingPoints] = useState([]);
@@ -6226,6 +6240,8 @@ export default function App() {
             showCrewLayer={canManagePins && (layers.crew ?? true)}
             selectedCrewKey={selectedCrewKey}
             onSelectCrewKey={setSelectedCrewKey}
+            expandedCrewShiftIds={expandedCrewShiftIds}
+            onToggleCrewShiftExpanded={toggleCrewShiftExpanded}
           />
         </div>
 
@@ -6265,6 +6281,8 @@ export default function App() {
             selectedKey={selectedCrewKey}
             onLocate={handleLocateCrew}
             onClose={() => setShowCrewPanel(false)}
+            expandedShiftIds={expandedCrewShiftIds}
+            onToggleShiftExpanded={toggleCrewShiftExpanded}
           />
         ) : null}
 

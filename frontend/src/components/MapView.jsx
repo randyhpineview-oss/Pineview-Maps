@@ -185,6 +185,12 @@ export default function MapView({
   showCrewLayer = true,
   selectedCrewKey = null,
   onSelectCrewKey,
+  // Expansion state: shift ids whose crew member pins are visible. By
+  // default the layer only shows the lead's pin per crew shift so the
+  // map stays uncluttered; the office expands a shift to see each crew
+  // member's individual pin. Backed by a Set on the App.
+  expandedCrewShiftIds = null,
+  onToggleCrewShiftExpanded,
 }) {
   const mapRef = useRef(null);
   const lastFittedBoundsKey = useRef('');
@@ -914,6 +920,8 @@ export default function MapView({
           visible={showCrewLayer}
           selectedPointKey={selectedCrewKey}
           onSelectPoint={onSelectCrewKey}
+          expandedShiftIds={expandedCrewShiftIds}
+          onToggleShiftExpanded={onToggleCrewShiftExpanded}
         />
 
         {sites.map((site) => {

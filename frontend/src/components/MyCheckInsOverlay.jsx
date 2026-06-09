@@ -26,6 +26,7 @@ import { hashToHslColor, initials } from '../lib/avatarColor';
 
 import { api } from '../lib/api';
 import { formatCountdown, shouldForceOverlay, tier as computeTier, tierColors, tierLabel } from '../lib/compliance';
+import { LOCATION_REQUIRED_MESSAGE, getGeolocationPermission, requestPosition } from '../lib/geolocation';
 import {
   ensurePushSubscribed,
   pushSupported,
@@ -161,6 +162,29 @@ export default function MyCheckInsOverlay({
   // Lead-handoff picker state: id of the crew mate currently selected to
   // become the new lead. Null when the picker isn't open.
   const [handoffTarget, setHandoffTarget] = useState(null);
+  // Browser geolocation permission state, re-polled on focus + after
+  // each blocked attempt so the banner clears the moment the user flips
+  // location on in OS settings and returns to the app. iOS Safari may
+  // not expose Permissions API for geolocation -- in that case this
+  // sits at 'prompt' and the per-action hard gate handles the rest.
+  const [geoPermState, setGeoPermState] = useState('prompt');
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async () => {
+      const state = await getGeolocationPermission();
+      if (!cancelled) setGeoPermState(state);
+    };
+    refresh();
+    const onFocus = () => refresh();
+    const onVisibility = () => { if (!document.hidden) refresh(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
 
   // Notification prefs accordion.
   const [showPrefs, setShowPrefs] = useState(false);
@@ -269,6 +293,21 @@ export default function MyCheckInsOverlay({
     setSubmitting(true);
     setError(null);
     try {
+      // HARD GATE: starting a shift requires location permission so the
+      // office can actually track the crew. We trigger the system
+      // prompt up front (if not already answered) and refuse to start
+      // the shift when permission is denied. "Position unavailable"
+      // (no GPS fix yet, indoors, etc.) is NOT a block -- the worker
+      // has permission and the foreground reporter will land a fix as
+      // soon as the device gets one.
+      const probe = await requestPosition();
+      if (!probe.ok && probe.denied) {
+        setGeoPermState('denied');
+        setError(LOCATION_REQUIRED_MESSAGE);
+        setSubmitting(false);
+        return;
+      }
+      if (probe.ok) setGeoPermState('granted');
       // If they previously marked today as off, end that shift first so
       // the backend's "already active" guard doesn't 409.
       if (shift && shift.mode === 'off' && !shift.ended_at) {
@@ -315,25 +354,26 @@ export default function MyCheckInsOverlay({
     setSubmitting(true);
     setError(null);
     try {
-      // Best-effort: include geolocation if available + already granted.
+      // HARD GATE: require location PERMISSION to record a check-in.
+      // We DON'T require a successful fix (indoors / dead spot must
+      // not block a safety tap) -- only the permission itself. If the
+      // probe fails with code !== PERMISSION_DENIED we proceed without
+      // coords; if it's denied, we refuse.
       let lat = null;
       let lon = null;
       let accuracyM = null;
-      if (typeof navigator !== 'undefined' && navigator.geolocation) {
-        try {
-          const pos = await new Promise((res, rej) => {
-            navigator.geolocation.getCurrentPosition(res, rej, {
-              timeout: 5000,
-              maximumAge: 30_000,
-              enableHighAccuracy: false,
-            });
-          });
-          lat = pos.coords.latitude;
-          lon = pos.coords.longitude;
-          accuracyM = pos.coords.accuracy;
-        } catch {
-          /* no geo permission -- record without */
-        }
+      const probe = await requestPosition({ timeout: 5000 });
+      if (!probe.ok && probe.denied) {
+        setGeoPermState('denied');
+        setError(LOCATION_REQUIRED_MESSAGE);
+        setSubmitting(false);
+        return;
+      }
+      if (probe.ok) {
+        setGeoPermState('granted');
+        lat = probe.position.coords.latitude;
+        lon = probe.position.coords.longitude;
+        accuracyM = probe.position.coords.accuracy;
       }
       const createdCheckin = await api.createCheckin({ lat, lon, accuracyM });
       setCheckins((prev) => [createdCheckin, ...prev]);
@@ -462,6 +502,31 @@ export default function MyCheckInsOverlay({
 
         {loading ? (
           <div style={{ padding: '20px 0', fontSize: 14, color: '#9ab1d6' }}>Loading…</div>
+        ) : null}
+
+        {/* Persistent "Location required" banner. Only shows when the
+            Permissions API has explicitly told us location is denied --
+            iOS Safari (which often doesn't expose that state) instead
+            falls back to the hard gate inside handleStart/handleCheckin.
+            The blocking is the action gate; this banner just makes the
+            cause visible at a glance before the worker even tries. */}
+        {geoPermState === 'denied' ? (
+          <div
+            role="alert"
+            style={{
+              margin: '0 0 12px 0',
+              padding: '10px 12px',
+              background: 'rgba(239, 68, 68, 0.10)',
+              border: '1px solid rgba(239, 68, 68, 0.45)',
+              borderRadius: 8,
+              color: '#fecaca',
+              fontSize: 13,
+              lineHeight: 1.4,
+            }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: 2 }}>📍 Location is off</div>
+            <div>{LOCATION_REQUIRED_MESSAGE}</div>
+          </div>
         ) : null}
 
         {/* ── No active shift OR active off shift -> Start form ──────── */}
