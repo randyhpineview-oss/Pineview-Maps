@@ -57,6 +57,8 @@ function MemberRow({ p, isSelected, colors, tier, isCrew, crewSize, isExpanded, 
         borderRadius: 10,
         background: isSelected ? 'rgba(143,182,255,0.14)' : 'rgba(9,17,31,0.6)',
         border: `1px solid ${isSelected ? 'rgba(143,182,255,0.4)' : 'rgba(143,182,255,0.12)'}`,
+        overflow: 'hidden',
+        minWidth: 0,
       }}
     >
       <span
@@ -188,7 +190,7 @@ export default function CrewSidebar({
           No one is checked in right now.
         </div>
       ) : (
-        <div style={{ display: 'grid', gap: 6 }}>
+        <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
           {groups.map(({ shift, tier, lead, members, crewSize }) => {
             const colors = tierColors(tier);
             const isExpanded = !!(expandedShiftIds && expandedShiftIds.has(shift.id));

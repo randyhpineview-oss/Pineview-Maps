@@ -454,7 +454,9 @@ button { cursor: pointer; }
   border-radius: 14px;
   padding: 0.75rem;
   width: 280px;
+  max-width: calc(100vw - 24px);
   max-height: calc(100% - 116px);
+  overflow-x: hidden;
   overflow-y: auto;
   backdrop-filter: blur(12px);
 }
