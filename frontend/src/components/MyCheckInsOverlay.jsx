@@ -532,12 +532,20 @@ export default function MyCheckInsOverlay({
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button
                 type="button"
-                onClick={() => {
-                  // Clear the denied state so the next check-in attempt
-                  // re-probes location fresh (will show the system prompt
-                  // if permission was actually reset).
-                  setGeoPermState('prompt');
+                onClick={async () => {
                   setError(null);
+                  // Force a fresh location probe. On iOS this picks up the
+                  // new permission state without requiring a page reload.
+                  const result = await requestPosition({ timeout: 10000, maximumAge: 0 });
+                  if (result.ok) {
+                    setGeoPermState('granted');
+                  } else if (!result.denied) {
+                    // Permission OK now but no fix yet — clear banner
+                    setGeoPermState('prompt');
+                  } else {
+                    // Still denied — show a hint about reloading
+                    setError('Still blocked. Try closing and reopening the app, or check Settings → Privacy → Location Services.');
+                  }
                 }}
                 style={{
                   background: 'rgba(34, 197, 94, 0.2)',
