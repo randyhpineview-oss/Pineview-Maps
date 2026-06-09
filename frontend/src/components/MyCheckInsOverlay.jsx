@@ -523,33 +523,36 @@ export default function MyCheckInsOverlay({
             }}
           >
             <div style={{ fontWeight: 600, marginBottom: 2 }}>📍 Location is off</div>
-            <div style={{ marginBottom: 8 }}>{LOCATION_REQUIRED_MESSAGE}</div>
-            <button
-              type="button"
-              onClick={async () => {
-                setError(null);
-                const result = await requestPosition({ timeout: 10000 });
-                if (result.ok) {
-                  setGeoPermState('granted');
-                } else if (!result.denied) {
-                  // Permission is fine now, just no fix yet — clear the banner
+            <div style={{ marginBottom: 6 }}>
+              To check in, turn on Location Services:
+            </div>
+            <div style={{ fontSize: 12, marginBottom: 8, color: '#fca5a5' }}>
+              iPhone: Settings → Privacy & Security → Location Services → On, then scroll to Safari/this app → "While Using"
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  // Clear the denied state so the next check-in attempt
+                  // re-probes location fresh (will show the system prompt
+                  // if permission was actually reset).
                   setGeoPermState('prompt');
-                }
-                // If still denied, banner stays visible
-              }}
-              style={{
-                background: 'rgba(239, 68, 68, 0.2)',
-                border: '1px solid rgba(239, 68, 68, 0.5)',
-                borderRadius: 6,
-                color: '#fecaca',
-                padding: '6px 12px',
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              📍 Allow Location
-            </button>
+                  setError(null);
+                }}
+                style={{
+                  background: 'rgba(34, 197, 94, 0.2)',
+                  border: '1px solid rgba(34, 197, 94, 0.5)',
+                  borderRadius: 6,
+                  color: '#bbf7d0',
+                  padding: '6px 12px',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                ✓ I turned it on — Retry
+              </button>
+            </div>
           </div>
         ) : null}
 
