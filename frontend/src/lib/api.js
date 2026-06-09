@@ -999,6 +999,16 @@ export const api = {
       },
     });
   },
+  // Hand off the crew lead to another current crew member. Only the
+  // current lead (or admin/office) can do this. Backend swaps user_id
+  // with the new lead and pushes the old lead into crew_user_ids; mode,
+  // deadline and check-ins are untouched.
+  transferShiftLead(shiftId, newLeadUserId) {
+    return request(`/api/shifts/${shiftId}/transfer-lead`, {
+      method: 'POST',
+      body: { new_lead_user_id: newLeadUserId },
+    });
+  },
   // Record an "I'm OK" check-in. lat/lon/accuracy are optional -- a
   // worker without geolocation can still tap I'm OK and we record the
   // time only.

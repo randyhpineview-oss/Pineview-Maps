@@ -69,6 +69,7 @@ from app.checkin_models import (
     PushSubscription,
     Shift,
     ShiftChange,
+    ShiftMemberLocation,
     UserProfile,
 )
 from app.config import get_settings
@@ -425,9 +426,45 @@ def _embed_shift_events(
             "channel": a.channel,
         })
 
+    # Per-member passive locations: the latest known position of each
+    # crew member individually (POST /api/checkins/me/location upserts
+    # one row per (shift, user)). Embedded so the map's CrewLayer + the
+    # Crew sidebar can place a pin / list a row per worker without
+    # making the caller pre-batch this themselves.
+    member_loc_rows = (
+        db.query(ShiftMemberLocation)
+        .filter(ShiftMemberLocation.shift_id.in_(shift_ids))
+        .all()
+    )
+    # Widen the user lookup so member_location names resolve even for
+    # users not in lead/crew (defensive: an old crew member who's since
+    # been removed but whose passive ping row lingers).
+    extra_user_ids = set()
+    for m in member_loc_rows:
+        if users_by_id is None or m.user_id not in users_by_id:
+            extra_user_ids.add(m.user_id)
+    if extra_user_ids:
+        rows = db.query(User).filter(User.id.in_(extra_user_ids)).all()
+        if users_by_id is None:
+            users_by_id = {}
+        for u in rows:
+            users_by_id[u.id] = u
+    member_locs_by_shift: dict[int, list[dict]] = {sid: [] for sid in shift_ids}
+    for m in member_loc_rows:
+        u = (users_by_id or {}).get(m.user_id)
+        member_locs_by_shift[m.shift_id].append({
+            "user_id": m.user_id,
+            "user_name": u.name if u else None,
+            "lat": m.lat,
+            "lon": m.lon,
+            "accuracy_m": float(m.accuracy_m) if m.accuracy_m is not None else None,
+            "updated_at": _aware(m.updated_at),
+        })
+
     for s in serialized_shifts:
         s["checkins"] = by_shift.get(s["id"], [])
         s["missed_events"] = alerts_by_shift.get(s["id"], [])
+        s["member_locations"] = member_locs_by_shift.get(s["id"], [])
 
 
 def _users_by_id(db: Session, user_ids: list[int]) -> dict[int, User]:
@@ -578,6 +615,10 @@ class ShiftRead(BaseModel):
     # ledger -- gives the office a full audit log per shift.
     checkins: list[CheckinEventRead] = []
     missed_events: list[MissedEventRead] = []
+    # Per-member passive locations. Populated by the same embed helper
+    # that fills ``checkins`` / ``missed_events`` (admin active +
+    # history endpoints). Empty on worker self-serve responses.
+    member_locations: list[MemberLocationRead] = []
 
 
 class CheckinRead(BaseModel):
@@ -616,6 +657,22 @@ class CheckinEventRead(BaseModel):
     created_at: datetime
 
 
+class MemberLocationRead(BaseModel):
+    """One crew member's latest passive location on this shift.
+
+    Embedded in ShiftRead.member_locations for the map's per-member
+    pins + the Crew sidebar. ``user_name`` is pre-resolved by the
+    embed helper so the frontend doesn't have to do a user lookup.
+    """
+    model_config = ConfigDict(from_attributes=True)
+    user_id: int
+    user_name: Optional[str] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    accuracy_m: Optional[float] = None
+    updated_at: Optional[datetime] = None
+
+
 class MissedEventRead(BaseModel):
     """One missed-deadline / escalation event embedded inside
     ShiftRead.missed_events. Sourced from the ``checkin_alerts`` ledger
@@ -652,6 +709,13 @@ class ShiftCompositionRequest(BaseModel):
     mode: str = Field(..., pattern=r"^(alone|crew)$")
     crew_user_ids: list[int] = []
     crew_freeform: str = ""
+
+
+class TransferLeadRequest(BaseModel):
+    # Hand the crew lead role to one of the existing crew members. The
+    # backend swaps shift.user_id with this id and pushes the old lead
+    # into crew_user_ids -- no one is dropped from the shift.
+    new_lead_user_id: int
 
 
 class CheckinCreate(BaseModel):
@@ -937,6 +1001,93 @@ def patch_composition(
     return ShiftRead(**_serialize_shift(shift))
 
 
+@me_router.post("/api/shifts/{shift_id}/transfer-lead", response_model=ShiftRead)
+def transfer_lead(
+    shift_id: int,
+    payload: TransferLeadRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ShiftRead:
+    """Hand the crew-lead role to another current crew member.
+
+    Use case: the lead leaves the job site mid-shift and someone else
+    needs to be the point person for paperwork / be the default-named
+    worker on the dashboard. The swap pushes the OLD lead into
+    ``crew_user_ids`` so nobody is dropped from the shift, and leaves
+    mode + deadline + check-ins untouched (this is a name swap, not a
+    composition change). Writes a ShiftChange audit row.
+
+    Authorization: only the current lead may hand off (or an admin/office
+    override via MANAGES_PINS). Crew mates can't seize lead from each
+    other -- the lead has to initiate.
+
+    New lead MUST be in the existing crew. Picking a stranger would be
+    a composition change; use PATCH /api/shifts/{id}/composition for that.
+    """
+    shift = db.query(Shift).filter(Shift.id == shift_id).first()
+    if shift is None:
+        raise HTTPException(status_code=404, detail="Shift not found")
+    if shift.ended_at is not None:
+        raise HTTPException(status_code=400, detail="Cannot edit an ended shift")
+    if (
+        shift.user_id != current_user.id
+        and current_user.role not in MANAGES_PINS
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the current lead can hand off.",
+        )
+
+    new_lead_id = payload.new_lead_user_id
+    crew_ids = list(shift.crew_user_ids or [])
+    if new_lead_id == shift.user_id:
+        # No-op: they're already lead.
+        return ShiftRead(**_serialize_shift(shift))
+    if new_lead_id not in crew_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="New lead must already be in the crew.",
+        )
+    new_lead_user = db.query(User).filter(User.id == new_lead_id).first()
+    if new_lead_user is None:
+        raise HTTPException(status_code=404, detail="New lead user not found.")
+
+    old_lead_id = shift.user_id
+    old_crew = list(crew_ids)
+    # Swap: new lead leaves crew, old lead joins crew. dict.fromkeys
+    # preserves order while deduping (defensive: if old_lead was somehow
+    # already in crew_ids the result stays clean).
+    new_crew = [c for c in crew_ids if c != new_lead_id]
+    if old_lead_id not in new_crew:
+        new_crew.append(old_lead_id)
+    new_crew = list(dict.fromkeys(new_crew))
+
+    shift.user_id = new_lead_id
+    shift.crew_user_ids = new_crew
+
+    deadline = _aware(shift.next_deadline_at) or _now()
+    change = ShiftChange(
+        shift_id=shift.id,
+        changed_by_user_id=current_user.id,
+        old_mode=shift.mode,
+        new_mode=shift.mode,
+        old_crew=old_crew,
+        new_crew=new_crew,
+        old_deadline=deadline,
+        new_deadline=deadline,
+    )
+    db.add(change)
+    db.commit()
+    db.refresh(shift)
+
+    # Re-serialize with the updated user batch so the embedded
+    # user_name / crew_members reflect the new lead.
+    user_map = _users_by_id(db, [shift.user_id] + list(shift.crew_user_ids or []))
+    return ShiftRead(
+        **_serialize_shift(shift, user=user_map.get(shift.user_id), users_by_id=user_map)
+    )
+
+
 @me_router.post("/api/checkins", response_model=CheckinRead)
 def create_checkin(
     payload: CheckinCreate,
@@ -1006,10 +1157,33 @@ def update_my_location(
             status_code=400,
             detail="No active shift. Start a shift before reporting location.",
         )
+    now = _now()
+    # Shift-level "truck position" (last-writer-wins across crew).
     shift.last_loc_lat = payload.lat
     shift.last_loc_lon = payload.lon
     shift.last_loc_accuracy_m = payload.accuracy_m
-    shift.last_loc_at = _now()
+    shift.last_loc_at = now
+    # Per-member row so the office can locate each crew member
+    # individually -- not just whoever pinged last. Upsert keyed on
+    # (shift_id, user_id); the unique index makes this idempotent.
+    member = (
+        db.query(ShiftMemberLocation)
+        .filter(
+            ShiftMemberLocation.shift_id == shift.id,
+            ShiftMemberLocation.user_id == current_user.id,
+        )
+        .first()
+    )
+    if member is None:
+        member = ShiftMemberLocation(
+            shift_id=shift.id,
+            user_id=current_user.id,
+        )
+        db.add(member)
+    member.lat = payload.lat
+    member.lon = payload.lon
+    member.accuracy_m = payload.accuracy_m
+    member.updated_at = now
     db.commit()
     db.refresh(shift)
     return ShiftRead(**_serialize_shift(shift))

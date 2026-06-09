@@ -12,6 +12,7 @@
  * source list and disappears here on the next refresh.
  */
 import { tier as computeTier, tierColors, tierLabel } from '../lib/compliance';
+import { crewMemberPoints } from '../lib/crewPoints';
 
 const STALE_MS = 2 * 60 * 60_000;
 
@@ -28,35 +29,41 @@ function relativeTime(iso) {
   return `${Math.round(hr / 24)} d ago`;
 }
 
-function crewName(shift) {
-  if (shift.user_name) return shift.user_name;
-  if (Array.isArray(shift.crew_members) && shift.crew_members.length) {
-    return shift.crew_members.map((m) => m.name).filter(Boolean).join(', ');
-  }
-  return shift.crew_freeform || `Shift #${shift.id}`;
-}
-
 export default function CrewSidebar({
   shifts = [],
-  selectedShiftId = null,
+  selectedKey = null,
   onLocate,
   onClose,
 }) {
   const now = new Date();
-  // Active, non-off shifts. Sort: those with a location first, then by
-  // worst (most overdue) status so the office sees who needs attention.
+  // Flatten active shifts into per-member rows so the office can locate
+  // anyone on the crew individually -- not just the lead. Each row
+  // inherits the shift's safety tier (compliance is shift-wide) but
+  // carries that member's own last-known location + time.
   const tierRank = { red: 0, yellow: 1, blue: 2, green: 3 };
-  const active = shifts
-    .filter((s) => !s.ended_at && s.mode !== 'off')
-    .slice()
-    .sort((a, b) => {
-      const aLoc = Number.isFinite(a.last_loc_lat) ? 0 : 1;
-      const bLoc = Number.isFinite(b.last_loc_lat) ? 0 : 1;
-      if (aLoc !== bLoc) return aLoc - bLoc;
-      const at = a.status_tier || computeTier(a, now);
-      const bt = b.status_tier || computeTier(b, now);
-      return (tierRank[at] ?? 9) - (tierRank[bt] ?? 9);
-    });
+  const rows = [];
+  for (const shift of shifts) {
+    if (!shift || shift.ended_at || shift.mode === 'off') continue;
+    const tier = shift.status_tier || computeTier(shift, now);
+    const crewSize = (shift.crew_members && shift.crew_members.length)
+      || (1 + (shift.crew_user_ids || []).length);
+    for (const p of crewMemberPoints(shift)) {
+      rows.push({ ...p, tier, crewSize });
+    }
+  }
+  // Sort: located first, then worst tier first, then lead first within
+  // a shift, then by name. This puts "who needs attention AND we know
+  // where they are" at the top.
+  rows.sort((a, b) => {
+    const aLoc = Number.isFinite(a.lat) ? 0 : 1;
+    const bLoc = Number.isFinite(b.lat) ? 0 : 1;
+    if (aLoc !== bLoc) return aLoc - bLoc;
+    const t = (tierRank[a.tier] ?? 9) - (tierRank[b.tier] ?? 9);
+    if (t !== 0) return t;
+    if (a.shiftId !== b.shiftId) return a.shiftId - b.shiftId;
+    if (a.isLead !== b.isLead) return a.isLead ? -1 : 1;
+    return String(a.name).localeCompare(String(b.name));
+  });
 
   return (
     <div className="crew-overlay">
@@ -69,7 +76,7 @@ export default function CrewSidebar({
         }}
       >
         <strong style={{ color: '#f5f8ff', fontSize: '0.9rem' }}>
-          Crew on shift ({active.length})
+          Crew on shift ({rows.length})
         </strong>
         <button
           type="button"
@@ -89,25 +96,21 @@ export default function CrewSidebar({
         </button>
       </div>
 
-      {active.length === 0 ? (
+      {rows.length === 0 ? (
         <div style={{ color: '#9ab1d6', fontSize: '0.82rem', padding: '0.5rem 0' }}>
           No one is checked in right now.
         </div>
       ) : (
         <div style={{ display: 'grid', gap: 6 }}>
-          {active.map((shift) => {
-            const t = shift.status_tier || computeTier(shift, now);
-            const colors = tierColors(t);
-            const hasLoc =
-              Number.isFinite(shift.last_loc_lat) &&
-              Number.isFinite(shift.last_loc_lon);
+          {rows.map((p) => {
+            const colors = tierColors(p.tier);
+            const hasLoc = Number.isFinite(p.lat) && Number.isFinite(p.lon);
             const stale =
-              shift.last_loc_at &&
-              Date.now() - new Date(shift.last_loc_at).getTime() > STALE_MS;
-            const isSelected = selectedShiftId === shift.id;
+              p.updatedAt && Date.now() - new Date(p.updatedAt).getTime() > STALE_MS;
+            const isSelected = selectedKey === p.key;
             return (
               <div
-                key={shift.id}
+                key={p.key}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -122,7 +125,7 @@ export default function CrewSidebar({
               >
                 <span
                   aria-hidden
-                  title={tierLabel(t)}
+                  title={tierLabel(p.tier)}
                   style={{
                     width: 12,
                     height: 12,
@@ -142,14 +145,15 @@ export default function CrewSidebar({
                       textOverflow: 'ellipsis',
                     }}
                   >
-                    {crewName(shift)}
-                    {shift.mode === 'crew' ? ' 👥' : ''}
+                    {p.name}
+                    {p.mode === 'crew' && p.isLead ? ' (lead)' : ''}
+                    {p.mode === 'crew' && !p.isLead ? ` (crew of ${p.crewSize})` : ''}
                   </div>
                   <div style={{ color: colors.bg, fontSize: '0.72rem' }}>
-                    {tierLabel(t)}
+                    {tierLabel(p.tier)}
                     <span style={{ color: '#9ab1d6' }}>
                       {' · '}
-                      📍 {relativeTime(shift.last_loc_at)}
+                      📍 {relativeTime(p.updatedAt)}
                       {stale ? ' (stale)' : ''}
                     </span>
                   </div>
@@ -157,7 +161,7 @@ export default function CrewSidebar({
                 <button
                   type="button"
                   disabled={!hasLoc}
-                  onClick={() => hasLoc && onLocate?.(shift)}
+                  onClick={() => hasLoc && onLocate?.(p)}
                   style={{
                     flexShrink: 0,
                     borderRadius: 8,

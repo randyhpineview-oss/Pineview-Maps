@@ -39,6 +39,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -209,6 +210,47 @@ class Checkin(Base):
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False, index=True
+    )
+
+
+class ShiftMemberLocation(Base):
+    """Latest passive location of ONE member of a shift.
+
+    The shift-level ``shifts.last_loc_*`` is "wherever any member last
+    pinged from" (the truck), which is last-writer-wins across a crew.
+    This table keeps a per-member row so the office can locate ANY crew
+    member individually -- e.g. when the lead is back at the truck doing
+    paperwork but a crew mate is out walking the lease. One row per
+    (shift, user), upserted by POST /api/checkins/me/location.
+
+    Like ``shifts.last_loc_*`` this is a PASSIVE position: it never
+    affects the safety deadline. Rows are scoped to the shift, so they
+    vanish with the shift on a hard delete (CASCADE) and stop being
+    served once the shift ends (privacy: no off-shift tracking).
+    """
+
+    __tablename__ = "shift_member_locations"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, index=True)
+    shift_id: Mapped[int] = mapped_column(
+        ForeignKey("shifts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    lat: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    lon: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    accuracy_m: Mapped[Optional[float]] = mapped_column(
+        Numeric(8, 2), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("shift_id", "user_id", name="uq_shift_member_location"),
     )
 
 

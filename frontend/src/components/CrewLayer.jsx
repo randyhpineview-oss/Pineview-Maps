@@ -23,6 +23,7 @@ import { useEffect, useState } from 'react';
 import { Marker, OverlayView } from '@react-google-maps/api';
 
 import { tier as computeTier, tierColors, tierLabel } from '../lib/compliance';
+import { crewMemberPoints } from '../lib/crewPoints';
 
 // A teardrop person-pin. Larger than a site pin so a moving crew is easy
 // to spot among stationary lease pins on a satellite view.
@@ -67,19 +68,11 @@ function relativeTime(iso) {
 // fix as the truck's current spot.
 const STALE_MS = 2 * 60 * 60_000;
 
-function crewName(shift) {
-  if (shift.user_name) return shift.user_name;
-  if (Array.isArray(shift.crew_members) && shift.crew_members.length) {
-    return shift.crew_members.map((m) => m.name).filter(Boolean).join(', ');
-  }
-  return shift.crew_freeform || `Shift #${shift.id}`;
-}
-
 export default function CrewLayer({
   shifts = [],
   visible = true,
-  selectedShiftId = null,
-  onSelectShift,
+  selectedPointKey = null,
+  onSelectPoint,
 }) {
   // 30 s tick so "X min ago" + the stale/dim treatment stay current
   // without a network call.
@@ -92,49 +85,55 @@ export default function CrewLayer({
   if (!visible) return null;
 
   const now = new Date();
-  const renderable = shifts.filter(
-    (s) =>
-      !s.ended_at &&
-      s.mode !== 'off' &&
-      Number.isFinite(s.last_loc_lat) &&
-      Number.isFinite(s.last_loc_lon),
-  );
+  // Flatten every active shift into per-member points and keep only
+  // those with a known location. Each point inherits its tier from the
+  // shift (safety status is shift-wide) but carries its own coords +
+  // updated_at so the stale dimming is per-member.
+  const points = [];
+  for (const shift of shifts) {
+    if (!shift || shift.ended_at || shift.mode === 'off') continue;
+    const tier = shift.status_tier || computeTier(shift, now);
+    for (const p of crewMemberPoints(shift)) {
+      if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) continue;
+      points.push({ ...p, tier });
+    }
+  }
 
-  const activePopup = selectedShiftId != null
-    ? renderable.find((s) => s.id === selectedShiftId) || null
+  const activePopup = selectedPointKey
+    ? points.find((p) => p.key === selectedPointKey) || null
     : null;
 
   return (
     <>
-      {renderable.map((shift) => {
-        const t = shift.status_tier || computeTier(shift, now);
-        const colorHex = tierColors(t).bg;
-        const isSelected = selectedShiftId === shift.id;
+      {points.map((p) => {
+        const colorHex = tierColors(p.tier).bg;
+        const isSelected = selectedPointKey === p.key;
         const stale =
-          shift.last_loc_at &&
-          Date.now() - new Date(shift.last_loc_at).getTime() > STALE_MS;
-        const mKey = `crew-${shift.id}-${t}-${isSelected ? 'sel' : 'norm'}-${stale ? 'stale' : 'fresh'}`;
+          p.updatedAt && Date.now() - new Date(p.updatedAt).getTime() > STALE_MS;
+        // Marker key includes tier + selection + stale so a state
+        // change cleanly remounts the icon. Position updates apply via
+        // the `position` prop without a remount.
+        const mKey = `crew-${p.key}-${p.tier}-${isSelected ? 'sel' : 'norm'}-${stale ? 'stale' : 'fresh'}`;
         return (
           <Marker
             key={mKey}
-            position={{ lat: shift.last_loc_lat, lng: shift.last_loc_lon }}
+            position={{ lat: p.lat, lng: p.lon }}
             icon={buildCrewIcon(colorHex, isSelected)}
             opacity={stale ? 0.55 : 1}
             zIndex={isSelected ? 620 : 520}
-            onClick={() => onSelectShift?.(shift.id)}
+            onClick={() => onSelectPoint?.(p.key)}
           />
         );
       })}
 
       {activePopup ? (() => {
-        const t = activePopup.status_tier || computeTier(activePopup, now);
-        const colorHex = tierColors(t).bg;
+        const colorHex = tierColors(activePopup.tier).bg;
         const stale =
-          activePopup.last_loc_at &&
-          Date.now() - new Date(activePopup.last_loc_at).getTime() > STALE_MS;
+          activePopup.updatedAt &&
+          Date.now() - new Date(activePopup.updatedAt).getTime() > STALE_MS;
         return (
           <OverlayView
-            position={{ lat: activePopup.last_loc_lat, lng: activePopup.last_loc_lon }}
+            position={{ lat: activePopup.lat, lng: activePopup.lon }}
             mapPaneName={OverlayView.FLOAT_PANE}
             getPixelPositionOffset={(w, h) => ({ x: -(w / 2), y: -(h + 50) })}
           >
@@ -169,11 +168,13 @@ export default function CrewLayer({
                     flexShrink: 0,
                   }}
                 />
-                <strong style={{ flexGrow: 1, minWidth: 0 }}>{crewName(activePopup)}</strong>
+                <strong style={{ flexGrow: 1, minWidth: 0 }}>
+                  {activePopup.name}{activePopup.isLead ? ' (lead)' : ''}
+                </strong>
                 <button
                   type="button"
                   aria-label="Close"
-                  onClick={() => onSelectShift?.(null)}
+                  onClick={() => onSelectPoint?.(null)}
                   style={{
                     background: 'transparent',
                     border: 'none',
@@ -188,12 +189,12 @@ export default function CrewLayer({
                 </button>
               </div>
               <div style={{ marginTop: '0.4rem', color: '#9ab1d6', fontSize: '0.78rem' }}>
-                <div style={{ color: colorHex }}>🛟 {tierLabel(t)}</div>
-                <div>📍 {relativeTime(activePopup.last_loc_at)}{stale ? ' (stale)' : ''}</div>
-                {Number.isFinite(activePopup.last_loc_accuracy_m) ? (
-                  <div>🎯 ±{Math.round(activePopup.last_loc_accuracy_m)} m</div>
+                <div style={{ color: colorHex }}>🛟 {tierLabel(activePopup.tier)}</div>
+                <div>📍 {relativeTime(activePopup.updatedAt)}{stale ? ' (stale)' : ''}</div>
+                {Number.isFinite(activePopup.accuracyM) ? (
+                  <div>🎯 ±{Math.round(activePopup.accuracyM)} m</div>
                 ) : null}
-                {activePopup.mode === 'crew' ? <div>👥 Crew</div> : <div>🧍 Solo</div>}
+                {activePopup.mode === 'crew' ? <div>👥 Crew member</div> : <div>🧍 Solo</div>}
                 {stale ? (
                   <div style={{ marginTop: '0.3rem', color: '#fbbf24', fontSize: '0.72rem' }}>
                     App backgrounded — location not updating.

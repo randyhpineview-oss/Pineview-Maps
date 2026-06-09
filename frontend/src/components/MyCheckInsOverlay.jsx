@@ -158,6 +158,9 @@ export default function MyCheckInsOverlay({
   const [editMode, setEditMode] = useState('alone');
   const [editCrewUserIds, setEditCrewUserIds] = useState([]);
   const [editCrewFreeform, setEditCrewFreeform] = useState('');
+  // Lead-handoff picker state: id of the crew mate currently selected to
+  // become the new lead. Null when the picker isn't open.
+  const [handoffTarget, setHandoffTarget] = useState(null);
 
   // Notification prefs accordion.
   const [showPrefs, setShowPrefs] = useState(false);
@@ -366,6 +369,27 @@ export default function MyCheckInsOverlay({
       setShift(ended);
       if (onShiftChanged) onShiftChanged(ended);
       if (onClose) onClose();
+    } catch (err) {
+      setError(err.message || String(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleHandoff = async () => {
+    if (!shift || !handoffTarget) return;
+    const newLead = (shift.crew_members || []).find((m) => m.id === handoffTarget);
+    const newLeadLabel = newLead?.name || `User #${handoffTarget}`;
+    if (!window.confirm(
+      `Hand off lead to ${newLeadLabel}? You'll stay on the crew, but ${newLeadLabel} becomes the point person for paperwork + alerts.`
+    )) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const updated = await api.transferShiftLead(shift.id, handoffTarget);
+      setShift(updated);
+      if (onShiftChanged) onShiftChanged(updated);
+      setHandoffTarget(null);
     } catch (err) {
       setError(err.message || String(err));
     } finally {
@@ -630,6 +654,59 @@ export default function MyCheckInsOverlay({
                     );
                   });
                 })()}
+              </div>
+            ) : null}
+
+            {/* Lead handoff — visible only to the current lead of an
+                active crew shift. Lets the lead pass the role to a
+                crew mate (e.g. when leaving the job site). The mode,
+                deadline, check-ins, and crew composition are
+                preserved; only the "who's the point person" changes. */}
+            {shift.mode === 'crew'
+              && shift.user_id === currentUserId
+              && (shift.crew_user_ids || []).length > 0 ? (
+              <div style={{ marginTop: 12, padding: 10, border: '1px solid rgba(143, 182, 255, 0.16)', borderRadius: 8, background: 'rgba(143, 182, 255, 0.04)' }}>
+                <div style={{ fontSize: 12, color: '#9ab1d6', marginBottom: 6 }}>
+                  Leaving the job site? Hand the lead role to a crew mate.
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <select
+                    value={handoffTarget ?? ''}
+                    onChange={(e) => setHandoffTarget(e.target.value ? Number(e.target.value) : null)}
+                    style={{
+                      flexGrow: 1,
+                      minWidth: 160,
+                      background: 'rgba(9,17,31,0.85)',
+                      color: '#f5f8ff',
+                      border: '1px solid rgba(143,182,255,0.2)',
+                      borderRadius: 8,
+                      padding: '6px 10px',
+                      fontSize: 13,
+                    }}
+                  >
+                    <option value="">Select new lead…</option>
+                    {(shift.crew_members || [])
+                      .filter((m) => m.id !== shift.user_id)
+                      .map((m) => (
+                        <option key={m.id} value={m.id}>{m.name}</option>
+                      ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={handleHandoff}
+                    disabled={!handoffTarget || submitting}
+                    style={{
+                      ...S.ghostBtn,
+                      background: handoffTarget ? '#2563eb' : 'rgba(9,17,31,0.85)',
+                      color: handoffTarget ? '#fff' : '#5f7396',
+                      border: `1px solid ${handoffTarget ? '#2563eb' : 'rgba(143,182,255,0.2)'}`,
+                      fontWeight: 600,
+                      cursor: handoffTarget && !submitting ? 'pointer' : 'not-allowed',
+                    }}
+                  >
+                    Hand off lead
+                  </button>
+                </div>
               </div>
             ) : null}
 

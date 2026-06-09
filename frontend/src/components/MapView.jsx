@@ -183,8 +183,8 @@ export default function MapView({
   // so MapView still works where crew data isn't loaded (e.g. tests).
   crewShifts = [],
   showCrewLayer = true,
-  selectedCrewShiftId = null,
-  onSelectCrewShift,
+  selectedCrewKey = null,
+  onSelectCrewKey,
 }) {
   const mapRef = useRef(null);
   const lastFittedBoundsKey = useRef('');
@@ -912,8 +912,8 @@ export default function MapView({
         <CrewLayer
           shifts={crewShifts}
           visible={showCrewLayer}
-          selectedShiftId={selectedCrewShiftId}
-          onSelectShift={onSelectCrewShift}
+          selectedPointKey={selectedCrewKey}
+          onSelectPoint={onSelectCrewKey}
         />
 
         {sites.map((site) => {

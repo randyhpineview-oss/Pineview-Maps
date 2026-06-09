@@ -53,6 +53,7 @@ from app.checkin_models import (  # noqa: F401 — ensure tables are registered
     PushSubscription,
     Shift,
     ShiftChange,
+    ShiftMemberLocation,
     UserProfile,
 )
 from app.models import (
@@ -270,6 +271,7 @@ def startup_event() -> None:
                     Shift.__table__,
                     Checkin.__table__,
                     ShiftChange.__table__,
+                    ShiftMemberLocation.__table__,
                     PushSubscription.__table__,
                     CheckinAlert.__table__,
                     OfficeAlertRecipient.__table__,

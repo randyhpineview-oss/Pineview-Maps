@@ -640,7 +640,11 @@ export default function App() {
   // to MANAGES_PINS. Refreshed on the same triggers as the active-shift
   // load (mount, focus/visibility, Realtime shifts/checkins).
   const [crewShifts, setCrewShifts] = useState([]);
-  const [selectedCrewShiftId, setSelectedCrewShiftId] = useState(null);
+  // Composite "shiftId:userId" key of the crew pin/row that's open;
+  // null when nothing is selected. One key per crew member because we
+  // track each member's last-known location individually now (not just
+  // the lead's truck position).
+  const [selectedCrewKey, setSelectedCrewKey] = useState(null);
   // Toggles the manager-only "Crew on shift" list overlay on the map.
   const [showCrewPanel, setShowCrewPanel] = useState(false);
   // Drawing pipeline state
@@ -5130,14 +5134,16 @@ export default function App() {
     setActiveTab(TAB_MAP);
   }
 
-  // Pan/zoom the map to a crew's last-known location and open its pin
-  // popup. Triggered from the Crew sidebar's "Locate" button.
-  function handleLocateCrew(shift) {
-    if (!shift || !Number.isFinite(shift.last_loc_lat) || !Number.isFinite(shift.last_loc_lon)) return;
+  // Pan/zoom the map to a crew member's last-known location and open
+  // their pin popup. Triggered from the Crew sidebar's "Locate" button;
+  // ``point`` is one row from ``crewMemberPoints(shift)`` -- per-member
+  // so the office can locate any worker individually, not just the lead.
+  function handleLocateCrew(point) {
+    if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lon)) return;
     const isPhone = (window.innerWidth <= 480 || window.innerHeight <= 600) &&
                     /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    setSelectedCrewShiftId(shift.id);
-    setZoomTarget({ latitude: shift.last_loc_lat, longitude: shift.last_loc_lon, _ts: Date.now(), _centerOnly: !isPhone });
+    setSelectedCrewKey(point.key);
+    setZoomTarget({ latitude: point.lat, longitude: point.lon, _ts: Date.now(), _centerOnly: !isPhone });
     setActiveTab(TAB_MAP);
     // On phones the panel covers the map -- close it so the worker can
     // see the pin they just located. On desktop/iPad keep it open.
@@ -6218,8 +6224,8 @@ export default function App() {
             onSelectDevice={setSelectedDevice}
             crewShifts={crewShifts}
             showCrewLayer={canManagePins && (layers.crew ?? true)}
-            selectedCrewShiftId={selectedCrewShiftId}
-            onSelectCrewShift={setSelectedCrewShiftId}
+            selectedCrewKey={selectedCrewKey}
+            onSelectCrewKey={setSelectedCrewKey}
           />
         </div>
 
@@ -6256,7 +6262,7 @@ export default function App() {
         {canManagePins && showCrewPanel ? (
           <CrewSidebar
             shifts={crewShifts}
-            selectedShiftId={selectedCrewShiftId}
+            selectedKey={selectedCrewKey}
             onLocate={handleLocateCrew}
             onClose={() => setShowCrewPanel(false)}
           />
