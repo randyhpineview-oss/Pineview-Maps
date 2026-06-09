@@ -504,12 +504,10 @@ export default function MyCheckInsOverlay({
           <div style={{ padding: '20px 0', fontSize: 14, color: '#9ab1d6' }}>Loading…</div>
         ) : null}
 
-        {/* Persistent "Location required" banner. Only shows when the
-            Permissions API has explicitly told us location is denied --
-            iOS Safari (which often doesn't expose that state) instead
-            falls back to the hard gate inside handleStart/handleCheckin.
-            The blocking is the action gate; this banner just makes the
-            cause visible at a glance before the worker even tries. */}
+        {/* Persistent "Location required" banner with a retry button that
+            re-triggers the system location prompt. On iOS, after the user
+            turns location back on at the OS level, calling getCurrentPosition
+            will re-show the browser "Allow" dialog. */}
         {geoPermState === 'denied' ? (
           <div
             role="alert"
@@ -525,7 +523,33 @@ export default function MyCheckInsOverlay({
             }}
           >
             <div style={{ fontWeight: 600, marginBottom: 2 }}>📍 Location is off</div>
-            <div>{LOCATION_REQUIRED_MESSAGE}</div>
+            <div style={{ marginBottom: 8 }}>{LOCATION_REQUIRED_MESSAGE}</div>
+            <button
+              type="button"
+              onClick={async () => {
+                setError(null);
+                const result = await requestPosition({ timeout: 10000 });
+                if (result.ok) {
+                  setGeoPermState('granted');
+                } else if (!result.denied) {
+                  // Permission is fine now, just no fix yet — clear the banner
+                  setGeoPermState('prompt');
+                }
+                // If still denied, banner stays visible
+              }}
+              style={{
+                background: 'rgba(239, 68, 68, 0.2)',
+                border: '1px solid rgba(239, 68, 68, 0.5)',
+                borderRadius: 6,
+                color: '#fecaca',
+                padding: '6px 12px',
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              📍 Allow Location
+            </button>
           </div>
         ) : null}
 
