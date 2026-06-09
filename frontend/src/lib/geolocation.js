@@ -42,8 +42,20 @@ export async function getGeolocationPermission() {
 //
 // Returns:
 //   { ok: true, position }
-//   { ok: false, denied: true, reason: 'permission denied' }
-//   { ok: false, denied: false, reason: '...' }  // timeout / unavailable
+//   { ok: false, denied: true, reason: '...' }
+//   { ok: false, denied: false, reason: '...' }  // timeout only
+//
+// `denied` is true for:
+//   - Code 1 (PERMISSION_DENIED) — explicit browser-level block.
+//   - Code 2 (POSITION_UNAVAILABLE) — on iOS this fires when Location
+//     Services are OFF at the OS level. The browser thinks it has
+//     permission but the OS refuses to provide a fix. We treat this
+//     the same as denied because the user needs to turn location on
+//     in Settings for tracking to work.
+//
+// Only code 3 (TIMEOUT) is treated as "you have permission but no
+// fix right now" — e.g. indoors / cold-start GPS. The caller can
+// proceed without coordinates in that case.
 export function requestPosition(options = {}) {
   return new Promise((resolve) => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
@@ -54,10 +66,13 @@ export function requestPosition(options = {}) {
       (position) => resolve({ ok: true, position }),
       (err) => resolve({
         ok: false,
-        // PositionError.PERMISSION_DENIED = 1 (spec). The OTHER codes
-        // (2 POSITION_UNAVAILABLE, 3 TIMEOUT) mean "you have permission
-        // but no fix right now" -- the caller can choose to proceed.
-        denied: err && err.code === 1,
+        // Code 1 = PERMISSION_DENIED (spec).
+        // Code 2 = POSITION_UNAVAILABLE — on iOS PWA this means Location
+        //   Services are disabled at OS level (Settings → Privacy →
+        //   Location Services → Off). Treat as denied.
+        // Code 3 = TIMEOUT — permission is fine, device just can't get a
+        //   fix right now. Proceed without coords.
+        denied: !!(err && (err.code === 1 || err.code === 2)),
         reason: (err && err.message) || `code ${err && err.code}`,
       }),
       { timeout: 8000, maximumAge: 30_000, enableHighAccuracy: false, ...options },
