@@ -465,10 +465,13 @@ button { cursor: pointer; }
   .crew-overlay { width: 320px; }
 }
 
-/* On phones narrow the panel so it doesn't obscure the map. */
+/* On phones the previous 220px width clipped names + hid the Locate
+   buttons, forcing horizontal scrolling to see the rest of each row.
+   Stretch the panel to nearly full-width so the full member name +
+   "Locate" pill are visible without scrolling sideways. */
 @media (max-width: 480px) {
   .crew-overlay {
-    width: min(220px, calc(100vw - 24px));
+    width: calc(100vw - 24px);
     padding: 0.6rem;
     border-radius: 12px;
   }

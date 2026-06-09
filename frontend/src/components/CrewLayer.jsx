@@ -27,19 +27,43 @@ import { crewMemberPoints, bestLocatedPoint } from '../lib/crewPoints';
 
 // A teardrop person-pin. Larger than a site pin so a moving crew is easy
 // to spot among stationary lease pins on a satellite view.
-function crewSvg(colorHex, isSelected) {
+// First+last initials in the head of the pin let the office tell crews
+// apart at a glance ("JS" = Jordan Smith, "JD" = Jordan Doe) without
+// opening every popup. Falls back to a single letter for one-word
+// names. Whitespace-collapsed + uppercased so " jordan  smith " → "JS".
+function initialOf(name) {
+  if (!name) return '';
+  const parts = String(name).trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '';
+  if (parts.length === 1) return (parts[0].charAt(0) || '').toUpperCase();
+  const first = parts[0].charAt(0) || '';
+  const last = parts[parts.length - 1].charAt(0) || '';
+  return (first + last).toUpperCase();
+}
+
+function crewSvg(colorHex, isSelected, initial) {
   const stroke = isSelected ? '#ffffff' : 'rgba(255,255,255,0.85)';
+  const letter = initial
+    ? `<text x="20" y="20" text-anchor="middle" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="${initial.length > 1 ? 10 : 13}" font-weight="700" fill="${colorHex}">${initial}</text>`
+    : `<circle cx="20" cy="14" r="4.2" fill="#ffffff"/>
+       <path d="M12.5 25c0-4.4 3.4-7.5 7.5-7.5s7.5 3.1 7.5 7.5z" fill="#ffffff"/>`;
+  // When we have an initial we replace the head+shoulders glyph with a
+  // larger white disc holding the letter — easier to read at marker
+  // size than overlaying text on the small head circle.
+  const headDisc = initial
+    ? `<circle cx="20" cy="16" r="9" fill="#ffffff" stroke="${stroke}" stroke-width="1.2"/>`
+    : '';
   return `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="48" viewBox="0 0 40 48">
     <ellipse cx="20" cy="45" rx="9" ry="2.5" fill="rgba(0,0,0,0.35)"/>
     <path d="M20 2C11.7 2 5 8.7 5 17c0 10.5 15 27 15 27s15-16.5 15-27C35 8.7 28.3 2 20 2z"
       fill="${colorHex}" stroke="${stroke}" stroke-width="2"/>
-    <circle cx="20" cy="14" r="4.2" fill="#ffffff"/>
-    <path d="M12.5 25c0-4.4 3.4-7.5 7.5-7.5s7.5 3.1 7.5 7.5z" fill="#ffffff"/>
+    ${headDisc}
+    ${letter}
   </svg>`;
 }
 
-function buildCrewIcon(colorHex, isSelected) {
-  const svg = crewSvg(colorHex || '#22c55e', isSelected);
+function buildCrewIcon(colorHex, isSelected, initial) {
+  const svg = crewSvg(colorHex || '#22c55e', isSelected, initial);
   const w = isSelected ? 52 : 36;
   const h = isSelected ? 62 : 43;
   return {
@@ -134,12 +158,15 @@ export default function CrewLayer({
         // Marker key includes tier + selection + stale so a state
         // change cleanly remounts the icon. Position updates apply via
         // the `position` prop without a remount.
-        const mKey = `crew-${p.key}-${p.tier}-${isSelected ? 'sel' : 'norm'}-${stale ? 'stale' : 'fresh'}`;
+        const initial = initialOf(p.name);
+        // Initial in the marker key so changing it (rare — only on
+        // member rename) cleanly remounts the icon.
+        const mKey = `crew-${p.key}-${p.tier}-${initial}-${isSelected ? 'sel' : 'norm'}-${stale ? 'stale' : 'fresh'}`;
         return (
           <Marker
             key={mKey}
             position={{ lat: p.lat, lng: p.lon }}
-            icon={buildCrewIcon(colorHex, isSelected)}
+            icon={buildCrewIcon(colorHex, isSelected, initial)}
             opacity={stale ? 0.55 : 1}
             zIndex={isSelected ? 620 : 520}
             onClick={() => onSelectPoint?.(p.key)}

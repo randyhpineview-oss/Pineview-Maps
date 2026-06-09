@@ -852,6 +852,10 @@ export default function MapView({
             setPopupSite(null);
             setPopupPipeline(null);
             if (onSelectDevice) onSelectDevice(null);
+            // Close any open crew popup on map tap, matching site/pipeline
+            // behaviour. Without this, tapping a crew pin on mobile leaves
+            // the bubble stuck open until the explicit × is hit.
+            if (onSelectCrewKey) onSelectCrewKey(null);
             if (onMapClick) onMapClick();
           }
         }}

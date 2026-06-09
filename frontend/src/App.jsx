@@ -6275,20 +6275,11 @@ export default function App() {
             selectedCrewKey={selectedCrewKey}
             onSelectCrewKey={(key) => {
               setSelectedCrewKey(key);
-              if (!key) return;
-              // Auto-expand the shift and open the sidebar when a crew pin is clicked.
-              const [shiftIdStr] = key.split(':');
-              const shiftId = Number(shiftIdStr);
-              if (!Number.isNaN(shiftId)) {
-                setExpandedCrewShiftIds((prev) => {
-                  if (prev.has(shiftId)) return prev;
-                  const next = new Set(prev);
-                  next.add(shiftId);
-                  return next;
-                });
-                setShowCrewPanel(true);
-                setIsFilterOpen(false);
-              }
+              // Tapping a crew pin opens ONLY the small popup near the
+              // pin — not the full Crew sidebar. Users open the sidebar
+              // explicitly via the floating "🛟 Crew" button. Previously
+              // clicking any pin force-opened the sidebar, which got in
+              // the way on mobile.
             }}
             expandedCrewShiftIds={expandedCrewShiftIds}
             onToggleCrewShiftExpanded={toggleCrewShiftExpanded}
