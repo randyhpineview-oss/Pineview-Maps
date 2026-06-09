@@ -3411,13 +3411,29 @@ export default function App() {
     const id = setInterval(reportLocation, 5 * 60_000);
     const onFocus = () => reportLocation();
     const onVis = () => { if (!document.hidden) reportLocation(); };
+    // Interaction-triggered ping: any tap/click counts as "the worker
+    // is actively using the app right now", so we refresh location
+    // opportunistically. Throttled to once every 2 min so a flurry of
+    // taps doesn't hammer geolocation (and burn battery).
+    let lastInteractionPingAt = Date.now();  // reportLocation() above already fired
+    const INTERACTION_THROTTLE_MS = 2 * 60_000;
+    const onInteraction = () => {
+      const now = Date.now();
+      if (now - lastInteractionPingAt < INTERACTION_THROTTLE_MS) return;
+      lastInteractionPingAt = now;
+      reportLocation();
+    };
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVis);
+    // `pointerdown` covers taps + mouse clicks; passive so we never
+    // interfere with scroll/click handling elsewhere in the app.
+    document.addEventListener('pointerdown', onInteraction, { passive: true });
     return () => {
       cancelled = true;
       clearInterval(id);
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVis);
+      document.removeEventListener('pointerdown', onInteraction);
     };
   }, [user?.id, activeShift?.id, activeShift?.ended_at, activeShift?.mode]);
 
