@@ -440,7 +440,10 @@ button { cursor: pointer; }
 
 /* ───── Crew (live) list overlay ───── */
 /* Sits below BOTH floating buttons (Filters + Crew, stacked) so they
-   stay visible/clickable while the list is open. */
+   stay visible/clickable while the list is open.
+   Two float-btns (~38px each) + 8px gap + 12px top padding ≈ 96px.
+   Use calc max-height so the panel never overflows the viewport bottom
+   regardless of screen size — no bottom-dock needed. */
 .crew-overlay {
   position: absolute;
   top: 100px;
@@ -451,7 +454,7 @@ button { cursor: pointer; }
   border-radius: 14px;
   padding: 0.75rem;
   width: 280px;
-  max-height: 60vh;
+  max-height: calc(100% - 116px);
   overflow-y: auto;
   backdrop-filter: blur(12px);
 }
@@ -460,16 +463,11 @@ button { cursor: pointer; }
   .crew-overlay { width: 320px; }
 }
 
-/* On phones, dock the crew overlay to the bottom of the map area so it
-   doesn't obscure the floating buttons or the map centre. */
+/* On phones constrain width to the button column so it doesn't
+   stretch across the full map, and tighten the corner radius. */
 @media (max-width: 480px) {
   .crew-overlay {
-    top: auto;
-    bottom: calc(var(--tab-height, 56px) + 8px);
-    left: 8px;
-    right: 8px;
-    width: auto;
-    max-height: 45vh;
+    width: 260px;
     border-radius: 12px;
   }
 }
