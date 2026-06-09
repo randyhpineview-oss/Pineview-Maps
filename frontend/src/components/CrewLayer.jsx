@@ -23,7 +23,7 @@ import { useEffect, useState } from 'react';
 import { Marker, OverlayView } from '@react-google-maps/api';
 
 import { tier as computeTier, tierColors, tierLabel } from '../lib/compliance';
-import { crewMemberPoints } from '../lib/crewPoints';
+import { crewMemberPoints, bestLocatedPoint } from '../lib/crewPoints';
 
 // A teardrop person-pin. Larger than a site pin so a moving crew is easy
 // to spot among stationary lease pins on a satellite view.
@@ -97,10 +97,10 @@ export default function CrewLayer({
   // shift (safety status is shift-wide) but carries its own coords +
   // updated_at so the stale dimming is per-member.
   //
-  // Collapsing: for crew shifts we show ONLY the lead pin by default --
-  // expanding the shift (via the sidebar chevron or the lead popup's
-  // "Show crew" toggle) reveals the other members' pins. Solo shifts
-  // are unaffected; they only have one member to show.
+  // Collapsing: for crew shifts we show ONE pin by default — the member
+  // with the most-recent location (often the lead, but if a worker has a
+  // fresher fix, show them instead so the office always sees the crew's
+  // latest position). Expanding reveals every located member.
   const points = [];
   for (const shift of shifts) {
     if (!shift || shift.ended_at || shift.mode === 'off') continue;
@@ -108,10 +108,15 @@ export default function CrewLayer({
     const crewSize = (shift.crew_members && shift.crew_members.length)
       || (1 + (shift.crew_user_ids || []).length);
     const isExpanded = !!(expandedShiftIds && expandedShiftIds.has(shift.id));
-    for (const p of crewMemberPoints(shift)) {
-      if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) continue;
-      if (shift.mode === 'crew' && !isExpanded && !p.isLead) continue;
-      points.push({ ...p, tier, crewSize, isExpanded });
+    if (shift.mode === 'crew' && !isExpanded) {
+      // Collapsed: show only the single best-located member pin.
+      const best = bestLocatedPoint(shift);
+      if (best) points.push({ ...best, tier, crewSize, isExpanded });
+    } else {
+      for (const p of crewMemberPoints(shift)) {
+        if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) continue;
+        points.push({ ...p, tier, crewSize, isExpanded });
+      }
     }
   }
 

@@ -463,11 +463,11 @@ button { cursor: pointer; }
   .crew-overlay { width: 320px; }
 }
 
-/* On phones constrain width to the button column so it doesn't
-   stretch across the full map, and tighten the corner radius. */
+/* On phones narrow the panel so it doesn't obscure the map. */
 @media (max-width: 480px) {
   .crew-overlay {
-    width: 260px;
+    width: min(220px, calc(100vw - 24px));
+    padding: 0.6rem;
     border-radius: 12px;
   }
 }
