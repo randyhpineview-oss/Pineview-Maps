@@ -62,19 +62,26 @@ export function requestPosition(options = {}) {
       resolve({ ok: false, denied: false, reason: 'unsupported' });
       return;
     }
+    const t0 = Date.now();
     navigator.geolocation.getCurrentPosition(
       (position) => resolve({ ok: true, position }),
-      (err) => resolve({
-        ok: false,
-        // Code 1 = PERMISSION_DENIED (spec).
-        // Code 2 = POSITION_UNAVAILABLE — on iOS PWA this means Location
-        //   Services are disabled at OS level (Settings → Privacy →
-        //   Location Services → Off). Treat as denied.
-        // Code 3 = TIMEOUT — permission is fine, device just can't get a
-        //   fix right now. Proceed without coords.
-        denied: !!(err && (err.code === 1 || err.code === 2)),
-        reason: (err && err.message) || `code ${err && err.code}`,
-      }),
+      (err) => {
+        const elapsed = Date.now() - t0;
+        // Code 1 = PERMISSION_DENIED (spec). Always denied.
+        // Code 2 = POSITION_UNAVAILABLE — nuanced:
+        //   - On iOS, when Location Services are OFF at the OS level, the
+        //     error fires almost instantly (< 2 s). Treat as denied.
+        //   - If it fires slowly (> 2 s) it means the OS tried to acquire
+        //     a fix and failed (GPS cold-start, indoors after re-enabling).
+        //     Treat like a timeout — proceed without coords.
+        // Code 3 = TIMEOUT — permission fine, device can't fix. Proceed.
+        const code2IsDenied = err && err.code === 2 && elapsed < 2000;
+        resolve({
+          ok: false,
+          denied: !!(err && (err.code === 1 || code2IsDenied)),
+          reason: (err && err.message) || `code ${err && err.code}`,
+        });
+      },
       { timeout: 8000, maximumAge: 30_000, enableHighAccuracy: false, ...options },
     );
   });
