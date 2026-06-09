@@ -12,7 +12,7 @@
  * source list and disappears here on the next refresh.
  */
 import { tier as computeTier, tierColors, tierLabel } from '../lib/compliance';
-import { crewMemberPoints } from '../lib/crewPoints';
+import { crewMemberPoints, bestLocatedPoint } from '../lib/crewPoints';
 
 const STALE_MS = 2 * 60 * 60_000;
 
@@ -29,17 +29,23 @@ function relativeTime(iso) {
   return `${Math.round(hr / 24)} d ago`;
 }
 
-function MemberRow({ p, isSelected, colors, tier, isCrew, crewSize, isExpanded, onLocate, onToggle, isMate = false }) {
+// onLeadClick: pre-resolved callback (with fallback point) supplied by parent
+// locateTarget: the point the Locate button should zoom to (may differ from p
+//   when the lead has no fix — bestLocatedPoint provides a crew fallback).
+function MemberRow({ p, isSelected, colors, tier, isCrew, crewSize, isExpanded, onLocate, onToggle, onLeadClick, locateTarget, isMate = false }) {
   if (!p) return null;
-  const hasLoc = Number.isFinite(p.lat) && Number.isFinite(p.lon);
+  // For the Locate button: use the explicit locateTarget when provided
+  // (crew-fallback for lead rows), otherwise fall back to the member's own point.
+  const resolvedTarget = locateTarget || p;
+  const hasLoc = Number.isFinite(resolvedTarget.lat) && Number.isFinite(resolvedTarget.lon);
   const stale = p.updatedAt && Date.now() - new Date(p.updatedAt).getTime() > STALE_MS;
   // For the lead row of a crew shift, clicking the name area expands the crew
-  // and locates the lead pin — no separate chevron needed.
+  // and navigates to the best available location — no separate chevron needed.
   const nameClickable = !isMate && isCrew && !!onToggle;
   function handleNameClick() {
     if (!nameClickable) return;
     onToggle?.();
-    if (hasLoc) onLocate?.(p);
+    onLeadClick?.();
   }
   return (
     <div
@@ -90,11 +96,11 @@ function MemberRow({ p, isSelected, colors, tier, isCrew, crewSize, isExpanded, 
           📍 {relativeTime(p.updatedAt)}{stale ? ' (stale)' : ''}
         </div>
       </div>
-      {/* Locate button */}
+      {/* Locate button — uses resolvedTarget (may be a crew member fallback) */}
       <button
         type="button"
         disabled={!hasLoc}
-        onClick={() => hasLoc && onLocate?.(p)}
+        onClick={() => hasLoc && onLocate?.(resolvedTarget)}
         style={{
           flexShrink: 0, borderRadius: 7,
           border: '1px solid rgba(143,182,255,0.2)',
@@ -203,6 +209,11 @@ export default function CrewSidebar({
                   isExpanded={isExpanded}
                   onLocate={onLocate}
                   onToggle={isCrew ? () => onToggleShiftExpanded?.(shift.id) : null}
+                  onLeadClick={isCrew ? (() => {
+                    const target = bestLocatedPoint(shift);
+                    if (target) onLocate?.(target);
+                  }) : null}
+                  locateTarget={isCrew ? bestLocatedPoint(shift) : null}
                 />
 
                 {/* ── Crew mates (shown when expanded) ── */}

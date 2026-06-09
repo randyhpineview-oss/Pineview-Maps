@@ -90,3 +90,31 @@ export function crewMemberPoints(shift) {
     key: `${shift.id}:${p.userId}`,
   }));
 }
+
+/**
+ * bestLocatedPoint(shift)
+ *
+ * Returns the best point to zoom to for a given shift:
+ *   1. Lead's point — if they have a known location.
+ *   2. Most-recently-updated crew member with a known location.
+ *   3. null — nobody on the shift has reported a position yet.
+ *
+ * Used as a fallback so tapping the lead's sidebar row or map pin
+ * always navigates to *someone* on the crew even when the lead
+ * hasn't sent a GPS fix yet.
+ */
+export function bestLocatedPoint(shift) {
+  const pts = crewMemberPoints(shift).filter(
+    (p) => Number.isFinite(p.lat) && Number.isFinite(p.lon),
+  );
+  if (!pts.length) return null;
+  const lead = pts.find((p) => p.isLead);
+  if (lead) return lead;
+  // Pick the crew member with the most-recent updatedAt.
+  return pts.reduce((best, p) => {
+    if (!best) return p;
+    const tBest = best.updatedAt ? new Date(best.updatedAt).getTime() : 0;
+    const tP = p.updatedAt ? new Date(p.updatedAt).getTime() : 0;
+    return tP > tBest ? p : best;
+  }, null);
+}
