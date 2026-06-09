@@ -33,6 +33,14 @@ function MemberRow({ p, isSelected, colors, tier, isCrew, crewSize, isExpanded, 
   if (!p) return null;
   const hasLoc = Number.isFinite(p.lat) && Number.isFinite(p.lon);
   const stale = p.updatedAt && Date.now() - new Date(p.updatedAt).getTime() > STALE_MS;
+  // For the lead row of a crew shift, clicking the name area expands the crew
+  // and locates the lead pin — no separate chevron needed.
+  const nameClickable = !isMate && isCrew && !!onToggle;
+  function handleNameClick() {
+    if (!nameClickable) return;
+    onToggle?.();
+    if (hasLoc) onLocate?.(p);
+  }
   return (
     <div
       style={{
@@ -58,7 +66,14 @@ function MemberRow({ p, isSelected, colors, tier, isCrew, crewSize, isExpanded, 
           opacity: isMate ? 0.75 : 1,
         }}
       />
-      <div style={{ flexGrow: 1, minWidth: 0 }}>
+      {/* Name + subtitle — tappable on the lead row to expand crew */}
+      <div
+        style={{ flexGrow: 1, minWidth: 0, cursor: nameClickable ? 'pointer' : 'default' }}
+        onClick={nameClickable ? handleNameClick : undefined}
+        role={nameClickable ? 'button' : undefined}
+        tabIndex={nameClickable ? 0 : undefined}
+        onKeyDown={nameClickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') handleNameClick(); } : undefined}
+      >
         <div style={{
           color: isMate ? '#9ab1d6' : '#e5eefb',
           fontSize: isMate ? '0.78rem' : '0.84rem',
@@ -67,7 +82,7 @@ function MemberRow({ p, isSelected, colors, tier, isCrew, crewSize, isExpanded, 
           {p.name}
           {isCrew && !isMate ? (
             <span style={{ color: '#9ab1d6', fontSize: '0.7rem', marginLeft: 4 }}>
-              (lead · crew of {crewSize})
+              {isExpanded ? '▲' : '▼'} lead · crew of {crewSize}
             </span>
           ) : null}
         </div>
@@ -91,23 +106,6 @@ function MemberRow({ p, isSelected, colors, tier, isCrew, crewSize, isExpanded, 
       >
         Locate
       </button>
-      {/* Expand/collapse chevron — only on lead row of a crew shift */}
-      {onToggle ? (
-        <button
-          type="button"
-          aria-label={isExpanded ? 'Collapse crew' : 'Expand crew'}
-          onClick={onToggle}
-          style={{
-            flexShrink: 0, background: 'transparent', border: 'none',
-            color: '#9ab1d6', cursor: 'pointer',
-            fontSize: '0.75rem', padding: '0 0.1rem', lineHeight: 1,
-            transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
-            transition: 'transform 0.18s',
-          }}
-        >
-          ▼
-        </button>
-      ) : null}
     </div>
   );
 }

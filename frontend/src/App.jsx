@@ -5112,6 +5112,7 @@ export default function App() {
   function handleMapDismiss() {
   if (isDrawingPipeline || isSprayMarking) return; // Don't dismiss during drawing/spray
   setIsFilterOpen(false);
+  setShowCrewPanel(false);
   setFabOpen(false);
   setDetailOpen(false);
   setSelectedSite(null);
@@ -6239,7 +6240,23 @@ export default function App() {
             crewShifts={crewShifts}
             showCrewLayer={canManagePins && (layers.crew ?? true)}
             selectedCrewKey={selectedCrewKey}
-            onSelectCrewKey={setSelectedCrewKey}
+            onSelectCrewKey={(key) => {
+              setSelectedCrewKey(key);
+              if (!key) return;
+              // Auto-expand the shift and open the sidebar when a crew pin is clicked.
+              const [shiftIdStr] = key.split(':');
+              const shiftId = Number(shiftIdStr);
+              if (!Number.isNaN(shiftId)) {
+                setExpandedCrewShiftIds((prev) => {
+                  if (prev.has(shiftId)) return prev;
+                  const next = new Set(prev);
+                  next.add(shiftId);
+                  return next;
+                });
+                setShowCrewPanel(true);
+                setIsFilterOpen(false);
+              }
+            }}
             expandedCrewShiftIds={expandedCrewShiftIds}
             onToggleCrewShiftExpanded={toggleCrewShiftExpanded}
           />

@@ -460,6 +460,20 @@ button { cursor: pointer; }
   .crew-overlay { width: 320px; }
 }
 
+/* On phones, dock the crew overlay to the bottom of the map area so it
+   doesn't obscure the floating buttons or the map centre. */
+@media (max-width: 480px) {
+  .crew-overlay {
+    top: auto;
+    bottom: calc(var(--tab-height, 56px) + 8px);
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-height: 45vh;
+    border-radius: 12px;
+  }
+}
+
 .filter-overlay input,
 .filter-overlay select {
   width: 100%;
