@@ -134,6 +134,10 @@ export default function HydroseedTicketDetailSheet({
   const [isSignatureOpen, setIsSignatureOpen] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [previewBase64, setPreviewBase64] = useState(null);
+  // Dirty flag — set whenever office data is edited locally but not yet
+  // persisted. Used to hide the Dropbox PDF link (which reflects the last
+  // saved version) so the user doesn't accidentally print a stale copy.
+  const [isDirty, setIsDirty] = useState(false);
 
   // Local editable state
   const [description, setDescription] = useState('');
@@ -155,6 +159,7 @@ export default function HydroseedTicketDetailSheet({
 
   const applyTicket = (t) => {
     if (!t) return;
+    setIsDirty(false);  // fresh data from server — no unsaved changes
     setTicket(t);
     setDescription(t.description_of_work || '');
     setClient(t.client || '');
@@ -262,12 +267,15 @@ export default function HydroseedTicketDetailSheet({
   // ── Office line editors ──────────────────────────────────────────────────
   const updateLine = (idx, patch) => {
     setOfficeLines(prev => prev.map((l, i) => i === idx ? { ...l, ...patch } : l));
+    setIsDirty(true);
   };
   const addLine = () => {
     setOfficeLines(prev => [...prev, { label: '', qty: '', unit: '', rate: '' }]);
+    setIsDirty(true);
   };
   const removeLine = (idx) => {
     setOfficeLines(prev => prev.filter((_, i) => i !== idx));
+    setIsDirty(true);
   };
 
   // ── Payload assembly ─────────────────────────────────────────────────────
@@ -296,6 +304,7 @@ export default function HydroseedTicketDetailSheet({
   // Helper for the two Other Product rows.
   const updateOtherProduct = (idx, patch) => {
     setOtherProducts(prev => prev.map((op, i) => i === idx ? { ...op, ...patch } : op));
+    setIsDirty(true);
   };
 
   // Re-generate the current PDF (used for both Preview and Approve).
@@ -537,7 +546,7 @@ export default function HydroseedTicketDetailSheet({
               disabled={!previewBase64}
               style={{ background: 'none', border: 'none', color: '#60a5fa', fontSize: '0.9rem', cursor: previewBase64 ? 'pointer' : 'not-allowed', padding: 0 }}
             >Print</button>
-            {dropboxHref ? (
+            {dropboxHref && !isDirty ? (
               <a
                 href={dropboxHref}
                 target="_blank"
@@ -597,11 +606,11 @@ export default function HydroseedTicketDetailSheet({
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
         <div>
           <label style={labelStyle}>Customer</label>
-          <input type="text" value={client} onChange={e => setClient(e.target.value)} disabled={isReadOnly} style={inputStyle} />
+          <input type="text" value={client} onChange={e => { setClient(e.target.value); setIsDirty(true); }} disabled={isReadOnly} style={inputStyle} />
         </div>
         <div>
           <label style={labelStyle}>Area</label>
-          <input type="text" value={area} onChange={e => setArea(e.target.value)} disabled={isReadOnly} style={inputStyle} />
+          <input type="text" value={area} onChange={e => { setArea(e.target.value); setIsDirty(true); }} disabled={isReadOnly} style={inputStyle} />
         </div>
         <div>
           <label style={labelStyle}>Work Date</label>
@@ -609,14 +618,14 @@ export default function HydroseedTicketDetailSheet({
         </div>
         <div>
           <label style={labelStyle}>PO / Approval #</label>
-          <input type="text" value={poNumber} onChange={e => setPoNumber(e.target.value)} disabled={isReadOnly} style={inputStyle} />
+          <input type="text" value={poNumber} onChange={e => { setPoNumber(e.target.value); setIsDirty(true); }} disabled={isReadOnly} style={inputStyle} />
         </div>
       </div>
       <div style={{ marginBottom: 14 }}>
         <label style={labelStyle}>Description of Work</label>
         <textarea
           value={description}
-          onChange={e => setDescription(e.target.value)}
+          onChange={e => { setDescription(e.target.value); setIsDirty(true); }}
           disabled={isReadOnly}
           rows={2}
           style={{ ...inputStyle, resize: 'vertical' }}
@@ -727,7 +736,7 @@ export default function HydroseedTicketDetailSheet({
         <textarea
           rows={3}
           value={comments}
-          onChange={e => setComments(e.target.value)}
+          onChange={e => { setComments(e.target.value); setIsDirty(true); }}
           disabled={isReadOnly}
           placeholder="Notes that print at the bottom of the ticket…"
           style={{ ...inputStyle, resize: 'vertical', width: '100%' }}
@@ -861,7 +870,7 @@ export default function HydroseedTicketDetailSheet({
             <input
               type="checkbox"
               checked={gstEnabled}
-              onChange={e => setGstEnabled(e.target.checked)}
+              onChange={e => { setGstEnabled(e.target.checked); setIsDirty(true); }}
               disabled={isReadOnly}
             />
             Charge GST
@@ -870,7 +879,7 @@ export default function HydroseedTicketDetailSheet({
             <input
               type="number" inputMode="decimal" min="0" step="0.1"
               value={gstPercent}
-              onChange={e => setGstPercent(e.target.value)}
+              onChange={e => { setGstPercent(e.target.value); setIsDirty(true); }}
               disabled={isReadOnly || !gstEnabled}
               style={{ ...inputStyle, width: 70, textAlign: 'right', display: 'inline-block' }}
             />
@@ -953,8 +962,11 @@ export default function HydroseedTicketDetailSheet({
 
       {/* Dropbox link — office/admin only, mirrors the T&M pattern. The
           stored PDF includes rates + signature, which workers must not
-          see; their Preview button regenerates a clean copy on the fly. */}
-      {canOfficeEdit && ticket.pdf_url ? (
+          see; their Preview button regenerates a clean copy on the fly.
+          When there are unsaved changes we hide the link and show a
+          warning instead — the stored PDF is stale and would show the
+          old lines/dollars if printed directly from Dropbox. */}
+      {canOfficeEdit && ticket.pdf_url && !isDirty ? (
         <a
           href={dropboxDirectUrl(ticket.pdf_url)}
           target="_blank"
@@ -963,6 +975,14 @@ export default function HydroseedTicketDetailSheet({
         >
           Open Dropbox PDF ↗
         </a>
+      ) : canOfficeEdit && ticket.pdf_url && isDirty ? (
+        <div style={{
+          marginTop: 12, fontSize: '0.8rem', color: '#fbbf24',
+          display: 'flex', alignItems: 'center', gap: 6,
+        }}>
+          ⚠ Unsaved changes — use <strong>Preview PDF → Print</strong> to print the latest version.
+          Save first to update the Dropbox copy.
+        </div>
       ) : null}
 
       <SignaturePadModal
