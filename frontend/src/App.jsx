@@ -10,6 +10,7 @@ import MapView from './components/MapView';
 import PipelineDetailSheet from './components/PipelineDetailSheet';
 import SiteDetailSheet from './components/SiteDetailSheet';
 import CheckinCountdown from './components/CheckinCountdown';
+import TankMixChartOverlay from './components/TankMixChartOverlay';
 import { api } from './lib/api';
 import { shouldForceOverlay } from './lib/compliance';
 import { scheduleLocalCheckinNotifications } from './lib/localCheckinNotifications';
@@ -593,6 +594,7 @@ export default function App() {
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [fabOpen, setFabOpen] = useState(false);
+  const [showTankMix, setShowTankMix] = useState(false);
   const [addPinType, setAddPinType] = useState(null);
   const [addPinLocation, setAddPinLocation] = useState(null);
   const [addPinForm, setAddPinForm] = useState({ lsd: '', client: '', area: '' });
@@ -6158,6 +6160,14 @@ export default function App() {
                 >
                   🛟 Check-ins
                 </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="topbar-account-item"
+                  onClick={() => { setAccountMenuOpen(false); setShowTankMix(true); }}
+                >
+                  🧪 Tank Mix Recipes
+                </button>
                 {actualCanManagePins ? (
                   <button
                     type="button"
@@ -7330,6 +7340,8 @@ export default function App() {
             </Suspense>
           </div>
         </div>
+
+        {showTankMix && <TankMixChartOverlay onClose={() => setShowTankMix(false)} />}
       </main>
 
       {/* ── Reports dashboard (admin/office full-page overlay) ──
