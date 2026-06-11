@@ -190,19 +190,41 @@ export default function TankMixChartOverlay({ onClose }) {
         }
 
         @media (max-width: 640px) {
+          .tank-mix-backdrop {
+            padding: 8px;
+          }
           .tank-mix-modal {
-            max-height: 95vh;
-            border-radius: 12px;
+            max-height: 96vh;
+            border-radius: 8px;
           }
-          .tank-mix-content {
-            padding: 12px;
-          }
-          .tank-mix-table th, .tank-mix-table td {
-            padding: 8px 10px;
-            font-size: 0.8rem;
+          .tank-mix-header {
+            padding: 10px 14px;
           }
           .tank-mix-title {
-            font-size: 1.1rem;
+            font-size: 1rem;
+          }
+          .tank-mix-close-x {
+            width: 28px;
+            height: 28px;
+            font-size: 1rem;
+          }
+          .tank-mix-content {
+            padding: 8px;
+          }
+          .tank-mix-table th, .tank-mix-table td {
+            padding: 6px 8px;
+            font-size: 0.72rem;
+          }
+          .tank-mix-instructions {
+            min-width: 150px;
+            font-size: 0.7rem;
+          }
+          .tank-mix-footer {
+            padding: 10px 14px;
+          }
+          .tank-mix-close-btn {
+            padding: 8px 18px;
+            font-size: 0.8rem;
           }
         }
       `}</style>
