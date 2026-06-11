@@ -280,7 +280,7 @@ export default function TankMixChartOverlay({ onClose }) {
                   <td className="tank-mix-value">½ L</td>
                   <td className="tank-mix-value">¼ L</td>
                   <td></td>
-                  <td className="tank-mix-instructions">Add once tank is full &amp; AFTER Transorb</td>
+                  <td className="tank-mix-instructions">Add once tank is half full &amp; AFTER Transorb</td>
                 </tr>
                 <tr>
                   <td className="tank-mix-herbicide-name">Escort/Assure</td>
