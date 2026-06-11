@@ -5,125 +5,319 @@ export default function TankMixChartOverlay({ onClose }) {
   const handleModalClick = (e) => e.stopPropagation();
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6"
-      style={{ backgroundColor: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(4px)' }}
-      onClick={onClose}
-    >
-      <div
-        className="bg-slate-900 rounded-xl shadow-2xl border border-slate-700 max-w-4xl w-full max-h-full overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200"
-        onClick={handleModalClick}
-      >
-        <div className="flex items-center justify-between p-4 border-b border-slate-700 bg-slate-800/50">
-          <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            🧪 Tank Recipes
+    <div className="tank-mix-backdrop" onClick={onClose}>
+      <style>{`
+        .tank-mix-backdrop {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background-color: rgba(9, 17, 31, 0.85);
+          backdrop-filter: blur(8px);
+          -webkit-backdrop-filter: blur(8px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 9999;
+          padding: 16px;
+        }
+
+        .tank-mix-modal {
+          background-color: #0f172a;
+          border: 1px solid rgba(143, 182, 255, 0.18);
+          border-radius: 16px;
+          box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+          width: 100%;
+          max-width: 900px;
+          max-height: 90vh;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+          animation: tank-mix-fade-in 0.2s ease-out;
+        }
+
+        @keyframes tank-mix-fade-in {
+          from { opacity: 0; transform: scale(0.95); }
+          to { opacity: 1; transform: scale(1); }
+        }
+
+        .tank-mix-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 16px 20px;
+          background-color: rgba(15, 23, 42, 0.95);
+          border-bottom: 1px solid rgba(143, 182, 255, 0.12);
+        }
+
+        .tank-mix-title {
+          font-size: 1.25rem;
+          font-weight: 700;
+          color: #ffffff;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin: 0;
+        }
+
+        .tank-mix-close-x {
+          background: transparent;
+          border: none;
+          color: #9ab1d6;
+          font-size: 1.25rem;
+          font-weight: 400;
+          cursor: pointer;
+          width: 32px;
+          height: 32px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 8px;
+          transition: all 0.15s ease;
+        }
+
+        .tank-mix-close-x:hover {
+          background-color: rgba(143, 182, 255, 0.1);
+          color: #ffffff;
+        }
+
+        .tank-mix-content {
+          padding: 20px;
+          overflow-y: auto;
+          flex: 1;
+        }
+
+        .tank-mix-table-wrapper {
+          overflow-x: auto;
+          border-radius: 12px;
+          border: 1px solid rgba(143, 182, 255, 0.12);
+          background-color: #09111f;
+        }
+
+        .tank-mix-table {
+          width: 100%;
+          border-collapse: collapse;
+          text-align: left;
+          font-size: 0.9rem;
+          color: #c6d6f1;
+        }
+
+        .tank-mix-table th {
+          padding: 12px 16px;
+          font-weight: 600;
+          white-space: nowrap;
+        }
+
+        .tank-mix-table th.header-standard {
+          background-color: #1e293b;
+          color: #ffffff;
+        }
+
+        .tank-mix-table th.header-yellow {
+          background-color: #f59e0b;
+          color: #0f172a;
+          font-weight: 700;
+        }
+
+        .tank-mix-table th.header-green {
+          background-color: #10b981;
+          color: #0f172a;
+          font-weight: 700;
+        }
+
+        .tank-mix-table th.header-pink {
+          background-color: #ec4899;
+          color: #0f172a;
+          font-weight: 700;
+        }
+
+        .tank-mix-table td {
+          padding: 12px 16px;
+          border-bottom: 1px solid rgba(143, 182, 255, 0.08);
+        }
+
+        .tank-mix-table tr:last-child td {
+          border-bottom: none;
+        }
+
+        .tank-mix-table tr:hover {
+          background-color: rgba(143, 182, 255, 0.03);
+        }
+
+        .tank-mix-herbicide-name {
+          color: #ffffff;
+          font-weight: 600;
+        }
+
+        .tank-mix-value {
+          font-weight: 500;
+        }
+
+        .tank-mix-surfactant-yes {
+          color: #34d399;
+          font-weight: 700;
+        }
+
+        .tank-mix-instructions {
+          color: #94a3b8;
+          font-size: 0.85rem;
+          line-height: 1.4;
+          min-width: 250px;
+        }
+
+        .tank-mix-footer {
+          display: flex;
+          justify-content: flex-end;
+          padding: 16px 20px;
+          background-color: rgba(15, 23, 42, 0.95);
+          border-top: 1px solid rgba(143, 182, 255, 0.12);
+        }
+
+        .tank-mix-close-btn {
+          padding: 10px 24px;
+          background-color: #2563eb;
+          color: #ffffff;
+          border: none;
+          border-radius: 8px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: background-color 0.15s ease;
+        }
+
+        .tank-mix-close-btn:hover {
+          background-color: #1d4ed8;
+        }
+
+        @media (max-width: 640px) {
+          .tank-mix-modal {
+            max-height: 95vh;
+            border-radius: 12px;
+          }
+          .tank-mix-content {
+            padding: 12px;
+          }
+          .tank-mix-table th, .tank-mix-table td {
+            padding: 8px 10px;
+            font-size: 0.8rem;
+          }
+          .tank-mix-title {
+            font-size: 1.1rem;
+          }
+        }
+      `}</style>
+
+      <div className="tank-mix-modal" onClick={handleModalClick}>
+        <div className="tank-mix-header">
+          <h2 className="tank-mix-title">
+            🧪 Tank Mix Recipes
           </h2>
           <button
             type="button"
             onClick={onClose}
-            className="text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-lg p-2 transition-colors"
+            className="tank-mix-close-x"
             title="Close"
           >
             ✕
           </button>
         </div>
 
-        <div className="p-4 sm:p-6 overflow-auto">
-          <div className="overflow-x-auto rounded-lg border border-slate-700">
-            <table className="w-full text-left border-collapse text-sm sm:text-base">
+        <div className="tank-mix-content">
+          <div className="tank-mix-table-wrapper">
+            <table className="tank-mix-table">
               <thead>
                 <tr>
-                  <th className="bg-slate-800 text-white font-semibold p-3 border-b border-slate-700">Herbicide</th>
-                  <th className="bg-yellow-400 text-slate-900 font-bold p-3 border-b border-slate-700 whitespace-nowrap">Full Tank 400L</th>
-                  <th className="bg-green-400 text-slate-900 font-bold p-3 border-b border-slate-700 whitespace-nowrap">½ Tank 200L</th>
-                  <th className="bg-fuchsia-400 text-slate-900 font-bold p-3 border-b border-slate-700 whitespace-nowrap">¼ Tank 100L</th>
-                  <th className="bg-slate-800 text-white font-semibold p-3 border-b border-slate-700">Surfactant</th>
-                  <th className="bg-slate-800 text-white font-semibold p-3 border-b border-slate-700 min-w-[200px]">Instructions</th>
+                  <th className="header-standard">Herbicide</th>
+                  <th className="header-yellow">Full Tank 400L</th>
+                  <th className="header-green">½ Tank 200L</th>
+                  <th className="header-pink">¼ Tank 100L</th>
+                  <th className="header-standard">Surfactant</th>
+                  <th className="header-standard">Instructions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-700">
-                <tr className="hover:bg-slate-800/50 transition-colors">
-                  <td className="p-3 text-white">Transorb HC</td>
-                  <td className="p-3 text-slate-300 font-medium">5L</td>
-                  <td className="p-3 text-slate-300 font-medium">2.5</td>
-                  <td className="p-3 text-slate-300 font-medium">1.25</td>
-                  <td className="p-3 text-slate-400"></td>
-                  <td className="p-3 text-slate-400"></td>
+              <tbody>
+                <tr>
+                  <td className="tank-mix-herbicide-name">Transorb HC</td>
+                  <td className="tank-mix-value">5L</td>
+                  <td className="tank-mix-value">2.5</td>
+                  <td className="tank-mix-value">1.25</td>
+                  <td></td>
+                  <td className="tank-mix-instructions"></td>
                 </tr>
-                <tr className="hover:bg-slate-800/50 transition-colors">
-                  <td className="p-3 text-white">Tordon 22K</td>
-                  <td className="p-3 text-slate-300 font-medium">¾ L</td>
-                  <td className="p-3 text-slate-300 font-medium">½ L</td>
-                  <td className="p-3 text-slate-300 font-medium">¼ L</td>
-                  <td className="p-3 text-slate-400"></td>
-                  <td className="p-3 text-slate-400"></td>
+                <tr>
+                  <td className="tank-mix-herbicide-name">Tordon 22K</td>
+                  <td className="tank-mix-value">¾ L</td>
+                  <td className="tank-mix-value">½ L</td>
+                  <td className="tank-mix-value">¼ L</td>
+                  <td></td>
+                  <td className="tank-mix-instructions"></td>
                 </tr>
-                <tr className="hover:bg-slate-800/50 transition-colors">
-                  <td className="p-3 text-white">MCPA</td>
-                  <td className="p-3 text-slate-300 font-medium">¾ L</td>
-                  <td className="p-3 text-slate-300 font-medium">½ L</td>
-                  <td className="p-3 text-slate-300 font-medium">¼ L</td>
-                  <td className="p-3 text-slate-400"></td>
-                  <td className="p-3 text-slate-300">Add once tank is full &amp; AFTER Transorb</td>
+                <tr>
+                  <td className="tank-mix-herbicide-name">MCPA</td>
+                  <td className="tank-mix-value">¾ L</td>
+                  <td className="tank-mix-value">½ L</td>
+                  <td className="tank-mix-value">¼ L</td>
+                  <td></td>
+                  <td className="tank-mix-instructions">Add once tank is full &amp; AFTER Transorb</td>
                 </tr>
-                <tr className="hover:bg-slate-800/50 transition-colors">
-                  <td className="p-3 text-white">Escort/Assure</td>
-                  <td className="p-3 text-slate-300 font-medium">16g</td>
-                  <td className="p-3 text-slate-300 font-medium">8g</td>
-                  <td className="p-3 text-slate-300 font-medium">4g</td>
-                  <td className="p-3 text-emerald-400 font-semibold">YES</td>
-                  <td className="p-3 text-slate-300">16g in 10L water, ½ jug per SXS tank + surfactant</td>
+                <tr>
+                  <td className="tank-mix-herbicide-name">Escort/Assure</td>
+                  <td className="tank-mix-value">16g</td>
+                  <td className="tank-mix-value">8g</td>
+                  <td className="tank-mix-value">4g</td>
+                  <td className="tank-mix-surfactant-yes">YES</td>
+                  <td className="tank-mix-instructions">16g in 10L water, ½ jug per SXS tank + surfactant</td>
                 </tr>
-                <tr className="hover:bg-slate-800/50 transition-colors">
-                  <td className="p-3 text-white">Par III</td>
-                  <td className="p-3 text-slate-300 font-medium">5L</td>
-                  <td className="p-3 text-slate-300 font-medium">2.5L</td>
-                  <td className="p-3 text-slate-300 font-medium">1.25L</td>
-                  <td className="p-3 text-slate-400"></td>
-                  <td className="p-3 text-slate-400"></td>
+                <tr>
+                  <td className="tank-mix-herbicide-name">Par III</td>
+                  <td className="tank-mix-value">5L</td>
+                  <td className="tank-mix-value">2.5L</td>
+                  <td className="tank-mix-value">1.25L</td>
+                  <td></td>
+                  <td className="tank-mix-instructions"></td>
                 </tr>
-                <tr className="hover:bg-slate-800/50 transition-colors">
-                  <td className="p-3 text-white">Garlon</td>
-                  <td className="p-3 text-slate-300 font-medium">7L</td>
-                  <td className="p-3 text-slate-300 font-medium">3.5L</td>
-                  <td className="p-3 text-slate-300 font-medium">1.75L</td>
-                  <td className="p-3 text-emerald-400 font-semibold">YES</td>
-                  <td className="p-3 text-slate-400"></td>
+                <tr>
+                  <td className="tank-mix-herbicide-name">Garlon</td>
+                  <td className="tank-mix-value">7L</td>
+                  <td className="tank-mix-value">3.5L</td>
+                  <td className="tank-mix-value">1.75L</td>
+                  <td className="tank-mix-surfactant-yes">YES</td>
+                  <td className="tank-mix-instructions"></td>
                 </tr>
-                <tr className="hover:bg-slate-800/50 transition-colors">
-                  <td className="p-3 text-white">Draft</td>
-                  <td className="p-3 text-slate-300 font-medium">8g</td>
-                  <td className="p-3 text-slate-300 font-medium">4g</td>
-                  <td className="p-3 text-slate-300 font-medium">2g</td>
-                  <td className="p-3 text-emerald-400 font-semibold">YES</td>
-                  <td className="p-3 text-slate-300">8g in 10L water, ⅓ jug per SXS tank + surfactant</td>
+                <tr>
+                  <td className="tank-mix-herbicide-name">Draft</td>
+                  <td className="tank-mix-value">8g</td>
+                  <td className="tank-mix-value">4g</td>
+                  <td className="tank-mix-value">2g</td>
+                  <td className="tank-mix-surfactant-yes">YES</td>
+                  <td className="tank-mix-instructions">8g in 10L water, ⅓ jug per SXS tank + surfactant</td>
                 </tr>
-                <tr className="hover:bg-slate-800/50 transition-colors">
-                  <td className="p-3 text-white">Tracker XP</td>
-                  <td className="p-3 text-slate-300 font-medium">2.5L</td>
-                  <td className="p-3 text-slate-300 font-medium">1.25L</td>
-                  <td className="p-3 text-slate-300 font-medium">0.65L</td>
-                  <td className="p-3 text-slate-400"></td>
-                  <td className="p-3 text-slate-400"></td>
+                <tr>
+                  <td className="tank-mix-herbicide-name">Tracker XP</td>
+                  <td className="tank-mix-value">2.5L</td>
+                  <td className="tank-mix-value">1.25L</td>
+                  <td className="tank-mix-value">0.65L</td>
+                  <td></td>
+                  <td className="tank-mix-instructions"></td>
                 </tr>
-                <tr className="hover:bg-slate-800/50 transition-colors">
-                  <td className="p-3 text-white">Trillion</td>
-                  <td className="p-3 text-slate-300 font-medium">10L</td>
-                  <td className="p-3 text-slate-300 font-medium">5L</td>
-                  <td className="p-3 text-slate-300 font-medium">2.5L</td>
-                  <td className="p-3 text-slate-400"></td>
-                  <td className="p-3 text-slate-400"></td>
+                <tr>
+                  <td className="tank-mix-herbicide-name">Trillion</td>
+                  <td className="tank-mix-value">10L</td>
+                  <td className="tank-mix-value">5L</td>
+                  <td className="tank-mix-value">2.5L</td>
+                  <td></td>
+                  <td className="tank-mix-instructions"></td>
                 </tr>
               </tbody>
             </table>
           </div>
         </div>
-        
-        <div className="p-4 border-t border-slate-700 bg-slate-800/50 flex justify-end">
+
+        <div className="tank-mix-footer">
           <button
             type="button"
             onClick={onClose}
-            className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium transition-colors"
+            className="tank-mix-close-btn"
           >
             Close
           </button>
