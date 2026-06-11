@@ -103,6 +103,8 @@ class QuoteLineItemPayload(BaseModel):
     markup_pct: float | None = None
     markup_label: str | None = None
     subtotal: float = 0
+    section_uid: str | None = None
+    section_location: str | None = None
 
 
 class QuoteCreate(BaseModel):

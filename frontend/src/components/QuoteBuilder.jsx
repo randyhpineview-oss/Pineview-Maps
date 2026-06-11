@@ -504,7 +504,7 @@ export default function QuoteBuilder({
     setTaxRate(d.taxRate != null ? String(d.taxRate) : String(DEFAULT_TAX_RATE));
     setQuoteNotes(d.quoteNotes || '');
     setLineItems((d.lineItems || []).map((li) => ({ ...li, _uid: makeUid() })));
-    setSections((d.sections || []).map((s) => ({ ...s, uid: makeUid() })));
+    setSections((d.sections || []).map((s) => ({ ...s, uid: s.uid || makeUid() })));
     setSubmittedQuote(null);
     setSubmitError('');
     setPeekedQuoteNumber('');
@@ -839,23 +839,28 @@ export default function QuoteBuilder({
     notes: quoteNotes || null,
     pdf_base64: pdfBase64 || null,
     expected_quote_number: expectedQuoteNumber || null,
-    line_items: lineItems.map((li) => ({
-      kind: li.kind,
-      category_id: li.category_id || null,
-      category_name: li.category_name || null,
-      item_id: li.item_id || null,
-      description: li.description || '',
-      unit: li.unit || '',
-      qty: li.kind === LINE_KIND_NOTE ? null : (li.qty === '' ? null : Number(li.qty)),
-      rate: li.kind === LINE_KIND_NOTE ? null : (li.rate === '' ? null : Number(li.rate)),
-      markup_enabled: !!li.markup_enabled,
-      markup_pct: li.markup_pct == null ? null : Number(li.markup_pct),
-      markup_label: li.markup_label || null,
-      subtotal: computeLineSubtotal(li),
-    })),
+    line_items: lineItems.map((li) => {
+      const parentSection = sections.find((s) => s.uid === li.section_uid);
+      return {
+        kind: li.kind,
+        category_id: li.category_id || null,
+        category_name: li.category_name || null,
+        item_id: li.item_id || null,
+        description: li.description || '',
+        unit: li.unit || '',
+        qty: li.kind === LINE_KIND_NOTE ? null : (li.qty === '' || li.qty == null ? 0 : Number(li.qty)),
+        rate: li.kind === LINE_KIND_NOTE ? null : (li.rate === '' ? null : Number(li.rate)),
+        markup_enabled: !!li.markup_enabled,
+        markup_pct: li.markup_pct == null ? null : Number(li.markup_pct),
+        markup_label: li.markup_label || null,
+        subtotal: computeLineSubtotal(li),
+        section_uid: li.section_uid || null,
+        section_location: parentSection?.locationLabel || null,
+      };
+    }),
   }), [
     client, area, projectDescription, quoteDate,
-    taxEnabled, taxLabel, taxRate, quoteNotes, lineItems,
+    taxEnabled, taxLabel, taxRate, quoteNotes, lineItems, sections,
   ]);
 
   // Peek the next quote number from the server, caching the result so
@@ -884,7 +889,7 @@ export default function QuoteBuilder({
     if (priced.length === 0) return 'Quote needs at least one priced line (notes alone don\u2019t count)';
     for (const li of priced) {
       if (!li.description?.trim()) return 'Every priced line needs a description';
-      if (li.qty === '' || li.rate === '') return 'Every priced line needs both qty and rate';
+      if (li.rate === '') return 'Every priced line needs a rate (qty defaults to 0)';
     }
     return '';
   }
@@ -1006,14 +1011,14 @@ export default function QuoteBuilder({
       // we reconstruct sections in the order they first appear. For old quotes
       // (no section_uid) we fall back to one section per unique category_id.
       const seenSectionUids = new Map(); // section_uid → { categoryId, locationLabel }
-      const seenCategoryIds = new Set(); // for legacy fallback
+      const seenCategoryIds = new Map(); // category_id → new_section_uid (for legacy fallback)
       const rebuiltSections = [];
       for (const li of lines) {
         if (li.section_uid) {
           if (!seenSectionUids.has(li.section_uid)) {
             seenSectionUids.set(li.section_uid, true);
             rebuiltSections.push({
-              uid: makeUid(),
+              uid: li.section_uid,
               categoryId: Number(li.category_id),
               locationLabel: li.section_location || '',
             });
@@ -1021,8 +1026,12 @@ export default function QuoteBuilder({
         } else if (li.category_id != null) {
           const key = String(li.category_id);
           if (!seenCategoryIds.has(key)) {
-            seenCategoryIds.add(key);
-            rebuiltSections.push({ uid: makeUid(), categoryId: Number(li.category_id), locationLabel: '' });
+            const newUid = makeUid();
+            seenCategoryIds.set(key, newUid);
+            rebuiltSections.push({ uid: newUid, categoryId: Number(li.category_id), locationLabel: '' });
+            li.section_uid = newUid;
+          } else {
+            li.section_uid = seenCategoryIds.get(key);
           }
         }
       }
@@ -1058,14 +1067,14 @@ export default function QuoteBuilder({
       setLineItems(lines);
       // Same section rebuild logic as Duplicate.
       const seenSectionUids = new Map();
-      const seenCategoryIds = new Set();
+      const seenCategoryIds = new Map();
       const rebuiltSections = [];
       for (const li of lines) {
         if (li.section_uid) {
           if (!seenSectionUids.has(li.section_uid)) {
             seenSectionUids.set(li.section_uid, true);
             rebuiltSections.push({
-              uid: makeUid(),
+              uid: li.section_uid,
               categoryId: Number(li.category_id),
               locationLabel: li.section_location || '',
             });
@@ -1073,8 +1082,12 @@ export default function QuoteBuilder({
         } else if (li.category_id != null) {
           const key = String(li.category_id);
           if (!seenCategoryIds.has(key)) {
-            seenCategoryIds.add(key);
-            rebuiltSections.push({ uid: makeUid(), categoryId: Number(li.category_id), locationLabel: '' });
+            const newUid = makeUid();
+            seenCategoryIds.set(key, newUid);
+            rebuiltSections.push({ uid: newUid, categoryId: Number(li.category_id), locationLabel: '' });
+            li.section_uid = newUid;
+          } else {
+            li.section_uid = seenCategoryIds.get(key);
           }
         }
       }
