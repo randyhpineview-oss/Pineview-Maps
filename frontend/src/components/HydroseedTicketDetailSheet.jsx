@@ -180,8 +180,25 @@ export default function HydroseedTicketDetailSheet({
     const serverRemoved = Array.isArray(t.office_data?.removed_labels)
       ? t.office_data.removed_labels
       : [];
-    setRemovedLabels(serverRemoved);
-    setOfficeLines(syncOfficeLineQtysFromRows(saved, t.rows, new Set(serverRemoved)).map(l => ({
+
+    // Robust diffing: any label in t.rows that is NOT in saved (and saved is non-empty)
+    // is treated as intentionally removed.
+    const computedRemoved = new Set(serverRemoved);
+    if (saved && saved.length > 0) {
+      const savedLabels = new Set(saved.map(l => (l.label || '').toLowerCase().trim()));
+      for (const r of t.rows || []) {
+        if (r?.label) {
+          const labelLc = r.label.toLowerCase().trim();
+          if (!savedLabels.has(labelLc)) {
+            computedRemoved.add(r.label);
+          }
+        }
+      }
+    }
+
+    const removedList = Array.from(computedRemoved);
+    setRemovedLabels(removedList);
+    setOfficeLines(syncOfficeLineQtysFromRows(saved, t.rows, computedRemoved).map(l => ({
       label: l.label || '',
       qty: l.qty ?? '',
       unit: l.unit || '',
@@ -365,6 +382,7 @@ export default function HydroseedTicketDetailSheet({
         pdf_base64: pdf,
       };
       const updated = await api.updateHydroseedTicket(ticket.id, payload);
+      try { await upsertHydroseedTicket(updated); } catch { /* non-fatal cache refresh */ }
       applyTicket(updated);
       onSaved?.(updated);
     } catch (e) {
@@ -392,6 +410,7 @@ export default function HydroseedTicketDetailSheet({
         pdf_base64: pdf,
       };
       const updated = await api.updateHydroseedTicket(ticket.id, payload);
+      try { await upsertHydroseedTicket(updated); } catch { /* non-fatal cache refresh */ }
       applyTicket(updated);
       onSaved?.(updated);
     } catch (e) {
@@ -423,6 +442,7 @@ export default function HydroseedTicketDetailSheet({
         pdf_base64: pdf,
       };
       const updated = await api.updateHydroseedTicket(ticket.id, payload);
+      try { await upsertHydroseedTicket(updated); } catch { /* non-fatal cache refresh */ }
       applyTicket(updated);
       onSaved?.(updated);
     } catch (e) {

@@ -490,6 +490,11 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
   const comments = ticket.office_data?.comments || '';
   const gstPercent = Number(ticket.office_data?.gst_percent ?? 5) || 0;
   const gstEnabled = ticket.office_data?.gst_enabled !== false;
+  const removedLabels = ticket.office_data?.removed_labels || [];
+  const removedLc = new Set(removedLabels.map(l => String(l).toLowerCase().trim()));
+  const isLabelRemoved = (label) => {
+    return removedLc.has(String(label).toLowerCase().trim());
+  };
 
   // ── Logo + Title (paper-style: title + No. on a single right-aligned line) ──
   const logoData = await loadLogo();
@@ -809,7 +814,7 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
   };
 
   // ── Materials rows ──────────────────────────────────────────────────
-  if (hasData(mulchKg, 0)) {
+  if (hasData(mulchKg, 0) && !isLabelRemoved('Mulch')) {
     renderProductRow({
       productLabel: 'Mulch',
       displayLabel: 'Mulch',
@@ -818,7 +823,7 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
       rateNeedles: ['mulch'],
     });
   }
-  if (hasData(fertilizerKg, 0)) {
+  if (hasData(fertilizerKg, 0) && !isLabelRemoved('Fertilizer')) {
     renderProductRow({
       productLabel: 'Fertilizer',
       displayLabel: 'Fertilizer',
@@ -835,6 +840,7 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
     if (seedKg === 0) continue;
     const name = seedTypes[i]?.name || '';
     const productLabel = `Seed: ${name}`;
+    if (isLabelRemoved(productLabel)) continue;
     const displayLabel = `#${i + 1} Seed${name ? `: ${name}` : ''}`;
     renderProductRow({
       productLabel,
@@ -849,7 +855,7 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
     });
   }
   const tackifierQty = findQtyFuzzy(officeLines, ['tackifier']) ?? tackifierKg;
-  if (hasData(tackifierQty, 0)) {
+  if (hasData(tackifierQty, 0) && !isLabelRemoved('Tackifier')) {
     drawScheduleRow({
       label: 'Tackifier',
       kgsUsed: tackifierQty,
@@ -858,7 +864,7 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
     });
   }
   const aquagelQty = findQtyFuzzy(officeLines, ['aqua gel', 'aquagel']) ?? aquagelKg;
-  if (hasData(aquagelQty, 0)) {
+  if (hasData(aquagelQty, 0) && !isLabelRemoved('Aquagel')) {
     drawScheduleRow({
       label: 'Aquagel',
       kgsUsed: aquagelQty,
@@ -872,7 +878,7 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
   // loads) so the office can see units at a glance without adding a
   // dedicated column to the schedule.
   const micronutrientsQty = findQtyFuzzy(officeLines, ['micro nutrients', 'micronutrients', 'micronutrient']) ?? micronutrientsL;
-  if ((Number(micronutrientsQty) || 0) !== 0) {
+  if ((Number(micronutrientsQty) || 0) !== 0 && !isLabelRemoved('Micro Nutrients')) {
     drawScheduleRow({
       label: 'Micro Nutrients',
       kgsUsed: `${formatQty(micronutrientsQty)} L`,
@@ -884,7 +890,7 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
     });
   }
   const bioticQty = findQtyFuzzy(officeLines, ['biotic', 'soil amendment', 'soil media']) ?? bioticKg;
-  if (hasData(bioticQty, 0)) {
+  if (hasData(bioticQty, 0) && !isLabelRemoved('Biotic Soil Media')) {
     drawScheduleRow({
       label: 'Biotic Soil Media',
       kgsUsed: bioticQty,
@@ -896,6 +902,7 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
   for (let i = 0; i < otherProducts.length; i++) {
     const op = otherProducts[i];
     if (!op?.label && (Number(op?.qty) || 0) === 0) continue;
+    if (op?.label && isLabelRemoved(op.label)) continue;
     const isHours = (op?.unit || '').toLowerCase().startsWith('hr');
     drawScheduleRow({
       label: op.label || `Other Product ${i + 1}`,
@@ -907,7 +914,7 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
 
   // ── Equipment rows ──────────────────────────────────────────────────
   const crewTruckQtyVal = findQtyFuzzy(officeLines, ['crew truck', 'truck/trailer']) ?? crewTruckHrs;
-  if (hasData(0, crewTruckQtyVal)) {
+  if (hasData(0, crewTruckQtyVal) && !isLabelRemoved('Crew Truck')) {
     const countAnnotation = crewTruckMaxN > 0 ? `   ${formatQty(crewTruckMaxN)} # trucks on site` : '';
     drawScheduleRow({
       label: `Crew Truck Truck/Trailer${countAnnotation}`,
@@ -917,7 +924,7 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
     });
   }
   const skidSteerQtyVal = findQtyFuzzy(officeLines, ['skid steer']) ?? skidSteerHrs;
-  if (hasData(0, skidSteerQtyVal)) {
+  if (hasData(0, skidSteerQtyVal) && !isLabelRemoved('Skid Steer')) {
     drawScheduleRow({
       label: 'Skid Steer',
       kgsUsed: null,
@@ -930,6 +937,7 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
   for (const h of hydroseederRows) {
     const hQty = findQty(officeLines, h.label) ?? h.hours;
     if ((Number(hQty) || 0) === 0) continue;
+    if (isLabelRemoved(h.label)) continue;
     drawScheduleRow({
       label: h.label,
       kgsUsed: null,
@@ -940,7 +948,7 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
 
   // ── Labour rows ─────────────────────────────────────────────────────
   const supervisorQtyVal = findQtyFuzzy(officeLines, ['supervisor']) ?? supervisorHrs;
-  if (hasData(0, supervisorQtyVal)) {
+  if (hasData(0, supervisorQtyVal) && !isLabelRemoved('Supervisor')) {
     drawScheduleRow({
       label: 'Supervisor',
       kgsUsed: null,
@@ -949,7 +957,7 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
     });
   }
   const leadHandQtyVal = findQtyFuzzy(officeLines, ['lead hand', 'lead']) ?? leadHandHrs;
-  if (hasData(0, leadHandQtyVal)) {
+  if (hasData(0, leadHandQtyVal) && !isLabelRemoved('Lead Hand')) {
     drawScheduleRow({
       label: 'Lead Hand',
       kgsUsed: null,
@@ -958,7 +966,7 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
     });
   }
   const labourQtyVal = findQtyFuzzy(officeLines, ['total general labour', 'general labour', 'labour', 'labourer']) ?? labourHrs;
-  if (hasData(0, labourQtyVal)) {
+  if (hasData(0, labourQtyVal) && !isLabelRemoved('Total General Labour')) {
     const countAnnotation = labourMaxN > 0 ? `   ${formatQty(labourMaxN)} # of Labourers on site` : '';
     drawScheduleRow({
       label: `Total General Labour${countAnnotation}`,
@@ -970,7 +978,7 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
 
   // ── Travel + Water Truck + Total Area ───────────────────────────────
   const travelQtyVal = findQtyFuzzy(officeLines, ['travel', 'mob/demob', 'mob']) ?? travelKm;
-  if ((Number(travelQtyVal) || 0) !== 0) {
+  if ((Number(travelQtyVal) || 0) !== 0 && !isLabelRemoved('Travel (Mob/Demob)')) {
     // Travel uses the kgs column to display the km figure (paper convention)
     // but the rate is per-km so the sub-total math is qty×rate as usual.
     drawScheduleRow({
@@ -981,7 +989,7 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
     });
   }
   const waterQtyVal = findQtyFuzzy(officeLines, ['water truck']) ?? waterLoads;
-  if ((Number(waterQtyVal) || 0) !== 0) {
+  if ((Number(waterQtyVal) || 0) !== 0 && !isLabelRemoved('Water Truck')) {
     drawScheduleRow({
       label: 'Water Truck',
       kgsUsed: `${formatQty(waterQtyVal)} Loads`,
@@ -990,7 +998,7 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
     });
   }
   const totalAreaM2QtyVal = findQtyFuzzy(officeLines, ['total area covered (m²)', 'area covered']) ?? totalAreaM2;
-  if ((Number(totalAreaM2QtyVal) || 0) !== 0) {
+  if ((Number(totalAreaM2QtyVal) || 0) !== 0 && !isLabelRemoved('Total Area Covered (m²)')) {
     drawScheduleRow({
       label: 'Total Area Covered (m²)',
       kgsUsed: `${formatQty(totalAreaM2QtyVal)} m²`,
@@ -1033,6 +1041,7 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
   for (const [label, info] of otherByLabel.entries()) {
     const infoQty = findQty(officeLines, label) ?? info.qty;
     if (!infoQty) continue;
+    if (isLabelRemoved(label)) continue;
     const unitLc = (info.unit || '').toLowerCase();
     const isHours = unitLc.startsWith('hr');
     drawScheduleRow({
