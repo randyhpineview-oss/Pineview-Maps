@@ -145,6 +145,10 @@ export default function HydroseedTicketDetailSheet({
   const [area, setArea] = useState('');
   const [poNumber, setPoNumber] = useState('');
   const [officeLines, setOfficeLines] = useState([]);
+  // Labels the office intentionally removed from the office lines list.
+  // Persisted on office_data.removed_labels so the sync function won't
+  // re-add them from the aggregated daily rows after a save round-trip.
+  const [removedLabels, setRemovedLabels] = useState([]);
   const [gstPercent, setGstPercent] = useState(5);
   const [gstEnabled, setGstEnabled] = useState(true);
   // Paper-form office-typed fields. `comments` is the free-text bottom
@@ -173,7 +177,11 @@ export default function HydroseedTicketDetailSheet({
     const saved = t.office_data?.lines && t.office_data.lines.length > 0
       ? t.office_data.lines
       : seedOfficeLinesFromTicketRows(t.rows);
-    setOfficeLines(syncOfficeLineQtysFromRows(saved, t.rows).map(l => ({
+    const serverRemoved = Array.isArray(t.office_data?.removed_labels)
+      ? t.office_data.removed_labels
+      : [];
+    setRemovedLabels(serverRemoved);
+    setOfficeLines(syncOfficeLineQtysFromRows(saved, t.rows, new Set(serverRemoved)).map(l => ({
       label: l.label || '',
       qty: l.qty ?? '',
       unit: l.unit || '',
@@ -274,7 +282,18 @@ export default function HydroseedTicketDetailSheet({
     setIsDirty(true);
   };
   const removeLine = (idx) => {
-    setOfficeLines(prev => prev.filter((_, i) => i !== idx));
+    setOfficeLines(prev => {
+      const removed = prev[idx];
+      // Track the removed label so syncOfficeLineQtysFromRows won't
+      // re-add it from the aggregated daily rows on the next load.
+      if (removed?.label) {
+        setRemovedLabels(rl => {
+          const lc = removed.label.toLowerCase().trim();
+          return rl.some(r => r.toLowerCase().trim() === lc) ? rl : [...rl, removed.label];
+        });
+      }
+      return prev.filter((_, i) => i !== idx);
+    });
     setIsDirty(true);
   };
 
@@ -289,6 +308,9 @@ export default function HydroseedTicketDetailSheet({
     })),
     gst_percent: Number(gstPercent) || 0,
     gst_enabled: !!gstEnabled,
+    // Labels the office intentionally removed. Persisted so they don't
+    // reappear when syncOfficeLineQtysFromRows runs after the next load.
+    removed_labels: removedLabels,
     // Paper-form fields. `comments` is plain text; `other_products` is
     // always serialized as a 2-element array (with blanks for unused
     // slots) so the PDF generator can index by position.

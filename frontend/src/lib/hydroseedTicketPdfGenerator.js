@@ -115,8 +115,14 @@ export function seedOfficeLinesFromTicketRows(rows) {
  * (bales / 25-kg bag / etc.). Legacy 'Mulch (bales)' / 'Seed' lines
  * already saved on a ticket are preserved untouched so any rate the
  * office may have entered before this rollout isn't silently wiped.
+ *
+ * @param {Array}    existingLines  - office_data.lines from the server.
+ * @param {Array}    rows           - ticket.rows (aggregated daily data).
+ * @param {Set|null} [removedLabels] - labels the office intentionally
+ *   deleted. When present, the append phase skips any label in this set
+ *   so deleted lines don't silently reappear after a save round-trip.
  */
-export function syncOfficeLineQtysFromRows(existingLines, rows) {
+export function syncOfficeLineQtysFromRows(existingLines, rows, removedLabels) {
   const rowByLabel = new Map();
   for (const r of rows || []) {
     if (!r?.label) continue;
@@ -164,8 +170,14 @@ export function syncOfficeLineQtysFromRows(existingLines, rows) {
   });
 
   // Append any newly-aggregated labels that weren't on the office_data yet.
+  // Skip labels the office intentionally removed so they don't reappear.
+  const removedLc = new Set();
+  if (removedLabels) {
+    for (const rl of removedLabels) removedLc.add(String(rl).toLowerCase().trim());
+  }
   for (const [label, info] of rowByLabel.entries()) {
     if (seen.has(label)) continue;
+    if (removedLc.has(label.toLowerCase().trim())) continue;
     out.push({ label: info.label, qty: info.qty, unit: info.unit, rate: '' });
   }
   return out;
