@@ -1738,17 +1738,42 @@ export default function App() {
             // need to spend an extra round-trip here.
             setTmRefreshToken((x) => x + 1);
           } else if (item.targetType === 'tm_ticket') {
-            // Worker "Mark as pending" on a T&M ticket. We queue instead of
-            // awaiting so the worker doesn't sit on a spinner while the
-            // backend talks to Dropbox for the PDF. Payload is the full
-            // updateTMTicket body (description_of_work, office_data,
-            // status: 'submitted', pdf_base64, and — for office/admin —
-            // po_approval_number and row_updates).
+            // Worker "Mark as pending" / office save on a T&M ticket.
+            // Two-lane to avoid parking at 99% while the backend uploads
+            // the PDF to Dropbox synchronously (which on slow cellular
+            // also exceeded proxy idle timeouts -> infinite retries):
+            //   • Lane 1 — fast PATCH with the metadata only (no PDF).
+            //   • Lane 2 — POST /files with just `pdf_base64`; backend
+            //              streams it to Dropbox and patches `pdf_url`.
+            //              Idempotent (Dropbox overwrite mode).
+            const pdfBase64 = item.payload && item.payload.pdf_base64 ? item.payload.pdf_base64 : null;
+            const lane1Body = { ...item.payload };
+            delete lane1Body.pdf_base64;
+
+            // Custom lane-1 progress: no creep (the PATCH is metadata-
+            // only, returns fast). Overall bar contributes the first 20%
+            // of the item, matching the two-lane calibration elsewhere.
+            const tmLane1Progress = (fraction) => {
+              const capped = Math.max(0, Math.min(1, fraction));
+              setCurrentItemPercent(Math.round(capped * 100));
+              const overall = ((itemsBefore + (pdfBase64 ? capped * 0.2 : capped)) / total) * 100;
+              setUploadProgress(Math.min(99, Math.round(overall)));
+            };
+
             await requestWithUploadProgress(`/api/time-materials/${item.targetId}`, {
               method: 'PATCH',
-              body: item.payload,
-              onProgress: onLane1Bytes,
+              body: lane1Body,
+              onProgress: tmLane1Progress,
             });
+            setCurrentItemPercent(100);
+
+            if (pdfBase64) {
+              await requestWithUploadProgress(`/api/time-materials/${item.targetId}/files`, {
+                method: 'POST',
+                body: { pdf_base64: pdfBase64 },
+                onProgress: onLane2Bytes,
+              });
+            }
             // Nudge FormsPanel to immediately delta-sync its ticket cache.
             // Without this, the worker would see the just-submitted ticket
             // stuck in "Open Tickets" for up to 5 minutes until the next

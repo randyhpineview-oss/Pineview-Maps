@@ -1038,6 +1038,24 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
       unit: r.unit || prior.unit,
     });
   }
+
+  // Also catch any custom lines manually added by the office that aren't in daily records
+  for (const line of officeLines) {
+    const label = line.label || '';
+    if (!label) continue;
+    const lc = label.toLowerCase();
+    if (handledLabels.has(lc)) continue;
+    if (seenSeedLabels.has(lc)) continue;
+    if (seenHydroseederLabels.has(lc)) continue;
+    if (lc.includes('skid steer')) continue;
+    
+    if (!otherByLabel.has(label)) {
+      otherByLabel.set(label, {
+        qty: 0, // `findQty` will grab the correct office line quantity in the next loop
+        unit: line.unit || '',
+      });
+    }
+  }
   for (const [label, info] of otherByLabel.entries()) {
     const infoQty = findQty(officeLines, label) ?? info.qty;
     if (!infoQty) continue;

@@ -295,7 +295,7 @@ export default function HydroseedTicketDetailSheet({
     setIsDirty(true);
   };
   const addLine = () => {
-    setOfficeLines(prev => [...prev, { label: '', qty: '', unit: '', rate: '' }]);
+    setOfficeLines(prev => [...prev, { label: '', qty: '', unit: '', rate: '', isQtyOverridden: true }]);
     setIsDirty(true);
   };
   const removeLine = (idx) => {

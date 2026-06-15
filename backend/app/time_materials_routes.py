@@ -714,6 +714,48 @@ def update_ticket(
     return _inject_row_applicators(_strip_office_fields_for_worker(ticket, current_user), ticket)
 
 
+# ── Lane-2 PDF upload ────────────────────────────────────────────
+# Workers' "Submit" PATCH used to do the Dropbox PDF upload inline,
+# which kept the upload-queue progress bar parked at 99% while the
+# backend waited on Dropbox. On slow cellular this also exceeded
+# proxy idle timeouts, causing infinite retries. The new /files
+# endpoint lets the frontend split the submit into two lanes:
+#   • Lane 1 — fast PATCH without `pdf_base64` (metadata only)
+#   • Lane 2 — POST /files with just `pdf_base64` (Dropbox upload)
+# Same idempotency story as the lease-sheet /files endpoint —
+# Dropbox writes use overwrite mode, so retries are safe.
+class _TMFilesUpload(BaseModel):
+    pdf_base64: str | None = None
+
+
+@router.post("/{ticket_id}/files", response_model=TimeMaterialsTicketRead)
+def attach_ticket_files(
+    ticket_id: int,
+    payload: _TMFilesUpload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Lane-2 of the two-lane T&M submit path: upload the PDF to Dropbox
+    and patch `pdf_url`. Mirrors the gating + open-status skip rule from
+    `update_ticket`."""
+    ticket = db.query(TimeMaterialsTicket).filter(
+        TimeMaterialsTicket.id == ticket_id
+    ).first()
+    if not ticket:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    if not _can_edit_ticket(ticket, current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
+
+    if payload.pdf_base64 and ticket.status != TMTicketStatus.open:
+        new_url = _upload_tm_pdf(ticket, payload.pdf_base64)
+        if new_url:
+            ticket.pdf_url = new_url
+            ticket.updated_at = datetime.utcnow()
+            db.commit()
+            db.refresh(ticket)
+    return _inject_row_applicators(_strip_office_fields_for_worker(ticket, current_user), ticket)
+
+
 @router.delete(
     "/{ticket_id}",
     status_code=status.HTTP_204_NO_CONTENT,
