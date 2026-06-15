@@ -265,8 +265,8 @@ def _worker_owns_ticket(ticket: TimeMaterialsTicket, current_user: User) -> bool
 
 
 def _can_edit_ticket(ticket: TimeMaterialsTicket, current_user: User) -> bool:
-    """Workers can only edit their own tickets. Office/admin can edit any."""
-    if current_user.role in (RoleEnum.admin, RoleEnum.office):
+    """Workers can only edit their own tickets. Office/admin/crew_lead can edit any."""
+    if current_user.role in MANAGES_PINS:
         return True
     return _worker_owns_ticket(ticket, current_user)
 
