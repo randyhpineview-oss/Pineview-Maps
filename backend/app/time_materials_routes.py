@@ -679,17 +679,31 @@ def update_ticket(
         if payload.office_data is not None:
             ticket.office_data = _merge_worker_office_data(ticket.office_data, payload.office_data)
         if payload.status is not None:
+            # Idempotent re-submit: if the worker is asking to submit a ticket
+            # that's ALREADY submitted, treat it as a no-op success instead of
+            # 403. This is critical for the offline upload queue — a flaky
+            # field connection can lose the response AFTER the server already
+            # committed the open->submitted transition, so the queue retries
+            # the same PATCH. Without this, the retry hit the strict guard
+            # below (ticket.status is now `submitted`, not `open`) and 403'd
+            # forever, leaving the worker's upload bar parked at 99%.
+            if payload.status == TMTicketStatus.submitted and ticket.status == TMTicketStatus.submitted:
+                # Already where we want to be — fall through (PDF re-upload
+                # below still runs so a first attempt that died before the
+                # Dropbox step still lands the PDF).
+                pass
             # Only one legal worker-initiated transition: open -> submitted.
             # Anything else (re-opening, approving, etc.) belongs to office.
-            if payload.status != TMTicketStatus.submitted or ticket.status != TMTicketStatus.open:
+            elif payload.status != TMTicketStatus.submitted or ticket.status != TMTicketStatus.open:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Workers can only submit an open ticket for approval",
                 )
-            # Validate the merged office_data FIRST so the error message points
-            # at the qty fields the worker still needs to fill in.
-            _validate_ticket_ready_for_submission(ticket, is_office=False)
-            ticket.status = TMTicketStatus.submitted
+            else:
+                # Validate the merged office_data FIRST so the error message points
+                # at the qty fields the worker still needs to fill in.
+                _validate_ticket_ready_for_submission(ticket, is_office=False)
+                ticket.status = TMTicketStatus.submitted
         # Workers cannot update rows (cost_code etc. is office-only); silently ignore.
 
     # Upload the PDF to Dropbox on any state where the ticket is NOT still

@@ -137,14 +137,32 @@ button { cursor: pointer; }
 }
 
 .topbar-account-trigger-dot--update {
+  /* Bigger + more insistent than the plain orange "view as worker" dot so
+     a worker in the field can't miss that an update is waiting. */
+  width: 13px;
+  height: 13px;
+  top: -3px;
+  right: -3px;
   background: #ef4444;
-  box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6);
-  animation: topbarUpdateDotPulse 2.2s ease-in-out infinite;
+  box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+  animation: topbarUpdateDotPulse 1.3s ease-in-out infinite;
 }
 
 @keyframes topbarUpdateDotPulse {
-  0%   { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.55); }
-  60%  { box-shadow: 0 0 0 7px rgba(239, 68, 68, 0); }
+  0%   { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+  60%  { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+/* The whole avatar circle pulses red while an update is waiting — an
+   impossible-to-ignore nudge for workers who otherwise ignore the dot. */
+.topbar-account-trigger--update {
+  animation: topbarAccountUpdatePulse 1.3s ease-in-out infinite;
+}
+
+@keyframes topbarAccountUpdatePulse {
+  0%   { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.65); }
+  60%  { box-shadow: 0 0 0 9px rgba(239, 68, 68, 0); }
   100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
 }
 

@@ -19,6 +19,99 @@ function get12hTime() {
   return `${hours}:${minutes} ${ampm}`;
 }
 
+// Split a `data:<mime>;base64,<data>` URL into its parts.
+function splitDataUrl(dataUrl, fallbackMime) {
+  const s = String(dataUrl || '');
+  const commaIdx = s.indexOf(',');
+  const data = commaIdx >= 0 ? s.slice(commaIdx + 1) : s;
+  const mime = (s.match(/^data:(.+?);base64/) || [])[1] || fallbackMime || 'image/jpeg';
+  return { data, mime };
+}
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+// Robustly read an image File into a data URL + base64, trying multiple
+// strategies. Android `<input type=file>` gallery picks frequently hand back
+// a `content://` MediaStore URI that fails the first read with a
+// NotReadableError ("The requested file could not be read…"); a different
+// strategy often succeeds where FileReader didn't, so we cascade:
+//   1. FileReader.readAsDataURL  (fast, normal path)
+//   2. createObjectURL -> <img>.decode() -> canvas.toDataURL  (re-encodes,
+//      sidesteps a flaky byte read by going through the image decoder)
+//   3. Blob.arrayBuffer() -> base64  (newer API; sometimes works when (1) fails)
+// Resolves { data, mime, dataUrl, name } or rejects if every strategy fails.
+async function readImageFileToDataUrl(file) {
+  const name = (file && file.name) || 'photo.jpg';
+  const fallbackMime = (file && file.type) || 'image/jpeg';
+
+  // Strategy 1: FileReader
+  try {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
+      reader.readAsDataURL(file);
+    });
+    if (dataUrl && dataUrl.indexOf(',') >= 0) {
+      const { data, mime } = splitDataUrl(dataUrl, fallbackMime);
+      if (data) return { data, mime, dataUrl, name };
+    }
+  } catch (_) { /* fall through */ }
+
+  // Strategy 2: object URL -> image decode -> canvas
+  try {
+    const objectUrl = URL.createObjectURL(file);
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('image decode failed'));
+        const draw = () => {
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth || img.width;
+            canvas.height = img.naturalHeight || img.height;
+            if (!canvas.width || !canvas.height) { reject(new Error('zero dims')); return; }
+            canvas.getContext('2d').drawImage(img, 0, 0);
+            resolve(canvas.toDataURL('image/jpeg', 0.92));
+          } catch (err) { reject(err); }
+        };
+        img.src = objectUrl;
+        if (typeof img.decode === 'function') {
+          img.decode().then(draw).catch(() => { img.onload = draw; });
+        } else {
+          img.onload = draw;
+        }
+      });
+      const { data, mime } = splitDataUrl(dataUrl, 'image/jpeg');
+      if (data) return { data, mime, dataUrl, name };
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  } catch (_) { /* fall through */ }
+
+  // Strategy 3: arrayBuffer
+  try {
+    if (typeof file.arrayBuffer === 'function') {
+      const buf = await file.arrayBuffer();
+      const data = arrayBufferToBase64(buf);
+      if (data) {
+        const mime = fallbackMime;
+        return { data, mime, dataUrl: `data:${mime};base64,${data}`, name };
+      }
+    }
+  } catch (_) { /* fall through */ }
+
+  throw new Error('Could not read image file');
+}
+
 export default function HerbicideLeaseSheet({
   site,
   pipeline,
@@ -489,40 +582,34 @@ export default function HerbicideLeaseSheet({
     // Limit: only take what's needed to reach max 2
     const spotsLeft = 2 - photos.length;
     if (spotsLeft <= 0) return;
-    // Read bytes IMMEDIATELY at pick time, while the Android content-URI
-    // permission is still fresh. Holding the raw `File` and reading it
-    // later (at preview / submit time) was failing on Android with
+    // Read bytes IMMEDIATELY at pick time via a multi-strategy reader.
+    // Android `<input type=file>` gallery picks return a `content://`
+    // MediaStore URI that intermittently fails FileReader with
     // "The requested file could not be read, typically due to permission
     // problems that have occurred after a reference to a file was
-    // acquired." — the OS revokes the picker's URI grant between pick
-    // and read. Caching the base64 here sidesteps the issue entirely;
-    // all downstream paths already prefer `existingBase64` over `file`.
+    // acquired." `readImageFileToDataUrl` falls back to a canvas decode
+    // and then an arrayBuffer read before giving up, so a single flaky
+    // provider no longer blocks the worker. Caching the base64 here also
+    // means downstream preview/submit never re-read the (stale) File.
     const slots = files.slice(0, spotsLeft);
-    const toAdd = await Promise.all(slots.map((file) => new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const dataUrl = String(reader.result || '');
-        const commaIdx = dataUrl.indexOf(',');
-        const data = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
-        const mime = (dataUrl.match(/^data:(.+);base64/) || [])[1] || file.type || 'image/jpeg';
-        resolve({
-          existingBase64: { data, type: mime, name: file.name },
-          preview: dataUrl,
-        });
-      };
-      reader.onerror = () => {
-        // If the read fails right at pick time, surface a clear error
-        // instead of silently dropping the slot.
-        alert({
-          title: 'Photo read failed',
-          message: 'Could not read the selected photo. Try taking a new one with the camera button.',
-          severity: 'danger',
-        });
-        resolve(null);
-      };
-      reader.readAsDataURL(file);
-    })));
-    const ok = toAdd.filter(Boolean);
+    const results = await Promise.all(slots.map((file) => readImageFileToDataUrl(file).catch(() => null)));
+    const ok = [];
+    let anyFailed = false;
+    for (const r of results) {
+      if (!r) { anyFailed = true; continue; }
+      ok.push({
+        existingBase64: { data: r.data, type: r.mime, name: r.name },
+        preview: r.dataUrl,
+      });
+    }
+    if (anyFailed) {
+      await alert({
+        title: 'Couldn\u2019t read that photo',
+        message: 'One of the selected photos could not be read from the gallery. '
+          + 'Try the \uD83D\uDCF7 Camera button to take it directly in the app, or re-save the photo to your gallery and pick it again.',
+        severity: 'warning',
+      });
+    }
     if (ok.length === 0) return;
     setPhotos(prev => [...prev, ...ok]);
   };
@@ -563,26 +650,30 @@ export default function HerbicideLeaseSheet({
         return;
       }
 
-      // Build photo data URLs for embedding in PDF. FileReader is
-      // wrapped with both `onloadend` and `onerror` — without `onerror`
-      // a corrupted file silently hangs the await forever, leaving the
-      // worker on a frozen "Preview" button until they reload.
-      const photoDataUrls = await Promise.all(
-        photos.filter(p => p && (p.file || (p.existingBase64?.data) || p.preview)).map(p => {
-          if (p.file) {
-            return new Promise((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onloadend = () => resolve(reader.result);
-              reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
-              reader.readAsDataURL(p.file);
-            });
-          }
+      // Build photo data URLs for embedding in PDF. A single unreadable
+      // photo must NEVER hard-fail the whole preview — that was the
+      // "Preview failed: The requested file could not be read" symptom.
+      // Each photo resolves to a data URL or `null` (skipped); the PDF
+      // generator renders a `[Photo N]` placeholder for missing slots, so
+      // the worker can still preview/submit with whatever is readable.
+      const photoResults = await Promise.all(
+        photos.filter(p => p && (p.file || (p.existingBase64?.data) || p.preview)).map(async (p) => {
           if (p.existingBase64?.data) {
-            return Promise.resolve(`data:${p.existingBase64.type || 'image/jpeg'};base64,${p.existingBase64.data}`);
+            return `data:${p.existingBase64.type || 'image/jpeg'};base64,${p.existingBase64.data}`;
           }
-          return Promise.resolve(p.preview);
+          if (typeof p.preview === 'string' && p.preview.startsWith('data:')) {
+            return p.preview;
+          }
+          if (p.file) {
+            try {
+              const r = await readImageFileToDataUrl(p.file);
+              return r.dataUrl;
+            } catch { return null; }
+          }
+          return p.preview || null;
         })
       );
+      const photoDataUrls = photoResults.filter(Boolean);
       const pdfData = {
         ...form,
         ticket_number: ticketNumber,
@@ -773,25 +864,27 @@ export default function HerbicideLeaseSheet({
       // queue payload would carry a string that's invalid the moment
       // the worker navigates away (blob URLs expire with their
       // creating document). Mirror handlePreview's logic here.
-      const photoDataUrls = await Promise.all(
-        photos.filter(p => p && (p.file || (p.existingBase64?.data) || p.preview)).map((p) => {
+      // A single unreadable photo must not block submission — resolve each
+      // to a usable URL or `null` (skipped). Mirrors handlePreview.
+      const photoDataUrlsRaw = await Promise.all(
+        photos.filter(p => p && (p.file || (p.existingBase64?.data) || p.preview)).map(async (p) => {
           if (p.existingBase64?.data) {
-            return Promise.resolve(`data:${p.existingBase64.type || 'image/jpeg'};base64,${p.existingBase64.data}`);
+            return `data:${p.existingBase64.type || 'image/jpeg'};base64,${p.existingBase64.data}`;
+          }
+          if (typeof p.preview === 'string' && p.preview.startsWith('data:')) {
+            return p.preview;
           }
           if (p.file) {
-            return new Promise((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onloadend = () => resolve(reader.result);
-              reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
-              reader.readAsDataURL(p.file);
-            });
+            try {
+              const r = await readImageFileToDataUrl(p.file);
+              return r.dataUrl;
+            } catch { return null; }
           }
-          // Fallback: `preview` is a data: URL (from a draft restore)
-          // OR a https: URL (Dropbox proxy result). Both work in
-          // `<img>` and jsPDF.
-          return Promise.resolve(p.preview);
+          // Fallback: `preview` may be a https: URL (Dropbox proxy result).
+          return p.preview || null;
         })
       );
+      const photoDataUrls = photoDataUrlsRaw.filter(Boolean);
 
       // Regenerate PDF with the ticket number so Dropbox copy has it.
       // Skipped offline: we don't have a real ticket number yet, and a
@@ -811,23 +904,18 @@ export default function HerbicideLeaseSheet({
         finalPdfBase64 = out.base64;
       }
 
-      // Convert photos to base64
+      // Convert photos to base64 for the queued payload. Unreadable photos
+      // resolve to null and are filtered out — better to submit the sheet
+      // with one photo (or none) than to block the worker entirely.
       const photoPromises = photos.map(async (p) => {
         if (p.existingBase64) {
           return p.existingBase64;
         }
         if (p.file) {
-          return new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-              resolve({
-                name: p.file.name,
-                data: reader.result.split(',')[1],
-                type: p.file.type,
-              });
-            };
-            reader.readAsDataURL(p.file);
-          });
+          try {
+            const r = await readImageFileToDataUrl(p.file);
+            return { name: r.name, data: r.data, type: r.mime };
+          } catch { return null; }
         }
         return null;
       });
@@ -2262,15 +2350,21 @@ export default function HerbicideLeaseSheet({
                     </div>
                   ) : (
                     <>
-                      {/* No `capture="environment"` — letting the OS pick the
-                          source means iOS shows the native action sheet
-                          (Photo Library / Take Photo / Choose Files) and
-                          Android shows the equivalent chooser, instead of
-                          jumping straight into the camera with no way for
-                          the worker to pick an existing photo from their
-                          gallery. */}
+                      {/* Two explicit routes. The gallery "+" (no `capture`)
+                          shows the OS picker for choosing an existing photo;
+                          the "📷 Camera" button (`capture="environment"`)
+                          jumps straight to the rear camera. On Android the
+                          plain picker often hides the camera option entirely,
+                          AND a freshly-captured gallery photo's content:// URI
+                          intermittently fails to read — so capturing directly
+                          in-app is the reliable path. Both feed the same
+                          robust pick-time reader. */}
                       <input type="file" accept="image/*" onChange={handlePhotoUpload} style={{ display: 'none' }} id="photo-lsd" />
-                      <label htmlFor="photo-lsd" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100px', height: '100px', backgroundColor: '#374151', borderRadius: '6px', cursor: 'pointer', fontSize: '2rem', color: '#6b7280' }}>+</label>
+                      <input type="file" accept="image/*" capture="environment" onChange={handlePhotoUpload} style={{ display: 'none' }} id="photo-lsd-cam" />
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                        <label htmlFor="photo-lsd" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100px', height: '100px', backgroundColor: '#374151', borderRadius: '6px', cursor: 'pointer', fontSize: '2rem', color: '#6b7280' }}>+</label>
+                        <label htmlFor="photo-lsd-cam" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100px', padding: '4px 0', backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '6px', cursor: 'pointer', fontSize: '0.7rem', color: '#9ca3af', gap: '4px' }}>📷 Camera</label>
+                      </div>
                     </>
                   )}
                 </div>
@@ -2293,11 +2387,14 @@ export default function HerbicideLeaseSheet({
                     </div>
                   ) : (
                     <>
-                      {/* See note on photo-lsd input: omitting capture lets
-                          the OS show its native picker so the worker can
-                          choose between camera and gallery. */}
+                      {/* See note on slot 1: gallery picker + dedicated
+                          camera-capture button, both feeding the robust reader. */}
                       <input type="file" accept="image/*" onChange={handlePhotoUpload} style={{ display: 'none' }} id="photo-site" />
-                      <label htmlFor="photo-site" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100px', height: '100px', backgroundColor: '#374151', borderRadius: '6px', cursor: photos.length >= 2 ? 'not-allowed' : 'pointer', fontSize: '2rem', color: '#6b7280' }}>+</label>
+                      <input type="file" accept="image/*" capture="environment" onChange={handlePhotoUpload} style={{ display: 'none' }} id="photo-site-cam" />
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                        <label htmlFor="photo-site" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100px', height: '100px', backgroundColor: '#374151', borderRadius: '6px', cursor: photos.length >= 2 ? 'not-allowed' : 'pointer', fontSize: '2rem', color: '#6b7280' }}>+</label>
+                        <label htmlFor="photo-site-cam" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100px', padding: '4px 0', backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '6px', cursor: 'pointer', fontSize: '0.7rem', color: '#9ca3af', gap: '4px' }}>📷 Camera</label>
+                      </div>
                     </>
                   )}
                 </div>

@@ -1432,7 +1432,12 @@ export default function App() {
     tmPdfGenPromiseRef.current = tmPdfGenPromiseRef.current
       || importWithRetry(() => import('./lib/tmTicketPdfGenerator'));
     try {
-      const items = await getUploadQueue();
+      // Exclude items whose PDF is still being generated in the background
+      // (T&M submit kicks the queue immediately so the sheet closes, then
+      // patches `pdf_base64` + clears `pdfPending` a beat later). Processing
+      // such an item now would submit it without its PDF and skip lane 2.
+      // They'll be picked up on the next tick once `pdfPending` clears.
+      const items = (await getUploadQueue()).filter((it) => !it.pdfPending);
       if (items.length === 0) { uploadingRef.current = false; return; }
       setIsUploading(true);
       setUploadProgress(0);
@@ -1834,16 +1839,54 @@ export default function App() {
           // SIGNED_IN/TOKEN_REFRESHED kick — and we deliberately do NOT
           // bump its attempts counter because the failure was
           // recoverable, not a payload problem.
-          if (err?.status === 401 || err?.status === 403) {
+          // 401 is almost always an expired token — refresh once and keep
+          // going. 403 is ambiguous: it can be an expired/again-rejected
+          // token, OR a permanent business-rule rejection (e.g. the backend
+          // refusing an illegal status transition). We must NOT loop forever
+          // on the latter — that's exactly the bug that parked crew-leads'
+          // upload bars at 99%: a permanent 403 was treated as auth, the
+          // session "refreshed" (token was actually fine), we `continue`d,
+          // and the same item failed again next cycle indefinitely. So for
+          // 403 we bound the refresh-retries: after a couple of attempts we
+          // flip the item to 'stalled' so it surfaces in the Uploading list
+          // instead of spinning silently.
+          if (err?.status === 401) {
             try {
               const { data, error } = await supabase.auth.refreshSession();
               if (!error && data?.session) {
-                console.info('[UPLOAD_QUEUE] Session refreshed after', err.status, '— continuing with next item');
+                console.info('[UPLOAD_QUEUE] Session refreshed after 401 — continuing with next item');
                 continue;
               }
             } catch { /* fall through to break */ }
-            console.warn('[UPLOAD_QUEUE] Auth failed (', err.status, ') and refresh failed — pausing queue until next cycle');
+            console.warn('[UPLOAD_QUEUE] Auth failed (401) and refresh failed — pausing queue until next cycle');
             break;
+          }
+          if (err?.status === 403) {
+            const attempts403 = (item.attempts || 0) + 1;
+            // Give the benefit of the doubt for the first attempt only (covers
+            // the genuine "token went stale mid-flight" case); beyond that a
+            // 403 is treated as permanent and stalled so we never loop.
+            if (attempts403 <= 1) {
+              try {
+                const { data, error } = await supabase.auth.refreshSession();
+                if (!error && data?.session) {
+                  // Bump attempts so a persistent 403 can't refresh-loop.
+                  try { await updateUploadEntry(item.id, { attempts: attempts403, lastErrorStatus: 403 }); } catch { /* non-fatal */ }
+                  console.info('[UPLOAD_QUEUE] 403 — refreshed session once, will retry item', item.id);
+                  continue;
+                }
+              } catch { /* fall through to stall */ }
+            }
+            try {
+              await updateUploadEntry(item.id, {
+                attempts: attempts403,
+                lastErrorStatus: 403,
+                lastErrorMessage: String(err?.message || err).slice(0, 200),
+                status: 'stalled',
+              });
+            } catch { /* non-fatal */ }
+            console.warn('[UPLOAD_QUEUE] Permanent 403 on item', item.id, '— stalled:', err?.message || err);
+            continue;
           }
           // ── Validation failure: permanent ─────────────────────────────
           // 400 / 422 means the payload will never be accepted as-is
@@ -4557,6 +4600,7 @@ export default function App() {
   // background and patches the IDB entry before the queue worker picks it up.
   // This removes the 2-3 s PDF generation delay from the critical path.
   async function handleQueueTMSubmit({ ticketId, payload, ticketNumber, sprayDate, pdfFactory }) {
+    const hasPdfFactory = typeof pdfFactory === 'function';
     const queued = await queueUpload({
       targetType: 'tm_ticket',
       targetId: ticketId,
@@ -4566,27 +4610,45 @@ export default function App() {
       ticket_number: ticketNumber || null,
       spray_date: sprayDate || null,
       form_type: 'tm_ticket',
+      // When a background PDF is still being generated, mark the entry
+      // `pdfPending` so the queue worker skips it until the bytes are
+      // patched in. Prevents a race where processUploadQueue() (kicked
+      // below) submits the ticket WITHOUT its PDF and skips lane 2.
+      pdfPending: hasPdfFactory,
     });
     await refreshUploadQueue();
     setMessage('Ticket queued for submission.');
-    // Kick the queue immediately — if online it'll start uploading right
-    // away; if offline it stays put and processUploadQueue retries on the
-    // back-online handler.
-    processUploadQueue();
     // Generate the PDF in the background AFTER returning so the sheet can
-    // close instantly. updateUploadEntry patches the IDB row before the
-    // queue worker reaches it (processUploadQueue runs on the next tick).
-    if (typeof pdfFactory === 'function') {
+    // close instantly, THEN clear `pdfPending` and kick the queue. If there
+    // is no pdfFactory, kick immediately.
+    if (hasPdfFactory) {
       (async () => {
         try {
           const pdfBase64 = await pdfFactory();
           if (pdfBase64) {
             await updateUploadEntry(queued.id, {
               payload: { ...queued.payload, pdf_base64: pdfBase64 },
+              pdfPending: false,
             });
+          } else {
+            // PDF factory returned nothing — submit without a PDF rather
+            // than leaving the item parked out of the queue forever.
+            await updateUploadEntry(queued.id, { pdfPending: false });
           }
-        } catch { /* non-fatal — upload proceeds without PDF */ }
+        } catch {
+          // Non-fatal — clear the flag so the upload still proceeds
+          // (without the PDF). Better than a ticket stuck un-submitted.
+          try { await updateUploadEntry(queued.id, { pdfPending: false }); } catch { /* ignore */ }
+        } finally {
+          try { await refreshUploadQueue(); } catch { /* ignore */ }
+          processUploadQueue();
+        }
       })();
+    } else {
+      // Kick the queue immediately — if online it'll start uploading right
+      // away; if offline it stays put and processUploadQueue retries on the
+      // back-online handler.
+      processUploadQueue();
     }
   }
 
@@ -6146,7 +6208,7 @@ export default function App() {
           <div className="topbar-account-menu" ref={accountMenuRef}>
             <button
               type="button"
-              className="topbar-account-trigger"
+              className={`topbar-account-trigger${swUpdateAvailable ? ' topbar-account-trigger--update' : ''}`}
               onClick={() => setAccountMenuOpen((v) => !v)}
               aria-label="Account menu"
               aria-expanded={accountMenuOpen}
