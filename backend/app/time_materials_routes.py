@@ -550,6 +550,13 @@ def update_ticket(
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
     if not _can_edit_ticket(ticket, current_user):
+        print(
+            f"[TM_PATCH_403] ticket={ticket.id} reason=not_owner "
+            f"status={getattr(ticket.status, 'value', ticket.status)} "
+            f"role={getattr(current_user.role, 'value', current_user.role)} "
+            f"user_id={current_user.id} created_by_user_id={ticket.created_by_user_id} "
+            f"created_by_name={ticket.created_by_name!r} user_name={getattr(current_user, 'name', None)!r}"
+        )
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
 
     is_office = current_user.role in (RoleEnum.admin, RoleEnum.office)
@@ -574,6 +581,11 @@ def update_ticket(
             payload.approve,
         ])
         if trying_to_edit:
+            print(
+                f"[TM_PATCH_403] ticket={ticket.id} reason=already_approved "
+                f"role={getattr(current_user.role, 'value', current_user.role)} "
+                f"user_id={current_user.id} payload_status={payload.status}"
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="This ticket has already been approved \u2014 ask office to unapprove it if edits are needed",
@@ -674,6 +686,12 @@ def update_ticket(
             payload.approved_signature is not None,
             payload.approve,
         ]):
+            print(
+                f"[TM_PATCH_403] ticket={ticket.id} reason=office_only_fields "
+                f"user_id={current_user.id} "
+                f"po={payload.po_approval_number is not None} "
+                f"sig={payload.approved_signature is not None} approve={payload.approve}"
+            )
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Office-only fields")
 
         if payload.office_data is not None:
@@ -695,6 +713,12 @@ def update_ticket(
             # Only one legal worker-initiated transition: open -> submitted.
             # Anything else (re-opening, approving, etc.) belongs to office.
             elif payload.status != TMTicketStatus.submitted or ticket.status != TMTicketStatus.open:
+                print(
+                    f"[TM_PATCH_403] ticket={ticket.id} reason=illegal_status_transition "
+                    f"current={getattr(ticket.status, 'value', ticket.status)} "
+                    f"requested={getattr(payload.status, 'value', payload.status)} "
+                    f"user_id={current_user.id}"
+                )
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Workers can only submit an open ticket for approval",
