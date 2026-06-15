@@ -481,16 +481,50 @@ export default function HerbicideLeaseSheet({
     });
   };
 
-  const handlePhotoUpload = (e) => {
+  const handlePhotoUpload = async (e) => {
     const files = Array.from(e.target.files);
+    // Reset the input so picking the same file twice (after a remove)
+    // still triggers onChange.
+    try { e.target.value = ''; } catch (_) { /* ignore */ }
     // Limit: only take what's needed to reach max 2
     const spotsLeft = 2 - photos.length;
     if (spotsLeft <= 0) return;
-    const toAdd = files.slice(0, spotsLeft).map(file => ({
-      file,
-      preview: URL.createObjectURL(file),
-    }));
-    setPhotos(prev => [...prev, ...toAdd]);
+    // Read bytes IMMEDIATELY at pick time, while the Android content-URI
+    // permission is still fresh. Holding the raw `File` and reading it
+    // later (at preview / submit time) was failing on Android with
+    // "The requested file could not be read, typically due to permission
+    // problems that have occurred after a reference to a file was
+    // acquired." — the OS revokes the picker's URI grant between pick
+    // and read. Caching the base64 here sidesteps the issue entirely;
+    // all downstream paths already prefer `existingBase64` over `file`.
+    const slots = files.slice(0, spotsLeft);
+    const toAdd = await Promise.all(slots.map((file) => new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const dataUrl = String(reader.result || '');
+        const commaIdx = dataUrl.indexOf(',');
+        const data = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
+        const mime = (dataUrl.match(/^data:(.+);base64/) || [])[1] || file.type || 'image/jpeg';
+        resolve({
+          existingBase64: { data, type: mime, name: file.name },
+          preview: dataUrl,
+        });
+      };
+      reader.onerror = () => {
+        // If the read fails right at pick time, surface a clear error
+        // instead of silently dropping the slot.
+        alert({
+          title: 'Photo read failed',
+          message: 'Could not read the selected photo. Try taking a new one with the camera button.',
+          severity: 'danger',
+        });
+        resolve(null);
+      };
+      reader.readAsDataURL(file);
+    })));
+    const ok = toAdd.filter(Boolean);
+    if (ok.length === 0) return;
+    setPhotos(prev => [...prev, ...ok]);
   };
 
   const removePhoto = (index) => {
