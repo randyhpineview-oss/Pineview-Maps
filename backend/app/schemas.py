@@ -368,6 +368,7 @@ class SiteQuickEdit(BaseModel):
 class BulkResetRequest(BaseModel):
     client: str | None = None
     area: str | None = None
+    include_grey: bool = False
 
 
 class BulkResetResponse(BaseModel):

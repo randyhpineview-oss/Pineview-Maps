@@ -169,6 +169,8 @@ export default function AdminPanel({
   const [resetArea, setResetArea] = useState('');
   const [pipelineResetClient, setPipelineResetClient] = useState('');
   const [pipelineResetArea, setPipelineResetArea] = useState('');
+  const [resetIncludeGrey, setResetIncludeGrey] = useState(false);
+  const [pipelineResetIncludeGrey, setPipelineResetIncludeGrey] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importingPipeline, setImportingPipeline] = useState(false);
 
@@ -195,7 +197,7 @@ export default function AdminPanel({
 
   async function handleReset(event) {
     event.preventDefault();
-    await onBulkReset({ client: resetClient || null, area: resetArea || null });
+    await onBulkReset({ client: resetClient || null, area: resetArea || null, include_grey: resetIncludeGrey });
   }
 
   async function handleBulkApprovePending() {
@@ -643,6 +645,14 @@ export default function AdminPanel({
                   <option key={area} value={area}>{area}</option>
                 ))}
               </select>
+              <label className="small-text" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <input
+                  type="checkbox"
+                  checked={resetIncludeGrey}
+                  onChange={(event) => setResetIncludeGrey(event.target.checked)}
+                />
+                Also reset grey (issue) pins
+              </label>
               <button className="secondary-button" type="submit" disabled={!canReset || busy}>
                 Reset Sites to Not Inspected
               </button>
@@ -652,7 +662,7 @@ export default function AdminPanel({
             <form onSubmit={(e) => {
               e.preventDefault();
               if (!pipelineResetClient && !pipelineResetArea) return;
-              onBulkResetPipelines?.({ client: pipelineResetClient || null, area: pipelineResetArea || null });
+              onBulkResetPipelines?.({ client: pipelineResetClient || null, area: pipelineResetArea || null, include_grey: pipelineResetIncludeGrey });
             }} className="list-grid">
               <select value={pipelineResetClient} onChange={(event) => setPipelineResetClient(event.target.value)}>
                 <option value="">Select client</option>
@@ -666,6 +676,14 @@ export default function AdminPanel({
                   <option key={area} value={area}>{area}</option>
                 ))}
               </select>
+              <label className="small-text" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <input
+                  type="checkbox"
+                  checked={pipelineResetIncludeGrey}
+                  onChange={(event) => setPipelineResetIncludeGrey(event.target.checked)}
+                />
+                Also reset grey (issue) pipelines
+              </label>
               <button className="secondary-button" type="submit" disabled={(!pipelineResetClient && !pipelineResetArea) || busy}>
                 Reset Pipelines to Not Sprayed
               </button>

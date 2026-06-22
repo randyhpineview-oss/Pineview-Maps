@@ -955,6 +955,9 @@ def bulk_reset_pipelines(
         if not payload.client and not payload.area:
             raise HTTPException(status_code=400, detail="Must specify client, area, or pipeline_ids")
 
+    if not payload.include_grey:
+        q = q.filter(Pipeline.status.notin_(["issue", "issue_not_inspected"]))
+
     pipelines = q.all()
     reset_count = 0
     for pipeline in pipelines:

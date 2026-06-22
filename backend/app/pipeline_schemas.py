@@ -201,6 +201,7 @@ class PipelineBulkResetRequest(BaseModel):
     client: str | None = None
     area: str | None = None
     pipeline_ids: list[int] | None = None
+    include_grey: bool = False
 
 
 class PipelinesDeltaResponse(BaseModel):

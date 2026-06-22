@@ -2635,6 +2635,10 @@ def bulk_reset_status(
         query = query.filter(Site.client == payload.client)
     if payload.area:
         query = query.filter(Site.area == payload.area)
+    if not payload.include_grey:
+        query = query.filter(
+            Site.status.notin_([SiteStatus.issue, SiteStatus.issue_not_inspected])
+        )
 
     sites = query.all()
     for site in sites:
