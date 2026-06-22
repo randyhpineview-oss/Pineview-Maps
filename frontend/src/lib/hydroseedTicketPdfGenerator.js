@@ -820,7 +820,8 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
   };
 
   // ── Materials rows ──────────────────────────────────────────────────
-  if (hasData(mulchKg, 0) && !isLabelRemoved('Mulch')) {
+  const mulchQtyVal = findQty(officeLines, 'Mulch') ?? mulchKg;
+  if (hasData(mulchQtyVal, 0) && !isLabelRemoved('Mulch')) {
     renderProductRow({
       productLabel: 'Mulch',
       displayLabel: 'Mulch',
@@ -829,7 +830,8 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
       rateNeedles: ['mulch'],
     });
   }
-  if (hasData(fertilizerKg, 0) && !isLabelRemoved('Fertilizer')) {
+  const fertilizerQtyVal = findQty(officeLines, 'Fertilizer') ?? fertilizerKg;
+  if (hasData(fertilizerQtyVal, 0) && !isLabelRemoved('Fertilizer')) {
     renderProductRow({
       productLabel: 'Fertilizer',
       displayLabel: 'Fertilizer',
@@ -843,9 +845,11 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
   // unit dropdown — its own billing unit (kg or 25 kg bag).
   for (let i = 0; i < seedTypes.length; i++) {
     const seedKg = Number(seedTypes[i]?.qty) || 0;
-    if (seedKg === 0) continue;
     const name = seedTypes[i]?.name || '';
     const productLabel = `Seed: ${name}`;
+    const resolvedSeedKg = findQty(officeLines, productLabel) ?? seedKg;
+    if (resolvedSeedKg === 0) continue;
+    
     if (isLabelRemoved(productLabel)) continue;
     const displayLabel = `#${i + 1} Seed${name ? `: ${name}` : ''}`;
     renderProductRow({
