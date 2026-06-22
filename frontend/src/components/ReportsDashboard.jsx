@@ -153,13 +153,14 @@ const S = {
   },
   label: { display: 'block', fontSize: '0.75rem', color: '#9ab1d6', marginBottom: '4px' },
   colRow: {
-    display: 'flex', alignItems: 'center', gap: '10px',
-    padding: '6px 8px', borderRadius: '6px',
+    display: 'flex', alignItems: 'center', gap: '6px',
+    padding: '5px 6px', borderRadius: '6px',
   },
   smallSelect: {
     borderRadius: '6px', border: '1px solid rgba(143,182,255,0.16)',
     background: 'rgba(9,17,31,0.75)', color: '#e5eefb',
-    padding: '4px 8px', fontSize: '0.75rem',
+    padding: '3px 6px', fontSize: '0.72rem',
+    maxWidth: '140px',
   },
   banner: {
     background: '#78350f', color: '#fcd34d', padding: '10px 14px',
@@ -225,8 +226,8 @@ export default function ReportsDashboard({
 
   // ── Per-column selection + format prefs ──
   const [columnKeys, setColumnKeys] = useState(() => new Set(DEFAULT_COLUMN_KEYS));
-  const [herbicidesFormat, setHerbicidesFormat] = useState('pcp');
-  const [areaUnits, setAreaUnits] = useState('ha');
+  const [herbicidesFormat, setHerbicidesFormat] = useState('pcp_concentrate');
+  const [areaUnits, setAreaUnits] = useState('number');
   const [dateFormat, setDateFormat] = useState('iso');
   const [weedsFormat, setWeedsFormat] = useState('all');
 
@@ -612,7 +613,7 @@ export default function ReportsDashboard({
           </div>
           <div style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
             gap: '4px',
           }}>
             {COLUMN_DEFS.map(renderColumnRow)}
