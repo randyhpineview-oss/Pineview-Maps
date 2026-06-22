@@ -181,24 +181,15 @@ export default function HydroseedTicketDetailSheet({
       ? t.office_data.removed_labels
       : [];
 
-    // Robust diffing: any label in t.rows that is NOT in saved (and saved is non-empty)
-    // is treated as intentionally removed.
-    const computedRemoved = new Set(serverRemoved);
-    if (saved && saved.length > 0) {
-      const savedLabels = new Set(saved.map(l => (l.label || '').toLowerCase().trim()));
-      for (const r of t.rows || []) {
-        if (r?.label) {
-          const labelLc = r.label.toLowerCase().trim();
-          if (!savedLabels.has(labelLc)) {
-            computedRemoved.add(r.label);
-          }
-        }
-      }
-    }
-
-    const removedList = Array.from(computedRemoved);
+    // removed_labels is persisted on office_data by the backend, so
+    // serverRemoved is the authoritative source. Previously a "robust
+    // diffing" block here added any aggregated row label not in saved to
+    // computedRemoved — but that wrongly suppressed new rows from dailies
+    // linked while the ticket was approved (the office never saw them,
+    // let alone deleted them). Rely on serverRemoved only.
+    const removedList = Array.from(new Set(serverRemoved));
     setRemovedLabels(removedList);
-    setOfficeLines(syncOfficeLineQtysFromRows(saved, t.rows, computedRemoved).map(l => ({
+    setOfficeLines(syncOfficeLineQtysFromRows(saved, t.rows, new Set(serverRemoved)).map(l => ({
       label: l.label || '',
       qty: l.qty ?? '',
       unit: l.unit || '',
@@ -292,6 +283,10 @@ export default function HydroseedTicketDetailSheet({
   // ── Office line editors ──────────────────────────────────────────────────
   const updateLine = (idx, patch) => {
     setOfficeLines(prev => prev.map((l, i) => i === idx ? { ...l, ...patch } : l));
+    if (patch.label != null && patch.label !== '') {
+      const newLabel = String(patch.label).toLowerCase().trim();
+      setRemovedLabels(prev => prev.filter(r => String(r).toLowerCase().trim() !== newLabel));
+    }
     setIsDirty(true);
   };
   const addLine = () => {
