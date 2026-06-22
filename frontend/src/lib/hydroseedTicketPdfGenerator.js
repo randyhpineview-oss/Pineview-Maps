@@ -1030,14 +1030,14 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
     'total general labour', 'travel (mob/demob)', 'water truck',
     'area covered',
   ]);
-  const seenSeedLabels = new Set(seedTypes.map(s => `seed: ${s.name}`.toLowerCase()));
-  const seenHydroseederLabels = new Set(hydroseederRows.map(h => h.label.toLowerCase()));
+  const seenSeedLabels = new Set(seedTypes.map(s => `seed: ${s.name}`.toLowerCase().trim()));
+  const seenHydroseederLabels = new Set(hydroseederRows.map(h => h.label.toLowerCase().trim()));
 
   const otherByLabel = new Map();
   for (const r of rows) {
     const label = r?.label || '';
     if (!label) continue;
-    const lc = label.toLowerCase();
+    const lc = label.toLowerCase().trim();
     if (handledLabels.has(lc)) continue;
     if (seenSeedLabels.has(lc)) continue;
     if (seenHydroseederLabels.has(lc)) continue;
@@ -1053,7 +1053,7 @@ export async function generateHydroseedTicketPdf(ticket, options = {}) {
   for (const line of officeLines) {
     const label = line.label || '';
     if (!label) continue;
-    const lc = label.toLowerCase();
+    const lc = label.toLowerCase().trim();
     if (handledLabels.has(lc)) continue;
     if (seenSeedLabels.has(lc)) continue;
     if (seenHydroseederLabels.has(lc)) continue;
