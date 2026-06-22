@@ -130,6 +130,7 @@ export default function MapAnnotationCanvas({
   const [isDrawingBoxMode, setIsDrawingBoxMode] = useState(false);
   const [boxStart, setBoxStart] = useState(null); // {x, y}
   const [boxEnd, setBoxEnd] = useState(null);     // {x, y}
+  const isDraggingBoxRef = useRef(false);
   const pickerMapRef = useRef(null);
   const pickerContainerRef = useRef(null);
 
@@ -983,23 +984,30 @@ export default function MapAnnotationCanvas({
             flexShrink: 0, fontSize: '0.78rem', color: '#9ca3af',
           }}>
             <span style={{ color: '#d1d5db', marginRight: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
-              <button
-                onClick={() => {
-                  setIsDrawingBoxMode(v => {
-                    if (!v) {
-                      setBoxStart(null);
-                      setBoxEnd(null);
-                    }
-                    return !v;
-                  });
-                }}
-                style={{
-                  padding: '4px 8px', background: isDrawingBoxMode ? '#3b82f6' : '#374151', color: '#f9fafb',
-                  border: 'none', borderRadius: 5, fontSize: '0.75rem', cursor: 'pointer'
-                }}
-              >
-                {isDrawingBoxMode ? '⏹️ Box Mode' : '🤚 Pan Mode'}
-              </button>
+              <div style={{ display: 'flex', background: '#111827', borderRadius: 6, padding: 2, border: '1px solid #374151' }}>
+                <button
+                  onClick={() => setIsDrawingBoxMode(false)}
+                  style={{
+                    padding: '4px 10px', background: !isDrawingBoxMode ? '#3b82f6' : 'transparent', color: !isDrawingBoxMode ? 'white' : '#9ca3af',
+                    border: 'none', borderRadius: 4, fontSize: '0.75rem', cursor: 'pointer',
+                  }}
+                >
+                  🤚 Pan Map
+                </button>
+                <button
+                  onClick={() => {
+                    setIsDrawingBoxMode(true);
+                    setBoxStart(null);
+                    setBoxEnd(null);
+                  }}
+                  style={{
+                    padding: '4px 10px', background: isDrawingBoxMode ? '#3b82f6' : 'transparent', color: isDrawingBoxMode ? 'white' : '#9ca3af',
+                    border: 'none', borderRadius: 4, fontSize: '0.75rem', cursor: 'pointer',
+                  }}
+                >
+                  ⏹️ Draw Box
+                </button>
+              </div>
               {isDrawingBoxMode ? 'Draw to crop' : 'Pan & zoom'}
             </span>
             <div style={{ flex: 1 }} />
@@ -1072,10 +1080,11 @@ export default function MapAnnotationCanvas({
                   const pt = { x: e.clientX - rect.left, y: e.clientY - rect.top };
                   setBoxStart(pt);
                   setBoxEnd(pt);
+                  isDraggingBoxRef.current = true;
                   e.currentTarget.setPointerCapture(e.pointerId);
                 }}
                 onPointerMove={(e) => {
-                  if (!boxStart) return;
+                  if (!isDraggingBoxRef.current || !boxStart) return;
                   const rect = e.currentTarget.getBoundingClientRect();
                   const currentX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
                   const currentY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
@@ -1099,13 +1108,15 @@ export default function MapAnnotationCanvas({
                   });
                 }}
                 onPointerUp={(e) => {
+                  isDraggingBoxRef.current = false;
                   if (boxStart) {
-                    e.currentTarget.releasePointerCapture(e.pointerId);
+                    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
                   }
                 }}
                 onPointerCancel={(e) => {
+                  isDraggingBoxRef.current = false;
                   if (boxStart) {
-                    e.currentTarget.releasePointerCapture(e.pointerId);
+                    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
                   }
                 }}
               >
