@@ -329,6 +329,9 @@ function findQty(officeLines, label) {
     if ((l?.label || '').toLowerCase().trim() === target) {
       const q = parseFloat(l.qty);
       if (Number.isFinite(q)) return q;
+      // Explicitly return 0 if qty is 0 (not null) so the ?? fallback
+      // doesn't trigger — office-set 0 means "hide this line".
+      if (l.qty === 0 || l.qty === '0') return 0;
     }
   }
   return null;
@@ -345,6 +348,9 @@ function findQtyFuzzy(officeLines, needles) {
       if (re.test(l?.label || '')) {
         const q = parseFloat(l.qty);
         if (Number.isFinite(q)) return q;
+        // Explicitly return 0 if qty is 0 (not null) so the ?? fallback
+        // doesn't trigger — office-set 0 means "hide this line".
+        if (l.qty === 0 || l.qty === '0') return 0;
       }
     }
   }
