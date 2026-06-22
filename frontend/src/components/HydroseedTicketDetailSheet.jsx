@@ -656,7 +656,12 @@ export default function HydroseedTicketDetailSheet({
   }
 
   return (
-    <div style={{ padding: '20px', color: '#f9fafb', overflowY: 'auto' }}>
+    <div style={{
+      backgroundColor: '#1f2937', color: '#f9fafb',
+      height: '100%', overflowY: 'auto', overflowX: 'hidden',
+      padding: '20px 20px calc(env(safe-area-inset-bottom, 0px) + 32px)',
+      maxWidth: 880, margin: '0 auto', width: '100%', boxSizing: 'border-box',
+    }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <h2 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>
