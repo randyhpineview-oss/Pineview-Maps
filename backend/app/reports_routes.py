@@ -52,6 +52,33 @@ router = APIRouter(prefix="/api/admin/reports", tags=["reports"])
 # `header` is what lands in the CSV / preview table header row. Extraction
 # happens in `_build_report_row()` below, which runs format preferences
 # through the helpers at the bottom of this file.
+# Tank mix recipe — per 400L tank. Mirrors the chart hardcoded in
+# frontend/src/components/TankMixChartOverlay.jsx. Keys are lowercased
+# herbicide names as they appear in lease_sheet_data.herbicidesUsed (which
+# come straight from the `herbicides` lookup table, e.g. 'Glyphosate',
+# 'MCPA', 'Tordon', 'Par III'). For a row using `total_liters` of mix the
+# amount of concentrate used is `total_liters * rate / 400`, in `unit`.
+TANK_MIX_RECIPES: dict[str, dict] = {
+    "glyphosate":  {"rate": 5.0,  "unit": "L", "label": "Glyphosate"},
+    "tordon":      {"rate": 0.75, "unit": "L", "label": "Tordon"},
+    "mcpa":        {"rate": 0.75, "unit": "L", "label": "MCPA"},
+    "escort":      {"rate": 16.0, "unit": "g", "label": "Escort"},
+    "assure":      {"rate": 16.0, "unit": "g", "label": "Assure"},
+    "par iii":     {"rate": 5.0,  "unit": "L", "label": "Par III"},
+    "garlon":      {"rate": 7.0,  "unit": "L", "label": "Garlon"},
+    "draft":       {"rate": 8.0,  "unit": "g", "label": "Draft"},
+    "tracker xp":  {"rate": 2.5,  "unit": "L", "label": "Tracker XP"},
+    "trillion":    {"rate": 10.0, "unit": "L", "label": "Trillion"},
+}
+
+# Per-herbicide concentrate column keys, derived from the recipe table so
+# the frontend column picker stays 1:1 with the backend. Header includes
+# the unit so the column itself can stay a bare number (Excel-summable).
+_CONC_COLUMNS: dict[str, str] = {
+    f"conc_{key.replace(' ', '_')}": f"{recipe['label']} ({recipe['unit']})"
+    for key, recipe in TANK_MIX_RECIPES.items()
+}
+
 COLUMN_CATALOG: dict[str, str] = {
     "ticket_number":      "Ticket #",
     "source_type":        "Source",
@@ -76,7 +103,31 @@ COLUMN_CATALOG: dict[str, str] = {
     "roadside_herbicides": "Roadside Herbicides",
     "roadside_area_ha":   "Roadside Area (ha)",
     "notes":              "Notes",
+    **_CONC_COLUMNS,
+    "concentrate_amounts": "Concentrate Amounts",
 }
+
+
+def _concentrate_amount(herb_name: str, total_liters: Optional[float]) -> Optional[tuple[float, str]]:
+    """Return (amount, unit) of concentrate used for one herbicide on one
+    row, or None if the herbicide isn't in the recipe table or there's no
+    tank volume to multiply against. Amount is in liters or grams per
+    `TANK_MIX_RECIPES[*].unit`.
+    """
+    if total_liters is None or total_liters <= 0 or not herb_name:
+        return None
+    recipe = TANK_MIX_RECIPES.get(str(herb_name).strip().lower())
+    if not recipe:
+        return None
+    amount = total_liters * recipe["rate"] / 400.0
+    return amount, recipe["unit"]
+
+
+def _fmt_concentrate_number(amount: float) -> str:
+    """Plain number with up to 2 decimals, trailing zeros stripped — keeps
+    cells Excel-summable. e.g. 5.0 → '5', 0.3125 → '0.31'."""
+    s = f"{amount:.2f}".rstrip("0").rstrip(".")
+    return s or "0"
 
 DEFAULT_COLUMNS = [
     "ticket_number",
@@ -156,9 +207,16 @@ def _fmt_area(area_ha: Optional[float], site_type: str, units: str) -> str:
                  in km since converting km → m² would be meaningless.
       • "auto" → km for Pipeline/Roadside, ha otherwise. Matches the T&M
                  detail sheet's own unit logic at TMTicketDetailSheet.jsx:781.
+      • "number" → bare number, no unit suffix. Lets the office sum the
+                 column in Excel without stripping " ha" / " km" text first.
+                 Pipeline/Roadside rows still carry km magnitude; header
+                 stays generic ("Total Area") so the caller knows the
+                 column may be mixed-unit.
     """
     if area_ha is None:
         return ""
+    if units == "number":
+        return f"{area_ha:.2f}"
     is_km = site_type in ("Pipeline", "Roadside", "Access Road")
     if is_km:
         return f"{area_ha:.2f} km"
@@ -357,6 +415,41 @@ def _build_report_row(
             return "" if v is None else f"{v:.2f}"
         if key == "notes":
             return record.notes or ""
+        if key == "concentrate_amounts":
+            # Inline summary across every recipe-matched herbicide on this
+            # row, e.g. "Glyphosate: 0.31 L; MCPA: 0.05 L". Uses the same
+            # herbicides_source as the Herbicides column so split mode's
+            # Roadside row reports concentrates from roadsideHerbicides.
+            parts: list[str] = []
+            tl = out["total_liters"]
+            for name in out["herbicides_source"] or []:
+                pair = _concentrate_amount(name, tl)
+                if pair is None:
+                    continue
+                amount, unit = pair
+                recipe = TANK_MIX_RECIPES.get(str(name).strip().lower())
+                label = (recipe or {}).get("label") or name
+                parts.append(f"{label}: {_fmt_concentrate_number(amount)} {unit}")
+            return "; ".join(parts)
+        if key.startswith("conc_"):
+            # Per-herbicide bare-number column. Header in COLUMN_CATALOG
+            # already names the unit, so the cell stays summable in Excel.
+            # Empty when this row didn't use that herbicide (or the recipe
+            # is unknown / no tank volume).
+            recipe_key = key[len("conc_"):].replace("_", " ")
+            recipe = TANK_MIX_RECIPES.get(recipe_key)
+            if not recipe:
+                return ""
+            target_label = recipe["label"].lower()
+            tl = out["total_liters"]
+            for name in out["herbicides_source"] or []:
+                if str(name).strip().lower() != target_label:
+                    continue
+                pair = _concentrate_amount(name, tl)
+                if pair is None:
+                    return ""
+                return _fmt_concentrate_number(pair[0])
+            return ""
         return ""
 
     # Every cell gets passed through the formula-injection guard before it
@@ -525,7 +618,7 @@ def preview_spray_records(
     split_roadside: bool = Query(default=False),
     columns: Optional[str] = Query(default=None, description="Comma-separated column keys"),
     herbicides_format: str = Query(default="pcp", pattern="^(pcp|names|tm_count)$"),
-    area_units: str = Query(default="ha", pattern="^(ha|m2|auto)$"),
+    area_units: str = Query(default="ha", pattern="^(ha|m2|auto|number)$"),
     date_format: str = Query(default="iso", pattern="^(iso|local)$"),
     weeds_format: str = Query(default="all", pattern="^(all|selected_only)$"),
     db: Session = Depends(get_db),
@@ -596,7 +689,7 @@ def export_spray_records_csv(
     include_totals: bool = Query(default=False),
     columns: Optional[str] = Query(default=None),
     herbicides_format: str = Query(default="pcp", pattern="^(pcp|names|tm_count)$"),
-    area_units: str = Query(default="ha", pattern="^(ha|m2|auto)$"),
+    area_units: str = Query(default="ha", pattern="^(ha|m2|auto|number)$"),
     date_format: str = Query(default="iso", pattern="^(iso|local)$"),
     weeds_format: str = Query(default="all", pattern="^(all|selected_only)$"),
     db: Session = Depends(get_db),

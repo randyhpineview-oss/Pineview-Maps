@@ -44,6 +44,21 @@ const COLUMN_DEFS = [
   { key: 'roadside_herbicides', label: 'Roadside Herbicides', format: 'herbicides' },
   { key: 'roadside_area_ha',   label: 'Roadside Area (ha)' },
   { key: 'notes',              label: 'Notes' },
+  // Per-herbicide concentrate columns — bare numbers (Excel-summable),
+  // header includes the unit. Calculated from the tank mix recipe chart
+  // (TankMixChartOverlay): concentrate = totalLiters × rate / 400.
+  // Cell is blank when that herbicide wasn't used on the row.
+  { key: 'conc_glyphosate',    label: 'Concentrate — Glyphosate (L)' },
+  { key: 'conc_tordon',        label: 'Concentrate — Tordon (L)' },
+  { key: 'conc_mcpa',          label: 'Concentrate — MCPA (L)' },
+  { key: 'conc_escort',        label: 'Concentrate — Escort (g)' },
+  { key: 'conc_assure',        label: 'Concentrate — Assure (g)' },
+  { key: 'conc_par_iii',       label: 'Concentrate — Par III (L)' },
+  { key: 'conc_garlon',        label: 'Concentrate — Garlon (L)' },
+  { key: 'conc_draft',         label: 'Concentrate — Draft (g)' },
+  { key: 'conc_tracker_xp',    label: 'Concentrate — Tracker XP (L)' },
+  { key: 'conc_trillion',      label: 'Concentrate — Trillion (L)' },
+  { key: 'concentrate_amounts', label: 'Concentrate Amounts (combined)' },
 ];
 
 const DEFAULT_COLUMN_KEYS = new Set([
@@ -60,6 +75,7 @@ const AREA_UNIT_OPTIONS = [
   { value: 'ha',   label: 'Hectares (ha)' },
   { value: 'm2',   label: 'Square meters (m²)' },
   { value: 'auto', label: 'Auto (km for Pipeline/Roadside/Access Rd)' },
+  { value: 'number', label: 'Number only (no "ha"/"km" suffix)' },
 ];
 const DATE_FORMAT_OPTIONS = [
   { value: 'iso',   label: 'ISO (2025-03-14)' },
