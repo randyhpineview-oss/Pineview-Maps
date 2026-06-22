@@ -311,7 +311,9 @@ export default function HydroseedTicketDetailSheet({
   };
 
   // ── Payload assembly ─────────────────────────────────────────────────────
-  const buildOfficeDataPayload = () => ({
+  const buildOfficeDataPayload = () => {
+    const currentLabels = new Set(officeLines.map(l => (l.label || '').toLowerCase().trim()));
+    return {
     lines: officeLines.map(l => ({
       label: l.label || '',
       qty: l.qty === '' || l.qty == null ? null : Number(l.qty),
@@ -323,7 +325,8 @@ export default function HydroseedTicketDetailSheet({
     gst_enabled: !!gstEnabled,
     // Labels the office intentionally removed. Persisted so they don't
     // reappear when syncOfficeLineQtysFromRows runs after the next load.
-    removed_labels: removedLabels,
+    // We filter out any labels currently in officeLines to resolve sync bugs.
+    removed_labels: removedLabels.filter(r => !currentLabels.has(String(r).toLowerCase().trim())),
     // Paper-form fields. `comments` is plain text; `other_products` is
     // always serialized as a 2-element array (with blanks for unused
     // slots) so the PDF generator can index by position.
@@ -334,7 +337,8 @@ export default function HydroseedTicketDetailSheet({
       unit: op.unit || '',
       rate: op.rate === '' || op.rate == null ? null : Number(op.rate),
     })),
-  });
+    };
+  };
 
   // Helper for the two Other Product rows.
   const updateOtherProduct = (idx, patch) => {
