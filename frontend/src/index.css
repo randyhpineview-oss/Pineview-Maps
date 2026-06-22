@@ -911,10 +911,10 @@ button { cursor: pointer; }
   padding: 1rem;
 }
 
-.panel input,
+.panel input:not([type="checkbox"]):not([type="radio"]),
 .panel select,
 .panel textarea,
-.side-panel-body input,
+.side-panel-body input:not([type="checkbox"]):not([type="radio"]),
 .side-panel-body select,
 .side-panel-body textarea {
   width: 100%;
