@@ -127,6 +127,9 @@ export default function MapAnnotationCanvas({
   // zoom freely; "Capture this view" reads the current center + zoom +
   // maptype and pipes them through the same Static Maps flow.
   const [isPickingMapLocation, setIsPickingMapLocation] = useState(false);
+  const [isDrawingBoxMode, setIsDrawingBoxMode] = useState(false);
+  const [boxStart, setBoxStart] = useState(null); // {x, y}
+  const [boxEnd, setBoxEnd] = useState(null);     // {x, y}
   const pickerMapRef = useRef(null);
   const pickerContainerRef = useRef(null);
 
@@ -525,14 +528,53 @@ export default function MapAnnotationCanvas({
     const center = map.getCenter();
     const zoom = map.getZoom();
     if (!center || zoom == null) return;
-    const pt = { lat: center.lat(), lng: center.lng() };
-    setCaptureCoords(pt);
-    setCaptureZoom(zoom);
+    
+    let targetPt = { lat: center.lat(), lng: center.lng() };
+    let targetZoom = zoom;
+
+    if (isDrawingBoxMode && boxStart && boxEnd && pickerContainerRef.current) {
+      const rect = pickerContainerRef.current.getBoundingClientRect();
+      const mapW = rect.width;
+      const mapH = rect.height;
+      
+      const x1 = Math.min(boxStart.x, boxEnd.x);
+      const x2 = Math.max(boxStart.x, boxEnd.x);
+      const y1 = Math.min(boxStart.y, boxEnd.y);
+      const y2 = Math.max(boxStart.y, boxEnd.y);
+      
+      const cx = (x1 + x2) / 2;
+      const cy = (y1 + y2) / 2;
+      const boxW = x2 - x1;
+      
+      if (boxW > 0 && mapW > 0 && mapH > 0) {
+        // Convert pixel offset from center to lat/lng using map projection
+        const scale = Math.pow(2, zoom);
+        const proj = map.getProjection();
+        if (proj) {
+          const centerWorld = proj.fromLatLngToPoint(center);
+          const dxWorld = (cx - mapW / 2) / scale;
+          const dyWorld = (cy - mapH / 2) / scale;
+          const targetWorld = new window.google.maps.Point(
+            centerWorld.x + dxWorld,
+            centerWorld.y + dyWorld
+          );
+          const targetLatLng = proj.fromPointToLatLng(targetWorld);
+          targetPt = { lat: targetLatLng.lat(), lng: targetLatLng.lng() };
+          
+          // Google Static Maps free-tier max size is 640x640 (scale=2 makes it 1280x1280).
+          // Our aspect ratio is 10:7, so we request 640x448.
+          // Calculate the zoom offset so the geographic width of the box fills 640 pixels.
+          const zoomOffset = Math.round(Math.log2(640 / boxW));
+          targetZoom = Math.min(21, Math.max(10, zoom + zoomOffset));
+        }
+      }
+    }
+
+    setCaptureCoords(targetPt);
+    setCaptureZoom(targetZoom);
     setIsPickingMapLocation(false);
-    // Always request 640×448 (the largest rectangle that fits the 1000×700
-    // canvas at the Static Maps 640px-per-side free-tier limit). This
-    // fills the canvas without white bars on any device.
-    await captureMapFromGoogle(pt, zoom, 640, 448);
+    
+    await captureMapFromGoogle(targetPt, targetZoom, 640, 448);
   };
 
   // Recenter the picker on the worker's current GPS. Best-effort — if
@@ -940,7 +982,26 @@ export default function MapAnnotationCanvas({
             display: 'flex', gap: 6, alignItems: 'center',
             flexShrink: 0, fontSize: '0.78rem', color: '#9ca3af',
           }}>
-            <span style={{ color: '#d1d5db', marginRight: 2 }}>Pan &amp; zoom, then capture</span>
+            <span style={{ color: '#d1d5db', marginRight: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button
+                onClick={() => {
+                  setIsDrawingBoxMode(v => {
+                    if (!v) {
+                      setBoxStart(null);
+                      setBoxEnd(null);
+                    }
+                    return !v;
+                  });
+                }}
+                style={{
+                  padding: '4px 8px', background: isDrawingBoxMode ? '#3b82f6' : '#374151', color: '#f9fafb',
+                  border: 'none', borderRadius: 5, fontSize: '0.75rem', cursor: 'pointer'
+                }}
+              >
+                {isDrawingBoxMode ? '⏹️ Box Mode' : '🤚 Pan Mode'}
+              </button>
+              {isDrawingBoxMode ? 'Draw to crop' : 'Pan & zoom'}
+            </span>
             <div style={{ flex: 1 }} />
             <button onClick={recenterPickerOnGps} style={{
               padding: '4px 8px', background: '#374151', color: '#f9fafb',
@@ -988,11 +1049,87 @@ export default function MapAnnotationCanvas({
                   fullscreenControl: false,
                   gestureHandling: 'greedy',  // one-finger pan on mobile
                 }}
+                onIdle={() => {
+                  const map = pickerMapRef.current;
+                  if (map) {
+                    const c = map.getCenter();
+                    if (c) setCaptureCoords({ lat: c.lat(), lng: c.lng() });
+                    setCaptureZoom(map.getZoom());
+                  }
+                }}
                 onLoad={(map) => { 
                   pickerMapRef.current = map; 
                   map.setMapTypeId(captureType);
                 }}
               />
+            )}
+
+            {isDrawingBoxMode && (
+              <div
+                style={{ position: 'absolute', inset: 0, zIndex: 10, cursor: 'crosshair', touchAction: 'none' }}
+                onPointerDown={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const pt = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+                  setBoxStart(pt);
+                  setBoxEnd(pt);
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                }}
+                onPointerMove={(e) => {
+                  if (!boxStart) return;
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const currentX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+                  const currentY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+                  
+                  const dx = currentX - boxStart.x;
+                  const dy = currentY - boxStart.y;
+                  
+                  // Enforce aspect ratio 640:448 -> 10:7
+                  let newDx = dx;
+                  let newDy = dy;
+                  
+                  if (Math.abs(dx) * 7 > Math.abs(dy) * 10) {
+                    newDy = (Math.abs(dx) * 7 / 10) * Math.sign(dy);
+                  } else {
+                    newDx = (Math.abs(dy) * 10 / 7) * Math.sign(dx);
+                  }
+                  
+                  setBoxEnd({
+                    x: boxStart.x + newDx,
+                    y: boxStart.y + newDy
+                  });
+                }}
+                onPointerUp={(e) => {
+                  if (boxStart) {
+                    e.currentTarget.releasePointerCapture(e.pointerId);
+                  }
+                }}
+                onPointerCancel={(e) => {
+                  if (boxStart) {
+                    e.currentTarget.releasePointerCapture(e.pointerId);
+                  }
+                }}
+              >
+                {boxStart && boxEnd && (() => {
+                  const x1 = Math.min(boxStart.x, boxEnd.x);
+                  const x2 = Math.max(boxStart.x, boxEnd.x);
+                  const y1 = Math.min(boxStart.y, boxEnd.y);
+                  const y2 = Math.max(boxStart.y, boxEnd.y);
+                  return (
+                    <>
+                      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: y1, background: 'rgba(0,0,0,0.5)' }} />
+                      <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, top: y2, background: 'rgba(0,0,0,0.5)' }} />
+                      <div style={{ position: 'absolute', top: y1, bottom: `calc(100% - ${y2}px)`, left: 0, width: x1, background: 'rgba(0,0,0,0.5)' }} />
+                      <div style={{ position: 'absolute', top: y1, bottom: `calc(100% - ${y2}px)`, right: 0, left: x2, background: 'rgba(0,0,0,0.5)' }} />
+                      <div style={{
+                        position: 'absolute',
+                        left: x1, top: y1, width: x2 - x1, height: y2 - y1,
+                        border: '2px solid #3b82f6',
+                        boxShadow: '0 0 0 1px rgba(255,255,255,0.5)',
+                      }} />
+                    </>
+                  );
+                })()}
+              </div>
             )}
           </div>
 
