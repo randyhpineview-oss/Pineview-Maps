@@ -615,69 +615,48 @@ export default function HydroseedTicketDetailSheet({
   const dropboxHref = canOfficeEdit && ticket.pdf_url ? dropboxDirectUrl(ticket.pdf_url) : '';
   const statusBadge = STATUS_COLORS[status] || STATUS_COLORS.open;
 
-  return (
-    // Outer flex row: form (always visible) + live preview panel (slide in on right)
-    <div style={{ display: 'flex', flexDirection: 'row', height: '100%', width: '100%', overflow: 'hidden', position: 'relative' }}>
+  // ── PDF preview overlay ──
+  if (isPreviewOpen) {
+    // Print handler: convert base64 to Blob, open in new window, trigger print
+    const handlePrint = () => {
+      if (!previewBase64) return;
+      const raw = atob(previewBase64);
+      const uint8 = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) uint8[i] = raw.charCodeAt(i);
+      const blob = new Blob([uint8], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const printWindow = window.open(url, '_blank');
+      if (printWindow) {
+        printWindow.onload = () => {
+          printWindow.print();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        };
+      } else {
+        URL.revokeObjectURL(url);
+      }
+    };
 
-      {/* ── Preview panel (right side, slide-in overlay) ── */}
-      {isPreviewOpen && (
-        <div style={{
-          position: 'absolute', top: 0, right: 0, bottom: 0,
-          width: 'min(480px, 100%)',
-          zIndex: 20,
-          display: 'flex', flexDirection: 'column',
-          background: '#111827',
-          boxShadow: '-4px 0 24px rgba(0,0,0,0.5)',
-          transition: 'width 0.25s ease',
-        }}>
-          {/* Preview header */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: '#1f2937', gap: 10, flexShrink: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: '0.9rem', color: '#f9fafb', fontWeight: 600 }}>PDF Preview</span>
-              {isRebuilding && (
-                <span
-                  aria-label="Regenerating preview"
-                  style={{ display: 'inline-block', width: 12, height: 12, border: '2px solid #374151', borderTopColor: '#60a5fa', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }}
-                />
-              )}
-            </div>
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-              <button
-                onClick={() => printPdfFromBase64(previewBase64)}
-                disabled={!previewBase64}
-                style={{ background: 'none', border: 'none', color: '#60a5fa', fontSize: '0.85rem', cursor: previewBase64 ? 'pointer' : 'not-allowed', padding: 0 }}
-              >Print</button>
-              {dropboxHref && !isDirty ? (
-                <a href={dropboxHref} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', fontSize: '0.85rem', textDecoration: 'none' }}>
-                  Dropbox ↗
-                </a>
-              ) : null}
-              <button
-                onClick={() => { setIsPreviewOpen(false); setPreviewBase64(null); }}
-                style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.4rem', cursor: 'pointer', padding: 0, lineHeight: 1 }}
-                title="Close preview"
-              >×</button>
-            </div>
+    return (
+      <div style={{ position: 'fixed', inset: 0, zIndex: 80, background: '#4b5563', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ padding: '10px 16px', background: '#1f2937', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ color: '#f9fafb', fontWeight: 600 }}>Hydroseed Preview — {ticket.ticket_number}</span>
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            <button onClick={handlePrint} style={{ background: 'none', border: 'none', color: '#60a5fa', fontSize: '0.85rem', cursor: 'pointer' }}>Print</button>
+            {dropboxHref && !isDirty ? (
+              <a href={dropboxHref} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', fontSize: '0.85rem', textDecoration: 'none' }}>
+                Dropbox ↗
+              </a>
+            ) : null}
+            <button onClick={() => { setIsPreviewOpen(false); setPreviewBase64(null); }} style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer' }}>×</button>
           </div>
-          {/* PDF canvas */}
-          <PdfPreviewViewer pdfBase64={previewBase64} />
         </div>
-      )}
+        <PdfPreviewViewer pdfBase64={previewBase64} />
+      </div>
+    );
+  }
 
-      {/* ── Main form (always rendered, scrollable) ── */}
-      <div style={{
-        backgroundColor: '#1f2937', color: '#f9fafb',
-        flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden',
-        // Pad the scrollable area's bottom so on iPhone Safari (where the
-        // dynamic toolbar / home indicator overlap the bottom of a fixed
-        // 100vh container) the action buttons (Approve / Save / Re-open)
-        // stay scrollable into view above the unsafe area. Matches the
-        // sticky-action-bar effect the Daily form gets via its internal
-        // flex layout.
-        padding: '20px 20px calc(env(safe-area-inset-bottom, 0px) + 32px)',
-        maxWidth: 880, margin: '0 auto', width: '100%', boxSizing: 'border-box',
-        borderRadius: '16px 16px 0 0',
-      }}>
+  return (
+    <div style={{ padding: '20px', color: '#f9fafb', overflowY: 'auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <h2 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>
@@ -1097,8 +1076,6 @@ export default function HydroseedTicketDetailSheet({
         existingSignature={ticket.approved_signature || null}
         storageKey={currentUserEmail ? `pv.sig.${currentUserEmail.toLowerCase()}` : null}
       />
-    </div>
-    {/* closes outer flex-row wrapper */}
     </div>
   );
 }
