@@ -120,7 +120,7 @@ export default function MapAnnotationCanvas({
   const [captureError, setCaptureError] = useState(null);
   const [captureZoom, setCaptureZoom] = useState(18);
   const [captureCoords, setCaptureCoords] = useState(null);  // { lat, lng }
-  const [captureType, setCaptureType] = useState('satellite');  // 'satellite' | 'hybrid' | 'roadmap'
+  const [captureType, setCaptureType] = useState('hybrid');  // 'satellite' | 'hybrid' | 'roadmap'
 
   // Interactive map-picker state. When `isPickingMapLocation` is true the
   // canvas area is replaced by a live <GoogleMap> the worker can pan and
