@@ -1046,8 +1046,8 @@ export default function MapAnnotationCanvas({
             ) : (
               <GoogleMap
                 mapContainerStyle={{ width: '100%', height: '100%' }}
-                center={captureCoords || { lat: 52.5, lng: -125.0 }}
-                zoom={captureCoords ? captureZoom : 6}
+                center={captureCoords || { lat: 56.2524, lng: -120.8464 }}
+                zoom={captureCoords ? captureZoom : 13}
                 mapTypeId={captureType}
                 options={{
                   mapTypeId: captureType,
