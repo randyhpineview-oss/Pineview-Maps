@@ -572,6 +572,12 @@ export default function MapAnnotationCanvas({
     onSave?.({ data, type: 'image/jpeg', dataUrl });
   };
 
+  useEffect(() => {
+    if (pickerMapRef.current) {
+      pickerMapRef.current.setMapTypeId(captureType);
+    }
+  }, [captureType]);
+
   if (!isOpen) return null;
 
   // Small helper for the tool toolbar's button look — keeps the JSX tidy.
@@ -975,13 +981,17 @@ export default function MapAnnotationCanvas({
                 zoom={captureCoords ? captureZoom : 6}
                 mapTypeId={captureType}
                 options={{
+                  mapTypeId: captureType,
                   disableDefaultUI: false,
                   mapTypeControl: false,
                   streetViewControl: false,
                   fullscreenControl: false,
                   gestureHandling: 'greedy',  // one-finger pan on mobile
                 }}
-                onLoad={(map) => { pickerMapRef.current = map; }}
+                onLoad={(map) => { 
+                  pickerMapRef.current = map; 
+                  map.setMapTypeId(captureType);
+                }}
               />
             )}
           </div>
