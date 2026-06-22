@@ -163,13 +163,17 @@ def _guard_csv(value: str) -> str:
     return value
 
 
-def _fmt_herbicide_list(names: list, pcp_lookup: dict, fmt: str) -> str:
+def _fmt_herbicide_list(names: list, pcp_lookup: dict, fmt: str, total_liters: Optional[float] = None) -> str:
     """Format a list of herbicide names per the office's `herbicides_format`.
 
     Modes:
-      • "pcp"     → "Roundup (PCP 12345); 2,4-D (PCP 67890)"
-      • "names"   → "Roundup; 2,4-D"
-      • "tm_count"→ "2 Herbicides"   (matches T&M sheet, capped at 3)
+      • "pcp"             → "Roundup (PCP 12345); 2,4-D (PCP 67890)"
+      • "names"           → "Roundup; 2,4-D"
+      • "tm_count"        → "2 Herbicides"   (matches T&M sheet, capped at 3)
+      • "pcp_concentrate" → "Glyphosate (PCP 28487): 0.31 L; MCPA (PCP 31327): 0.05 L"
+                            Falls back to the plain PCP rendering for any
+                            herbicide that isn't in the tank-mix recipe
+                            table or when total_liters is missing.
     """
     if not names:
         return ""
@@ -177,6 +181,19 @@ def _fmt_herbicide_list(names: list, pcp_lookup: dict, fmt: str) -> str:
         return _herbicides_text(names)
     if fmt == "names":
         return "; ".join(str(n) for n in names)
+    if fmt == "pcp_concentrate":
+        parts: list[str] = []
+        for n in names:
+            key = str(n).strip().lower()
+            pcp = pcp_lookup.get(key)
+            base = f"{n} (PCP {pcp})" if pcp else str(n)
+            conc = _concentrate_amount(n, total_liters)
+            if conc is not None:
+                amount, unit = conc
+                parts.append(f"{base}: {_fmt_concentrate_number(amount)} {unit}")
+            else:
+                parts.append(base)
+        return "; ".join(parts)
     # default / "pcp"
     parts: list[str] = []
     for n in names:
@@ -370,7 +387,7 @@ def _build_report_row(
             # roadsideHerbicides; the main row pulls from herbicidesUsed.
             # In non-split mode herbicides_source is always herbicidesUsed.
             src = out["herbicides_source"]
-            return _fmt_herbicide_list(src, pcp_lookup, herbicides_format)
+            return _fmt_herbicide_list(src, pcp_lookup, herbicides_format, out["total_liters"])
         if key == "noxious_weeds":
             selected = data.get("noxiousWeedsSelected") or []
             custom = data.get("customWeeds") or []
@@ -408,7 +425,10 @@ def _build_report_row(
             return "" if v is None else f"{v:g}"
         if key == "roadside_herbicides":
             return _fmt_herbicide_list(
-                data.get("roadsideHerbicides") or [], pcp_lookup, herbicides_format
+                data.get("roadsideHerbicides") or [],
+                pcp_lookup,
+                herbicides_format,
+                _to_float(data.get("roadsideLiters")),
             )
         if key == "roadside_area_ha":
             v = _to_float(data.get("roadsideAreaTreated"))
@@ -617,7 +637,7 @@ def preview_spray_records(
     include_avoided: bool = Query(default=False),
     split_roadside: bool = Query(default=False),
     columns: Optional[str] = Query(default=None, description="Comma-separated column keys"),
-    herbicides_format: str = Query(default="pcp", pattern="^(pcp|names|tm_count)$"),
+    herbicides_format: str = Query(default="pcp", pattern="^(pcp|names|tm_count|pcp_concentrate)$"),
     area_units: str = Query(default="ha", pattern="^(ha|m2|auto|number)$"),
     date_format: str = Query(default="iso", pattern="^(iso|local)$"),
     weeds_format: str = Query(default="all", pattern="^(all|selected_only)$"),
@@ -688,7 +708,7 @@ def export_spray_records_csv(
     split_roadside: bool = Query(default=False),
     include_totals: bool = Query(default=False),
     columns: Optional[str] = Query(default=None),
-    herbicides_format: str = Query(default="pcp", pattern="^(pcp|names|tm_count)$"),
+    herbicides_format: str = Query(default="pcp", pattern="^(pcp|names|tm_count|pcp_concentrate)$"),
     area_units: str = Query(default="ha", pattern="^(ha|m2|auto|number)$"),
     date_format: str = Query(default="iso", pattern="^(iso|local)$"),
     weeds_format: str = Query(default="all", pattern="^(all|selected_only)$"),
