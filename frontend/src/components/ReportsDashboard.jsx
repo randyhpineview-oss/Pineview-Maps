@@ -692,15 +692,28 @@ export default function ReportsDashboard({
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
                   <thead>
                     <tr>
-                      {preview.headers.map((h) => <th key={h} style={S.th}>{h}</th>)}
+                      {preview.columns.map((k) => {
+                        const header = preview.headers[preview.columns.indexOf(k)];
+                        const isWide = k === 'herbicides' || k === 'roadside_herbicides' || k === 'concentrate_amounts';
+                        return (
+                          <th key={k} style={{ ...S.th, minWidth: isWide ? '320px' : undefined }}>
+                            {header}
+                          </th>
+                        );
+                      })}
                     </tr>
                   </thead>
                   <tbody>
                     {preview.rows.slice(0, 100).map((r, i) => (
                       <tr key={i}>
-                        {preview.columns.map((k) => (
-                          <td key={k} style={S.td} title={r[k]}>{r[k]}</td>
-                        ))}
+                        {preview.columns.map((k) => {
+                          const isWide = k === 'herbicides' || k === 'roadside_herbicides' || k === 'concentrate_amounts';
+                          return (
+                            <td key={k} style={{ ...S.td, minWidth: isWide ? '320px' : undefined }} title={r[k]}>
+                              {r[k]}
+                            </td>
+                          );
+                        })}
                       </tr>
                     ))}
                   </tbody>
