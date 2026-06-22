@@ -832,175 +832,7 @@ export default function HydroseedDailyRecord({
   if (!isOpen) return null;
 
   // ── Load sub-modal ───────────────────────────────────────────────────────
-  if (editingLoad) {
-    const bales = Number(editingLoad.mulch_bales) || 0;
-    const mulchKg = (bales * KG_PER_BALE).toFixed(1);
-    const isExisting = form.loads.some(l => l.id === editingLoad.id);
-    return (
-      <div style={{
-        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        zIndex: 1100, padding: 16,
-      }}>
-        <div style={{
-          backgroundColor: '#1f2937', color: '#f9fafb', borderRadius: 12,
-          padding: 20, maxWidth: 480, width: '100%', maxHeight: '90vh', overflowY: 'auto',
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-            <h3 style={{ margin: 0 }}>Load #{editingLoad.load_number}</h3>
-            <button onClick={() => setEditingLoad(null)} style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer' }}>×</button>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div>
-              <label style={labelStyle}>Area (m²)</label>
-              <input
-                type="number" inputMode="decimal" min="0"
-                value={editingLoad.area_m2}
-                onChange={e => setEditingLoad({ ...editingLoad, area_m2: e.target.value })}
-                style={inputStyle}
-              />
-            </div>
-            <div>
-              <label style={labelStyle}>Mulch Bales</label>
-              <input
-                type="number" inputMode="decimal" min="0" step="1"
-                value={editingLoad.mulch_bales}
-                onChange={e => setEditingLoad({ ...editingLoad, mulch_bales: e.target.value })}
-                style={inputStyle}
-              />
-              <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: 2 }}>= {mulchKg} kg</div>
-            </div>
-            <div>
-              <label style={labelStyle}>Soil Amendment (kg)</label>
-              <input
-                type="number" inputMode="decimal" min="0"
-                value={editingLoad.soil_amendment_kg}
-                onChange={e => setEditingLoad({ ...editingLoad, soil_amendment_kg: e.target.value })}
-                style={inputStyle}
-              />
-            </div>
-            <div>
-              <label style={labelStyle}>Aqua Gel (kg)</label>
-              <input
-                type="number" inputMode="decimal" min="0"
-                value={editingLoad.aqua_gel_kg}
-                onChange={e => setEditingLoad({ ...editingLoad, aqua_gel_kg: e.target.value })}
-                style={inputStyle}
-              />
-            </div>
-            <div>
-              <label style={labelStyle}>Tackifier (kg)</label>
-              <input
-                type="number" inputMode="decimal" min="0"
-                value={editingLoad.tackifier_kg}
-                onChange={e => setEditingLoad({ ...editingLoad, tackifier_kg: e.target.value })}
-                style={inputStyle}
-              />
-            </div>
-            <div>
-              <label style={labelStyle}>Fertilizer (kg)</label>
-              <input
-                type="number" inputMode="decimal" min="0"
-                value={editingLoad.fertilizer_kg}
-                onChange={e => setEditingLoad({ ...editingLoad, fertilizer_kg: e.target.value })}
-                style={inputStyle}
-              />
-            </div>
-            <div>
-              <label style={labelStyle}>Micro Nutrients (L)</label>
-              <input
-                type="number" inputMode="decimal" min="0" step="any"
-                value={editingLoad.micronutrients_l}
-                onChange={e => setEditingLoad({ ...editingLoad, micronutrients_l: e.target.value })}
-                style={inputStyle}
-              />
-            </div>
-            {/* Spacer so the 2-column grid stays balanced when the seed
-                grid below renders — keeps Micronutrients on its own row
-                with Fertilizer to its left. */}
-            <div />
-          </div>
-
-          {(form.seed_types || []).length > 0 && (
-            <>
-              <h4 style={{ margin: '14px 0 6px', fontSize: '0.95rem' }}>Seed (kg per type)</h4>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                {form.seed_types.map((st) => {
-                  const value = (editingLoad.seed_kgs || {})[st.name] ?? '';
-                  return (
-                    <div key={st.name}>
-                      <label style={labelStyle}>
-                        {st.name}{st.description ? ` — ${st.description}` : ''}
-                      </label>
-                      <input
-                        type="number" inputMode="decimal" min="0"
-                        value={value}
-                        onChange={e => setEditingLoad({
-                          ...editingLoad,
-                          seed_kgs: { ...(editingLoad.seed_kgs || {}), [st.name]: e.target.value },
-                        })}
-                        style={inputStyle}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
-
-          <label style={{ ...labelStyle, marginTop: 14 }}>Notes</label>
-          <textarea
-            rows={2}
-            value={editingLoad.notes}
-            onChange={e => setEditingLoad({ ...editingLoad, notes: e.target.value })}
-            style={{ ...inputStyle, resize: 'vertical' }}
-          />
-
-          <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
-            <button
-              onClick={saveEditingLoad}
-              style={{
-                flex: 1, padding: 12, backgroundColor: '#22c55e', color: 'white',
-                border: 'none', borderRadius: 8, fontWeight: 600, cursor: 'pointer',
-              }}
-            >
-              {isExisting ? 'Save Load' : 'Add Load'}
-            </button>
-            {isExisting && (
-              <button
-                onClick={() => {
-                  // Save any in-progress edits first, then clone — workers
-                  // who tweak this load before duplicating expect the
-                  // tweaks to be in BOTH the original and the clone.
-                  saveEditingLoad();
-                  duplicateLoad(editingLoad.id);
-                }}
-                style={{
-                  padding: 12, backgroundColor: '#1f2937', color: '#f9fafb',
-                  border: '1px solid #374151', borderRadius: 8, cursor: 'pointer',
-                }}
-                title="Save & duplicate this load"
-              >
-                📋 Duplicate
-              </button>
-            )}
-            {isExisting && (
-              <button
-                onClick={deleteEditingLoad}
-                style={{
-                  padding: 12, backgroundColor: '#7f1d1d', color: 'white',
-                  border: 'none', borderRadius: 8, cursor: 'pointer',
-                }}
-              >
-                Delete
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // ── Load sub-modal moved to the bottom so the form doesn't unmount ──────
 
   // ── HT picker (between Preview and Submit) ──────────────────────────────
   if (isPickingHT) {
@@ -1979,6 +1811,177 @@ export default function HydroseedDailyRecord({
           </button>
         )}
       </div>
+
+      {/* ── Load sub-modal ─────────────────────────────────────────────────────── */}
+      {editingLoad && (() => {
+        const bales = Number(editingLoad.mulch_bales) || 0;
+        const mulchKg = (bales * KG_PER_BALE).toFixed(1);
+        const isExisting = form.loads.some(l => l.id === editingLoad.id);
+        return (
+          <div style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 1100, padding: 16,
+          }}>
+            <div style={{
+              backgroundColor: '#1f2937', color: '#f9fafb', borderRadius: 12,
+              padding: 20, maxWidth: 480, width: '100%', maxHeight: '90vh', overflowY: 'auto',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                <h3 style={{ margin: 0 }}>Load #{editingLoad.load_number}</h3>
+                <button onClick={() => setEditingLoad(null)} style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer' }}>×</button>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div>
+                  <label style={labelStyle}>Area (m²)</label>
+                  <input
+                    type="number" inputMode="decimal" min="0"
+                    value={editingLoad.area_m2}
+                    onChange={e => setEditingLoad({ ...editingLoad, area_m2: e.target.value })}
+                    style={inputStyle}
+                  />
+                </div>
+                <div>
+                  <label style={labelStyle}>Mulch Bales</label>
+                  <input
+                    type="number" inputMode="decimal" min="0" step="1"
+                    value={editingLoad.mulch_bales}
+                    onChange={e => setEditingLoad({ ...editingLoad, mulch_bales: e.target.value })}
+                    style={inputStyle}
+                  />
+                  <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: 2 }}>= {mulchKg} kg</div>
+                </div>
+                <div>
+                  <label style={labelStyle}>Soil Amendment (kg)</label>
+                  <input
+                    type="number" inputMode="decimal" min="0"
+                    value={editingLoad.soil_amendment_kg}
+                    onChange={e => setEditingLoad({ ...editingLoad, soil_amendment_kg: e.target.value })}
+                    style={inputStyle}
+                  />
+                </div>
+                <div>
+                  <label style={labelStyle}>Aqua Gel (kg)</label>
+                  <input
+                    type="number" inputMode="decimal" min="0"
+                    value={editingLoad.aqua_gel_kg}
+                    onChange={e => setEditingLoad({ ...editingLoad, aqua_gel_kg: e.target.value })}
+                    style={inputStyle}
+                  />
+                </div>
+                <div>
+                  <label style={labelStyle}>Tackifier (kg)</label>
+                  <input
+                    type="number" inputMode="decimal" min="0"
+                    value={editingLoad.tackifier_kg}
+                    onChange={e => setEditingLoad({ ...editingLoad, tackifier_kg: e.target.value })}
+                    style={inputStyle}
+                  />
+                </div>
+                <div>
+                  <label style={labelStyle}>Fertilizer (kg)</label>
+                  <input
+                    type="number" inputMode="decimal" min="0"
+                    value={editingLoad.fertilizer_kg}
+                    onChange={e => setEditingLoad({ ...editingLoad, fertilizer_kg: e.target.value })}
+                    style={inputStyle}
+                  />
+                </div>
+                <div>
+                  <label style={labelStyle}>Micro Nutrients (L)</label>
+                  <input
+                    type="number" inputMode="decimal" min="0" step="any"
+                    value={editingLoad.micronutrients_l}
+                    onChange={e => setEditingLoad({ ...editingLoad, micronutrients_l: e.target.value })}
+                    style={inputStyle}
+                  />
+                </div>
+                {/* Spacer so the 2-column grid stays balanced when the seed
+                    grid below renders — keeps Micronutrients on its own row
+                    with Fertilizer to its left. */}
+                <div />
+              </div>
+
+              {(form.seed_types || []).length > 0 && (
+                <>
+                  <h4 style={{ margin: '14px 0 6px', fontSize: '0.95rem' }}>Seed (kg per type)</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    {form.seed_types.map((st) => {
+                      const value = (editingLoad.seed_kgs || {})[st.name] ?? '';
+                      return (
+                        <div key={st.name}>
+                          <label style={labelStyle}>
+                            {st.name}{st.description ? ` — ${st.description}` : ''}
+                          </label>
+                          <input
+                            type="number" inputMode="decimal" min="0"
+                            value={value}
+                            onChange={e => setEditingLoad({
+                              ...editingLoad,
+                              seed_kgs: { ...(editingLoad.seed_kgs || {}), [st.name]: e.target.value },
+                            })}
+                            style={inputStyle}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+
+              <label style={{ ...labelStyle, marginTop: 14 }}>Notes</label>
+              <textarea
+                rows={2}
+                value={editingLoad.notes}
+                onChange={e => setEditingLoad({ ...editingLoad, notes: e.target.value })}
+                style={{ ...inputStyle, resize: 'vertical' }}
+              />
+
+              <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+                <button
+                  onClick={saveEditingLoad}
+                  style={{
+                    flex: 1, padding: 12, backgroundColor: '#22c55e', color: 'white',
+                    border: 'none', borderRadius: 8, fontWeight: 600, cursor: 'pointer',
+                  }}
+                >
+                  {isExisting ? 'Save Load' : 'Add Load'}
+                </button>
+                {isExisting && (
+                  <button
+                    onClick={() => {
+                      // Save any in-progress edits first, then clone — workers
+                      // who tweak this load before duplicating expect the
+                      // tweaks to be in BOTH the original and the clone.
+                      saveEditingLoad();
+                      duplicateLoad(editingLoad.id);
+                    }}
+                    style={{
+                      padding: 12, backgroundColor: '#1f2937', color: '#f9fafb',
+                      border: '1px solid #374151', borderRadius: 8, cursor: 'pointer',
+                    }}
+                    title="Save & duplicate this load"
+                  >
+                    📋 Duplicate
+                  </button>
+                )}
+                {isExisting && (
+                  <button
+                    onClick={deleteEditingLoad}
+                    style={{
+                      padding: 12, backgroundColor: '#7f1d1d', color: 'white',
+                      border: 'none', borderRadius: 8, cursor: 'pointer',
+                    }}
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       <MapAnnotationCanvas
         isOpen={annotationOpen}
