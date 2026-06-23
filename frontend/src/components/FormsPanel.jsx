@@ -406,6 +406,7 @@ export default function FormsPanel({
   const hydroseedDailiesSinceRef = useRef(null);
   const hydroseedDailiesSyncingRef = useRef(false);
   const hydroseedDailiesDeltaFailCountRef = useRef(0);
+  const [loadingHydroseedDailyId, setLoadingHydroseedDailyId] = useState(null);
 
   // Deep-link from the header "Syncing X%" badge: when App bumps
   // `uploadTabSignal`, jump to In Progress → Uploading so the worker
@@ -2065,23 +2066,43 @@ export default function FormsPanel({
                             <button
                               type="button"
                               title="Duplicate this daily"
-                              onClick={() => onDuplicateHydroseedDaily?.(d)}
+                              disabled={loadingHydroseedDailyId !== null}
+                              onClick={async () => {
+                                setLoadingHydroseedDailyId(d.id + '_dup');
+                                try {
+                                  await onDuplicateHydroseedDaily?.(d);
+                                } finally {
+                                  setLoadingHydroseedDailyId(null);
+                                }
+                              }}
                               style={{
                                 padding: '4px 8px', fontSize: '0.75rem',
                                 background: '#1f2937', border: '1px solid #374151',
-                                color: '#f9fafb', borderRadius: 4, cursor: 'pointer',
+                                color: '#f9fafb', borderRadius: 4, cursor: loadingHydroseedDailyId ? 'wait' : 'pointer',
                               }}
-                            >📋</button>
+                            >
+                              {loadingHydroseedDailyId === d.id + '_dup' ? <Spinner size={12} color="#f9fafb" /> : '📋'}
+                            </button>
                             <button
                               type="button"
                               title="Edit this daily"
-                              onClick={() => onEditHydroseedDaily?.(d)}
+                              disabled={loadingHydroseedDailyId !== null}
+                              onClick={async () => {
+                                setLoadingHydroseedDailyId(d.id);
+                                try {
+                                  await onEditHydroseedDaily?.(d);
+                                } finally {
+                                  setLoadingHydroseedDailyId(null);
+                                }
+                              }}
                               style={{
                                 padding: '4px 8px', fontSize: '0.75rem',
                                 background: '#1f2937', border: '1px solid #374151',
-                                color: '#f9fafb', borderRadius: 4, cursor: 'pointer',
+                                color: '#f9fafb', borderRadius: 4, cursor: loadingHydroseedDailyId ? 'wait' : 'pointer',
                               }}
-                            >✏️</button>
+                            >
+                              {loadingHydroseedDailyId === d.id ? <Spinner size={12} color="#f9fafb" /> : '✏️'}
+                            </button>
                             {roleCanAdmin && (
                               <button
                                 type="button"
