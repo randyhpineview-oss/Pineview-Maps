@@ -126,7 +126,7 @@ export default function MapAnnotationCanvas({
   // canvas area is replaced by a live <GoogleMap> the worker can pan and
   // zoom freely; "Capture this view" reads the current center + zoom +
   // maptype and pipes them through the same Static Maps flow.
-  const [isPickingMapLocation, setIsPickingMapLocation] = useState(false);
+  const [isPickingMapLocation, setIsPickingMapLocation] = useState(initialMode === 'map');
   const [isDrawingBoxMode, setIsDrawingBoxMode] = useState(false);
   const [boxStart, setBoxStart] = useState(null); // {x, y}
   const [boxEnd, setBoxEnd] = useState(null);     // {x, y}
@@ -196,6 +196,12 @@ export default function MapAnnotationCanvas({
     if (mode === 'blank') {
       setBackgroundDataUrl(null);
       bgImgRef.current = null;
+    }
+    if (mode === 'map') {
+      setIsPickingMapLocation(true);
+      setIsDrawingBoxMode(false);
+    } else {
+      setIsPickingMapLocation(false);
     }
   }, [isOpen, mode]);
 
