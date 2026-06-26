@@ -359,7 +359,7 @@ export const api = {
    * @param {AbortSignal} [signal] Optional AbortSignal to cancel the fetch.
    * @returns {Promise<Uint8Array>}
    */
-  async fetchPdfBytes(pdfUrl, signal) {
+  async fetchPdfBytes(pdfUrl, signal, { bustCache = false } = {}) {
     if (!pdfUrl) throw new Error('No pdf_url on this record.');
     const headers = {};
     if (USE_SUPABASE_AUTH) {
@@ -368,8 +368,19 @@ export const api = {
     } else {
       headers['X-Demo-User'] = 'worker';
     }
-    const url = `${API_BASE_URL}/api/pdf-proxy?url=${encodeURIComponent(pdfUrl)}`;
-    const resp = await fetch(url, { headers, signal });
+    // The backend pdf-proxy emits Cache-Control: private, max-age=3600, which
+    // is great for repeat opens but means after a "Regenerate PDF" action the
+    // browser keeps serving the stale (pre-regen) bytes for up to an hour
+    // because the Dropbox URL didn't change (overwrite-in-place). When the
+    // caller knows the upstream file just changed, append a cache-buster
+    // and force a network fetch.
+    const bust = bustCache ? `&_t=${Date.now()}` : '';
+    const url = `${API_BASE_URL}/api/pdf-proxy?url=${encodeURIComponent(pdfUrl)}${bust}`;
+    const resp = await fetch(url, {
+      headers,
+      signal,
+      cache: bustCache ? 'no-store' : 'default',
+    });
     if (!resp.ok) {
       let message = `PDF proxy failed (${resp.status})`;
       try {

@@ -42,6 +42,11 @@ export default function PdfPreviewOverlay({ record, onClose, canRegenerate = fal
   // Bumped after a successful regen to force the fetch effect to re-run
   // against the freshly-uploaded Dropbox file instead of the stale cache.
   const [reloadToken, setReloadToken] = useState(0);
+  // Set true on the next fetch-effect run after a successful regen so we
+  // bypass the backend pdf-proxy's 1-hour browser cache (the Dropbox URL is
+  // unchanged after overwrite-in-place, so without busting we'd render the
+  // pre-regen bytes for up to an hour).
+  const [bustNextFetch, setBustNextFetch] = useState(false);
 
   // Fetch the real Dropbox PDF via the backend proxy (avoids browser-side
   // CORS issues and means we don't have to drag base64 photos through the API).
@@ -55,20 +60,28 @@ export default function PdfPreviewOverlay({ record, onClose, canRegenerate = fal
     setError(null);
     setPdfBytes(null);
 
+    // After a regen the local IDB cache was already cleared; we also skip the
+    // cache-first read here so we don't risk serving a stale entry that
+    // somehow lingered (defense in depth — same effect run also passes
+    // bustCache:true to fetchPdfBytes below).
+    const skipLocalCache = bustNextFetch;
+
     (async () => {
       // 1. Cache-first — by ticket number (cached at generation time, so the
       //    preview is instant right after submit even before Dropbox has the
       //    file) then by the Dropbox url (cached after a prior fetch).
-      try {
-        const cachedB64 =
-          (ticket ? await getCachedPdf(`ticket:${ticket}`) : null) ||
-          (record.pdf_url ? await getCachedPdf(`url:${record.pdf_url}`) : null);
-        if (cachedB64 && !cancelled) {
-          setPdfBytes(base64ToBytes(cachedB64));
-          setLoading(false);
-          return;
-        }
-      } catch { /* fall through to network */ }
+      if (!skipLocalCache) {
+        try {
+          const cachedB64 =
+            (ticket ? await getCachedPdf(`ticket:${ticket}`) : null) ||
+            (record.pdf_url ? await getCachedPdf(`url:${record.pdf_url}`) : null);
+          if (cachedB64 && !cancelled) {
+            setPdfBytes(base64ToBytes(cachedB64));
+            setLoading(false);
+            return;
+          }
+        } catch { /* fall through to network */ }
+      }
 
       // 2. No local copy — need the Dropbox url to fetch via the proxy.
       if (!record.pdf_url) {
@@ -80,10 +93,17 @@ export default function PdfPreviewOverlay({ record, onClose, canRegenerate = fal
       }
 
       try {
-        const bytes = await api.fetchPdfBytes(record.pdf_url, controller.signal);
+        const bytes = await api.fetchPdfBytes(
+          record.pdf_url,
+          controller.signal,
+          { bustCache: skipLocalCache }
+        );
         if (!cancelled) {
           setPdfBytes(bytes);
           setLoading(false);
+          // Clear the one-shot bust flag after the fetch settles so a
+          // subsequent record switch / re-open behaves normally.
+          if (skipLocalCache) setBustNextFetch(false);
         }
         // Cache the fetched bytes so re-opening this record is instant.
         try { putCachedPdf(`url:${record.pdf_url}`, bytesToBase64(bytes)); } catch { /* non-fatal */ }
@@ -180,6 +200,7 @@ export default function PdfPreviewOverlay({ record, onClose, canRegenerate = fal
       if (typeof onRegenerated === 'function') {
         try { onRegenerated(updated); } catch { /* parent refresh is best-effort */ }
       }
+      setBustNextFetch(true);
       setReloadToken((x) => x + 1);
       setTimeout(() => setRegenMsg(null), 2500);
     } catch (err) {
