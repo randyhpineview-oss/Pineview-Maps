@@ -122,13 +122,45 @@ export default function PdfPreviewOverlay({ record, onClose, canRegenerate = fal
       const leaseData = full?.lease_sheet_data || {};
       const tn = full?.ticket_number || leaseData.ticket_number || ticket || '';
 
+      // Re-hydrate photos. lease_sheet_data.photos[].data is stripped server
+      // side (the binaries live in Dropbox), so we try in order:
+      //   1. embedded data URLs (legacy records, pre-strip)
+      //   2. record.photo_urls fetched through the photo proxy
+      // and pass the resulting data URLs to the generator. Mirrors the edit
+      // flow in HerbicideLeaseSheet.jsx so the regenerated PDF embeds the
+      // same photos the worker originally submitted.
+      let photoDataUrls = [];
+      const embedded = Array.isArray(leaseData.photos)
+        ? leaseData.photos
+            .filter((p) => p && p.data)
+            .map((p) => `data:${p.type || 'image/jpeg'};base64,${p.data}`)
+        : [];
+      if (embedded.length > 0) {
+        photoDataUrls = embedded;
+      } else if (Array.isArray(full?.photo_urls) && full.photo_urls.length > 0) {
+        setRegenMsg(`Fetching photos (0/${full.photo_urls.length})…`);
+        for (let i = 0; i < full.photo_urls.length; i++) {
+          try {
+            const { data, type } = await api.proxyPhoto(full.photo_urls[i]);
+            photoDataUrls.push(`data:${type || 'image/jpeg'};base64,${data}`);
+            setRegenMsg(`Fetching photos (${i + 1}/${full.photo_urls.length})…`);
+          } catch (e) {
+            console.warn('[PdfPreviewOverlay] photo proxy failed:', e?.message);
+          }
+        }
+        setRegenMsg('Regenerating PDF…');
+      }
+
       const { generateLeaseSheetPdf } = await import('../lib/pdfGenerator');
-      const { base64 } = await generateLeaseSheetPdf({
-        ...leaseData,
-        ticket_number: tn,
-        herbicidesLookup: cachedLookups?.herbicides || [],
-        applicatorsLookup: cachedLookups?.applicators || [],
-      });
+      const { base64 } = await generateLeaseSheetPdf(
+        {
+          ...leaseData,
+          ticket_number: tn,
+          herbicidesLookup: cachedLookups?.herbicides || [],
+          applicatorsLookup: cachedLookups?.applicators || [],
+        },
+        photoDataUrls
+      );
 
       const updated = await api.updateSiteSprayRecord(record.id, {
         pdf_base64: base64,
