@@ -11,3 +11,10 @@ frontend/public/version.json
 .env
 .DS_Store
 Thumbs.db
+
+# Local build / debug artifacts (not for source control)
+*.log
+err.txt
+**/err.txt
+project_architecture.html
+project_architecture.pdf
