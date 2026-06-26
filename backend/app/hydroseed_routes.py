@@ -37,6 +37,7 @@ from app.schemas import (
     HydroseedDailyUpdate,
     HydroseedTicketCreate,
     HydroseedTicketDeltaRow,
+    HydroseedTicketListRead,
     HydroseedTicketRead,
     HydroseedTicketsDeltaResponse,
     HydroseedTicketUpdate,
@@ -164,7 +165,7 @@ def _strip_office_fields_for_worker(
     them — only `rate`, GST/percent, and totals get stripped.
     """
     data = HydroseedTicketRead.model_validate(ticket)
-    if current_user.role == RoleEnum.worker:
+    if current_user.role in (RoleEnum.worker, RoleEnum.crew_lead):
         stripped_office_data = None
         if ticket.office_data:
             src = ticket.office_data
@@ -1201,7 +1202,7 @@ def list_open_tickets(
     return [_strip_office_fields_for_worker(t, current_user) for t in tickets]
 
 
-@router.get("/tickets", response_model=list[HydroseedTicketRead])
+@router.get("/tickets", response_model=list[HydroseedTicketListRead])
 def list_tickets(
     status_filter: TMTicketStatus | None = Query(default=None, alias="status"),
     work_date: date | None = Query(default=None),
@@ -1214,7 +1215,7 @@ def list_tickets(
     if work_date:
         q = q.filter(HydroseedTicket.work_date == work_date)
     tickets = q.order_by(HydroseedTicket.created_at.desc()).limit(200).all()
-    return [_strip_office_fields_for_worker(t, current_user) for t in tickets]
+    return [HydroseedTicketListRead.model_validate(t) for t in tickets]
 
 
 # Declared BEFORE /tickets/{id} so FastAPI doesn't route 'deleted' as an id.

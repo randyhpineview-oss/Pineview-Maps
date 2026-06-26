@@ -312,7 +312,7 @@ def startup_event() -> None:
 # Format: an opaque-but-meaningful string. Date-prefix + initial keeps
 # bumps obvious in git blame. The exact value doesn't matter as long as
 # it differs from any prior committed value.
-_MIGRATION_VERSION = "2026-06-08-shift-last-location"
+_MIGRATION_VERSION = "2026-06-25-ticket-created-at-indexes"
 
 
 def _migrate_add_columns() -> None:
@@ -642,6 +642,24 @@ def _migrate_add_columns() -> None:
                 conn.execute(text("ALTER TABLE shifts ADD COLUMN last_loc_accuracy_m NUMERIC(8,2)"))
             if "last_loc_at" not in existing_shifts:
                 conn.execute(text("ALTER TABLE shifts ADD COLUMN last_loc_at TIMESTAMP"))
+
+        if insp.has_table("time_materials_tickets"):
+            try:
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_time_materials_tickets_created_at "
+                    "ON time_materials_tickets(created_at DESC)"
+                ))
+            except Exception as e:
+                print(f"[STARTUP] Could not create time_materials_tickets.created_at index: {e}")
+
+        if insp.has_table("hydroseed_tickets"):
+            try:
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_hydroseed_tickets_created_at "
+                    "ON hydroseed_tickets(created_at DESC)"
+                ))
+            except Exception as e:
+                print(f"[STARTUP] Could not create hydroseed_tickets.created_at index: {e}")
 
     # ── Stamp schema_meta so subsequent cold starts can short-circuit.
     # Done in its own transaction so the migrations above commit even if

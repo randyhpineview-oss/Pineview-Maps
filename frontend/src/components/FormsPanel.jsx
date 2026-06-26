@@ -54,6 +54,8 @@ const HYD_STATUS_ALL = 'all';
 const HYD_STATUS_SUBMITTED = 'submitted';
 const HYD_STATUS_APPROVED = 'approved';
 
+const TICKET_SYNC_DEBOUNCE_MS = 500;
+
 // Format an ISO timestamp as a short, worker-friendly "submitted on" label
 // used in the Recently Submitted list. Falls back to an em dash when the
 // incoming value is missing or invalid so rows never render "Invalid Date".
@@ -562,77 +564,64 @@ export default function FormsPanel({
     const onInProgress = subTab === SUB_IN_PROGRESS;
     const onRecentsTm = subTab === SUB_RECENTS && recTab !== REC_LEASE;
     if (!onInProgress && !onRecentsTm) return;
-    // Guard against overlapping runs when multiple deps change in the same
-    // tick (e.g. tab switch + token bump). The in-flight request completes
-    // and commits before we fire another.
-    if (tmSyncingRef.current) return;
 
     let cancelled = false;
-    tmSyncingRef.current = true;
-    setTmSyncing(true);
-    (async () => {
-      try {
-        const since = tmTicketsSinceRef.current;
-        if (!since) {
-          // Cold start — full list. Seeds both state and the watermark so
-          // the NEXT call can take the delta path. We use the current wall
-          // clock as the watermark rather than a per-row max(updated_at):
-          // simpler, and any race with a row written mid-request is caught
-          // by the next delta tick anyway (updated_at > since still holds).
-          const list = await api.listTMTickets({});
-          if (cancelled) return;
-          tmDeltaFailCountRef.current = 0;
-          setTmTickets(list || []);
-          setTmTicketsLoaded(true);
-          tmTicketsSinceRef.current = new Date().toISOString();
-          // Fix #5 — warm the IDB detail cache so TMTicketDetailSheet
-          // can open offline. By using replaceTMTickets, we ensure any
-          // soft-deleted tickets lingering in the local IDB are purged
-          // on a fresh full sync.
-          try { await replaceTMTickets(list || []); } catch { /* non-fatal */ }
-        } else {
-          // Delta — merges new/updated rows and prunes soft-deleted ones.
-          const delta = await api.tmTicketsDelta(since);
-          if (cancelled) return;
-          tmDeltaFailCountRef.current = 0;
-          const items = Array.isArray(delta?.items) ? delta.items : [];
-          const idsRemoved = Array.isArray(delta?.ids_removed) ? delta.ids_removed : [];
-          if (items.length > 0 || idsRemoved.length > 0) {
-            setTmTickets((prev) => {
-              const byId = new Map(prev.map((t) => [t.id, t]));
-              for (const it of items) byId.set(it.id, it);
-              for (const id of idsRemoved) byId.delete(id);
-              return Array.from(byId.values());
-            });
-            // Fix #5 — keep the offline detail cache in sync with deltas
-            // (new tickets, edits, status changes).
-            if (items.length > 0) {
-              try { await upsertTMTickets(items); } catch { /* non-fatal */ }
-            }
-            if (idsRemoved.length > 0) {
-              for (const id of idsRemoved) {
-                try { await removeTMTicket(id); } catch { /* non-fatal */ }
+    const timer = setTimeout(() => {
+      if (cancelled || tmSyncingRef.current) return;
+      tmSyncingRef.current = true;
+      setTmSyncing(true);
+      (async () => {
+        try {
+          const since = tmTicketsSinceRef.current;
+          if (!since) {
+            const list = await api.listTMTickets({});
+            if (cancelled) return;
+            tmDeltaFailCountRef.current = 0;
+            setTmTickets(list || []);
+            setTmTicketsLoaded(true);
+            tmTicketsSinceRef.current = new Date().toISOString();
+            try { await replaceTMTickets(list || []); } catch { /* non-fatal */ }
+          } else {
+            const delta = await api.tmTicketsDelta(since);
+            if (cancelled) return;
+            tmDeltaFailCountRef.current = 0;
+            const items = Array.isArray(delta?.items) ? delta.items : [];
+            const idsRemoved = Array.isArray(delta?.ids_removed) ? delta.ids_removed : [];
+            if (items.length > 0 || idsRemoved.length > 0) {
+              setTmTickets((prev) => {
+                const byId = new Map(prev.map((t) => [t.id, t]));
+                for (const it of items) byId.set(it.id, it);
+                for (const id of idsRemoved) byId.delete(id);
+                return Array.from(byId.values());
+              });
+              if (items.length > 0) {
+                try { await upsertTMTickets(items); } catch { /* non-fatal */ }
+              }
+              if (idsRemoved.length > 0) {
+                for (const id of idsRemoved) {
+                  try { await removeTMTicket(id); } catch { /* non-fatal */ }
+                }
               }
             }
+            tmTicketsSinceRef.current = delta?.server_time || tmTicketsSinceRef.current;
           }
-          // Advance the watermark. Server sends `server_time` captured
-          // BEFORE its query so nothing can slip through on the next tick.
-          tmTicketsSinceRef.current = delta?.server_time || tmTicketsSinceRef.current;
+        } catch (e) {
+          tmDeltaFailCountRef.current += 1;
+          if (tmDeltaFailCountRef.current >= 2) {
+            console.warn('[FORMS] TM tickets sync failed:', e.message);
+          }
+          setTmTicketsLoaded(true);
+        } finally {
+          tmSyncingRef.current = false;
+          if (!cancelled) setTmSyncing(false);
         }
-      } catch (e) {
-        tmDeltaFailCountRef.current += 1;
-        if (tmDeltaFailCountRef.current >= 2) {
-          console.warn('[FORMS] TM tickets sync failed:', e.message);
-        }
-        // Mark loaded even on error so the UI doesn't stay on the spinner.
-        setTmTicketsLoaded(true);
-        // Leave the watermark alone so the next tick retries the same range.
-      } finally {
-        tmSyncingRef.current = false;
-        if (!cancelled) setTmSyncing(false);
-      }
-    })();
-    return () => { cancelled = true; };
+      })();
+    }, TICKET_SYNC_DEBOUNCE_MS);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [visible, subTab, recTab, tmRefreshToken, tmLocalTick]);
 
   // Fast local poll for TM tickets while the user is actively looking at
@@ -753,67 +742,64 @@ export default function FormsPanel({
     const onInProgress = subTab === SUB_IN_PROGRESS;
     const onRecents = subTab === SUB_RECENTS;
     if (!onInProgress && !onRecents) return;
-    if (hydroseedSyncingRef.current) return;
 
     let cancelled = false;
-    hydroseedSyncingRef.current = true;
-    setHydroseedSyncing(true);
-    (async () => {
-      try {
-        const since = hydroseedTicketsSinceRef.current;
-        if (!since) {
-          // Cold start — full list. Seeds state + watermark + the IDB
-          // detail cache so HydroseedTicketDetailSheet can open offline.
-          const list = await api.listHydroseedTickets({});
-          if (cancelled) return;
-          hydroseedDeltaFailCountRef.current = 0;
-          setHydroseedTickets(list || []);
-          setHydroseedTicketsLoaded(true);
-          hydroseedTicketsSinceRef.current = new Date().toISOString();
-          try { await replaceHydroseedTickets(list || []); } catch { /* non-fatal */ }
-        } else {
-          // Delta — merges new/updated rows and prunes soft-deleted ones.
-          const delta = await api.getHydroseedTicketsDelta(since);
-          if (cancelled) return;
-          hydroseedDeltaFailCountRef.current = 0;
-          const items = Array.isArray(delta?.items) ? delta.items : [];
-          const idsRemoved = Array.isArray(delta?.ids_removed) ? delta.ids_removed : [];
-          if (items.length > 0 || idsRemoved.length > 0) {
-            setHydroseedTickets((prev) => {
-              const byId = new Map(prev.map((t) => [t.id, t]));
-              for (const it of items) byId.set(it.id, it);
-              for (const id of idsRemoved) byId.delete(id);
-              return Array.from(byId.values());
-            });
-            // Keep the offline detail cache in sync with deltas (new
-            // tickets, edits, status changes).
-            if (items.length > 0) {
-              try { await upsertHydroseedTickets(items); } catch { /* non-fatal */ }
-            }
-            if (idsRemoved.length > 0) {
-              for (const id of idsRemoved) {
-                try { await removeHydroseedTicket(id); } catch { /* non-fatal */ }
+    const timer = setTimeout(() => {
+      if (cancelled || hydroseedSyncingRef.current) return;
+      hydroseedSyncingRef.current = true;
+      setHydroseedSyncing(true);
+      (async () => {
+        try {
+          const since = hydroseedTicketsSinceRef.current;
+          if (!since) {
+            const list = await api.listHydroseedTickets({});
+            if (cancelled) return;
+            hydroseedDeltaFailCountRef.current = 0;
+            setHydroseedTickets(list || []);
+            setHydroseedTicketsLoaded(true);
+            hydroseedTicketsSinceRef.current = new Date().toISOString();
+            try { await replaceHydroseedTickets(list || []); } catch { /* non-fatal */ }
+          } else {
+            const delta = await api.getHydroseedTicketsDelta(since);
+            if (cancelled) return;
+            hydroseedDeltaFailCountRef.current = 0;
+            const items = Array.isArray(delta?.items) ? delta.items : [];
+            const idsRemoved = Array.isArray(delta?.ids_removed) ? delta.ids_removed : [];
+            if (items.length > 0 || idsRemoved.length > 0) {
+              setHydroseedTickets((prev) => {
+                const byId = new Map(prev.map((t) => [t.id, t]));
+                for (const it of items) byId.set(it.id, it);
+                for (const id of idsRemoved) byId.delete(id);
+                return Array.from(byId.values());
+              });
+              if (items.length > 0) {
+                try { await upsertHydroseedTickets(items); } catch { /* non-fatal */ }
+              }
+              if (idsRemoved.length > 0) {
+                for (const id of idsRemoved) {
+                  try { await removeHydroseedTicket(id); } catch { /* non-fatal */ }
+                }
               }
             }
+            hydroseedTicketsSinceRef.current = delta?.server_time || hydroseedTicketsSinceRef.current;
           }
-          // Advance the watermark. Server sends `server_time` captured
-          // BEFORE its query so nothing can slip through on the next tick.
-          hydroseedTicketsSinceRef.current = delta?.server_time || hydroseedTicketsSinceRef.current;
+        } catch (e) {
+          hydroseedDeltaFailCountRef.current += 1;
+          if (hydroseedDeltaFailCountRef.current >= 2) {
+            console.warn('[FORMS] hydroseed tickets sync failed:', e.message);
+          }
+          setHydroseedTicketsLoaded(true);
+        } finally {
+          hydroseedSyncingRef.current = false;
+          if (!cancelled) setHydroseedSyncing(false);
         }
-      } catch (e) {
-        hydroseedDeltaFailCountRef.current += 1;
-        if (hydroseedDeltaFailCountRef.current >= 2) {
-          console.warn('[FORMS] hydroseed tickets sync failed:', e.message);
-        }
-        // Mark loaded even on error so the UI doesn't stay on the spinner.
-        setHydroseedTicketsLoaded(true);
-        // Leave the watermark alone so the next tick retries the same range.
-      } finally {
-        hydroseedSyncingRef.current = false;
-        if (!cancelled) setHydroseedSyncing(false);
-      }
-    })();
-    return () => { cancelled = true; };
+      })();
+    }, TICKET_SYNC_DEBOUNCE_MS);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [visible, subTab, recTab, hydroseedRefreshToken, tmLocalTick]);
 
   // Submitted Hydroseed dailies — delta-sync mirror of the tickets effect

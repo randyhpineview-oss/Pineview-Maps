@@ -41,6 +41,7 @@ CREATE INDEX IF NOT EXISTS ix_time_materials_tickets_spray_date   ON time_materi
 CREATE INDEX IF NOT EXISTS ix_time_materials_tickets_client        ON time_materials_tickets(client);
 CREATE INDEX IF NOT EXISTS ix_time_materials_tickets_area          ON time_materials_tickets(area);
 CREATE INDEX IF NOT EXISTS ix_time_materials_tickets_created_by    ON time_materials_tickets(created_by_user_id);
+CREATE INDEX IF NOT EXISTS ix_time_materials_tickets_created_at    ON time_materials_tickets(created_at DESC);
 CREATE INDEX IF NOT EXISTS ix_time_materials_tickets_status        ON time_materials_tickets(status);
 
 -- ── time_materials_rows (each row ⇔ one linked SiteSprayRecord) ──────────────

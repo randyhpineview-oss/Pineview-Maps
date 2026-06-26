@@ -712,6 +712,33 @@ class HydroseedTicketRead(BaseModel):
         return out
 
 
+class HydroseedTicketListRead(BaseModel):
+    """Slim list view of a hydroseed ticket. Same rationale as
+    `HydroseedTicketDeltaRow` — list views only render header + rows, so
+    we omit the heavy `office_data` JSONB, the `approved_signature` base64
+    PNG, and the `daily_records` linked-daily summary. The full detail
+    sheet still fetches `HydroseedTicketRead` on demand via
+    `GET /api/hydroseed/tickets/{id}`."""
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    ticket_number: str
+    work_date: date
+    client: str
+    area: str
+    description_of_work: str | None = None
+    po_approval_number: str | None = None
+    created_by_user_id: int | None = None
+    created_by_name: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    pdf_url: str | None = None
+    approved_by_user_id: int | None = None
+    approved_by_name: str | None = None
+    approved_at: datetime | None = None
+    status: TMTicketStatus
+    rows: list[HydroseedTicketRowRead] = Field(default_factory=list)
+
+
 class HydroseedTicketDeltaRow(BaseModel):
     """Slim delta-payload view. Omits office_data + approved_signature.
     Same rationale as TimeMaterialsTicketDeltaRow."""

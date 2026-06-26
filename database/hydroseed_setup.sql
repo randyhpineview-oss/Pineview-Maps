@@ -58,6 +58,7 @@ CREATE INDEX IF NOT EXISTS ix_hydroseed_tickets_work_date     ON hydroseed_ticke
 CREATE INDEX IF NOT EXISTS ix_hydroseed_tickets_client        ON hydroseed_tickets(client);
 CREATE INDEX IF NOT EXISTS ix_hydroseed_tickets_area          ON hydroseed_tickets(area);
 CREATE INDEX IF NOT EXISTS ix_hydroseed_tickets_created_by    ON hydroseed_tickets(created_by_user_id);
+CREATE INDEX IF NOT EXISTS ix_hydroseed_tickets_created_at    ON hydroseed_tickets(created_at DESC);
 CREATE INDEX IF NOT EXISTS ix_hydroseed_tickets_updated_at    ON hydroseed_tickets(updated_at);
 CREATE INDEX IF NOT EXISTS ix_hydroseed_tickets_status        ON hydroseed_tickets(status);
 CREATE INDEX IF NOT EXISTS ix_hydroseed_tickets_deleted_at    ON hydroseed_tickets(deleted_at);
