@@ -472,7 +472,17 @@ export async function generateTMTicketPdf(ticket, options = {}) {
   }
 
   // ── Output ──
+  // Single doc.output() call — see pdfGenerator.js for why calling it
+  // twice (blob + datauristring) produced silently-corrupted Dropbox
+  // uploads. Serialize once, derive base64 from the same bytes.
   const blob = doc.output('blob');
-  const base64 = doc.output('datauristring').split(',')[1];
+  const buf = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  const base64 = btoa(binary);
   return { blob, base64 };
 }

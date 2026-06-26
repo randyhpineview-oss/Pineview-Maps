@@ -372,7 +372,22 @@ export async function generateLeaseSheetPdf(data, photoDataUrls = []) {
   }
 
   // ── Output ──
+  // Serialize the PDF exactly once and derive base64 from the SAME bytes.
+  // Calling doc.output() twice (e.g. once for 'blob' and once for
+  // 'datauristring') is fragile in jsPDF — internal stream / xref state can
+  // desync between calls, producing a blob whose bytes don't match the
+  // base64. That was the "sometimes corrupted in Dropbox" lease-sheet bug
+  // (Jun 2026): the uploaded base64 was a different serialization than the
+  // locally-rendered preview, so the in-app preview worked but the file in
+  // Dropbox failed to open in stricter PDF readers.
   const blob = doc.output('blob');
-  const base64 = doc.output('datauristring').split(',')[1];
+  const buf = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  const base64 = btoa(binary);
   return { blob, base64 };
 }
