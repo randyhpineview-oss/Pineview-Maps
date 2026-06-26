@@ -1894,7 +1894,7 @@ export default function App() {
           // Retrying MAX_ATTEMPTS times before stalling wastes worker
           // bandwidth and delays surfacing the broken item in the
           // Uploading list. Flip to 'stalled' immediately.
-          if (err?.status === 400 || err?.status === 422) {
+          if (err?.status === 400 || err?.status === 422 || err?.status === 409) {
             try {
               await updateUploadEntry(item.id, {
                 attempts: (item.attempts || 0) + 1,

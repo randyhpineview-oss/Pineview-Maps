@@ -561,10 +561,60 @@ def _find_or_create_ticket_for_daily(
         if not ticket:
             return None
         if ticket.status != TMTicketStatus.open:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Hydroseed ticket is already signed / approved and cannot accept new dailies.",
+            # Fallback: instead of throwing 409 Conflict and stalling the offline queue,
+            # we automatically allocate a new Hydroseed ticket or find another open one.
+            # This ensures the worker's work is uploaded and not lost.
+            client = daily.client or ""
+            area = daily.area or ""
+            work_date_val = daily.work_date
+            if isinstance(work_date_val, datetime):
+                work_date_val = work_date_val.date()
+
+            # Search for another open ticket for this client, area, and work date
+            # created by the same user.
+            other_ticket = (
+                db.query(HydroseedTicket)
+                .filter(
+                    HydroseedTicket.status == TMTicketStatus.open,
+                    HydroseedTicket.deleted_at.is_(None),
+                    func.lower(func.trim(HydroseedTicket.client)) == client.strip().lower(),
+                    func.lower(func.trim(HydroseedTicket.area)) == area.strip().lower(),
+                    HydroseedTicket.work_date == work_date_val,
+                    or_(
+                        HydroseedTicket.created_by_user_id == current_user.id,
+                        and_(
+                            HydroseedTicket.created_by_user_id.is_(None),
+                            HydroseedTicket.created_by_name == current_user.name,
+                        ),
+                    ),
+                )
+                .order_by(HydroseedTicket.created_at.desc())
+                .first()
             )
+            if other_ticket:
+                print(f"[HYDROSEED_FALLBACK] Closed ticket {ticket.ticket_number} (ID {ticket.id}) selected. Found other open ticket {other_ticket.ticket_number} (ID {other_ticket.id}) for user {current_user.id or current_user.name}. Re-homing record.")
+                return other_ticket
+                
+            # Create a new ticket if none found
+            ticket_number = _allocate_ticket_number(db)
+            user_name = getattr(current_user, "name", None) or (
+                current_user.email.split("@")[0].title() if current_user.email else None
+            )
+            new_ticket_desc = description_of_work or ticket.description_of_work or ""
+            other_ticket = HydroseedTicket(
+                ticket_number=ticket_number,
+                work_date=work_date_val,
+                client=client,
+                area=area,
+                status=TMTicketStatus.open,
+                description_of_work=new_ticket_desc,
+                created_by_user_id=current_user.id,
+                created_by_name=user_name,
+            )
+            db.add(other_ticket)
+            db.flush()
+            print(f"[HYDROSEED_FALLBACK] Closed ticket {ticket.ticket_number} (ID {ticket.id}) selected. No other open ticket found. Created new ticket {other_ticket.ticket_number} (ID {other_ticket.id}) for user {current_user.id or current_user.name}. Re-homing record.")
+            return other_ticket
         if current_user.role == RoleEnum.worker and not _worker_owns_ticket(ticket, current_user):
             return None
         return ticket

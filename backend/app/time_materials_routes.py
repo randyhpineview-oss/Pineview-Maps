@@ -1666,10 +1666,66 @@ def find_or_create_ticket_for_link(
         # (submitted / approved / signed). The picker already filters these out
         # on the frontend, but this is a backstop against stale UIs.
         if ticket.status != TMTicketStatus.open:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="T&M ticket is already signed / approved and cannot accept new rows.",
+            # Fallback: instead of throwing 409 Conflict and stalling the offline queue,
+            # we automatically allocate a new T&M ticket or find another open one.
+            # This ensures the worker's work is uploaded and not lost.
+            data = record.lease_sheet_data or {}
+            if _is_pipeline_record(record):
+                parent = getattr(record, "pipeline", None)
+            else:
+                parent = getattr(record, "site", None)
+            client = data.get("customer") or (parent.client if parent else "") or ""
+            area = data.get("area") or (parent.area if parent else "") or ""
+            
+            spray_date_val = record.spray_date
+            if isinstance(spray_date_val, datetime):
+                spray_date_val = spray_date_val.date()
+
+            # Search for another open ticket for this client, area, and spray date
+            # created by the same user.
+            other_ticket = (
+                db.query(TimeMaterialsTicket)
+                .filter(
+                    TimeMaterialsTicket.status == TMTicketStatus.open,
+                    TimeMaterialsTicket.deleted_at.is_(None),
+                    func.lower(func.trim(TimeMaterialsTicket.client)) == client.strip().lower(),
+                    func.lower(func.trim(TimeMaterialsTicket.area)) == area.strip().lower(),
+                    TimeMaterialsTicket.spray_date == spray_date_val,
+                    or_(
+                        TimeMaterialsTicket.created_by_user_id == current_user.id,
+                        and_(
+                            TimeMaterialsTicket.created_by_user_id.is_(None),
+                            TimeMaterialsTicket.created_by_name == current_user.name,
+                        ),
+                    ),
+                )
+                .order_by(TimeMaterialsTicket.created_at.desc())
+                .first()
             )
+            if other_ticket:
+                print(f"[TM_FALLBACK] Closed ticket {ticket.ticket_number} (ID {ticket.id}) selected. Found other open ticket {other_ticket.ticket_number} (ID {other_ticket.id}) for user {current_user.id or current_user.name}. Re-homing row.")
+                return other_ticket
+                
+            # Create a new ticket if none found
+            ticket_number = _allocate_ticket_number(db)
+            user_name = getattr(current_user, "name", None) or (
+                current_user.email.split("@")[0].title() if current_user.email else None
+            )
+            new_ticket_desc = description_of_work or ticket.description_of_work or "Herbicide Application"
+            other_ticket = TimeMaterialsTicket(
+                ticket_number=ticket_number,
+                spray_date=spray_date_val,
+                client=client,
+                area=area,
+                status=TMTicketStatus.open,
+                description_of_work=new_ticket_desc,
+                created_by_user_id=current_user.id,
+                created_by_name=user_name,
+            )
+            db.add(other_ticket)
+            db.flush()
+            print(f"[TM_FALLBACK] Closed ticket {ticket.ticket_number} (ID {ticket.id}) selected. No other open ticket found. Created new ticket {other_ticket.ticket_number} (ID {other_ticket.id}) for user {current_user.id or current_user.name}. Re-homing row.")
+            return other_ticket
         # Workers may only attach to their own open tickets
         if current_user.role == RoleEnum.worker and not _worker_owns_ticket(ticket, current_user):
             return None
