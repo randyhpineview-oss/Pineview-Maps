@@ -108,6 +108,7 @@ export default function TMTicketDetailSheet({
   const [client, setClient] = useState('');
   const [area, setArea] = useState('');
   const [poNumber, setPoNumber] = useState('');
+  const [sprayDate, setSprayDate] = useState('');
   const [officeLines, setOfficeLines] = useState(DEFAULT_OFFICE_LINES.map((l) => ({ ...l })));
   const [gstPercent, setGstPercent] = useState(5);
   // Whether to charge GST on this ticket. Office-controlled toggle; defaults
@@ -154,6 +155,7 @@ export default function TMTicketDetailSheet({
         setDescription(t.description_of_work || '');
         setClient(t.client || '');
         setArea(t.area || '');
+        setSprayDate(t.spray_date || '');
         setPoNumber(t.po_approval_number || '');
         // Seed office lines from saved data, or start from defaults. Helper
         // also fills in any default labels missing from a legacy partial
@@ -262,6 +264,7 @@ export default function TMTicketDetailSheet({
       setDescription(merged.description_of_work || '');
       setClient(merged.client || '');
       setArea(merged.area || '');
+      setSprayDate(merged.spray_date || '');
       setPoNumber(merged.po_approval_number || '');
       setOfficeLines(seedOfficeLinesFromOfficeData(merged.office_data));
       setGstPercent(Number(merged.office_data?.gst_percent ?? 5));
@@ -500,6 +503,7 @@ export default function TMTicketDetailSheet({
       ...ticket,
       client,
       area,
+      spray_date: sprayDate,
       description_of_work: description,
       po_approval_number: poNumber,
       rows: effectiveRows,
@@ -527,6 +531,7 @@ export default function TMTicketDetailSheet({
       if (canOfficeEdit) {
         payload.client = client;
         payload.area = area;
+        payload.spray_date = sprayDate;
         payload.po_approval_number = poNumber;
         const rowUps = buildRowUpdates();
         if (rowUps.length > 0) payload.row_updates = rowUps;
@@ -588,6 +593,7 @@ export default function TMTicketDetailSheet({
       if (canOfficeEdit) {
         payload.client = client;
         payload.area = area;
+        payload.spray_date = sprayDate;
         payload.po_approval_number = poNumber;
         const rowUps = buildRowUpdates();
         if (rowUps.length > 0) payload.row_updates = rowUps;
@@ -677,6 +683,7 @@ export default function TMTicketDetailSheet({
         description_of_work: description,
         client,
         area,
+        spray_date: sprayDate,
         po_approval_number: poNumber,
         office_data: buildOfficeDataPayload(),
         approved_signature: signatureBase64,
@@ -770,6 +777,7 @@ export default function TMTicketDetailSheet({
         description_of_work: description,
         client,
         area,
+        spray_date: sprayDate,
         po_approval_number: poNumber,
         office_data: buildOfficeDataPayload(),
         approve: true,
@@ -889,7 +897,7 @@ export default function TMTicketDetailSheet({
         />
       </div>
       {canOfficeEdit ? (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '12px' }}>
           <div>
             <label style={{ display: 'block', fontSize: '0.85rem', color: '#9ca3af', marginBottom: '4px' }}>Client</label>
             <input
@@ -906,6 +914,18 @@ export default function TMTicketDetailSheet({
             <input
               value={area}
               onChange={(e) => setArea(e.target.value)}
+              style={{
+                width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '6px',
+                border: '1px solid #374151', backgroundColor: '#111827', color: '#f9fafb',
+              }}
+            />
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: '0.85rem', color: '#9ca3af', marginBottom: '4px' }}>Date</label>
+            <input
+              type="date"
+              value={sprayDate}
+              onChange={(e) => setSprayDate(e.target.value)}
               style={{
                 width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '6px',
                 border: '1px solid #374151', backgroundColor: '#111827', color: '#f9fafb',

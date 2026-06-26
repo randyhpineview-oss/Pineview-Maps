@@ -544,6 +544,7 @@ class TimeMaterialsTicketCreate(BaseModel):
 
 
 class TimeMaterialsTicketUpdate(BaseModel):
+    spray_date: date | None = None
     description_of_work: str | None = None
     client: str | None = None
     area: str | None = None

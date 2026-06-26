@@ -597,6 +597,8 @@ def update_ticket(
 
     # Office-only fields
     if is_office:
+        if payload.spray_date is not None:
+            ticket.spray_date = payload.spray_date
         if payload.client is not None:
             ticket.client = payload.client
         if payload.area is not None:
