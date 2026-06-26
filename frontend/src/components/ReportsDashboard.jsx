@@ -33,6 +33,7 @@ const COLUMN_DEFS = [
   { key: 'noxious_weeds',      label: 'Noxious Weeds',   format: 'weeds' },
   { key: 'location_types',     label: 'Location Types' },
   { key: 'main_site_type',     label: 'Main Site Type' },
+  { key: 'spray_type',         label: 'Spray Type (Blanket/Spot/Respray)' },
   { key: 'total_liters',       label: 'Total Liters' },
   { key: 'total_area',         label: 'Total Area',      format: 'area' },
   { key: 'total_distance_km',  label: 'Total Distance (km)' },
@@ -48,7 +49,7 @@ const COLUMN_DEFS = [
 
 const DEFAULT_COLUMN_KEYS = new Set([
   'ticket_number', 'lsd_or_pipeline', 'customer', 'area', 'spray_date',
-  'sprayed_by', 'herbicides', 'total_liters', 'total_area',
+  'sprayed_by', 'herbicides', 'total_liters', 'total_area', 'spray_type',
 ]);
 
 const HERBICIDE_FORMAT_OPTIONS = [

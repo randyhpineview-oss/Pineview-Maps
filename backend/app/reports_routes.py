@@ -92,6 +92,7 @@ COLUMN_CATALOG: dict[str, str] = {
     "noxious_weeds":      "Noxious Weeds",
     "location_types":     "Location Types",
     "main_site_type":     "Main Site Type",
+    "spray_type":         "Spray Type",
     "total_liters":       "Total Liters",
     "total_area":         "Total Area",
     "total_distance_km":  "Total Distance (km)",
@@ -139,6 +140,7 @@ DEFAULT_COLUMNS = [
     "herbicides",
     "total_liters",
     "total_area",
+    "spray_type",
 ]
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -401,6 +403,11 @@ def _build_report_row(
             return "; ".join(data.get("locationTypes") or [])
         if key == "main_site_type":
             return out["main_site_type"] or ""
+        if key == "spray_type":
+            # Lease-sheet sprayType is a list (Blanket / Spot / Respray).
+            # Roadside split rows inherit the parent's sprayType — the
+            # underlying lease sheet only carries one value for the whole job.
+            return "; ".join(str(s) for s in (data.get("sprayType") or []))
         if key == "total_liters":
             v = out["total_liters"]
             return "" if v is None else f"{v:g}"
