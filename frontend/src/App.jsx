@@ -6553,6 +6553,16 @@ export default function App() {
             <PdfPreviewOverlay
               record={previewingRecord}
               onClose={() => setPreviewingRecord(null)}
+              canRegenerate={canManagePins}
+              cachedLookups={cachedLookups}
+              onRegenerated={(updated) => {
+                // Swap in the freshly-uploaded record so the overlay's
+                // `directUrl` + cache keys reflect the new Dropbox URL.
+                if (updated) setPreviewingRecord(updated);
+                // Best-effort refresh of the recents list so the list view
+                // also picks up the new pdf_url.
+                try { refreshAllData?.(); } catch { /* non-fatal */ }
+              }}
             />
           </Suspense>
         )}

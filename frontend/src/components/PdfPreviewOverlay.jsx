@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
-import { getCachedPdf, putCachedPdf } from '../lib/offlineStore';
+import { getCachedPdf, putCachedPdf, deleteCachedPdf } from '../lib/offlineStore';
 import PdfPreviewViewer from './PdfPreviewViewer';
 
 function base64ToBytes(b64) {
@@ -30,13 +30,18 @@ function pdfLink(url) {
     .replace(/[?&]$/, '');
 }
 
-export default function PdfPreviewOverlay({ record, onClose }) {
+export default function PdfPreviewOverlay({ record, onClose, canRegenerate = false, cachedLookups = null, onRegenerated = null }) {
   const d = record?.lease_sheet_data || {};
   const directUrl = pdfLink(record?.pdf_url || null);
   const ticket = record?.ticket_number || d.ticket_number || '';
   const [pdfBytes, setPdfBytes] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [regenerating, setRegenerating] = useState(false);
+  const [regenMsg, setRegenMsg] = useState(null);
+  // Bumped after a successful regen to force the fetch effect to re-run
+  // against the freshly-uploaded Dropbox file instead of the stale cache.
+  const [reloadToken, setReloadToken] = useState(0);
 
   // Fetch the real Dropbox PDF via the backend proxy (avoids browser-side
   // CORS issues and means we don't have to drag base64 photos through the API).
@@ -94,7 +99,65 @@ export default function PdfPreviewOverlay({ record, onClose }) {
       cancelled = true;
       controller.abort();
     };
-  }, [record?.id, record?.pdf_url, ticket]);
+  }, [record?.id, record?.pdf_url, ticket, reloadToken]);
+
+  // ── Regenerate PDF (admin recovery for previously-corrupted Dropbox files) ──
+  // Earlier versions of the jsPDF pipeline called doc.output() twice (once for
+  // blob, once for datauristring), and the two serializations could desync,
+  // producing PDFs that opened fine in lenient readers but were rejected by
+  // pdfjs. The on-disk Dropbox copy is permanently bad for those records.
+  // This handler refetches the full record, re-runs the (now single-output)
+  // generator, and PATCHes the record so the backend re-uploads a clean PDF
+  // to Dropbox, replacing the corrupt one.
+  //
+  // Photos are NOT re-embedded — their base64 bytes are stripped server-side
+  // before persisting (see _strip_photos_from_lease_data). This matches the
+  // existing Approve & Edit regen path.
+  const handleRegenerate = async () => {
+    if (!record?.id || regenerating) return;
+    setRegenerating(true);
+    setRegenMsg('Regenerating PDF…');
+    try {
+      const full = await api.getSiteSprayRecord(record.id);
+      const leaseData = full?.lease_sheet_data || {};
+      const tn = full?.ticket_number || leaseData.ticket_number || ticket || '';
+
+      const { generateLeaseSheetPdf } = await import('../lib/pdfGenerator');
+      const { base64 } = await generateLeaseSheetPdf({
+        ...leaseData,
+        ticket_number: tn,
+        herbicidesLookup: cachedLookups?.herbicides || [],
+        applicatorsLookup: cachedLookups?.applicators || [],
+      });
+
+      const updated = await api.updateSiteSprayRecord(record.id, {
+        pdf_base64: base64,
+      });
+
+      // Invalidate caches keyed by ticket and the old (and new) Dropbox URLs
+      // so the next preview reads fresh bytes via the proxy.
+      try {
+        if (tn) await deleteCachedPdf(`ticket:${tn}`);
+        if (record.pdf_url) await deleteCachedPdf(`url:${record.pdf_url}`);
+        if (updated?.pdf_url && updated.pdf_url !== record.pdf_url) {
+          await deleteCachedPdf(`url:${updated.pdf_url}`);
+        }
+      } catch { /* non-fatal */ }
+
+      setRegenMsg('Done — reloading preview…');
+      if (typeof onRegenerated === 'function') {
+        try { onRegenerated(updated); } catch { /* parent refresh is best-effort */ }
+      }
+      setReloadToken((x) => x + 1);
+      setTimeout(() => setRegenMsg(null), 2500);
+    } catch (err) {
+      console.error('[PdfPreviewOverlay] Regenerate failed:', err);
+      setRegenMsg(`Regenerate failed: ${err?.message || 'unknown error'}`);
+      setTimeout(() => setRegenMsg(null), 4000);
+    } finally {
+      setRegenerating(false);
+    }
+  };
 
   // Print handler: open PDF in a new window and trigger browser print dialog
   const handlePrint = () => {
@@ -128,6 +191,18 @@ export default function PdfPreviewOverlay({ record, onClose }) {
           Lease Sheet {ticket ? `— ${ticket}` : ''}
         </span>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          {canRegenerate && record?.id ? (
+            <button onClick={handleRegenerate} disabled={regenerating}
+              title="Re-render this lease sheet's PDF and re-upload to Dropbox. Use this to repair PDFs that were corrupted by the old double-serialization bug."
+              style={{
+                background: 'none', border: '1px solid #f59e0b', color: '#fbbf24',
+                fontSize: '0.8rem', padding: '4px 10px', borderRadius: 6,
+                cursor: regenerating ? 'wait' : 'pointer', whiteSpace: 'nowrap',
+                opacity: regenerating ? 0.6 : 1,
+              }}>
+              {regenerating ? 'Regenerating…' : '↻ Regenerate PDF'}
+            </button>
+          ) : null}
           {pdfBytes ? (
             <button onClick={handlePrint}
               style={{ background: 'none', border: 'none', color: '#60a5fa', fontSize: '0.85rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
@@ -147,10 +222,28 @@ export default function PdfPreviewOverlay({ record, onClose }) {
         </button>
       </div>
 
+      {/* ── Inline status banner for the regen action ── */}
+      {regenMsg ? (
+        <div style={{ padding: '8px 16px', background: '#111827', color: '#fbbf24', fontSize: '0.85rem', textAlign: 'center', borderBottom: '1px solid #374151' }}>
+          {regenMsg}
+        </div>
+      ) : null}
+
       {/* ── PDF viewer ── */}
       {error ? (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', padding: '20px', textAlign: 'center' }}>
           <div style={{ color: '#f87171' }}>{error}</div>
+          {canRegenerate && record?.id ? (
+            <button onClick={handleRegenerate} disabled={regenerating}
+              style={{
+                background: '#f59e0b', border: 'none', color: '#111827',
+                fontSize: '0.9rem', padding: '8px 16px', borderRadius: 6,
+                cursor: regenerating ? 'wait' : 'pointer', fontWeight: 600,
+                opacity: regenerating ? 0.6 : 1,
+              }}>
+              {regenerating ? 'Regenerating…' : '↻ Regenerate PDF & re-upload to Dropbox'}
+            </button>
+          ) : null}
           {directUrl ? (
             <a href={directUrl} target="_blank" rel="noopener noreferrer"
               style={{ color: '#60a5fa', fontSize: '0.9rem' }}>

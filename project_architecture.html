@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pineview Maps - Project Dashboard & Architecture</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <style>
+    :root {
+      --bg-gradient: radial-gradient(circle at top, #0f172a, #020617);
+      --card-bg: rgba(15, 23, 42, 0.6);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --card-border-hover: rgba(59, 130, 246, 0.3);
+      --text-primary: #f8fafc;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --accent-blue: #3b82f6;
+      --accent-cyan: #06b6d4;
+      --accent-purple: #a855f7;
+      --accent-green: #10b981;
+      --accent-orange: #f97316;
+      --accent-red: #ef4444;
+      
+      --font-main: 'Plus Jakarta Sans', sans-serif;
+      --font-display: 'Outfit', sans-serif;
+      
+      --glow-blue: 0 0 20px rgba(59, 130, 246, 0.15);
+      --glow-cyan: 0 0 20px rgba(6, 118, 212, 0.15);
+      --glow-purple: 0 0 20px rgba(168, 85, 247, 0.15);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: var(--bg-gradient);
+      color: var(--text-primary);
+      font-family: var(--font-main);
+      min-height: 100vh;
+      padding: 2.5rem;
+      overflow-x: hidden;
+      line-height: 1.5;
+    }
+
+    /* Background decorative meshes */
+    .bg-grid {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-image: linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      z-index: -2;
+      pointer-events: none;
+    }
+
+    .bg-blur-1 {
+      position: fixed;
+      top: -10%;
+      left: 10%;
+      width: 600px;
+      height: 600px;
+      background: radial-gradient(circle, rgba(99, 102, 241, 0.08) 0%, transparent 70%);
+      z-index: -1;
+      pointer-events: none;
+    }
+
+    .bg-blur-2 {
+      position: fixed;
+      bottom: -10%;
+      right: 10%;
+      width: 500px;
+      height: 500px;
+      background: radial-gradient(circle, rgba(6, 182, 212, 0.08) 0%, transparent 70%);
+      z-index: -1;
+      pointer-events: none;
+    }
+
+    /* Container & Grid layout */
+    .container {
+      max-width: 1300px;
+      margin: 0 auto;
+    }
+
+    /* Header */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 3rem;
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 2rem;
+      flex-wrap: wrap;
+      gap: 2rem;
+    }
+
+    .brand-title h1 {
+      font-family: var(--font-display);
+      font-size: 2.75rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      background: linear-gradient(135deg, #fff 0%, #94a3b8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 0.25rem;
+    }
+
+    .brand-title .subtitle {
+      font-size: 1.05rem;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .badge {
+      background: rgba(59, 130, 246, 0.15);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      color: var(--accent-blue);
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .badge.green {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: var(--accent-green);
+    }
+
+    /* Architecture Map - The central drawing representation */
+    .section-title {
+      font-family: var(--font-display);
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .architecture-wrapper {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 3.5rem 2rem;
+      margin-bottom: 3rem;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      position: relative;
+    }
+
+    /* Interactive diagram styling */
+    .diagram-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2.5rem;
+      position: relative;
+    }
+
+    .node {
+      background: rgba(30, 41, 59, 0.7);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 1.25rem 2rem;
+      text-align: center;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+      z-index: 2;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+      cursor: default;
+    }
+
+    .node:hover {
+      transform: translateY(-4px);
+      border-color: var(--accent-blue);
+      box-shadow: var(--glow-blue);
+    }
+
+    .node-title {
+      font-family: var(--font-display);
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+    }
+
+    .node-subtitle {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+    }
+
+    /* Specific node styles */
+    .node.root {
+      background: linear-gradient(135deg, rgba(79, 70, 229, 0.2) 0%, rgba(99, 102, 241, 0.05) 100%);
+      border-color: rgba(99, 102, 241, 0.4);
+    }
+    .node.root:hover {
+      border-color: var(--accent-purple);
+      box-shadow: var(--glow-purple);
+    }
+
+    .node.vercel {
+      background: linear-gradient(135deg, rgba(6, 182, 212, 0.15) 0%, rgba(6, 182, 212, 0.02) 100%);
+      border-color: rgba(6, 182, 212, 0.4);
+    }
+    .node.vercel:hover {
+      border-color: var(--accent-cyan);
+      box-shadow: var(--glow-cyan);
+    }
+
+    .node.render {
+      background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(59, 130, 246, 0.02) 100%);
+      border-color: rgba(59, 130, 246, 0.4);
+    }
+
+    .node.supabase {
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(16, 185, 129, 0.02) 100%);
+      border-color: rgba(16, 185, 129, 0.4);
+    }
+    .node.supabase:hover {
+      border-color: var(--accent-green);
+      box-shadow: 0 0 20px rgba(16, 185, 129, 0.15);
+    }
+
+    /* Sub-nodes row */
+    .diagram-row {
+      display: flex;
+      justify-content: space-around;
+      width: 100%;
+      position: relative;
+      gap: 1.5rem;
+    }
+
+    @media (max-width: 900px) {
+      .diagram-row {
+        flex-direction: column;
+        align-items: center;
+        gap: 3.5rem;
+      }
+      .diagram-column {
+        width: 100% !important;
+        align-items: center;
+      }
+      .diagram-svg-line {
+        display: none; /* Hide SVG lines on mobile, we use CSS vertical indicators */
+      }
+    }
+
+    .diagram-column {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2.5rem;
+      width: 32%;
+      position: relative;
+    }
+
+    .sub-row {
+      display: flex;
+      justify-content: center;
+      gap: 1rem;
+      width: 100%;
+    }
+
+    .node.sub {
+      padding: 0.75rem 1.25rem;
+      background: rgba(30, 41, 59, 0.5);
+      font-size: 0.9rem;
+      flex: 1;
+    }
+
+    /* SVG Connector Lines - for desktop */
+    .diagram-svg-line {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    .diagram-svg-line path {
+      fill: none;
+      stroke: rgba(255, 255, 255, 0.08);
+      stroke-width: 2;
+      stroke-dasharray: 4 4;
+      transition: stroke 0.3s, stroke-width 0.3s;
+    }
+
+    /* Custom hover flows */
+    .diagram-container:hover .diagram-svg-line path {
+      stroke: rgba(255, 255, 255, 0.15);
+    }
+
+    /* Main Dashboard Grid */
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 2rem;
+      margin-bottom: 3rem;
+    }
+
+    @media (max-width: 900px) {
+      .dashboard-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 2.25rem;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      transition: border-color 0.3s;
+    }
+
+    .card:hover {
+      border-color: var(--card-border-hover);
+    }
+
+    /* Project Folder Card Details */
+    .folder-path-box {
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 8px;
+      padding: 1rem;
+      font-family: monospace;
+      font-size: 0.9rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 0.75rem;
+      color: var(--accent-cyan);
+      word-break: break-all;
+    }
+
+    .btn-copy {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: var(--text-primary);
+      padding: 0.4rem 0.8rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: var(--font-main);
+      font-size: 0.8rem;
+      font-weight: 500;
+      transition: all 0.2s;
+      flex-shrink: 0;
+      margin-left: 1rem;
+    }
+
+    .btn-copy:hover {
+      background: rgba(59, 130, 246, 0.2);
+      border-color: var(--accent-blue);
+    }
+
+    /* Credentials Block styling */
+    .credentials-wrapper {
+      margin-top: 1.5rem;
+      padding-top: 1.5rem;
+      border-top: 1px dashed rgba(255, 255, 255, 0.1);
+    }
+
+    .cred-title {
+      font-family: var(--font-display);
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .cred-row {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      background: rgba(30, 41, 59, 0.3);
+      padding: 1.25rem;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.03);
+    }
+
+    .cred-field {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .cred-label {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      font-weight: 500;
+      flex-shrink: 0;
+    }
+
+    .cred-value-container {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(15, 23, 42, 0.6);
+      padding: 0.4rem 0.75rem;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      flex-grow: 1;
+      justify-content: flex-end;
+      overflow: hidden;
+    }
+
+    .cred-value {
+      font-family: monospace;
+      font-size: 0.85rem;
+      color: var(--accent-purple);
+      text-overflow: ellipsis;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    .cred-value.secret {
+      filter: blur(4px);
+      transition: filter 0.2s;
+      user-select: none;
+    }
+
+    .cred-value.secret.revealed {
+      filter: blur(0);
+      user-select: text;
+    }
+
+    .btn-reveal {
+      background: none;
+      border: none;
+      color: var(--text-secondary);
+      font-size: 0.75rem;
+      cursor: pointer;
+      text-decoration: underline;
+      padding: 0.2rem;
+      flex-shrink: 0;
+    }
+
+    .btn-reveal:hover {
+      color: var(--text-primary);
+    }
+
+    /* Login Paths Visual Flow */
+    .login-flow-list {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+
+    .flow-chain {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      font-size: 0.9rem;
+      background: rgba(30, 41, 59, 0.3);
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+    }
+
+    .flow-step {
+      font-weight: 500;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .flow-arrow {
+      color: var(--accent-blue);
+      font-weight: 700;
+    }
+
+    /* Dev tools info block */
+    .dev-tools-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.75rem;
+      margin-top: 1rem;
+    }
+
+    @media (max-width: 600px) {
+      .dev-tools-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    .tool-tag {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 8px;
+      padding: 0.6rem;
+      text-align: center;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+    }
+
+    .tool-tag:hover {
+      color: var(--text-primary);
+      border-color: rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    /* Toast Notification */
+    .toast {
+      position: fixed;
+      bottom: 2rem;
+      right: 2rem;
+      background: #1e293b;
+      color: var(--text-primary);
+      border: 1px solid var(--accent-blue);
+      border-radius: 8px;
+      padding: 0.75rem 1.5rem;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      transform: translateY(150%);
+      transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      z-index: 100;
+    }
+
+    .toast.show {
+      transform: translateY(0);
+    }
+
+  </style>
+</head>
+<body>
+
+  <!-- Background decorations -->
+  <div class="bg-grid"></div>
+  <div class="bg-blur-1"></div>
+  <div class="bg-blur-2"></div>
+
+  <div class="container">
+    
+    <!-- Top Header -->
+    <header>
+      <div class="brand-title">
+        <h1>Pineview Maps</h1>
+        <div class="subtitle">
+          System Architecture & Infrastructure Hub 
+          <span class="badge green">Ready</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Visual Architecture Map (The handwritten sketch recreated) -->
+    <div class="section-title">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="M12 6v12"/><path d="M6 12h12"/></svg>
+      System Architecture Map
+    </div>
+    
+    <div class="architecture-wrapper">
+      <!-- SVG Connectors for visual design -->
+      <svg class="diagram-svg-line" id="svg-connectors">
+        <!-- SVG lines will be drawn here dynamically via javascript for accurate positioning -->
+      </svg>
+
+      <div class="diagram-container">
+        <!-- Root node: Github -->
+        <div class="node root" id="node-github">
+          <div class="node-title">Github Repository</div>
+          <div class="node-subtitle">Version Control Hub</div>
+        </div>
+
+        <!-- Row 2: Vercel, Render, Supabase -->
+        <div class="diagram-row">
+          
+          <!-- Column 1: Vercel -->
+          <div class="diagram-column">
+            <div class="node vercel" id="node-vercel">
+              <span class="badge blue" style="float: right; margin-left: 0.5rem; padding: 0.1rem 0.4rem; font-size: 0.7rem;">Free</span>
+              <div class="node-title">Vercel</div>
+              <div class="node-subtitle">Frontend Deployment</div>
+            </div>
+            
+            <div class="sub-row">
+              <div class="node sub" id="node-godaddy">
+                <div class="node-title">GoDaddy</div>
+                <div class="node-subtitle" style="font-size:0.72rem; color: var(--accent-cyan);">mikf.pineview@gmail.com</div>
+                <div class="node-subtitle" style="font-size:0.68rem; margin-top:0.1rem;">$100/yr Domain</div>
+              </div>
+              <div class="node sub" id="node-resend">
+                <span class="badge green" style="font-size:0.6rem; padding: 0.1rem 0.3rem; float:right;">Free</span>
+                <div class="node-title" style="clear:both;">Resend</div>
+                <div class="node-subtitle" style="font-size: 0.75rem; margin-top:0.25rem;">Transactional Email</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Column 2: Render -->
+          <div class="diagram-column" style="justify-content: flex-start;">
+            <div class="node render" id="node-render">
+              <div class="node-title">Render Backend</div>
+              <div class="node-subtitle">$25 USD+ (Updates dependent)</div>
+            </div>
+          </div>
+
+          <!-- Column 3: Supabase -->
+          <div class="diagram-column">
+            <div class="node supabase" id="node-supabase">
+              <div class="node-title">Supabase Database</div>
+              <div class="node-subtitle">$25 / Mo Logins & DB</div>
+            </div>
+
+            <div class="sub-row">
+              <div class="node sub" id="node-sql">
+                <div class="node-title">SQL Changes</div>
+                <div class="node-subtitle">Migration Management</div>
+              </div>
+              <div class="node sub" id="node-egress">
+                <div class="node-title">Egress</div>
+                <div class="node-subtitle">External Data</div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- Details and Checklists Grid -->
+    <div class="dashboard-grid">
+      
+      <!-- Card: Project Environment & Accounts -->
+      <div class="card">
+        <div class="section-title">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-purple)" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          Workspace Directory & Team Tools
+        </div>
+        
+        <p style="color: var(--text-secondary); font-size: 0.9rem;">
+          Local Workspace Directory path for coding agents & developer environments:
+        </p>
+        
+        <div class="folder-path-box">
+          <span id="folder-path">C:/Users/pinev/CascadeProjects/Pineview-Actual-Data-Collab</span>
+          <button class="btn-copy" onclick="copyText('folder-path')">Copy Path</button>
+        </div>
+
+        <div style="margin-top: 1.5rem;">
+          <h4 style="font-family: var(--font-display); font-size: 1rem; font-weight: 600; margin-bottom: 0.25rem;">Dev Tools & Agents</h4>
+          <div class="dev-tools-grid">
+            <div class="tool-tag">Devin / Windsurf</div>
+            <div class="tool-tag">Antigravity</div>
+            <div class="tool-tag">Claude Code</div>
+            <div class="tool-tag">Cursor</div>
+          </div>
+        </div>
+
+        <!-- Shared Gmail Credentials -->
+        <div class="credentials-wrapper">
+          <div class="cred-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-orange)" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            Shared Gmail Account Credentials
+          </div>
+          <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 0.75rem;">
+            Primary shared account used to access all infrastructure consoles and databases:
+          </p>
+          <div class="cred-row">
+            <div class="cred-field">
+              <span class="cred-label">Email Account</span>
+              <div class="cred-value-container">
+                <span class="cred-value" id="cred-email" style="color: var(--text-primary)">randyh.pineview@gmail.com</span>
+                <button class="btn-copy" style="margin:0; padding: 0.2rem 0.5rem; font-size:0.75rem;" onclick="copyText('cred-email')">Copy</button>
+              </div>
+            </div>
+            <div class="cred-field">
+              <span class="cred-label">Secret Key</span>
+              <div class="cred-value-container">
+                <span class="cred-value secret" id="cred-pass">sytku8-rUEpoq-fyzfac</span>
+                <button class="btn-reveal" onclick="toggleSecret()">Reveal</button>
+                <button class="btn-copy" style="margin:0; padding: 0.2rem 0.5rem; font-size:0.75rem;" onclick="copyText('cred-pass')">Copy</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Card: Login Paths Visual Flow -->
+      <div class="card">
+        <div class="section-title">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-blue)" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M17 11h1v3m0-3h3m-3 0V8"/></svg>
+          Login Authentication Paths (Federated OAuth Flow)
+        </div>
+        <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 1rem;">
+          Console access routes authenticated through Google/Github identities:
+        </p>
+
+        <div class="login-flow-list">
+          <div class="flow-chain">
+            <span class="flow-step" style="color: var(--accent-orange)">Google Auth</span>
+            <span class="flow-arrow">&rarr;</span>
+            <span class="flow-step" style="color: var(--accent-purple)">GitHub</span>
+            <span class="flow-arrow">&rarr;</span>
+            <span class="flow-step" style="color: var(--accent-cyan)">Vercel</span>
+          </div>
+          
+          <div class="flow-chain">
+            <span class="flow-step" style="color: var(--accent-orange)">Google Auth</span>
+            <span class="flow-arrow">&rarr;</span>
+            <span class="flow-step" style="color: var(--accent-purple)">GitHub</span>
+            <span class="flow-arrow">&rarr;</span>
+            <span class="flow-step" style="color: var(--accent-blue)">Render</span>
+          </div>
+
+          <div class="flow-chain">
+            <span class="flow-step" style="color: var(--accent-orange)">Google Auth</span>
+            <span class="flow-arrow">&rarr;</span>
+            <span class="flow-step" style="color: var(--accent-purple)">GitHub</span>
+            <span class="flow-arrow">&rarr;</span>
+            <span class="flow-step" style="color: var(--accent-green)">Supabase</span>
+          </div>
+
+          <div class="flow-chain">
+            <span class="flow-step" style="color: var(--accent-orange)">Google Auth</span>
+            <span class="flow-arrow">&rarr;</span>
+            <span class="flow-step" style="color: var(--accent-purple)">GitHub</span>
+            <span class="flow-arrow">&rarr;</span>
+            <span class="flow-step" style="color: #f97316">Resend</span>
+          </div>
+        </div>
+        
+        <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px dashed rgba(255, 255, 255, 0.1); font-size: 0.85rem; color: var(--text-secondary);">
+          <span style="color: var(--accent-green); font-weight: 600;">Google Cloud Console</span> is used for maps key management (Free tier Google Maps API Key).
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- Toast message notification -->
+  <div class="toast" id="toast-notif">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+    <span id="toast-text">Copied to clipboard!</span>
+  </div>
+
+  <script>
+    // Reveal/Hide GMail Password Secret
+    function toggleSecret() {
+      const passEl = document.getElementById('cred-pass');
+      const btn = passEl.parentElement.querySelector('.btn-reveal');
+      if (passEl.classList.contains('revealed')) {
+        passEl.classList.remove('revealed');
+        btn.textContent = 'Reveal';
+      } else {
+        passEl.classList.add('revealed');
+        btn.textContent = 'Hide';
+      }
+    }
+
+    // Copy to clipboard helper
+    function copyText(elementId) {
+      const text = document.getElementById(elementId).textContent;
+      navigator.clipboard.writeText(text).then(() => {
+        showToast("Copied to clipboard!");
+      }).catch(err => {
+        console.error('Could not copy text: ', err);
+      });
+    }
+
+    function showToast(message) {
+      const toast = document.getElementById('toast-notif');
+      document.getElementById('toast-text').textContent = message;
+      toast.classList.add('show');
+      setTimeout(() => {
+        toast.classList.remove('show');
+      }, 2500);
+    }
+
+    // Draw connecting SVG lines between nodes dynamically
+    function drawConnectors() {
+      const svg = document.getElementById('svg-connectors');
+      svg.innerHTML = ''; // Clear existing paths
+      
+      const rootNode = document.getElementById('node-github');
+      const vercelNode = document.getElementById('node-vercel');
+      const renderNode = document.getElementById('node-render');
+      const supabaseNode = document.getElementById('node-supabase');
+      const godaddyNode = document.getElementById('node-godaddy');
+      const resendNode = document.getElementById('node-resend');
+      const sqlNode = document.getElementById('node-sql');
+      const egressNode = document.getElementById('node-egress');
+      
+      if (window.innerWidth <= 900) return; // Don't draw SVG lines on narrow/mobile viewports
+
+      const svgRect = svg.getBoundingClientRect();
+
+      function getCenterCoords(el) {
+        const rect = el.getBoundingClientRect();
+        return {
+          x: (rect.left + rect.right) / 2 - svgRect.left,
+          y: (rect.top + rect.bottom) / 2 - svgRect.top,
+          topY: rect.top - svgRect.top,
+          bottomY: rect.bottom - svgRect.top,
+          leftX: rect.left - svgRect.left,
+          rightX: rect.right - svgRect.left
+        };
+      }
+
+      const root = getCenterCoords(rootNode);
+      const vercel = getCenterCoords(vercelNode);
+      const render = getCenterCoords(renderNode);
+      const supabase = getCenterCoords(supabaseNode);
+      const godaddy = getCenterCoords(godaddyNode);
+      const resend = getCenterCoords(resendNode);
+      const sql = getCenterCoords(sqlNode);
+      const egress = getCenterCoords(egressNode);
+
+      // Helper function to draw curved paths
+      function createPath(startX, startY, endX, endY) {
+        const midY = (startY + endY) / 2;
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', `M ${startX} ${startY} C ${startX} ${midY}, ${endX} ${midY}, ${endX} ${endY}`);
+        svg.appendChild(path);
+      }
+
+      // Github -> Vercel, Render, Supabase
+      createPath(root.x, root.bottomY, vercel.x, vercel.topY);
+      createPath(root.x, root.bottomY, render.x, render.topY);
+      createPath(root.x, root.bottomY, supabase.x, supabase.topY);
+
+      // Vercel -> GoDaddy & Resend
+      createPath(vercel.x, vercel.bottomY, godaddy.x, godaddy.topY);
+      createPath(vercel.x, vercel.bottomY, resend.x, resend.topY);
+
+      // Supabase -> SQL & Egress
+      createPath(supabase.x, supabase.bottomY, sql.x, sql.topY);
+      createPath(supabase.x, supabase.bottomY, egress.x, egress.topY);
+    }
+
+    // Initialize layout and redraw on resize
+    window.addEventListener('load', drawConnectors);
+    window.addEventListener('resize', drawConnectors);
+  </script>
+</body>
+</html>

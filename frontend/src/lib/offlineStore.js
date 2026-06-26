@@ -397,6 +397,17 @@ export async function getCachedPdf(key) {
   }
 }
 
+// Invalidate a cached PDF entry. Used by the "Regenerate PDF" admin action so
+// the freshly re-uploaded Dropbox file is fetched on the next preview open
+// instead of serving the stale (corrupt) bytes that triggered the regen.
+export async function deleteCachedPdf(key) {
+  if (!key) return;
+  try {
+    const db = await dbPromise;
+    await db.delete('pdfCache', String(key));
+  } catch { /* non-fatal */ }
+}
+
 // ── Pipelines cache ──
 // Mirrors the sites cache: full replace on initial load, upsert/remove on
 // delta-sync ticks. Enables hydrate-from-cache on boot so pipelines don't
