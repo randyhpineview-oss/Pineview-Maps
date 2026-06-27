@@ -100,6 +100,8 @@ class UserResponse(BaseModel):
     # POST /api/admin/users/{id}/confirm-email; the UI shows the button only
     # when this is None / empty.
     email_confirmed_at: Optional[str] = None
+    # Soft delete timestamp - if set, user is deleted but data preserved
+    deleted_at: Optional[str] = None
 
 
 def _format_user(user) -> UserResponse:
@@ -113,6 +115,7 @@ def _format_user(user) -> UserResponse:
         created_at=str(user.created_at) if user.created_at else "",
         last_sign_in_at=str(user.last_sign_in_at) if user.last_sign_in_at else None,
         email_confirmed_at=str(user.email_confirmed_at) if getattr(user, "email_confirmed_at", None) else None,
+        deleted_at=str(user.deleted_at) if getattr(user, "deleted_at", None) else None,
     )
 
 
@@ -125,13 +128,15 @@ def _format_user(user) -> UserResponse:
     dependencies=[Depends(require_roles(RoleEnum.admin))],
 )
 def list_users() -> list[UserResponse]:
-    """List all Supabase Auth users."""
+    """List all Supabase Auth users (excluding soft-deleted)."""
     client = get_supabase_admin()
     try:
         result = client.auth.admin.list_users()
         # result is a list of User objects
         users = result if isinstance(result, list) else (result or [])
-        return [_format_user(u) for u in users]
+        # Filter out soft-deleted users
+        active_users = [u for u in users if not getattr(u, "deleted_at", None)]
+        return [_format_user(u) for u in active_users]
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -232,10 +237,10 @@ def update_user(user_id: str, payload: UserUpdate) -> UserResponse:
     dependencies=[Depends(require_roles(RoleEnum.admin))],
 )
 def delete_user(user_id: str) -> None:
-    """Delete a Supabase Auth user."""
+    """Delete a Supabase Auth user (soft delete - preserves data but disables login)."""
     client = get_supabase_admin()
     try:
-        client.auth.admin.delete_user(user_id, should_soft_delete=False)
+        client.auth.admin.delete_user(user_id, should_soft_delete=True)
     except Exception as exc:
         logger.exception(
             "Error deleting user %s: %s", short_id(user_id), type(exc).__name__
