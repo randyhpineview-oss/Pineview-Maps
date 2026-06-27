@@ -242,7 +242,7 @@ def delete_user(user_id: str) -> None:
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete user",
+            detail=f"Failed to delete user: {str(exc)}",
         )
 
 
