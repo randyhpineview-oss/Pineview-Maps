@@ -235,7 +235,7 @@ def delete_user(user_id: str) -> None:
     """Delete a Supabase Auth user."""
     client = get_supabase_admin()
     try:
-        client.auth.admin.delete_user(user_id)
+        client.auth.admin.delete_user(user_id, should_soft_delete=False)
     except Exception as exc:
         logger.exception(
             "Error deleting user %s: %s", short_id(user_id), type(exc).__name__
