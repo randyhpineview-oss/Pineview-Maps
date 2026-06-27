@@ -1218,10 +1218,6 @@ export default function FormsPanel({
                     This creates a lease sheet for a location that is NOT on the map (e.g. roadside spraying, external job, km marker on a road).
                     {'\n\n'}
                     If this location already has a pin on the map, cancel and select it from the Map tab instead.
-                    {'\n\n'}
-                    <span style={{ color: '#ef4444', fontWeight: 800, fontSize: '1rem' }}>
-                      ⚠️ IF YOU USE THIS FOR A LOCATION THAT IS ON THE MAP, KELSEY WILL BEAT YOU WITH A STICK!!! ⚠️
-                    </span>
                   </>
                 ),
                 okLabel: 'Continue',
