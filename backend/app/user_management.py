@@ -240,9 +240,16 @@ def delete_user(user_id: str) -> None:
         logger.exception(
             "Error deleting user %s: %s", short_id(user_id), type(exc).__name__
         )
+        error_detail = str(exc)
+        if "Database error" in error_detail:
+            error_detail = (
+                "Cannot delete user - they likely have related records in the database. "
+                "Please delete their associated data first (e.g., spray records, checkins, etc.) "
+                f"Original error: {error_detail}"
+            )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete user: {str(exc)}",
+            detail=f"Failed to delete user: {error_detail}",
         )
 
 
