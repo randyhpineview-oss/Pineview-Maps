@@ -44,9 +44,10 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
-from sqlalchemy import and_, cast, or_, select
+from sqlalchemy import and_, cast, func, or_, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
+from supabase import create_client
 
 from app.auth import DEV_ACCOUNT_EMAIL, MANAGES_PINS, get_current_user, is_dev_email, require_roles
 from app.checkin_cadence import (
@@ -1247,12 +1248,12 @@ def list_crew_candidates(
     workers, office, and admin users because admins and office staff
     routinely join field crews -- restricting to ``role=worker`` would
     hide those legitimate crewmates. The caller is excluded because
-    you can't crew with yourself. Inactive (soft-deleted) users are
-    excluded so abandoned accounts don't pollute the list.
+    you can't crew with yourself.
 
-    If a generic name like "Pineview Worker" appears here, that's a
-    real `users` row that should be renamed or deleted in the User
-    admin panel -- this endpoint just surfaces what's in the table.
+    The active-user list is sourced from Supabase Auth (the same list
+    the User Management panel shows) so users that are soft-deleted in
+    Supabase immediately disappear here without depending on the local
+    ``is_active`` flag staying in sync.
 
     The three @pineview.local seed rows (Pineview Admin / Office /
     Worker) are explicitly hidden because they're dev/demo accounts
@@ -1260,12 +1261,30 @@ def list_crew_candidates(
     in the crew picker just clutters the list with three users that
     can never be selected meaningfully.
     """
-    query = (
-        db.query(User)
-        .filter(User.id != current_user.id)
-        .filter(User.is_active.is_(True))
-        .filter(~User.email.ilike("%@pineview.local"))
-    )
+    settings = get_settings()
+    active_emails: set[str] = set()
+    if settings.supabase_url and settings.supabase_service_role_key:
+        try:
+            client = create_client(settings.supabase_url, settings.supabase_service_role_key)
+            result = client.auth.admin.list_users()
+            users = result if isinstance(result, list) else (getattr(result, "users", None) or result or [])
+            active_emails = {
+                u.email.lower()
+                for u in users
+                if not getattr(u, "deleted_at", None) and u.email
+            }
+        except Exception:
+            # If Supabase Auth is unreachable, fall back to the local is_active
+            # flag so the crew picker still works in degraded mode.
+            pass
+
+    query = db.query(User).filter(User.id != current_user.id)
+    if active_emails:
+        query = query.filter(func.lower(User.email).in_(active_emails))
+    else:
+        # Supabase fallback: trust the local flag.
+        query = query.filter(User.is_active.is_(True))
+    query = query.filter(~User.email.ilike("%@pineview.local"))
     # Hide the dev account from everyone else's crew picker.
     if not is_dev_email(getattr(current_user, "email", None)):
         query = query.filter(~User.email.ilike(DEV_ACCOUNT_EMAIL))
