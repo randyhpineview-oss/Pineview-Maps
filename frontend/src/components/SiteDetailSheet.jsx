@@ -24,6 +24,7 @@ export default function SiteDetailSheet({
   onStatusChange,
   statusSaving,
   canManagePin = false,
+  canAdmin = false,
   onSavePin,
   onDeletePin,
   onRequestTypeChange,
@@ -391,6 +392,26 @@ export default function SiteDetailSheet({
                 onClick={() => onStatusChange(site, 'not_inspected', '')}
               >
                 Mark Not inspected
+              </button>
+            </div>
+          ) : null}
+          {!isInfoOnlyPin(site.pin_type) && canAdmin ? (
+            <div className="button-row" style={{ marginTop: '0.5rem' }}>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={statusSaving}
+                style={{ background: '#15803d' }}
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: 'Mark inspected without a lease sheet?',
+                    message: 'This turns the pin green immediately. No herbicide lease sheet will be created.',
+                    okLabel: 'Mark Inspected',
+                  });
+                  if (ok) onStatusChange(site, 'inspected', 'Marked inspected by admin (no lease sheet)');
+                }}
+              >
+                ✓ Mark Inspected (no lease sheet)
               </button>
             </div>
           ) : null}

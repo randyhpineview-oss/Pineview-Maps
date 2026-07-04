@@ -6921,6 +6921,7 @@ export default function App() {
                 onStatusChange={handleStatusChange}
                 statusSaving={statusSaving}
                 canManagePin={canManagePins}
+                canAdmin={roleCanAdmin}
                 onSavePin={handleAdminUpdateSite}
                 onDeletePin={handleDeleteSite}
                 onRequestTypeChange={handleRequestTypeChange}
