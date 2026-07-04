@@ -312,7 +312,7 @@ def startup_event() -> None:
 # Format: an opaque-but-meaningful string. Date-prefix + initial keeps
 # bumps obvious in git blame. The exact value doesn't matter as long as
 # it differs from any prior committed value.
-_MIGRATION_VERSION = "2026-06-25-ticket-created-at-indexes"
+_MIGRATION_VERSION = "2026-07-03-user-is-active"
 
 
 def _migrate_add_columns() -> None:
@@ -660,6 +660,15 @@ def _migrate_add_columns() -> None:
                 ))
             except Exception as e:
                 print(f"[STARTUP] Could not create hydroseed_tickets.created_at index: {e}")
+
+    # ── users.is_active column (soft-delete support).
+    if insp.has_table("users"):
+        existing_user_cols = {col["name"] for col in insp.get_columns("users")}
+        if "is_active" not in existing_user_cols:
+            if is_sqlite:
+                conn.execute(text("ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT 1"))
+            else:
+                conn.execute(text("ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE"))
 
     # ── Stamp schema_meta so subsequent cold starts can short-circuit.
     # Done in its own transaction so the migrations above commit even if
