@@ -474,7 +474,7 @@ def _users_by_id(db: Session, user_ids: list[int]) -> dict[int, User]:
     ids = [uid for uid in {*user_ids} if uid is not None]
     if not ids:
         return {}
-    rows = db.query(User).filter(User.id.in_(ids)).all()
+    rows = db.query(User).filter(User.id.in_(ids)).filter(User.is_active.is_(True)).all()
     return {u.id: u for u in rows}
 
 
@@ -1263,16 +1263,12 @@ def list_crew_candidates(
     query = (
         db.query(User)
         .filter(User.id != current_user.id)
+        .filter(User.is_active.is_(True))
         .filter(~User.email.ilike("%@pineview.local"))
     )
     # Hide the dev account from everyone else's crew picker.
     if not is_dev_email(getattr(current_user, "email", None)):
         query = query.filter(~User.email.ilike(DEV_ACCOUNT_EMAIL))
-    # `is_active` only exists if the User model defines it. Avoid a
-    # hard reference so this works against legacy schemas without it.
-    is_active_col = getattr(User, "is_active", None)
-    if is_active_col is not None:
-        query = query.filter(is_active_col.is_(True))
     rows = query.order_by(User.name.asc()).all()
     return [
         AssignableUserRead(id=u.id, name=u.name, email=u.email, role=u.role.value)

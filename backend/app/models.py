@@ -59,6 +59,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     role: Mapped[RoleEnum] = mapped_column(Enum(RoleEnum), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     created_sites: Mapped[list["Site"]] = relationship(
         back_populates="created_by_user",

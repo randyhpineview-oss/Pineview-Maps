@@ -47,7 +47,7 @@ def list_roster(
     Mirrors the shape `cachedUsers` consumers expect (HydroseedDailyRecord,
     crew picker, etc.) without exposing Supabase-Auth fields.
     """
-    rows = db.query(User).order_by(User.name.asc()).all()
+    rows = db.query(User).filter(User.is_active.is_(True)).order_by(User.name.asc()).all()
     # Hide the dev account from everyone except the dev themselves.
     if not is_dev_email(getattr(current_user, "email", None)):
         rows = [u for u in rows if not is_dev_email(u.email)]
@@ -266,12 +266,22 @@ def update_user(
 def delete_user(
     user_id: str,
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> None:
     """Delete a Supabase Auth user (soft delete - preserves data but disables login)."""
     client = get_supabase_admin()
     _guard_dev_account(client, user_id, current_user)
     try:
         client.auth.admin.delete_user(user_id, should_soft_delete=True)
+        # Also mark the local users row as inactive so they disappear from pickers
+        result = client.auth.admin.get_user_by_id(user_id)
+        target = getattr(result, "user", None) or result
+        target_email = getattr(target, "email", None)
+        if target_email:
+            local_user = db.query(User).filter(User.email == target_email).first()
+            if local_user:
+                local_user.is_active = False
+                db.commit()
     except Exception as exc:
         logger.exception(
             "Error deleting user %s: %s", short_id(user_id), type(exc).__name__
