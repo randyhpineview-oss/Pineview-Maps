@@ -312,7 +312,7 @@ def startup_event() -> None:
 # Format: an opaque-but-meaningful string. Date-prefix + initial keeps
 # bumps obvious in git blame. The exact value doesn't matter as long as
 # it differs from any prior committed value.
-_MIGRATION_VERSION = "2026-07-03-user-is-active"
+_MIGRATION_VERSION = "2026-07-03-sync-users-is-active"
 
 
 def _migrate_add_columns() -> None:
@@ -673,6 +673,26 @@ def _migrate_add_columns() -> None:
                         fresh_conn.execute(text("ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE"))
             except Exception as e:
                 print(f"[STARTUP] Could not add users.is_active column: {e}")
+
+    # ── Sync local users.is_active with Supabase Auth (one-time cleanup).
+    # Marks any local user whose email is NOT in Supabase Auth as inactive.
+    # This cleans up orphaned rows from users deleted before soft-delete was added.
+    if not is_sqlite and settings.supabase_url and settings.supabase_service_role_key:
+        try:
+            from supabase import create_client
+            client = create_client(settings.supabase_url, settings.supabase_service_role_key)
+            result = client.auth.admin.list_users()
+            users = result if isinstance(result, list) else (result or [])
+            supabase_emails = {u.email.lower() for u in users if getattr(u, "deleted_at", None) is None and u.email}
+            with SessionLocal() as db:
+                orphaned = db.query(User).filter(User.is_active.is_(True)).all()
+                for u in orphaned:
+                    if u.email and u.email.lower() not in supabase_emails:
+                        u.is_active = False
+                        print(f"[STARTUP] Marking orphaned user inactive: {u.email}")
+                db.commit()
+        except Exception as e:
+            print(f"[STARTUP] Could not sync users.is_active with Supabase: {e}")
 
     # ── Stamp schema_meta so subsequent cold starts can short-circuit.
     # Done in its own transaction so the migrations above commit even if
