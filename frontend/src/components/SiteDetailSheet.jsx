@@ -395,26 +395,6 @@ export default function SiteDetailSheet({
               </button>
             </div>
           ) : null}
-          {!isInfoOnlyPin(site.pin_type) && canAdmin ? (
-            <div className="button-row" style={{ marginTop: '0.5rem' }}>
-              <button
-                className="secondary-button"
-                type="button"
-                disabled={statusSaving}
-                style={{ background: '#15803d' }}
-                onClick={async () => {
-                  const ok = await confirm({
-                    title: 'Mark inspected without a lease sheet?',
-                    message: 'This turns the pin green immediately. No herbicide lease sheet will be created.',
-                    okLabel: 'Mark Inspected',
-                  });
-                  if (ok) onStatusChange(site, 'inspected', 'Marked inspected by admin (no lease sheet)');
-                }}
-              >
-                ✓ Mark Inspected (no lease sheet)
-              </button>
-            </div>
-          ) : null}
           {(site.pin_type === 'lsd' || site.pin_type === 'reclaimed') && onRequestTypeChange ? (
             <div className="button-row" style={{ marginTop: '0.75rem' }}>
               <button
@@ -502,6 +482,33 @@ export default function SiteDetailSheet({
                   </button>
                 )
               ) : null}
+            </div>
+          ) : null}
+          {!isInfoOnlyPin(site.pin_type) && canAdmin ? (
+            <div style={{ marginTop: '0.75rem' }}>
+              <button
+                type="button"
+                disabled={statusSaving}
+                style={{
+                  fontSize: '0.72rem',
+                  padding: '4px 10px',
+                  background: 'transparent',
+                  color: '#86efac',
+                  border: '1px dashed #4ade80',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                }}
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: 'Mark inspected without a lease sheet?',
+                    message: 'This turns the pin green immediately. No herbicide lease sheet will be created.',
+                    okLabel: 'Mark Inspected',
+                  });
+                  if (ok) onStatusChange(site, 'inspected', 'Marked inspected by admin (no lease sheet)');
+                }}
+              >
+                Admin: set green without lease sheet
+              </button>
             </div>
           ) : null}
 

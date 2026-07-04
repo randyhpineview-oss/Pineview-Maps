@@ -64,6 +64,18 @@ def _stable_user_id(sub: str) -> int:
 MANAGES_PINS: tuple[RoleEnum, ...] = (RoleEnum.admin, RoleEnum.office, RoleEnum.crew_lead)
 
 
+# Developer account. Hidden from other users' user lists (User Management,
+# roster, crew picker, Check-ins Dashboard) and protected from update/delete
+# by anyone except the dev themselves. The dev still sees their own account
+# when logged in, for testing.
+DEV_ACCOUNT_EMAIL = "randyh.pineview@gmail.com"
+
+
+def is_dev_email(email) -> bool:
+    """True if `email` belongs to the protected developer account."""
+    return (email or "").strip().lower() == DEV_ACCOUNT_EMAIL
+
+
 DEMO_USERS = {
     "admin": {"name": "Pineview Admin", "email": "admin@pineview.local", "role": RoleEnum.admin},
     "office": {"name": "Pineview Office", "email": "office@pineview.local", "role": RoleEnum.office},

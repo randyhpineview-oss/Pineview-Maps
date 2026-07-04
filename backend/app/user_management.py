@@ -12,7 +12,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 from supabase import create_client
 
-from app.auth import get_current_user, require_roles
+from app.auth import get_current_user, is_dev_email, require_roles
 from app.config import get_settings
 from app.database import get_db
 from app.email_service import send_password_setup_link
@@ -48,6 +48,9 @@ def list_roster(
     crew picker, etc.) without exposing Supabase-Auth fields.
     """
     rows = db.query(User).order_by(User.name.asc()).all()
+    # Hide the dev account from everyone except the dev themselves.
+    if not is_dev_email(getattr(current_user, "email", None)):
+        rows = [u for u in rows if not is_dev_email(u.email)]
     return [
         RosterUser(
             id=u.id,
@@ -61,6 +64,22 @@ def list_roster(
 
 settings = get_settings()
 logger = get_logger(__name__)
+
+def _guard_dev_account(client, user_id: str, current_user: User) -> None:
+    """403 if `user_id` is the dev account and the requester isn't the dev."""
+    if is_dev_email(getattr(current_user, "email", None)):
+        return
+    try:
+        result = client.auth.admin.get_user_by_id(user_id)
+        target = getattr(result, "user", None) or result
+        target_email = getattr(target, "email", None)
+    except Exception:
+        return  # target lookup failed — let the main handler surface the error
+    if is_dev_email(target_email):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account is protected and cannot be modified.",
+        )
 
 
 def get_supabase_admin():
@@ -127,7 +146,7 @@ def _format_user(user) -> UserResponse:
     response_model=list[UserResponse],
     dependencies=[Depends(require_roles(RoleEnum.admin))],
 )
-def list_users() -> list[UserResponse]:
+def list_users(current_user: User = Depends(get_current_user)) -> list[UserResponse]:
     """List all Supabase Auth users (excluding soft-deleted)."""
     client = get_supabase_admin()
     try:
@@ -136,6 +155,9 @@ def list_users() -> list[UserResponse]:
         users = result if isinstance(result, list) else (result or [])
         # Filter out soft-deleted users
         active_users = [u for u in users if not getattr(u, "deleted_at", None)]
+        # Hide the dev account from everyone except the dev themselves.
+        if not is_dev_email(getattr(current_user, "email", None)):
+            active_users = [u for u in active_users if not is_dev_email(getattr(u, "email", None))]
         return [_format_user(u) for u in active_users]
     except Exception as exc:
         raise HTTPException(
@@ -195,9 +217,14 @@ def create_user(payload: UserCreate) -> UserResponse:
     response_model=UserResponse,
     dependencies=[Depends(require_roles(RoleEnum.admin))],
 )
-def update_user(user_id: str, payload: UserUpdate) -> UserResponse:
+def update_user(
+    user_id: str,
+    payload: UserUpdate,
+    current_user: User = Depends(get_current_user),
+) -> UserResponse:
     """Update a Supabase Auth user's role or name."""
     client = get_supabase_admin()
+    _guard_dev_account(client, user_id, current_user)
     try:
         # Build the metadata update
         update_data: dict = {}
@@ -236,9 +263,13 @@ def update_user(user_id: str, payload: UserUpdate) -> UserResponse:
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_roles(RoleEnum.admin))],
 )
-def delete_user(user_id: str) -> None:
+def delete_user(
+    user_id: str,
+    current_user: User = Depends(get_current_user),
+) -> None:
     """Delete a Supabase Auth user (soft delete - preserves data but disables login)."""
     client = get_supabase_admin()
+    _guard_dev_account(client, user_id, current_user)
     try:
         client.auth.admin.delete_user(user_id, should_soft_delete=True)
     except Exception as exc:

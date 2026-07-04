@@ -48,7 +48,7 @@ from sqlalchemy import and_, cast, or_, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
-from app.auth import MANAGES_PINS, get_current_user, require_roles
+from app.auth import DEV_ACCOUNT_EMAIL, MANAGES_PINS, get_current_user, is_dev_email, require_roles
 from app.checkin_cadence import (
     OFFICE_REPEAT_AFTER_URGENT_MIN,
     OFFICE_ALERTS,
@@ -1265,6 +1265,9 @@ def list_crew_candidates(
         .filter(User.id != current_user.id)
         .filter(~User.email.ilike("%@pineview.local"))
     )
+    # Hide the dev account from everyone else's crew picker.
+    if not is_dev_email(getattr(current_user, "email", None)):
+        query = query.filter(~User.email.ilike(DEV_ACCOUNT_EMAIL))
     # `is_active` only exists if the User model defines it. Avoid a
     # hard reference so this works against legacy schemas without it.
     is_active_col = getattr(User, "is_active", None)
@@ -1351,6 +1354,7 @@ def unsubscribe_push(
 def get_overview(
     db: Session = Depends(get_db),
     include_ended_day: Optional[date] = None,
+    current_user: Optional[User] = Depends(get_current_user),
 ) -> list[OverviewEntry]:
     """Overview tab: anyone with an active shift today OR assigned to an
     active truck. One row per user. Single round-trip.
@@ -1442,11 +1446,16 @@ def get_overview(
     # Pre-serialize and batch-embed checkins for every shift so the
     # Overview cards can render today's check-in list (live TV feed).
     shift_serials_by_user: dict[int, dict] = {}
+    # Hide the dev account's rows from everyone else (incl. the TV board,
+    # which calls this function directly without a current_user).
+    hide_dev = not is_dev_email(getattr(current_user, "email", None))
     for uid, sh in all_shift_by_user.items():
         user = user_by_id.get(uid)
         if user is None:
             continue
         if user.email and user.email.lower().endswith("@pineview.local"):
+            continue
+        if hide_dev and is_dev_email(user.email):
             continue
         shift_serials_by_user[uid] = _serialize_shift(
             sh, user=user, users_by_id=user_by_id
@@ -1466,6 +1475,8 @@ def get_overview(
         # in production, so any shift/truck attached to those rows is
         # noise. Defensive: in normal operation they have neither.
         if user.email and user.email.lower().endswith("@pineview.local"):
+            continue
+        if hide_dev and is_dev_email(user.email):
             continue
         truck = truck_by_user.get(uid)
         shift_serial = shift_serials_by_user.get(uid)
@@ -1500,7 +1511,10 @@ def get_overview(
 
 
 @admin_router.get("/api/admin/shifts/active", response_model=list[ShiftRead])
-def list_active_shifts(db: Session = Depends(get_db)) -> list[ShiftRead]:
+def list_active_shifts(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[ShiftRead]:
     """All active shifts (after lazy auto-end). Drives the Active tab.
 
     Embeds ``user_name`` / ``user_email`` so the dashboard renders real
@@ -1519,6 +1533,12 @@ def list_active_shifts(db: Session = Depends(get_db)) -> list[ShiftRead]:
         all_ids.append(s.user_id)
         all_ids.extend(s.crew_user_ids or [])
     user_map = _users_by_id(db, all_ids)
+    # Hide the dev account's shifts from everyone else.
+    if not is_dev_email(getattr(current_user, "email", None)):
+        resolved_rows = [
+            s for s in resolved_rows
+            if not is_dev_email(getattr(user_map.get(s.user_id), "email", None))
+        ]
     serialized = [
         _serialize_shift(s, user=user_map.get(s.user_id), users_by_id=user_map)
         for s in resolved_rows
@@ -1533,6 +1553,7 @@ def list_active_shifts(db: Session = Depends(get_db)) -> list[ShiftRead]:
 def list_shifts_by_date(
     date_str: Optional[str] = Query(None, alias="date"),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> list[ShiftRead]:
     """History tab: shifts active during the given local-Vancouver date.
 
@@ -1568,6 +1589,12 @@ def list_shifts_by_date(
         all_ids.append(s.user_id)
         all_ids.extend(s.crew_user_ids or [])
     user_map = _users_by_id(db, all_ids)
+    # Hide the dev account's shifts from everyone else.
+    if not is_dev_email(getattr(current_user, "email", None)):
+        rows = [
+            s for s in rows
+            if not is_dev_email(getattr(user_map.get(s.user_id), "email", None))
+        ]
     serialized = [
         _serialize_shift(s, user=user_map.get(s.user_id), users_by_id=user_map)
         for s in rows
