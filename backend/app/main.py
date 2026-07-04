@@ -665,10 +665,14 @@ def _migrate_add_columns() -> None:
     if insp.has_table("users"):
         existing_user_cols = {col["name"] for col in insp.get_columns("users")}
         if "is_active" not in existing_user_cols:
-            if is_sqlite:
-                conn.execute(text("ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT 1"))
-            else:
-                conn.execute(text("ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE"))
+            try:
+                with engine.begin() as fresh_conn:
+                    if is_sqlite:
+                        fresh_conn.execute(text("ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT 1"))
+                    else:
+                        fresh_conn.execute(text("ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE"))
+            except Exception as e:
+                print(f"[STARTUP] Could not add users.is_active column: {e}")
 
     # ── Stamp schema_meta so subsequent cold starts can short-circuit.
     # Done in its own transaction so the migrations above commit even if
