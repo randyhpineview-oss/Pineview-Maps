@@ -682,15 +682,23 @@ def _migrate_add_columns() -> None:
             from supabase import create_client
             client = create_client(settings.supabase_url, settings.supabase_service_role_key)
             result = client.auth.admin.list_users()
-            users = result if isinstance(result, list) else (result or [])
+            # The Supabase client has returned both plain lists and page objects
+            # with a .users attribute; accept either shape so the sync never
+            # silently marks everyone inactive because the list is empty.
+            users = result if isinstance(result, list) else (getattr(result, "users", None) or result or [])
             supabase_emails = {u.email.lower() for u in users if getattr(u, "deleted_at", None) is None and u.email}
             with SessionLocal() as db:
                 orphaned = db.query(User).filter(User.is_active.is_(True)).all()
+                changed = False
                 for u in orphaned:
                     if u.email and u.email.lower() not in supabase_emails:
                         u.is_active = False
+                        changed = True
                         print(f"[STARTUP] Marking orphaned user inactive: {u.email}")
-                db.commit()
+                if changed:
+                    db.commit()
+                else:
+                    db.rollback()
         except Exception as e:
             print(f"[STARTUP] Could not sync users.is_active with Supabase: {e}")
 

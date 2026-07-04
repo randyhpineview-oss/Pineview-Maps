@@ -12,7 +12,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 from supabase import create_client
 
-from app.auth import get_current_user, is_dev_email, require_roles
+from app.auth import get_current_user, is_dev_email, require_roles, _stable_user_id
 from app.config import get_settings
 from app.database import get_db
 from app.email_service import send_password_setup_link
@@ -272,16 +272,31 @@ def delete_user(
     client = get_supabase_admin()
     _guard_dev_account(client, user_id, current_user)
     try:
+        # Capture the email BEFORE soft-deleting. After deletion, Supabase may
+        # not return the user (or may omit the email), leaving the local users
+        # row active and causing the deleted account to keep appearing in crew
+        # pickers and roster lists.
+        target_email = None
+        try:
+            result = client.auth.admin.get_user_by_id(user_id)
+            target = getattr(result, "user", None) or result
+            target_email = getattr(target, "email", None)
+        except Exception:
+            pass
+
         client.auth.admin.delete_user(user_id, should_soft_delete=True)
-        # Also mark the local users row as inactive so they disappear from pickers
-        result = client.auth.admin.get_user_by_id(user_id)
-        target = getattr(result, "user", None) or result
-        target_email = getattr(target, "email", None)
+
+        # Also mark the local users row as inactive so they disappear from pickers.
+        local_user = None
         if target_email:
             local_user = db.query(User).filter(User.email == target_email).first()
-            if local_user:
-                local_user.is_active = False
-                db.commit()
+        if local_user is None:
+            # Fallback: the local users.id is the stable hash of the Supabase UUID,
+            # so we can still deactivate the row even if the email lookup failed.
+            local_user = db.query(User).filter(User.id == _stable_user_id(user_id)).first()
+        if local_user:
+            local_user.is_active = False
+            db.commit()
     except Exception as exc:
         logger.exception(
             "Error deleting user %s: %s", short_id(user_id), type(exc).__name__
