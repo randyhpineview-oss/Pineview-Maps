@@ -34,30 +34,50 @@
  * on any current phone camera — only a single JPEG re-encode pass runs,
  * which saves ~20-30% vs the raw capture with no visible quality loss.
  */
+async function decodeBase64Image(base64) {
+  // Fast path: binary Blob + createImageBitmap. Avoids materialising a
+  // multi-MB data-URL string and lets the browser decode off the main
+  // thread where supported — noticeably quicker on phone-camera shots.
+  try {
+    if (typeof createImageBitmap === 'function' && typeof atob === 'function') {
+      const bin = atob(base64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+      const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/jpeg' }));
+      return { source: bitmap, width: bitmap.width, height: bitmap.height, close: () => { try { bitmap.close(); } catch { /* ignore */ } } };
+    }
+  } catch { /* fall through to the Image-element path */ }
+  const img = await new Promise((resolve, reject) => {
+    const i = new window.Image();
+    i.onload = () => resolve(i);
+    i.onerror = reject;
+    i.src = `data:image/jpeg;base64,${base64}`;
+  });
+  return { source: img, width: img.naturalWidth, height: img.naturalHeight, close: () => {} };
+}
+
 async function compressPhotoBase64(
   base64,
   { maxPx = 4096, quality = 0.94 } = {},
 ) {
   if (!base64) return base64;
   try {
-    const dataUrl = `data:image/jpeg;base64,${base64}`;
-    const img = await new Promise((resolve, reject) => {
-      const i = new window.Image();
-      i.onload = () => resolve(i);
-      i.onerror = reject;
-      i.src = dataUrl;
-    });
-    const scale = Math.min(1, maxPx / Math.max(img.naturalWidth, img.naturalHeight));
-    const w = Math.round(img.naturalWidth * scale);
-    const h = Math.round(img.naturalHeight * scale);
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(img, 0, 0, w, h);
-    const compressed = canvas.toDataURL('image/jpeg', quality);
-    const comma = compressed.indexOf(',');
-    return comma >= 0 ? compressed.slice(comma + 1) : base64;
+    const decoded = await decodeBase64Image(base64);
+    try {
+      const scale = Math.min(1, maxPx / Math.max(decoded.width, decoded.height));
+      const w = Math.round(decoded.width * scale);
+      const h = Math.round(decoded.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(decoded.source, 0, 0, w, h);
+      const compressed = canvas.toDataURL('image/jpeg', quality);
+      const comma = compressed.indexOf(',');
+      return comma >= 0 ? compressed.slice(comma + 1) : base64;
+    } finally {
+      decoded.close();
+    }
   } catch {
     return base64;
   }

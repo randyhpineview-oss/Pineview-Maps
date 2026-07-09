@@ -1569,6 +1569,23 @@ export default function App() {
             let activePayload = item.payload || {};
             let recordId = item.recordId || null;
 
+            // Lane-2 body prep (build + client-side photo compression) is
+            // CPU-only and has no dependency on lane 1's response, so we
+            // kick it off as soon as the payload is final and let it
+            // overlap the lane-1 network round-trip. Resolves to
+            // { raw, body } or null (nothing to upload / prep error —
+            // lane 2 rebuilds inline as a fallback, so a prep failure is
+            // never fatal).
+            let lane2Prep = null;
+            const startLane2Prep = () => (async () => {
+              const raw = buildLane2Payload(item.targetType, activePayload);
+              if (!raw) return null;
+              return { raw, body: await compressLane2Photos(item.targetType, raw) };
+            })().catch(() => null);
+            // Post-lane-1 UI refresh promise — overlapped with the lane-2
+            // upload (see below) instead of blocking it.
+            let lane1ViewRefresh = null;
+
             if (item.lane !== 'files') {
               // ── Lane 1 ──
               let patched = activePayload;
@@ -1579,6 +1596,9 @@ export default function App() {
                 patched = await ensurePdfAndTicket(item);
               }
               activePayload = patched;
+              // Payload is final — start building + compressing the lane-2
+              // body now so it overlaps the lane-1 POST below.
+              lane2Prep = startLane2Prep();
 
               const lane1Body = stripFilesForLane1(item.targetType, patched);
               let lane1Endpoint;
@@ -1631,31 +1651,42 @@ export default function App() {
               //    so the worker should see their submit land immediately.
               //    pdf_url / photo_urls will fill in via delta-sync once
               //    lane 2 patches them on the server.
+              //
+              //    Site / pipeline refreshes are network round-trips that
+              //    used to block lane 2 from starting. They only touch UI
+              //    state, so we run them CONCURRENTLY with the lane-2
+              //    upload and await them before the post-lane-2 refresh
+              //    (so this stale-er snapshot can never overwrite the
+              //    fresh one that carries pdf_url / photo_urls).
               if (item.targetType === 'site') {
-                try {
-                  let updated = await api.getSite(item.targetId);
-                  if (patched.site_status === 'in_progress' && updated.status !== 'in_progress') {
-                    updated = await api.updateSiteStatus(item.targetId, {
-                      status: 'in_progress',
-                      note: patched.notes || '',
-                    });
-                  }
-                  setSites((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-                  setSelectedSite((prev) => prev && prev.id === updated.id ? updated : prev);
-                  await upsertSite(updated);
-                } catch { /* non-fatal */ }
-              } else if (item.targetType === 'pipeline') {
-                try {
-                  const updatedPipeline = await api.getPipeline(item.targetId);
-                  setPipelines((prev) => prev.map((p) => (p.id === updatedPipeline.id ? updatedPipeline : p)));
-                  setSelectedPipeline((prev) => {
-                    if (prev && prev.id === updatedPipeline.id) {
-                      setPipelineSprayRecords(updatedPipeline.spray_records || []);
-                      return updatedPipeline;
+                lane1ViewRefresh = (async () => {
+                  try {
+                    let updated = await api.getSite(item.targetId);
+                    if (patched.site_status === 'in_progress' && updated.status !== 'in_progress') {
+                      updated = await api.updateSiteStatus(item.targetId, {
+                        status: 'in_progress',
+                        note: patched.notes || '',
+                      });
                     }
-                    return prev;
-                  });
-                } catch { /* non-fatal */ }
+                    setSites((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+                    setSelectedSite((prev) => prev && prev.id === updated.id ? updated : prev);
+                    await upsertSite(updated);
+                  } catch { /* non-fatal */ }
+                })();
+              } else if (item.targetType === 'pipeline') {
+                lane1ViewRefresh = (async () => {
+                  try {
+                    const updatedPipeline = await api.getPipeline(item.targetId);
+                    setPipelines((prev) => prev.map((p) => (p.id === updatedPipeline.id ? updatedPipeline : p)));
+                    setSelectedPipeline((prev) => {
+                      if (prev && prev.id === updatedPipeline.id) {
+                        setPipelineSprayRecords(updatedPipeline.spray_records || []);
+                        return updatedPipeline;
+                      }
+                      return prev;
+                    });
+                  } catch { /* non-fatal */ }
+                })();
               } else if (item.targetType === 'hydroseed_daily') {
                 setDraftsRefreshToken((x) => x + 1);
                 setHydroseedRefreshToken((x) => x + 1);
@@ -1668,16 +1699,21 @@ export default function App() {
             // retry-after-lane-1-success we skip lane 1 and come
             // straight here).
             if (recordId) {
-              const rawLane2Body = buildLane2Payload(item.targetType, activePayload);
+              // Prefer the prep that overlapped lane 1; on the retry-after-
+              // lane-1-success path (or a prep error) build + compress here.
+              const prep = await (lane2Prep || startLane2Prep());
+              const rawLane2Body = prep
+                ? prep.raw
+                : buildLane2Payload(item.targetType, activePayload);
               if (rawLane2Body) {
                 const lane2Endpoint = lane2EndpointFor(item.targetType, recordId);
                 if (lane2Endpoint) {
-                  // Compress photos client-side before the network round-trip.
-                  // Full-res phone shots are 3-5 MB each; resizing to 1600px
-                  // longest-edge at q=0.78 cuts them to ~300-600 KB with no
-                  // visible quality loss on a lease sheet. Falls back silently
-                  // to the original bytes on any canvas error.
-                  const lane2Body = await compressLane2Photos(item.targetType, rawLane2Body);
+                  // Photos are compressed client-side before the network
+                  // round-trip (see compressLane2Photos — single high-quality
+                  // re-encode pass, no visible quality loss). Falls back
+                  // silently to the original bytes on any canvas error.
+                  const lane2Body = prep?.body
+                    || await compressLane2Photos(item.targetType, rawLane2Body);
                   const lane2Response = await requestWithUploadProgress(lane2Endpoint, {
                     method: 'POST',
                     body: lane2Body,
@@ -1693,6 +1729,10 @@ export default function App() {
                   }
                 }
               }
+              // Make sure the overlapped post-lane-1 refresh has settled
+              // before fetching the post-lane-2 snapshot, so the older
+              // snapshot can never land after (and clobber) the fresh one.
+              if (lane1ViewRefresh) { try { await lane1ViewRefresh; } catch { /* non-fatal */ } }
               // Lane 2 done — refresh the site so pdf_url / photo_urls
               // appear immediately in Spray History without waiting for
               // the next delta-sync tick (which may be up to 30 s away).
