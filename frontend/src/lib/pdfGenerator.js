@@ -169,6 +169,17 @@ export async function generateLeaseSheetPdf(data, photoDataUrls = []) {
   doc.text(`${data.customer || ''} / ${data.area || ''} / ${data.lsdOrPipeline || ''}`, marginL + 110, y);
   y += 14;
 
+  // GPS coordinates (standalone lease sheets only — present when the worker
+  // entered/picked a location). Rendered on its own line so it never
+  // collides with the Customer/Area/LSD text above.
+  if (data.gpsLat && data.gpsLng) {
+    doc.setFont('helvetica', 'bold');
+    doc.text('GPS:', marginL, y);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`${data.gpsLat}, ${data.gpsLng}`, marginL + 32, y);
+    y += 14;
+  }
+
   // Date + Time
   doc.setFont('helvetica', 'bold');
   doc.text('Date:', marginL, y);

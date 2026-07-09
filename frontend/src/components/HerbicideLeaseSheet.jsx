@@ -643,7 +643,7 @@ export default function HerbicideLeaseSheet({
         if (p?.existingBase64?.data) return `b:${p.existingBase64.data.length}`;
         return `u:${p?.preview || ''}`;
       }).join('|');
-      const cacheKey = JSON.stringify({ form, ticketNumber, photoKey });
+      const cacheKey = JSON.stringify({ form, ticketNumber, photoKey, gpsLat, gpsLng });
       if (pdfCacheRef.current.key === cacheKey && pdfCacheRef.current.base64) {
         setPdfBase64(pdfCacheRef.current.base64);
         setIsPreviewing(true);
@@ -679,6 +679,7 @@ export default function HerbicideLeaseSheet({
         ticket_number: ticketNumber,
         herbicidesLookup: herbicides,
         applicatorsLookup: applicators,
+        ...(standalone && gpsLat && gpsLng ? { gpsLat, gpsLng } : {}),
       };
       const { base64 } = await generateLeaseSheetPdf(pdfData, photoDataUrls);
       pdfCacheRef.current = { key: cacheKey, base64 };
@@ -898,6 +899,7 @@ export default function HerbicideLeaseSheet({
             ticket_number: finalTicket,
             herbicidesLookup: herbicides,
             applicatorsLookup: applicators,
+            ...(standalone && gpsLat && gpsLng ? { gpsLat, gpsLng } : {}),
           },
           photoDataUrls
         );
@@ -1058,6 +1060,10 @@ export default function HerbicideLeaseSheet({
           // the T&M row's site_type column so the billing row matches the
           // lease-sheet PDF.
           mainSiteType: mainSiteType || null,
+          // GPS coordinates (standalone only). Stamped into lease_sheet_data
+          // so the offline upload queue's PDF regeneration (App.jsx
+          // processUploadQueue) renders the GPS line too.
+          ...(standalone && gpsLat && gpsLng ? { gpsLat, gpsLng } : {}),
           ...(intendedSiteStatus ? { site_status: intendedSiteStatus } : {}),
         },
         pdf_base64: finalPdfBase64,
