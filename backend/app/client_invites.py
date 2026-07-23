@@ -180,18 +180,24 @@ async def client_signup(request: Request, payload: ClientSignupRequest, db: Sess
     display_name = payload.name.strip() or payload.email.split("@")[0].title()
     client = _get_supabase_admin()
 
+    # Omit client_areas entirely when unset rather than sending an explicit
+    # JSON null — see the matching comment in
+    # app/user_management.py::invite_client for why.
+    app_metadata: dict = {
+        "role": RoleEnum.client.value,
+        "name": display_name,
+        "client_name": invite.client_name,
+    }
+    if invite.client_areas:
+        app_metadata["client_areas"] = invite.client_areas
+
     try:
         client.auth.admin.create_user(
             {
                 "email": payload.email,
                 "password": payload.password,
                 "email_confirm": False,
-                "app_metadata": {
-                    "role": RoleEnum.client.value,
-                    "name": display_name,
-                    "client_name": invite.client_name,
-                    "client_areas": invite.client_areas,
-                },
+                "app_metadata": app_metadata,
                 "user_metadata": {"name": display_name},
             }
         )
@@ -205,8 +211,20 @@ async def client_signup(request: Request, payload: ClientSignupRequest, db: Sess
                 status_code=status.HTTP_409_CONFLICT,
                 detail="An account with this email already exists. Try logging in, or use 'Forgot password'.",
             )
-        logger.exception("Error creating client user %s: %s", mask_email(payload.email), type(exc).__name__)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not create account. Please try again.")
+        logger.exception(
+            "Error creating client user %s: %s (code=%s status=%s)",
+            mask_email(payload.email),
+            type(exc).__name__,
+            getattr(exc, "code", None),
+            getattr(exc, "status", None),
+        )
+        detail = f"Could not create account ({type(exc).__name__}): {exc}"
+        if "database error" in msg:
+            detail += (
+                " This usually means a leftover Supabase Auth account already exists for this "
+                "email — contact Pineview instead of retrying with the same address."
+            )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail)
 
     # Burn the token now that the account exists — a retry (e.g. the
     # confirmation-link step below failing) should not let the same link

@@ -632,35 +632,65 @@ async def invite_client(
     display_name = payload.name.strip() or payload.email.split("@")[0].title()
     client = get_supabase_admin()
 
+    # `app_metadata` is sent as a plain dict over the wire (JSON), so an
+    # explicit `None` here becomes a JSON `null` value under `client_areas`
+    # rather than the key being absent. Both are harmless to read back
+    # (get_current_user/_format_user already handle either), but omitting
+    # the key entirely is the more conservative choice for any Postgres-side
+    # trigger/function on this project that might not expect an explicit
+    # null in a JSONB column it isn't defensively coded against.
+    app_metadata: dict = {
+        "role": RoleEnum.client.value,
+        "name": display_name,
+        "client_name": client_name,
+    }
+    if client_areas:
+        app_metadata["client_areas"] = client_areas
+
     try:
         result = client.auth.admin.create_user(
             {
                 "email": payload.email,
                 "password": secrets.token_urlsafe(32),  # nobody is ever told this
                 "email_confirm": True,
-                "app_metadata": {
-                    "role": RoleEnum.client.value,
-                    "name": display_name,
-                    "client_name": client_name,
-                    "client_areas": client_areas,
-                },
+                "app_metadata": app_metadata,
                 "user_metadata": {"name": display_name},
             }
         )
     except Exception as exc:
         error_msg = str(exc)
+        error_code = getattr(exc, "code", None)
+        error_status = getattr(exc, "status", None)
         if "already been registered" in error_msg.lower() or "already exists" in error_msg.lower():
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="A user with this email already exists",
             )
-        logger.exception("Error creating client user %s: %s", mask_email(payload.email), type(exc).__name__)
-        # Surface the underlying error type + message (not a stack trace) so
-        # this is diagnosable from the admin UI alone — a bare "Failed to
-        # create client account" gave no signal when this first shipped.
+        logger.exception(
+            "Error creating client user %s: %s (code=%s status=%s)",
+            mask_email(payload.email),
+            type(exc).__name__,
+            error_code,
+            error_status,
+        )
+        # "Database error creating new user" is GoTrue's generic wrapper for
+        # a Postgres-level failure during the auth.users/auth.identities
+        # insert — most commonly a leftover row (soft-deleted or otherwise
+        # incomplete) still occupying this email, or a custom trigger on
+        # auth.users rejecting the row. Neither is fixable by retrying with
+        # the same email, so say so explicitly instead of just "try again".
+        hint = ""
+        if "database error" in error_msg.lower():
+            hint = (
+                " This usually means a leftover or soft-deleted Supabase Auth user already "
+                "occupies this email — check the Supabase dashboard (Authentication > Users, "
+                "including any 'deleted' filter) for an existing row with this address, or ask "
+                "your developer to check Postgres Logs in the Supabase dashboard for the exact "
+                "underlying error."
+            )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create client account ({type(exc).__name__}): {error_msg}",
+            detail=f"Failed to create client account ({type(exc).__name__}): {error_msg}{hint}",
         )
 
     user_id = result.user.id
