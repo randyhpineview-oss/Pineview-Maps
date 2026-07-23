@@ -655,7 +655,13 @@ async def invite_client(
                 detail="A user with this email already exists",
             )
         logger.exception("Error creating client user %s: %s", mask_email(payload.email), type(exc).__name__)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create client account")
+        # Surface the underlying error type + message (not a stack trace) so
+        # this is diagnosable from the admin UI alone — a bare "Failed to
+        # create client account" gave no signal when this first shipped.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create client account ({type(exc).__name__}): {error_msg}",
+        )
 
     user_id = result.user.id
 
@@ -667,7 +673,14 @@ async def invite_client(
     except Exception as exc:
         db.rollback()
         logger.exception("DB error issuing client setup link for %s: %s", mask_email(payload.email), type(exc).__name__)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Account created but could not issue setup link. Use 'Send password reset' from the user list to retry.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                f"Account created but could not issue setup link ({type(exc).__name__}: {exc}). "
+                "The client account already exists in Supabase — use 'Send password reset' from "
+                "the user list below to retry sending them a link."
+            ),
+        )
 
     setup_url = f"{settings.frontend_url.rstrip('/')}/?setup_token={reset_code.reset_token}"
 
