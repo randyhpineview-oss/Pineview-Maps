@@ -220,18 +220,21 @@ export default function ClientPortal({ clientName, clientAreas, userDisplayName,
           )}
         </div>
 
-        {/* Detail side panel */}
-        <div
-          className="side-panel"
-          style={{
-            flex: '1 1 40%',
-            maxWidth: '420px',
-            minWidth: '280px',
-            overflowY: 'auto',
-            padding: '1rem',
-            borderLeft: '1px solid rgba(148,163,184,0.15)',
-          }}
-        >
+        {/* Detail panel — side-by-side on desktop, bottom sheet on mobile
+            (see `.client-portal-detail` in index.css). */}
+        <div className={`client-portal-detail${selectedSite ? ' open' : ''}`}>
+          {selectedSite ? (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.5rem' }}>
+              <button
+                type="button"
+                className="badge"
+                onClick={() => setSelectedSiteId(null)}
+                style={{ cursor: 'pointer', background: '#1f2937', color: '#93c5fd', border: '1px solid #374151' }}
+              >
+                ✕ Close
+              </button>
+            </div>
+          ) : null}
           <SiteDetailSheet
             site={selectedSite}
             sprayRecords={sprayLoading ? [] : sprayRecords}
