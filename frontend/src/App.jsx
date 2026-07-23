@@ -1099,6 +1099,10 @@ export default function App() {
 
   const loadServerRecents = useCallback(async () => {
     if (!window.navigator.onLine) return;
+    // Client-portal accounts are denied /api/recent-submissions by the
+    // backend allowlist (they view spray records via ClientPortal's own
+    // scoped fetch instead) — skip the call entirely rather than 403ing.
+    if (userRole === 'client') return;
     try {
       // Pull 100 rows on initial / full-refresh fetches so a freshly-installed
       // PWA (or any device whose IDB recents cache was wiped) shows ~3–6 weeks
@@ -1111,7 +1115,7 @@ export default function App() {
     } catch {
       console.error('[RECENTS] Failed to load from server');
     }
-  }, []);
+  }, [userRole]);
 
   // Load lookups: cached from IndexedDB instantly, then refresh from server
   const loadCachedLookups = useCallback(async () => {
@@ -1128,6 +1132,10 @@ export default function App() {
 
   const loadServerLookups = useCallback(async () => {
     if (!window.navigator.onLine) return;
+    // Client-portal accounts are denied the herbicide/applicator/weed/
+    // location lookup endpoints by the backend allowlist — they're only
+    // used by the lease-sheet / T&M forms, which client role never sees.
+    if (userRole === 'client') return;
     try {
       const [herbicides, applicators, weeds, locations] = await Promise.all([
         api.listHerbicides(),
@@ -1145,7 +1153,7 @@ export default function App() {
     } catch {
       console.error('[LOOKUPS] Failed to load from server');
     }
-  }, []);
+  }, [userRole]);
 
   // Load users: cached from IndexedDB instantly, then refresh from server
   const loadCachedUsers = useCallback(async () => {
@@ -1156,6 +1164,10 @@ export default function App() {
   const loadServerUsers = useCallback(async () => {
     if (!window.navigator.onLine) return;
     if (!userRole) return;
+    // Client-portal accounts are denied /api/users/roster (and obviously
+    // /api/admin/users) by the backend allowlist — no picker in the main
+    // app shell is ever visible to them, so skip the fetch outright.
+    if (userRole === 'client') return;
     // Admins get the full Supabase-Auth list (includes last_sign_in_at,
     // email_confirmed_at, etc. for the User Management panel).
     // Non-admins fall back to the lightweight roster endpoint so crew
@@ -2037,6 +2049,16 @@ export default function App() {
   }, [refreshQueueCount, processUploadQueue]);
 
   const refreshAllData = useCallback(async () => {
+    // Client-portal accounts render <ClientPortal> instead of the main
+    // app shell and fetch their own scoped data independently — none of
+    // the sites/pipelines/recents/lookups/users/devices/pending/deleted
+    // fetches below are reachable (or needed) for that role, and several
+    // are explicitly denied by the backend allowlist. Skip the whole
+    // orchestrator rather than letting it fire a batch of 403s.
+    if (userRole === 'client') {
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
     setMessage('Loading...');
 
@@ -2112,7 +2134,7 @@ export default function App() {
       setIsLoading(false);
       setMessage('Ready');
     }
-  }, [loadCachedSites, loadCachedPipelines, loadCachedRecents, loadCachedLookups, loadCachedUsers,
+  }, [userRole, loadCachedSites, loadCachedPipelines, loadCachedRecents, loadCachedLookups, loadCachedUsers,
       loadServerSites, loadServerRecents, loadServerLookups, loadServerUsers, loadDevices,
       loadPipelines, loadPendingPipelines, loadDeletedPipelines,
       loadDeletedLeaseSheets, loadDeletedTMTickets,
@@ -2135,6 +2157,14 @@ export default function App() {
   // fresh — they're tiny and outside the delta pipeline.
   const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 h
   const bootHydrate = useCallback(async () => {
+    // Client-portal accounts skip the whole hydrate-from-cache / full-fetch
+    // dance — ClientPortal manages its own scoped data fetching and none
+    // of the site/pipeline/recents/lookups/users caches here are used (or
+    // allowlisted) for that role.
+    if (userRole === 'client') {
+      setIsLoading(false);
+      return false;
+    }
     try {
       const [cachedSites, cachedPipelines, cachedRecentsList, watermarks] = await Promise.all([
         getSites(),
@@ -2217,7 +2247,7 @@ export default function App() {
     // Slow path: cold cache, stale cache, or offline → original behaviour.
     await refreshAllData();
     return false;
-  }, [refreshAllData, loadCachedSites, loadCachedPipelines, loadCachedRecents,
+  }, [userRole, refreshAllData, loadCachedSites, loadCachedPipelines, loadCachedRecents,
       loadCachedLookups, loadCachedUsers, loadServerLookups, loadServerUsers,
       loadPendingSites, loadPendingPipelines, loadDeletedPipelines]);
 
@@ -2495,6 +2525,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // Client-portal accounts have no use for the app-shell sync machinery
+    // (sites/pipelines/recents delta sync, upload queue, …) — ClientPortal
+    // fetches its own scoped data independently. Skip the whole bundle.
+    if (userRole === 'client') return;
     if (!isOnline) {
       wasOnline.current = false;
       return;
@@ -2523,7 +2557,7 @@ export default function App() {
         setIsSyncing(false);
       }
     })();
-  }, [isOnline, refreshAllData, syncQueuedActions]);
+  }, [isOnline, refreshAllData, syncQueuedActions, userRole]);
 
   // ── Auto-poll for real-time updates ──
   // Strategy:
@@ -2538,6 +2572,13 @@ export default function App() {
   //   5. Skip the tick while the tab is hidden; re-run on visibility change.
   useEffect(() => {
     if (!isOnline) return;
+    // Client-portal accounts have no use for this poll loop — it's built
+    // entirely around /api/sync-status + the sites/pipelines/recents delta
+    // endpoints, devices, and pending-list refreshes, none of which
+    // ClientPortal needs (it manages its own scoped fetching). Even
+    // though sync-status itself is allowlisted for 'client', skip the
+    // whole bundle since everything downstream of it is blocked anyway.
+    if (userRole === 'client') return;
 
     // Adaptive poll cadence:
     //   - Realtime connected  → 5 min. The WebSocket pushes row changes
@@ -2875,7 +2916,7 @@ export default function App() {
       document.removeEventListener('visibilitychange', onVisibilityChange);
       runPollTickRef.current = null;
     };
-  }, [isOnline, serverFilters, canManagePins, selectedSite, processUploadQueue, realtimeStatus, loadDevices]);
+  }, [isOnline, serverFilters, canManagePins, selectedSite, processUploadQueue, realtimeStatus, loadDevices, userRole]);
 
   // ── Mirror selectedSite / selectedPipeline into refs ────────────────────
   // The Realtime subscription useEffect below opens a single long-lived
@@ -3414,6 +3455,10 @@ export default function App() {
   // and Realtime is the source of truth for shift state changes.
   const loadActiveShift = useCallback(async () => {
     if (!user?.id) return;
+    // Client-portal accounts are denied /api/checkins/me/today by the
+    // backend allowlist — check-ins are a worker/crew concept the
+    // ClientPortal has no use for.
+    if (userRole === 'client') return;
     try {
       const data = await api.getMyTodayCheckin();
       setActiveShift(data?.shift && !data.shift.ended_at ? data.shift : null);
@@ -3422,7 +3467,7 @@ export default function App() {
       // (e.g. fresh deploy before /api/checkins/me/today exists).
       console.warn('[checkin] loadActiveShift failed:', err);
     }
-  }, [user?.id]);
+  }, [user?.id, userRole]);
 
   // Active shifts for the map's CrewLayer + the Crew sidebar. Only
   // pin-managers can read this -- workers don't see other people's
@@ -3638,6 +3683,9 @@ export default function App() {
   // prefs panel. iOS PWA + 16.4+ also gates this via pushSupported().
   useEffect(() => {
     if (!user?.id) return;
+    // Client-portal accounts are denied the checkin-prefs endpoint (and
+    // have no use for check-in push reminders) — skip entirely.
+    if (userRole === 'client') return;
     let cancelled = false;
     (async () => {
       try {
@@ -3658,7 +3706,7 @@ export default function App() {
       }
     })();
     return () => { cancelled = true; };
-  }, [user?.id]);
+  }, [user?.id, userRole]);
 
   // ── Soft morning banner: hydrate dismiss flag from localStorage ──
   // The flag is stored as the local YYYY-MM-DD it was dismissed on.
@@ -3682,7 +3730,10 @@ export default function App() {
 
   // Pre-fetch the latest Hydroseed Daily in the background whenever the user or drafts refresh
   useEffect(() => {
-    if (user) {
+    // Client-portal accounts are denied /api/hydroseed/dailies/me/latest
+    // by the backend allowlist — hydroseed dailies are a worker concept
+    // the ClientPortal never surfaces.
+    if (user && userRole !== 'client') {
       const p = api.getMyLatestHydroseedDaily();
       latestDailyFetchRef.current = p;
       p.then((res) => {
@@ -3697,7 +3748,7 @@ export default function App() {
       setLatestHydroseedDaily(null);
       setHasFetchedLatestDaily(false);
     }
-  }, [user, draftsRefreshToken]);
+  }, [user, userRole, draftsRefreshToken]);
 
   const visibleSites = useMemo(() => {
     const normalizedSearch = filters.search.trim().toLowerCase();
