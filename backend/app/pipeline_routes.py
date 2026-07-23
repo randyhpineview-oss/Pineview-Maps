@@ -6,7 +6,7 @@ import base64
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session, defer, joinedload
 
-from app.auth import MANAGES_PINS, get_current_user, require_roles
+from app.auth import MANAGES_PINS, apply_client_scope, client_scope_matches, get_current_user, require_roles
 from app.database import get_db
 from app.dropbox_integration import upload_pdf_to_dropbox, upload_files_parallel, build_pdf_path, build_photo_path
 from app.kml_pipeline_import import parse_pipeline_kml, simplify_coordinates, _total_length_km
@@ -126,6 +126,7 @@ def list_pipelines(
         )
         .filter(Pipeline.deleted_at.is_(None))
     )
+    q = apply_client_scope(q, current_user, Pipeline.client, Pipeline.area)
     if client:
         q = q.filter(Pipeline.client == client)
     if area:
@@ -162,6 +163,7 @@ def pipelines_delta(
             Pipeline.approval_state != PipelineApprovalState.rejected.value,
         )
     )
+    items_q = apply_client_scope(items_q, current_user, Pipeline.client, Pipeline.area)
     items = [PipelineListRead.model_validate(p) for p in items_q.all()]
 
     # Rows that became invisible since the caller's watermark.
@@ -175,6 +177,7 @@ def pipelines_delta(
             ),
         )
     )
+    removed_q = apply_client_scope(removed_q, current_user, Pipeline.client, Pipeline.area)
     ids_removed = [row[0] for row in removed_q.all()]
 
     return PipelinesDeltaResponse(
@@ -208,6 +211,8 @@ def get_pipeline(
 ):
     """Get a single pipeline with its spray records."""
     pipeline = _get_pipeline_or_404(db, pipeline_id)
+    if current_user.role == RoleEnum.client and not client_scope_matches(current_user, pipeline.client, pipeline.area):
+        raise HTTPException(status_code=404, detail="Pipeline not found")
     return PipelineRead.model_validate(pipeline)
 
 
@@ -850,7 +855,9 @@ def list_spray_records(
     current_user: User = Depends(get_current_user),
 ):
     """List spray records for a pipeline, optionally filtered by date."""
-    _get_pipeline_or_404(db, pipeline_id)
+    pipeline = _get_pipeline_or_404(db, pipeline_id)
+    if current_user.role == RoleEnum.client and not client_scope_matches(current_user, pipeline.client, pipeline.area):
+        raise HTTPException(status_code=404, detail="Pipeline not found")
     q = db.query(SprayRecord).filter(SprayRecord.pipeline_id == pipeline_id)
     if spray_date:
         from datetime import date as date_type

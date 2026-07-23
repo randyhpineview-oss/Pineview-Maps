@@ -790,6 +790,26 @@ export const api = {
     return request('/api/admin/signup-invite-url');
   },
 
+  // ── Client portal (invite-only external accounts) ──
+  // Flow A: admin enters the client's email directly; backend creates the
+  // account and emails a one-tap "set your password" link.
+  inviteClient(payload) {
+    return request('/api/admin/users/invite-client', { method: 'POST', body: payload, timeoutMs: 45_000 });
+  },
+  // Flow B: admin generates a single-use link and sends it themselves
+  // (text/email) — no email is sent by the backend for this flow.
+  createClientInvite(payload) {
+    return request('/api/admin/client-invites', { method: 'POST', body: payload });
+  },
+  // Public: validates a Flow-B token and returns which company it's for.
+  getClientInvite(token) {
+    return request(`/api/auth/client-invite/${encodeURIComponent(token)}`);
+  },
+  // Public: consumes a Flow-B token, creating the client's own account.
+  clientSignup(payload) {
+    return request('/api/auth/client-signup', { method: 'POST', body: payload });
+  },
+
   // ── Reports dashboard (admin/office only) ──
   // These endpoints are ONLY hit when the reports overlay is open and the
   // user explicitly clicks Generate/Download. Zero background traffic —

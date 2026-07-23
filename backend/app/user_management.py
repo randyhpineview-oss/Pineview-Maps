@@ -12,10 +12,12 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 from supabase import create_client
 
-from app.auth import get_current_user, is_dev_email, require_roles, _stable_user_id
+import secrets
+
+from app.auth import MANAGES_PINS, get_current_user, is_dev_email, require_roles, _stable_user_id
 from app.config import get_settings
 from app.database import get_db
-from app.email_service import send_password_setup_link
+from app.email_service import email_transport_configured, send_password_setup_link
 from app.log_util import get_logger, mask_email, short_id
 from app.models import PasswordResetCode, RoleEnum, User
 
@@ -105,6 +107,12 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     role: Optional[RoleEnum] = None
     name: Optional[str] = None
+    # Only meaningful for existing role=="client" accounts — lets an admin
+    # re-scope an already-created client without recreating the account.
+    # Rejected (400) if the target user isn't currently a client — use
+    # invite-client to create one.
+    client_name: Optional[str] = None
+    client_areas: Optional[list[str]] = None
 
 
 class UserResponse(BaseModel):
@@ -121,20 +129,41 @@ class UserResponse(BaseModel):
     email_confirmed_at: Optional[str] = None
     # Soft delete timestamp - if set, user is deleted but data preserved
     deleted_at: Optional[str] = None
+    # Only meaningful when role == "client". See models.py::User for semantics.
+    client_name: Optional[str] = None
+    client_areas: Optional[list[str]] = None
 
 
 def _format_user(user) -> UserResponse:
-    """Convert a Supabase auth user object to our response format."""
-    metadata = user.user_metadata or {}
+    """Convert a Supabase auth user object to our response format.
+
+    SECURITY: role/name/client-scope are read from `app_metadata` — the
+    only field the Supabase Admin API (service-role key) can write, and
+    the only field `app/auth.py` trusts for authorization. `user_metadata`
+    is user-editable and is only used here as a last-resort display
+    fallback for legacy rows that haven't been migrated yet (see
+    `scripts/migrate_roles_to_app_metadata.py`); it is never treated as a
+    source of privilege.
+    """
+    app_metadata = user.app_metadata or {}
+    user_metadata = user.user_metadata or {}
+    role = app_metadata.get("role") or user_metadata.get("role") or "worker"
+    name = (
+        app_metadata.get("name")
+        or user_metadata.get("name")
+        or (user.email.split("@")[0].title() if user.email else "")
+    )
     return UserResponse(
         id=user.id,
         email=user.email or "",
-        role=metadata.get("role", "worker"),
-        name=metadata.get("name", user.email.split("@")[0].title() if user.email else ""),
+        role=role,
+        name=name,
         created_at=str(user.created_at) if user.created_at else "",
         last_sign_in_at=str(user.last_sign_in_at) if user.last_sign_in_at else None,
         email_confirmed_at=str(user.email_confirmed_at) if getattr(user, "email_confirmed_at", None) else None,
         deleted_at=str(user.deleted_at) if getattr(user, "deleted_at", None) else None,
+        client_name=app_metadata.get("client_name"),
+        client_areas=app_metadata.get("client_areas") or None,
     )
 
 
@@ -173,7 +202,18 @@ def list_users(current_user: User = Depends(get_current_user)) -> list[UserRespo
     dependencies=[Depends(require_roles(RoleEnum.admin))],
 )
 def create_user(payload: UserCreate) -> UserResponse:
-    """Create a new Supabase Auth user with a role."""
+    """Create a new Supabase Auth user with a role.
+
+    Role/name are written to `app_metadata` (admin-only, via this
+    service-role client) — never `user_metadata`, which the user could
+    edit themselves. See `_format_user` and `app/auth.py`.
+    """
+    if payload.role == RoleEnum.client:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Use POST /api/admin/users/invite-client to create a client account "
+            "— it requires a client_name and sends the setup-link email.",
+        )
     client = get_supabase_admin()
     try:
         logger.info(
@@ -181,15 +221,18 @@ def create_user(payload: UserCreate) -> UserResponse:
             mask_email(payload.email),
             payload.role.value,
         )
+        display_name = payload.name or payload.email.split("@")[0].title()
         result = client.auth.admin.create_user(
             {
                 "email": payload.email,
                 "password": payload.password,
                 "email_confirm": True,
-                "user_metadata": {
+                "app_metadata": {
                     "role": payload.role.value,
-                    "name": payload.name or payload.email.split("@")[0].title(),
+                    "name": display_name,
                 },
+                # Harmless display-only mirror — never trusted for authorization.
+                "user_metadata": {"name": display_name},
             }
         )
         logger.info("User created successfully: %s", short_id(result.user.id))
@@ -222,27 +265,64 @@ def update_user(
     payload: UserUpdate,
     current_user: User = Depends(get_current_user),
 ) -> UserResponse:
-    """Update a Supabase Auth user's role or name."""
+    """Update a Supabase Auth user's role or name.
+
+    Writes to `app_metadata` — see `create_user` docstring for why.
+    Changing a user's role AWAY from `client` here does not clear
+    `client_name`/`client_areas` from app_metadata, but that's harmless:
+    `app/auth.py` only reads those fields when `role == client`.
+    """
+    if payload.role == RoleEnum.client:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Changing a role to 'client' isn't supported here — invite a new client "
+            "account instead via POST /api/admin/users/invite-client.",
+        )
     client = get_supabase_admin()
     _guard_dev_account(client, user_id, current_user)
     try:
-        # Build the metadata update
-        update_data: dict = {}
-        metadata_updates: dict = {}
+        # Fetch the current app_metadata so a partial update (e.g. name
+        # only) doesn't clobber the other fields — Supabase's admin API
+        # replaces the whole app_metadata dict, it doesn't merge.
+        current = client.auth.admin.get_user_by_id(user_id)
+        current_user_obj = getattr(current, "user", None) or current
+        existing_app_metadata = dict(getattr(current_user_obj, "app_metadata", None) or {})
+
+        if payload.client_name is not None or payload.client_areas is not None:
+            if existing_app_metadata.get("role") != RoleEnum.client.value:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="client_name/client_areas can only be set on an existing client account.",
+                )
 
         if payload.role is not None:
-            metadata_updates["role"] = payload.role.value
+            existing_app_metadata["role"] = payload.role.value
         if payload.name is not None:
-            metadata_updates["name"] = payload.name
+            existing_app_metadata["name"] = payload.name
+        if payload.client_name is not None:
+            trimmed = payload.client_name.strip()
+            if not trimmed:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="client_name cannot be empty")
+            existing_app_metadata["client_name"] = trimmed
+        if payload.client_areas is not None:
+            cleaned = [a.strip() for a in payload.client_areas if isinstance(a, str) and a.strip()]
+            existing_app_metadata["client_areas"] = cleaned or None
 
-        if metadata_updates:
-            update_data["user_metadata"] = metadata_updates
-
-        if not update_data:
+        if (
+            payload.role is None
+            and payload.name is None
+            and payload.client_name is None
+            and payload.client_areas is None
+        ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="No fields to update",
             )
+
+        update_data: dict = {"app_metadata": existing_app_metadata}
+        if payload.name is not None:
+            # Harmless display-only mirror — never trusted for authorization.
+            update_data["user_metadata"] = {"name": payload.name}
 
         result = client.auth.admin.update_user_by_id(user_id, update_data)
         return _format_user(result.user)
@@ -490,4 +570,117 @@ async def send_user_password_reset(
     logger.info("Admin-initiated setup link sent to %s", mask_email(email))
     return SimpleMessageResponse(
         message=f"Password setup link sent to {email}. They'll get a one-tap link that lets them set their password and sign in.",
+    )
+
+
+# ── Client invites (Flow A: personal setup-link email) ───────────────
+# See app/client_invites.py for Flow B (admin generates a copy/paste
+# link and sends it themselves via text or email).
+
+
+class InviteClientRequest(BaseModel):
+    email: EmailStr
+    name: str = ""
+    # Must exactly match an existing sites/pipelines `client` value — the
+    # frontend populates this from the same dropdown as the map's client
+    # filter, so there's no free-typed spelling drift.
+    client_name: str
+    # Optional. Empty/omitted = the client can see every area for
+    # client_name. Non-empty restricts them to just those areas (e.g. a
+    # CNRL contact who only covers one field office).
+    client_areas: Optional[list[str]] = None
+
+
+@router.post(
+    "/invite-client",
+    response_model=SimpleMessageResponse,
+    dependencies=[Depends(require_roles(*MANAGES_PINS))],
+)
+async def invite_client(
+    payload: InviteClientRequest,
+    db: Session = Depends(get_db),
+) -> SimpleMessageResponse:
+    """Create a read-only client-portal account and email them a one-tap
+    "set your password" link (Flow A).
+
+    The account is created with `role: "client"` and the given
+    `client_name`/`client_areas` in `app_metadata` — never `user_metadata`,
+    so the client can't edit their own scope. The password is a random
+    value nobody is ever told; the recipient sets their own via the
+    setup-link email (same mechanism as `send_user_password_reset`).
+    """
+    client_name = payload.client_name.strip()
+    if not client_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="client_name is required")
+    client_areas = [a.strip() for a in (payload.client_areas or []) if isinstance(a, str) and a.strip()] or None
+
+    if db is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Client invites are not available — backend has no database session.",
+        )
+    if not email_transport_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Email is not configured on the server. Set RESEND_API_KEY + "
+                "RESEND_FROM_EMAIL (recommended on Render) or SMTP_USER + "
+                "SMTP_PASSWORD, then redeploy."
+            ),
+        )
+
+    display_name = payload.name.strip() or payload.email.split("@")[0].title()
+    client = get_supabase_admin()
+
+    try:
+        result = client.auth.admin.create_user(
+            {
+                "email": payload.email,
+                "password": secrets.token_urlsafe(32),  # nobody is ever told this
+                "email_confirm": True,
+                "app_metadata": {
+                    "role": RoleEnum.client.value,
+                    "name": display_name,
+                    "client_name": client_name,
+                    "client_areas": client_areas,
+                },
+                "user_metadata": {"name": display_name},
+            }
+        )
+    except Exception as exc:
+        error_msg = str(exc)
+        if "already been registered" in error_msg.lower() or "already exists" in error_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A user with this email already exists",
+            )
+        logger.exception("Error creating client user %s: %s", mask_email(payload.email), type(exc).__name__)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create client account")
+
+    user_id = result.user.id
+
+    try:
+        reset_code = PasswordResetCode(email=payload.email, expires_at=datetime.utcnow() + timedelta(hours=24))
+        db.add(reset_code)
+        db.commit()
+        db.refresh(reset_code)
+    except Exception as exc:
+        db.rollback()
+        logger.exception("DB error issuing client setup link for %s: %s", mask_email(payload.email), type(exc).__name__)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Account created but could not issue setup link. Use 'Send password reset' from the user list to retry.")
+
+    setup_url = f"{settings.frontend_url.rstrip('/')}/?setup_token={reset_code.reset_token}"
+
+    try:
+        await send_password_setup_link(payload.email, setup_url, display_name)
+    except Exception as exc:
+        logger.exception("Email error sending client setup link to %s: %s", mask_email(payload.email), type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Account created but the email failed to send. Use 'Send password reset' from the user list to retry.",
+        )
+
+    logger.info("Client account created + setup link sent to %s (client=%s)", mask_email(payload.email), client_name)
+    return SimpleMessageResponse(
+        message=f"Client account created. A one-tap setup link was emailed to {payload.email}.",
     )

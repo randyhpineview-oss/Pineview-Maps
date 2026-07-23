@@ -13,6 +13,10 @@ class UserRead(BaseModel):
     name: str
     email: str
     role: RoleEnum
+    # Only meaningful when role == "client" — the client-portal frontend
+    # uses these to show "You're viewing sites for {client_name}".
+    client_name: str | None = None
+    client_areas: list[str] | None = None
 
 
 class SiteSprayRecordRead(BaseModel):

@@ -50,8 +50,25 @@ export default function SiteDetailSheet({
   clientSuggestions = [],
   lsdSuggestions = [],
   getAreasForClient,
+  // ── Client-portal viewer mode ──────────────────────────────────────
+  // The external "client" role sees the same site details and spray
+  // history/PDF as everyone else, but every action button that changes
+  // data must disappear (no admin edit, directions, import lease sheet,
+  // status changes, reclaim toggle, or "green without lease sheet").
+  // `showDirections`/`canEditStatus` default to `true` so existing
+  // worker/admin callers are unaffected; ClientPortal explicitly passes
+  // `false`. `canViewPdf` defaults to `canManagePin` (workers today
+  // can't see PDFs) but the client role gets read-only PDF access
+  // without gaining `canManagePin`'s edit/delete rights, so it's a
+  // separate flag.
+  showDirections = true,
+  canEditStatus = true,
+  canViewPdf,
+  showSprayHistory,
 }) {
   const { confirm, prompt } = useDialog();
+  const effectiveCanViewPdf = canViewPdf ?? canManagePin;
+  const effectiveShowSprayHistory = showSprayHistory ?? Boolean(onCreateSprayRecord);
   const [isEditing, setIsEditing] = useState(false);
   const [editState, setEditState] = useState(() => buildEditState(site));
   const [quickEditing, setQuickEditing] = useState(false);
@@ -320,27 +337,29 @@ export default function SiteDetailSheet({
                 Edit details
               </button>
             ) : null}
-            <button
-              className="primary-button"
-              type="button"
-              onClick={() => {
-                const url = getDirectionsUrl(site);
-                // On desktop (> 768 px viewport), open Google Maps in a
-                // new tab so the Pineview app state isn't replaced — the
-                // user returns to the same pin/filter view when they
-                // come back. On mobile keep same-tab navigation so iOS
-                // and Android can hand the URL off to the native Google
-                // Maps / Apple Maps app via the universal-link handler.
-                if (window.matchMedia('(min-width: 769px)').matches) {
-                  window.open(url, '_blank', 'noopener,noreferrer');
-                } else {
-                  window.location.assign(url);
-                }
-              }}
-              style={{ padding: '6px 12px', fontSize: '0.85rem' }}
-            >
-              🧭 Directions
-            </button>
+            {showDirections ? (
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => {
+                  const url = getDirectionsUrl(site);
+                  // On desktop (> 768 px viewport), open Google Maps in a
+                  // new tab so the Pineview app state isn't replaced — the
+                  // user returns to the same pin/filter view when they
+                  // come back. On mobile keep same-tab navigation so iOS
+                  // and Android can hand the URL off to the native Google
+                  // Maps / Apple Maps app via the universal-link handler.
+                  if (window.matchMedia('(min-width: 769px)').matches) {
+                    window.open(url, '_blank', 'noopener,noreferrer');
+                  } else {
+                    window.location.assign(url);
+                  }
+                }}
+                style={{ padding: '6px 12px', fontSize: '0.85rem' }}
+              >
+                🧭 Directions
+              </button>
+            ) : null}
             {canManagePin ? (
               <>
                 <button className="secondary-button" type="button" onClick={() => setIsEditing(true)}>
@@ -362,7 +381,7 @@ export default function SiteDetailSheet({
               </button>
             ) : null}
           </div>
-          {!isInfoOnlyPin(site.pin_type) ? (
+          {!isInfoOnlyPin(site.pin_type) && canEditStatus ? (
             <div className="button-row" style={{ marginTop: '1rem' }}>
               <button
                 className="status-button green"
@@ -395,7 +414,7 @@ export default function SiteDetailSheet({
               </button>
             </div>
           ) : null}
-          {(site.pin_type === 'lsd' || site.pin_type === 'reclaimed') && onRequestTypeChange ? (
+          {canEditStatus && (site.pin_type === 'lsd' || site.pin_type === 'reclaimed') && onRequestTypeChange ? (
             <div className="button-row" style={{ marginTop: '0.75rem' }}>
               <button
                 className="secondary-button"
@@ -484,7 +503,7 @@ export default function SiteDetailSheet({
               ) : null}
             </div>
           ) : null}
-          {!isInfoOnlyPin(site.pin_type) && canAdmin ? (
+          {!isInfoOnlyPin(site.pin_type) && canAdmin && canEditStatus ? (
             <div style={{ marginTop: '0.75rem' }}>
               <button
                 type="button"
@@ -513,7 +532,7 @@ export default function SiteDetailSheet({
           ) : null}
 
           {/* Spray History */}
-          {!isInfoOnlyPin(site.pin_type) && onCreateSprayRecord ? (
+          {!isInfoOnlyPin(site.pin_type) && effectiveShowSprayHistory ? (
             <div style={{ borderTop: '1px solid rgba(143,182,255,0.1)', marginTop: '1rem', paddingTop: '0.75rem' }}>
               <div className="small-text" style={{ fontWeight: 600, marginBottom: '0.5rem' }}>
                 Spray History ({sprayRecords.length})
@@ -528,8 +547,10 @@ export default function SiteDetailSheet({
                             {record.spray_date}{record.is_avoided ? ' — Issue/Not Sprayed' : ' — Sprayed'}
                             {/* Only show the 📄 icon to roles that can actually
                                 view the PDF — workers don't need a hint that a
-                                lease sheet exists since they can't open it. */}
-                            {canManagePin && record.lease_sheet_data ? ' 📄' : ''}
+                                lease sheet exists since they can't open it.
+                                Clients CAN view the PDF (effectiveCanViewPdf),
+                                even though they can't manage the pin. */}
+                            {effectiveCanViewPdf && record.lease_sheet_data ? ' 📄' : ''}
                           </div>
                           <div className="small-text">
                             By: {record.sprayed_by_name || 'Unknown'}
@@ -541,8 +562,10 @@ export default function SiteDetailSheet({
                           </div>
                           {/* Workers see spray-record rows (date + who) but
                               NOT the "View PDF" / "Edit" buttons — they don't
-                              need access to the lease sheet itself. */}
-                          {canManagePin && (record.pdf_url || record.lease_sheet_data) && (
+                              need access to the lease sheet itself. Clients
+                              get "View PDF" only — never "Edit" (that stays
+                              behind canManagePin). */}
+                          {effectiveCanViewPdf && (record.pdf_url || record.lease_sheet_data) && (
                             <div style={{ display: 'flex', gap: '6px', marginTop: '0.25rem' }}>
                               {record.pdf_url && (
                                 <button

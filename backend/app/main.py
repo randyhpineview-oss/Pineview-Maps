@@ -11,7 +11,7 @@ from slowapi.errors import RateLimitExceeded
 from sqlalchemy import and_, func, inspect, or_, text
 from sqlalchemy.orm import Session, defer, joinedload
 
-from app.auth import MANAGES_PINS, get_current_user, require_roles, seed_demo_users
+from app.auth import MANAGES_PINS, apply_client_scope, client_scope_matches, get_current_user, require_roles, seed_demo_users
 from app.config import get_settings
 from app.database import Base, SessionLocal, engine, get_db
 from app.kml_import import parse_kml_file
@@ -58,6 +58,7 @@ from app.checkin_models import (  # noqa: F401 — ensure tables are registered
 )
 from app.models import (
     ApprovalState,
+    ClientInvite,
     PinType,
     Quote,
     QuoteRateCategory,
@@ -71,6 +72,7 @@ from app.models import (
     TimeMaterialsTicket,
     User,
 )
+from app.client_invites import router as client_invites_router
 from app.time_materials_routes import (
     append_row_for_spray_record,
     classify_ticket_ownership,
@@ -148,6 +150,7 @@ app.include_router(user_management_router)
 app.include_router(roster_router)
 app.include_router(password_reset_router)
 app.include_router(signup_router)
+app.include_router(client_invites_router)
 app.include_router(pipeline_router)
 app.include_router(lookup_router)
 app.include_router(time_materials_router)
@@ -312,7 +315,7 @@ def startup_event() -> None:
 # Format: an opaque-but-meaningful string. Date-prefix + initial keeps
 # bumps obvious in git blame. The exact value doesn't matter as long as
 # it differs from any prior committed value.
-_MIGRATION_VERSION = "2026-07-03-sync-users-is-active"
+_MIGRATION_VERSION = "2026-07-22-client-role"
 
 
 def _migrate_add_columns() -> None:
@@ -362,6 +365,13 @@ def _migrate_add_columns() -> None:
                 conn.execute(text("ALTER TYPE roleenum ADD VALUE IF NOT EXISTS 'tv'"))
             except Exception as e:
                 print(f"Warning: roleenum enum migration failed: {e}")
+
+            # External, invite-only client-portal role (see app/auth.py's
+            # CLIENT_ALLOWED_ROUTES for what it can reach).
+            try:
+                conn.execute(text("ALTER TYPE roleenum ADD VALUE IF NOT EXISTS 'client'"))
+            except Exception as e:
+                print(f"Warning: roleenum 'client' enum migration failed: {e}")
 
         # Sites migrations
         if insp.has_table("sites"):
@@ -674,6 +684,32 @@ def _migrate_add_columns() -> None:
             except Exception as e:
                 print(f"[STARTUP] Could not add users.is_active column: {e}")
 
+        # ── Client-role scoping columns. Only populated for role='client'
+        # rows; NULL/empty for every other role. See models.py::User for
+        # the full field semantics.
+        if "client_name" not in existing_user_cols:
+            try:
+                with engine.begin() as fresh_conn:
+                    fresh_conn.execute(text("ALTER TABLE users ADD COLUMN client_name VARCHAR(120)"))
+            except Exception as e:
+                print(f"[STARTUP] Could not add users.client_name column: {e}")
+        if "client_areas" not in existing_user_cols:
+            try:
+                with engine.begin() as fresh_conn:
+                    if is_sqlite:
+                        fresh_conn.execute(text("ALTER TABLE users ADD COLUMN client_areas JSON"))
+                    else:
+                        fresh_conn.execute(text("ALTER TABLE users ADD COLUMN client_areas JSONB"))
+            except Exception as e:
+                print(f"[STARTUP] Could not add users.client_areas column: {e}")
+
+    # ── client_invites table (Flow B: admin generates a single-use invite
+    # link and copies it into a text/email manually).
+    try:
+        Base.metadata.create_all(bind=engine, tables=[ClientInvite.__table__], checkfirst=True)
+    except Exception as e:
+        print(f"[STARTUP] Could not ensure client_invites table: {e}")
+
     # ── Sync local users.is_active with Supabase Auth (one-time cleanup).
     # Marks any local user whose email is NOT in Supabase Auth as inactive.
     # This cleans up orphaned rows from users deleted before soft-delete was added.
@@ -943,6 +979,14 @@ def list_sites(
         .order_by(Site.updated_at.desc())
     )
 
+    # Client-role scoping: narrow to the caller's company (+ optional
+    # areas) before any other filter, and hide water pins entirely — those
+    # are a shared internal resource with no client, not something an
+    # external client-portal account should see. No-op for every other role.
+    query = apply_client_scope(query, current_user, Site.client, Site.area)
+    if current_user.role == RoleEnum.client:
+        query = query.filter(Site.pin_type != PinType.water)
+
     if client:
         query = query.filter(Site.client == client)
     if area:
@@ -1004,6 +1048,9 @@ def sites_delta(
             Site.is_hidden.is_(False),
         )
     )
+    items_q = apply_client_scope(items_q, current_user, Site.client, Site.area)
+    if current_user.role == RoleEnum.client:
+        items_q = items_q.filter(Site.pin_type != PinType.water)
     sites = items_q.all()
     has_spray_map = _has_spray_map_for(db, [s.id for s in sites])
     items = _build_site_list_items(sites, has_spray_map)
@@ -1020,6 +1067,21 @@ def sites_delta(
             ),
         )
     )
+    # A client role should still learn about a removal of one of THEIR
+    # sites, but never learn that some other company's site id exists —
+    # even a bare int id is information disclosure across tenants. Scoping
+    # this one is a plain-column filter (not `apply_client_scope`, which
+    # takes model columns) since it's a distinct query shape.
+    if current_user.role == RoleEnum.client:
+        if not current_user.client_name:
+            removed_q = removed_q.filter(False)  # noqa: FBT003
+        else:
+            removed_q = removed_q.filter(
+                func.lower(Site.client) == current_user.client_name.strip().lower()
+            )
+            if current_user.client_areas:
+                allowed = [a.strip().lower() for a in current_user.client_areas]
+                removed_q = removed_q.filter(func.lower(Site.area).in_(allowed))
     ids_removed = [row[0] for row in removed_q.all()]
 
     return SitesDeltaResponse(
@@ -1037,6 +1099,12 @@ def get_site(
 ) -> SiteRead:
     site = get_site_or_404(db, site_id)
     if site.deleted_at is not None or site.approval_state == ApprovalState.rejected:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Site not found")
+    if current_user.role == RoleEnum.client and (
+        site.pin_type == PinType.water or not client_scope_matches(current_user, site.client, site.area)
+    ):
+        # 404, not 403 — don't confirm to a client that a site id outside
+        # their scope exists at all.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Site not found")
     return SiteRead.model_validate(site)
 
@@ -1227,7 +1295,9 @@ def list_site_spray_records(
     leaves Supabase. The detail endpoint /api/site-spray-records/{id} fetches
     the full row when the edit flow actually needs it.
     """
-    get_site_or_404(db, site_id)
+    site = get_site_or_404(db, site_id)
+    if current_user.role == RoleEnum.client and not client_scope_matches(current_user, site.client, site.area):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Site not found")
     q = (
         db.query(SiteSprayRecord)
         .options(defer(SiteSprayRecord.lease_sheet_data))
@@ -1249,6 +1319,10 @@ def get_site_spray_record(
     record = db.query(SiteSprayRecord).filter(SiteSprayRecord.id == record_id).first()
     if not record:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Site spray record not found")
+    if current_user.role == RoleEnum.client:
+        parent_site = record.site
+        if not parent_site or not client_scope_matches(current_user, parent_site.client, parent_site.area):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Site spray record not found")
     return SiteSprayRecordRead.model_validate(record)
 
 
@@ -2873,13 +2947,62 @@ def restore_site(
     return SiteRead.model_validate(site)
 
 
+def _client_may_access_file_url(db: Session, current_user: User, url: str, *, is_photo: bool) -> bool:
+    """For the client role only: true if `url` is a pdf_url (or one of the
+    photo_urls) on a spray record belonging to a site/pipeline within the
+    caller's client_name/client_areas scope.
+
+    Without this check, /api/pdf-proxy and /api/proxy-photo would let any
+    authenticated client fetch ANY Dropbox file the backend knows the URL
+    for, just by guessing/enumerating URLs — the allowlist only gates
+    *reaching* the endpoint, not *which* file it's allowed to fetch.
+    """
+    if current_user.role != RoleEnum.client:
+        return True
+    if not url or not current_user.client_name:
+        return False
+
+    try:
+        site_col = SiteSprayRecord.photo_urls if is_photo else SiteSprayRecord.pdf_url
+        site_match = (
+            db.query(SiteSprayRecord.id)
+            .join(Site, Site.id == SiteSprayRecord.site_id)
+            .filter(
+                SiteSprayRecord.deleted_at.is_(None),
+                site_col.contains([url]) if is_photo else (SiteSprayRecord.pdf_url == url),
+            )
+        )
+        site_match = apply_client_scope(site_match, current_user, Site.client, Site.area)
+        if site_match.first() is not None:
+            return True
+
+        pipeline_col = SprayRecord.photo_urls if is_photo else SprayRecord.pdf_url
+        pipeline_match = (
+            db.query(SprayRecord.id)
+            .join(Pipeline, Pipeline.id == SprayRecord.pipeline_id)
+            .filter(
+                SprayRecord.deleted_at.is_(None),
+                pipeline_col.contains([url]) if is_photo else (SprayRecord.pdf_url == url),
+            )
+        )
+        pipeline_match = apply_client_scope(pipeline_match, current_user, Pipeline.client, Pipeline.area)
+        return pipeline_match.first() is not None
+    except Exception as exc:  # noqa: BLE001 — fail CLOSED (deny) on any query error
+        print(f"[CLIENT_FILE_ACCESS] Ownership check failed, denying: {type(exc).__name__}: {exc}")
+        return False
+
+
 @app.get("/api/pdf-proxy")
 async def pdf_proxy(
     url: str = Query(..., description="Dropbox shared link URL"),
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Proxy a Dropbox PDF to avoid CORS/iframe issues. Returns raw PDF bytes."""
     import httpx
+
+    if not _client_may_access_file_url(db, current_user, url, is_photo=False):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to view this file")
 
     # Convert Dropbox shared link to direct download URL
     download_url = url
@@ -2980,11 +3103,15 @@ def delete_draft_photos(
 @app.post("/api/proxy-photo")
 async def proxy_photo(
     payload: PhotoProxyRequest,
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Proxy a Dropbox image to avoid CORS issues. Returns base64 data and MIME type."""
     import httpx
     import base64
+
+    if not _client_may_access_file_url(db, current_user, payload.url, is_photo=True):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to view this file")
 
     # Convert Dropbox shared link to direct download URL
     download_url = payload.url

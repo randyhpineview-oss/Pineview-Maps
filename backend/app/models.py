@@ -28,6 +28,12 @@ class RoleEnum(str, enum.Enum):
     # mutating rights); it can only read the check-ins overview and the
     # TV stats summary. Boots straight into TVDashboard on login.
     tv = "tv"
+    # External, invite-only account for an oil & gas client contact
+    # (Shell, CNRL, etc.). Scoped to exactly one company (`User.client_name`)
+    # and, optionally, a subset of that company's areas (`User.client_areas`).
+    # Enforced via a deny-by-default allowlist in `app.auth.get_current_user`
+    # — see CLIENT_ALLOWED_ROUTES. Read-only everywhere it's allowed.
+    client = "client"
 
 
 class SiteStatus(str, enum.Enum):
@@ -60,6 +66,17 @@ class User(Base):
     role: Mapped[RoleEnum] = mapped_column(Enum(RoleEnum), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Only meaningful when role == RoleEnum.client. Must match an existing
+    # `sites.client` / `pipelines.client` value exactly (admins pick it from
+    # a dropdown built off that same list — see UserManagementPanel — so
+    # there's no free-typed spelling drift). Synced from Supabase
+    # `app_metadata.client_name` on every request in `_upsert_supabase_user`.
+    client_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # Only meaningful when role == RoleEnum.client. Empty/NULL means "all
+    # areas for client_name". Non-empty restricts visibility to sites/
+    # pipelines whose `area` is in this list (case-insensitive) — e.g. a
+    # CNRL contact who should only see one field office's area.
+    client_areas: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
     created_sites: Mapped[list["Site"]] = relationship(
         back_populates="created_by_user",
@@ -643,6 +660,42 @@ class PasswordResetCode(Base):
     @property
     def is_locked(self) -> bool:
         return self.attempts >= self.max_attempts or self.is_used or self.is_expired
+
+
+class ClientInvite(Base):
+    """A single-use, admin-generated invite link for external client signup
+    (Flow B — "generate a link and text/email it yourself", as opposed to
+    Flow A where the backend emails a personal setup link directly).
+
+    The token is embedded in `?client_invite=<token>` on the frontend URL.
+    See app/client_invites.py for the create/validate/consume endpoints.
+    """
+    __tablename__ = "client_invites"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    token: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    client_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    client_areas: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    used_by_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if not self.token:
+            self.token = secrets.token_urlsafe(32)
+        if not self.expires_at:
+            self.expires_at = datetime.utcnow() + timedelta(days=7)
+
+    @property
+    def is_expired(self) -> bool:
+        return datetime.utcnow() > self.expires_at
+
+    @property
+    def is_used(self) -> bool:
+        return self.used_at is not None
 
 
 class QuoteDraft(Base):

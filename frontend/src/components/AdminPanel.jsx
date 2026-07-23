@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 
 import { pinTypeLabel, statusLabel } from '../lib/mapUtils';
 import UserManagementPanel from './UserManagementPanel';
+import InviteClientPanel from './InviteClientPanel';
 import LookupManager from './LookupManager';
 import DeviceAdmin from './DeviceAdmin';
 import { useDialog } from './DialogProvider';
@@ -94,6 +95,7 @@ export default function AdminPanel({
   deletedSites = [],
   clients,
   areas,
+  getAreasForClient,
   busy,
   onApprove,
   onReject,
@@ -583,6 +585,15 @@ export default function AdminPanel({
           </div>
         </CollapsibleSection>
 
+        {/* Visible to admin/office AND crew_lead ("field lead") — unlike
+            the rest of User Management below, inviting a client is
+            explicitly something a field lead should be able to do. The
+            list of existing client accounts (with revoke/reset) still
+            lives in the admin/office-only User Management section. */}
+        <CollapsibleSection title="Invite a Client" defaultOpen={false}>
+          <InviteClientPanel clients={clients} getAreasForClient={getAreasForClient} />
+        </CollapsibleSection>
+
         {/* The five sections below (KML import, Bulk Reset, User
             Management, Truck Tracking, Lookup Tables) are office/admin
             tooling. Crew leads only see pin-management + Recent Deletes
@@ -692,7 +703,14 @@ export default function AdminPanel({
         </CollapsibleSection>
 
         <CollapsibleSection title="User Management" defaultOpen={false}>
-          <UserManagementPanel busy={busy} currentUserEmail={currentUserEmail} cachedUsers={cachedUsers} onUsersChanged={onUsersChanged} />
+          <UserManagementPanel
+            busy={busy}
+            currentUserEmail={currentUserEmail}
+            cachedUsers={cachedUsers}
+            onUsersChanged={onUsersChanged}
+            clients={clients}
+            getAreasForClient={getAreasForClient}
+          />
         </CollapsibleSection>
 
         {/* Truck Tracking sits next to User Management because device admin

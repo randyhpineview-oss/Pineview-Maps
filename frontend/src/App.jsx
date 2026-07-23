@@ -121,6 +121,8 @@ const LinkLeaseSheetModal = lazy(() => import('./components/LinkLeaseSheetModal'
 // invite-only chunk doesn't sit in the cold-start main bundle for every
 // returning login. Suspense fallback shows a tiny "Loading…" placeholder.
 const SignupPage = lazy(() => import('./components/SignupPage'));
+const ClientSignupPage = lazy(() => import('./components/ClientSignupPage'));
+const ClientPortal = lazy(() => import('./components/ClientPortal'));
 
 // Small retry helper for dynamic chunk loads. Transient Vercel edge / network
 // blips occasionally make a single import() reject; one retry with backoff
@@ -877,10 +879,21 @@ export default function App() {
   //   actualCanAdmin      \u2014 admin | office only          (reports, quotes,
   //                          calendar, lookups, T&M / hydroseed approvals,
   //                          user management, etc.)
-  const userRole = session?.user?.user_metadata?.role || 'worker';
+  // SECURITY: role must be read from `app_metadata` — the only field a
+  // signed-in user cannot edit themselves (only the backend's service-role
+  // key can write it; see backend/app/auth.py). `user_metadata.role` is a
+  // display-only fallback for legacy accounts that haven't been migrated
+  // yet (see backend/scripts/migrate_roles_to_app_metadata.py); it is
+  // never trusted for anything above the default 'worker'. This mirrors
+  // the backend's own resolution order exactly, so the UI a user sees
+  // matches what the backend will actually let them do.
+  const userRole = session?.user?.app_metadata?.role || session?.user?.user_metadata?.role || 'worker';
   const actualCanAdmin = userRole === 'admin' || userRole === 'office';
   const actualIsCrewLead = userRole === 'crew_lead';
   const actualCanManagePins = actualCanAdmin || actualIsCrewLead;
+  // Client-portal scope — only meaningful when userRole === 'client'.
+  const clientPortalName = session?.user?.app_metadata?.client_name || null;
+  const clientPortalAreas = session?.user?.app_metadata?.client_areas || null;
 
   // Display label for the current user, computed once and reused by both
   // the inline (tablet/PC) name badge and the mobile avatar menu. Mirrors
@@ -895,6 +908,20 @@ export default function App() {
   }, [user]);
   // Initial used inside the round avatar trigger on mobile.
   const userInitial = (userDisplayName || 'U').trim().charAt(0).toUpperCase() || 'U';
+
+  // Wipes the local IndexedDB cache (sites/pipelines/tickets/pdfCache/etc.)
+  // before signing out, so a revoked account or a shared/kiosk device
+  // doesn't retain the previous user's data offline after logout. This
+  // matters most for the client-portal role (external accounts on
+  // possibly-shared machines) but is applied to every sign-out uniformly —
+  // a fresh login always re-syncs from the server regardless of role.
+  const handleSignOut = useCallback(async () => {
+    try {
+      const { clearAllOfflineData } = await import('./lib/offlineStore');
+      await clearAllOfflineData();
+    } catch { /* best-effort — never block sign-out on cache cleanup */ }
+    signOut();
+  }, []);
 
   // "View as Worker" override: admin/office can flip this on to get the
   // worker-level UI (no admin panel tab, no approve/delete buttons, no
@@ -6043,6 +6070,36 @@ export default function App() {
         </Suspense>
       );
     }
+
+    // Client-portal self-signup (Flow B): ?client_invite=<token> from a
+    // single-use link an admin/field lead generated and sent themselves.
+    // Mirrors the ?invite= worker-QR flow above, but the token is looked
+    // up server-side (GET /api/auth/client-invite/{token}) to show which
+    // company the visitor is signing up for before they enter anything.
+    const clientInviteToken = (() => {
+      try {
+        return new URLSearchParams(window.location.search).get('client_invite');
+      } catch {
+        return null;
+      }
+    })();
+    if (clientInviteToken) {
+      return (
+        <Suspense fallback={<div style={{ padding: 24, textAlign: 'center', color: '#9ab1d6' }}>Loading…</div>}>
+          <ClientSignupPage
+            token={clientInviteToken}
+            onDone={() => {
+              try {
+                const url = new URL(window.location.href);
+                url.searchParams.delete('client_invite');
+                window.history.replaceState({}, '', url.toString());
+              } catch { /* ignore */ }
+              window.location.reload();
+            }}
+          />
+        </Suspense>
+      );
+    }
     return <LoginPage onLoginSuccess={() => void refreshAllData()} />;
   }
 
@@ -6054,6 +6111,28 @@ export default function App() {
     return (
       <Suspense fallback={<div style={{ padding: 24, textAlign: 'center', color: '#9ab1d6' }}>Loading…</div>}>
         <TVDashboard />
+      </Suspense>
+    );
+  }
+
+  // External, invite-only client-portal account (Shell, CNRL, etc.): boots
+  // straight into a dedicated, read-only, self-contained view — NOT the
+  // full worker/admin app shell. This mirrors the `tv` early-return above.
+  // Deliberately its own component (rather than threading `userRole ===
+  // 'client'` conditionals through this 7000+ line shell) so the huge
+  // surface of worker/admin-only state, polling, and mutating actions in
+  // the rest of this file can never accidentally leak into what an
+  // external client sees — and the backend's allowlist in app/auth.py is
+  // the real security boundary either way.
+  if (userRole === 'client') {
+    return (
+      <Suspense fallback={<div style={{ padding: 24, textAlign: 'center', color: '#9ab1d6' }}>Loading…</div>}>
+        <ClientPortal
+          clientName={clientPortalName}
+          clientAreas={clientPortalAreas}
+          userDisplayName={userDisplayName}
+          onSignOut={handleSignOut}
+        />
       </Suspense>
     );
   }
@@ -6216,7 +6295,7 @@ export default function App() {
           ) : null}
           <span className="badge topbar-account-inline-only">{userDisplayName}</span>
           <button
-            onClick={() => signOut()}
+            onClick={() => handleSignOut()}
             className="badge topbar-account-inline-only"
             style={{ cursor: 'pointer', background: '#ef4444', color: 'white' }}
           >
@@ -6309,7 +6388,7 @@ export default function App() {
                   type="button"
                   role="menuitem"
                   className="topbar-account-item topbar-account-item-danger"
-                  onClick={() => { setAccountMenuOpen(false); signOut(); }}
+                  onClick={() => { setAccountMenuOpen(false); handleSignOut(); }}
                 >
                   Sign out
                 </button>
@@ -7287,6 +7366,7 @@ export default function App() {
               deletedSites={deletedSites}
               clients={clients}
               areas={areas}
+              getAreasForClient={getAreasForClient}
               busy={adminBusy}
               onApprove={(siteId, overrides) => runAdminAction(
                 () => api.approveSite(siteId, { approval_state: 'approved', ...overrides }),

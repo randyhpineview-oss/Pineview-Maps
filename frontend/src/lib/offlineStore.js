@@ -600,3 +600,17 @@ export async function replaceHydroseedTickets(tickets) {
   }
   await tx.done;
 }
+
+// Wipes every IndexedDB object store. Called on sign-out (and whenever the
+// signed-in user changes) so a revoked account — client or otherwise — or a
+// shared/kiosk device doesn't retain the previous user's site/pipeline/
+// ticket data offline. `meta` (last-sync watermarks) is included; a fresh
+// login always re-syncs from scratch, which is the safe default here.
+export async function clearAllOfflineData() {
+  const db = await dbPromise;
+  await Promise.all(
+    Array.from(db.objectStoreNames).map((storeName) =>
+      db.clear(storeName).catch(() => { /* best-effort — a locked/missing store shouldn't block sign-out */ })
+    )
+  );
+}

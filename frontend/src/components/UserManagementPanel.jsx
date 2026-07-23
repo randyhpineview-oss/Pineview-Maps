@@ -164,7 +164,12 @@ function WorkerSignupQR() {
   );
 }
 
-const ROLES = [
+// Roles selectable via "Change role" / "+ Add User" — deliberately
+// EXCLUDES "client". Client accounts are created only via the "Invite a
+// Client" panel (requires a client_name); the backend rejects
+// create/update calls that try to set role="client" through this
+// generic endpoint (see backend/app/user_management.py).
+const ASSIGNABLE_ROLES = [
   { value: 'admin', label: 'Admin' },
   { value: 'office', label: 'Office' },
   { value: 'crew_lead', label: 'Crew Lead' },
@@ -172,6 +177,9 @@ const ROLES = [
   // Read-only kiosk account for the always-on office Operations TV.
   { value: 'tv', label: 'TV Dashboard' },
 ];
+
+// Full set, including "client" — used for badge-label lookups only.
+const ROLES = [...ASSIGNABLE_ROLES, { value: 'client', label: 'Client' }];
 
 function roleBadgeStyle(role) {
   switch (role) {
@@ -183,6 +191,8 @@ function roleBadgeStyle(role) {
       return { background: '#0891b2', color: '#fff' };
     case 'tv':
       return { background: '#0d9488', color: '#fff' };
+    case 'client':
+      return { background: '#b45309', color: '#fff' };
     default:
       return { background: '#475569', color: '#fff' };
   }
@@ -270,6 +280,15 @@ function UserRow({ user, busy, onUpdateRole, onUpdateName, onDelete, onConfirmEm
         {user.last_sign_in_at ? ` · Last login: ${new Date(user.last_sign_in_at).toLocaleDateString()}` : ''}
       </div>
 
+      {user.role === 'client' && user.client_name ? (
+        <div className="small-text" style={{ marginTop: '0.3rem', color: '#fbbf24' }}>
+          Scoped to: {user.client_name}
+          {Array.isArray(user.client_areas) && user.client_areas.length > 0
+            ? ` — ${user.client_areas.join(', ')}`
+            : ' — all areas'}
+        </div>
+      ) : null}
+
       {editingRole ? (
         <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           <select
@@ -277,7 +296,7 @@ function UserRow({ user, busy, onUpdateRole, onUpdateName, onDelete, onConfirmEm
             onChange={(e) => setSelectedRole(e.target.value)}
             style={{ flex: 1 }}
           >
-            {ROLES.map((r) => (
+            {ASSIGNABLE_ROLES.map((r) => (
               <option key={r.value} value={r.value}>{r.label}</option>
             ))}
           </select>
@@ -565,7 +584,7 @@ export default function UserManagementPanel({ busy: externalBusy, currentUserEma
               minLength={6}
             />
             <select value={newRole} onChange={(e) => setNewRole(e.target.value)}>
-              {ROLES.map((r) => (
+              {ASSIGNABLE_ROLES.map((r) => (
                 <option key={r.value} value={r.value}>{r.label}</option>
               ))}
             </select>
