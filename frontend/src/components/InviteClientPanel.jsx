@@ -8,11 +8,10 @@ import { api } from '../lib/api';
  * ("field lead" in the product ask) — unlike the rest of User Management,
  * which stays admin/office only.
  *
- * Client is a required single-select dropdown sourced from the SAME list
- * as the map's client filter (`clients` prop) — no free typing, so a
- * misspelled company name can never silently scope someone to zero sites.
- * Areas are optional; leaving all unchecked means "every area for this
- * client". A client account is always scoped to exactly one company.
+ * Clients are a multi-select from the SAME list as the map's client filter
+ * (`clients` prop) — no free typing. For each selected company, areas are
+ * optional; leaving all unchecked for a company means "every area for that
+ * company".
  *
  * Two ways to actually get the invite to the client (matches how Pineview
  * said they want to operate — sometimes email it themselves, sometimes
@@ -23,9 +22,16 @@ import { api } from '../lib/api';
  *     the admin copies and sends themselves (text, email, whatever) — no
  *     account exists yet; the client's own visit + signup form creates it.
  */
+function buildClientAccess(selectedClients, areasByClient) {
+  return selectedClients.map((client) => {
+    const areas = (areasByClient[client] || []).filter((a) => typeof a === 'string' && a.trim());
+    return areas.length > 0 ? { client, areas } : { client, areas: null };
+  });
+}
+
 export default function InviteClientPanel({ clients = [], getAreasForClient }) {
-  const [selectedClient, setSelectedClient] = useState('');
-  const [selectedAreas, setSelectedAreas] = useState([]);
+  const [selectedClients, setSelectedClients] = useState([]);
+  const [areasByClient, setAreasByClient] = useState({});
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
@@ -34,9 +40,9 @@ export default function InviteClientPanel({ clients = [], getAreasForClient }) {
   const [generatedLink, setGeneratedLink] = useState('');
   const [copied, setCopied] = useState(false);
 
-  const availableAreas = useMemo(
-    () => (selectedClient && typeof getAreasForClient === 'function' ? getAreasForClient(selectedClient) : []),
-    [selectedClient, getAreasForClient]
+  const clientOptions = useMemo(
+    () => (Array.isArray(clients) ? clients.filter(Boolean) : []),
+    [clients]
   );
 
   function clearMessages() {
@@ -45,25 +51,35 @@ export default function InviteClientPanel({ clients = [], getAreasForClient }) {
     setGeneratedLink('');
   }
 
-  function toggleArea(area) {
-    setSelectedAreas((prev) =>
-      prev.includes(area) ? prev.filter((a) => a !== area) : [...prev, area]
-    );
+  function toggleClient(client) {
+    setSelectedClients((prev) => {
+      if (prev.includes(client)) {
+        setAreasByClient((areas) => {
+          const next = { ...areas };
+          delete next[client];
+          return next;
+        });
+        return prev.filter((c) => c !== client);
+      }
+      return [...prev, client];
+    });
   }
 
-  // Reset the area selection whenever the client changes — an area picked
-  // for one client is meaningless (and potentially confusing/wrong) for a
-  // different one.
-  function handleClientChange(value) {
-    setSelectedClient(value);
-    setSelectedAreas([]);
+  function toggleArea(client, area) {
+    setAreasByClient((prev) => {
+      const current = prev[client] || [];
+      const nextAreas = current.includes(area)
+        ? current.filter((a) => a !== area)
+        : [...current, area];
+      return { ...prev, [client]: nextAreas };
+    });
   }
 
   async function handleEmailSetupLink(e) {
     e.preventDefault();
     clearMessages();
-    if (!selectedClient) {
-      setError('Choose a client first.');
+    if (selectedClients.length === 0) {
+      setError('Choose at least one client.');
       return;
     }
     if (!email.trim()) {
@@ -75,8 +91,7 @@ export default function InviteClientPanel({ clients = [], getAreasForClient }) {
       const resp = await api.inviteClient({
         email: email.trim(),
         name: name.trim() || undefined,
-        client_name: selectedClient,
-        client_areas: selectedAreas.length > 0 ? selectedAreas : undefined,
+        client_access: buildClientAccess(selectedClients, areasByClient),
       });
       setSuccess(resp?.message || `Setup link sent to ${email.trim()}.`);
       setEmail('');
@@ -90,15 +105,14 @@ export default function InviteClientPanel({ clients = [], getAreasForClient }) {
 
   async function handleGenerateLink() {
     clearMessages();
-    if (!selectedClient) {
-      setError('Choose a client first.');
+    if (selectedClients.length === 0) {
+      setError('Choose at least one client.');
       return;
     }
     setBusy(true);
     try {
       const resp = await api.createClientInvite({
-        client_name: selectedClient,
-        client_areas: selectedAreas.length > 0 ? selectedAreas : undefined,
+        client_access: buildClientAccess(selectedClients, areasByClient),
       });
       setGeneratedLink(resp?.url || '');
     } catch (err) {
@@ -123,9 +137,9 @@ export default function InviteClientPanel({ clients = [], getAreasForClient }) {
     <div className="site-row">
       <strong style={{ fontSize: '0.95rem' }}>Invite a Client</strong>
       <p className="small-text" style={{ marginTop: '0.25rem', lineHeight: 1.5 }}>
-        Gives an external contact (Shell, CNRL, etc.) a read-only login scoped to one
-        company. They'll see their sites, spray history, and herbicide lease sheet
-        PDFs — nothing else. There's no public sign-up; this is the only way in.
+        Gives an external contact a read-only login scoped to one or more companies.
+        They&apos;ll see sites, spray history, and herbicide lease sheet PDFs for those
+        companies — nothing else. There&apos;s no public sign-up; this is the only way in.
       </p>
 
       {error ? (
@@ -140,44 +154,78 @@ export default function InviteClientPanel({ clients = [], getAreasForClient }) {
       ) : null}
 
       <div className="list-grid" style={{ marginTop: '0.6rem' }}>
-        <select value={selectedClient} onChange={(e) => handleClientChange(e.target.value)}>
-          <option value="">Select client…</option>
-          {clients.map((c) => (
-            <option key={c} value={c}>{c}</option>
+        <div className="small-text" style={{ marginBottom: '0.25rem' }}>
+          Companies (select one or more)
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+          {clientOptions.map((client) => (
+            <label
+              key={client}
+              className="small-text"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.3rem',
+                padding: '2px 8px',
+                borderRadius: '4px',
+                background: selectedClients.includes(client) ? 'rgba(59,130,246,0.25)' : 'rgba(148,163,184,0.1)',
+                cursor: 'pointer',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={selectedClients.includes(client)}
+                onChange={() => toggleClient(client)}
+              />
+              {client}
+            </label>
           ))}
-        </select>
+        </div>
 
-        {selectedClient && availableAreas.length > 0 ? (
-          <div>
-            <div className="small-text" style={{ marginBottom: '0.35rem' }}>
-              Areas (optional — leave all unchecked for every area of {selectedClient})
+        {selectedClients.map((client) => {
+          const availableAreas = typeof getAreasForClient === 'function'
+            ? (getAreasForClient(client) || [])
+            : [];
+          if (availableAreas.length === 0) {
+            return (
+              <div key={client} className="small-text" style={{ color: '#94a3b8' }}>
+                {client}: no areas on record — they&apos;ll see every area of this company.
+              </div>
+            );
+          }
+          const selectedAreas = areasByClient[client] || [];
+          return (
+            <div key={client}>
+              <div className="small-text" style={{ marginBottom: '0.35rem' }}>
+                Areas for {client} (optional — leave all unchecked for every area)
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                {availableAreas.map((area) => (
+                  <label
+                    key={area}
+                    className="small-text"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.3rem',
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      background: selectedAreas.includes(area) ? 'rgba(59,130,246,0.25)' : 'rgba(148,163,184,0.1)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedAreas.includes(area)}
+                      onChange={() => toggleArea(client, area)}
+                    />
+                    {area}
+                  </label>
+                ))}
+              </div>
             </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-              {availableAreas.map((area) => (
-                <label
-                  key={area}
-                  className="small-text"
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.3rem',
-                    padding: '2px 8px',
-                    borderRadius: '4px',
-                    background: selectedAreas.includes(area) ? 'rgba(59,130,246,0.25)' : 'rgba(148,163,184,0.1)',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedAreas.includes(area)}
-                    onChange={() => toggleArea(area)}
-                  />
-                  {area}
-                </label>
-              ))}
-            </div>
-          </div>
-        ) : null}
+          );
+        })}
       </div>
 
       {/* Flow A: email a one-tap setup link directly. */}
@@ -195,7 +243,7 @@ export default function InviteClientPanel({ clients = [], getAreasForClient }) {
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
-        <button className="primary-button" type="submit" disabled={busy || !selectedClient}>
+        <button className="primary-button" type="submit" disabled={busy || selectedClients.length === 0}>
           {busy ? 'Working…' : 'Email setup link'}
         </button>
       </form>
@@ -205,7 +253,12 @@ export default function InviteClientPanel({ clients = [], getAreasForClient }) {
         <div className="small-text" style={{ fontWeight: 600, marginBottom: '0.4rem' }}>
           Option B — Generate a link to text or email yourself
         </div>
-        <button className="secondary-button" type="button" disabled={busy || !selectedClient} onClick={handleGenerateLink}>
+        <button
+          className="secondary-button"
+          type="button"
+          disabled={busy || selectedClients.length === 0}
+          onClick={handleGenerateLink}
+        >
           {busy ? 'Working…' : 'Generate invite link'}
         </button>
         {generatedLink ? (
@@ -225,8 +278,8 @@ export default function InviteClientPanel({ clients = [], getAreasForClient }) {
               {copied ? 'Copied!' : 'Copy link'}
             </button>
             <div className="small-text" style={{ marginTop: '0.4rem', color: '#fbbf24' }}>
-              Valid for 7 days, single-use. Anyone with this link can sign up as this
-              client — send it directly to the contact, don't post it anywhere public.
+              Valid for 7 days, single-use. Anyone with this link can sign up with this
+              access — send it directly to the contact, don&apos;t post it anywhere public.
             </div>
           </div>
         ) : null}

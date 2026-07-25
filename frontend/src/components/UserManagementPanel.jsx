@@ -198,6 +198,39 @@ function roleBadgeStyle(role) {
   }
 }
 
+function resolveUserClientAccess(user) {
+  if (Array.isArray(user?.client_access) && user.client_access.length > 0) {
+    return user.client_access
+      .map((entry) => {
+        const client = typeof entry?.client === 'string' ? entry.client.trim() : '';
+        if (!client) return null;
+        const areas = Array.isArray(entry.areas)
+          ? entry.areas.filter((a) => typeof a === 'string' && a.trim())
+          : [];
+        return { client, areas };
+      })
+      .filter(Boolean);
+  }
+  if (typeof user?.client_name === 'string' && user.client_name.trim()) {
+    return [{
+      client: user.client_name.trim(),
+      areas: Array.isArray(user.client_areas)
+        ? user.client_areas.filter((a) => typeof a === 'string' && a.trim())
+        : [],
+    }];
+  }
+  return [];
+}
+
+function formatClientAccessLabel(access) {
+  if (!access.length) return null;
+  return access.map((entry) => (
+    entry.areas.length > 0
+      ? `${entry.client} (${entry.areas.join(', ')})`
+      : `${entry.client} (all areas)`
+  )).join(' · ');
+}
+
 function UserRow({
   user,
   busy,
@@ -216,63 +249,79 @@ function UserRow({
   const [editingScope, setEditingScope] = useState(false);
   const [selectedRole, setSelectedRole] = useState(user.role);
   const [editedName, setEditedName] = useState(user.name || '');
-  const [scopeClient, setScopeClient] = useState(user.client_name || '');
-  const [scopeAreas, setScopeAreas] = useState(
-    Array.isArray(user.client_areas) ? user.client_areas : []
-  );
+  const existingAccess = useMemo(() => resolveUserClientAccess(user), [user]);
+  const [scopeClients, setScopeClients] = useState(() => existingAccess.map((e) => e.client));
+  const [areasByClient, setAreasByClient] = useState(() => {
+    const initial = {};
+    existingAccess.forEach((entry) => { initial[entry.client] = entry.areas; });
+    return initial;
+  });
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
 
   const isSelf = currentUserEmail && user.email === currentUserEmail;
   const emailUnconfirmed = !user.email_confirmed_at;
   const isClient = user.role === 'client';
+  const scopeLabel = formatClientAccessLabel(existingAccess);
 
   // The map's client list is derived from live sites, so a client account
   // could be scoped to a company that currently has none. Keep its stored
-  // value selectable so opening the editor can't silently reassign them.
+  // values selectable so opening the editor can't silently reassign them.
   const clientOptions = useMemo(() => {
     const list = Array.isArray(clients) ? clients.filter(Boolean) : [];
-    if (user.client_name && !list.includes(user.client_name)) {
-      return [user.client_name, ...list];
-    }
-    return list;
-  }, [clients, user.client_name]);
+    const extras = existingAccess.map((e) => e.client).filter((c) => !list.includes(c));
+    return extras.length ? [...extras, ...list] : list;
+  }, [clients, existingAccess]);
 
-  // Same reasoning for areas: union the derived areas with any the account
-  // is already restricted to, so an area with no current sites still shows
-  // up (checked) instead of quietly disappearing on save.
-  const availableAreas = useMemo(() => {
-    const derived = scopeClient && typeof getAreasForClient === 'function'
-      ? (getAreasForClient(scopeClient) || [])
+  function areasForClient(client) {
+    const derived = typeof getAreasForClient === 'function'
+      ? (getAreasForClient(client) || [])
       : [];
-    const extras = scopeClient === user.client_name && Array.isArray(user.client_areas)
-      ? user.client_areas
-      : [];
+    const existing = existingAccess.find((e) => e.client === client);
+    const extras = existing?.areas || [];
     return [...new Set([...derived, ...extras])];
-  }, [scopeClient, getAreasForClient, user.client_name, user.client_areas]);
+  }
 
   function openScopeEditor() {
-    setScopeClient(user.client_name || '');
-    setScopeAreas(Array.isArray(user.client_areas) ? user.client_areas : []);
+    const access = resolveUserClientAccess(user);
+    setScopeClients(access.map((e) => e.client));
+    const nextAreas = {};
+    access.forEach((entry) => { nextAreas[entry.client] = entry.areas; });
+    setAreasByClient(nextAreas);
     setEditingScope(true);
   }
 
-  // An area picked for one company is meaningless for another, so switching
-  // the client resets to "all areas" — same as InviteClientPanel.
-  function handleScopeClientChange(value) {
-    setScopeClient(value);
-    setScopeAreas([]);
+  function toggleScopeClient(client) {
+    setScopeClients((prev) => {
+      if (prev.includes(client)) {
+        setAreasByClient((areas) => {
+          const next = { ...areas };
+          delete next[client];
+          return next;
+        });
+        return prev.filter((c) => c !== client);
+      }
+      return [...prev, client];
+    });
   }
 
-  function toggleScopeArea(area) {
-    setScopeAreas((prev) => (
-      prev.includes(area) ? prev.filter((a) => a !== area) : [...prev, area]
-    ));
+  function toggleScopeArea(client, area) {
+    setAreasByClient((prev) => {
+      const current = prev[client] || [];
+      const nextAreas = current.includes(area)
+        ? current.filter((a) => a !== area)
+        : [...current, area];
+      return { ...prev, [client]: nextAreas };
+    });
   }
 
   async function handleSaveScope() {
-    if (!scopeClient) return;
-    const ok = await onUpdateClientScope?.(user.id, scopeClient, scopeAreas);
+    if (scopeClients.length === 0) return;
+    const clientAccess = scopeClients.map((client) => {
+      const areas = (areasByClient[client] || []).filter((a) => typeof a === 'string' && a.trim());
+      return areas.length > 0 ? { client, areas } : { client, areas: null };
+    });
+    const ok = await onUpdateClientScope?.(user.id, clientAccess);
     if (ok !== false) setEditingScope(false);
   }
 
@@ -347,12 +396,9 @@ function UserRow({
         {user.last_sign_in_at ? ` · Last login: ${new Date(user.last_sign_in_at).toLocaleDateString()}` : ''}
       </div>
 
-      {isClient && user.client_name ? (
+      {isClient && scopeLabel ? (
         <div className="small-text" style={{ marginTop: '0.3rem', color: '#fbbf24' }}>
-          Scoped to: {user.client_name}
-          {Array.isArray(user.client_areas) && user.client_areas.length > 0
-            ? ` — ${user.client_areas.join(', ')}`
-            : ' — all areas'}
+          Scoped to: {scopeLabel}
         </div>
       ) : null}
 
@@ -386,55 +432,83 @@ function UserRow({
       ) : editingScope ? (
         <div style={{ marginTop: '0.5rem' }}>
           <div className="list-grid">
-            <select value={scopeClient} onChange={(e) => handleScopeClientChange(e.target.value)}>
-              <option value="">Select client…</option>
+            <div className="small-text" style={{ marginBottom: '0.25rem' }}>
+              Companies (select one or more)
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
               {clientOptions.map((c) => (
-                <option key={c} value={c}>{c}</option>
+                <label
+                  key={c}
+                  className="small-text"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.3rem',
+                    padding: '2px 8px',
+                    borderRadius: '4px',
+                    background: scopeClients.includes(c) ? 'rgba(59,130,246,0.25)' : 'rgba(148,163,184,0.1)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={scopeClients.includes(c)}
+                    onChange={() => toggleScopeClient(c)}
+                  />
+                  {c}
+                </label>
               ))}
-            </select>
+            </div>
 
-            {scopeClient && availableAreas.length > 0 ? (
-              <div>
-                <div className="small-text" style={{ marginBottom: '0.35rem' }}>
-                  Areas (leave all unchecked for every area of {scopeClient})
+            {scopeClients.map((client) => {
+              const availableAreas = areasForClient(client);
+              const selectedAreas = areasByClient[client] || [];
+              if (availableAreas.length === 0) {
+                return (
+                  <div key={client} className="small-text" style={{ color: '#94a3b8' }}>
+                    {client}: no areas on record — they&apos;ll see every area of this company.
+                  </div>
+                );
+              }
+              return (
+                <div key={client}>
+                  <div className="small-text" style={{ marginBottom: '0.35rem' }}>
+                    Areas for {client} (leave all unchecked for every area)
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    {availableAreas.map((area) => (
+                      <label
+                        key={area}
+                        className="small-text"
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.3rem',
+                          padding: '2px 8px',
+                          borderRadius: '4px',
+                          background: selectedAreas.includes(area) ? 'rgba(59,130,246,0.25)' : 'rgba(148,163,184,0.1)',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedAreas.includes(area)}
+                          onChange={() => toggleScopeArea(client, area)}
+                        />
+                        {area}
+                      </label>
+                    ))}
+                  </div>
                 </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                  {availableAreas.map((area) => (
-                    <label
-                      key={area}
-                      className="small-text"
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.3rem',
-                        padding: '2px 8px',
-                        borderRadius: '4px',
-                        background: scopeAreas.includes(area) ? 'rgba(59,130,246,0.25)' : 'rgba(148,163,184,0.1)',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={scopeAreas.includes(area)}
-                        onChange={() => toggleScopeArea(area)}
-                      />
-                      {area}
-                    </label>
-                  ))}
-                </div>
-              </div>
-            ) : scopeClient ? (
-              <div className="small-text" style={{ color: '#94a3b8' }}>
-                No areas on record for {scopeClient} — they'll see every area of this client.
-              </div>
-            ) : null}
+              );
+            })}
           </div>
 
           <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
             <button
               className="primary-button"
               type="button"
-              disabled={busy || !scopeClient}
+              disabled={busy || scopeClients.length === 0}
               onClick={handleSaveScope}
               style={{ padding: '4px 12px', fontSize: '0.8rem' }}
             >
@@ -476,7 +550,7 @@ function UserRow({
               type="button"
               disabled={busy}
               onClick={openScopeEditor}
-              title="Change which company and areas this client account can see. Takes effect without them logging out."
+              title="Change which companies and areas this client account can see. Takes effect without them logging out."
               style={{ fontSize: '0.8rem' }}
             >
               Edit access
@@ -640,26 +714,24 @@ export default function UserManagementPanel({
     }
   }
 
-  // Client accounts only. Always sends BOTH fields: the backend treats an
-  // omitted field as "leave alone", and an empty `client_areas` array as
-  // "every area of this client" — so clearing every checkbox has to be an
-  // explicit [] rather than undefined. Returns false so the row can keep the
-  // editor open when the save fails.
-  async function handleUpdateClientScope(userId, clientName, areas) {
+  // Client accounts only. Sends full `client_access` so multi-company edits
+  // replace the previous set (not merge). Returns false so the row can keep
+  // the editor open when the save fails.
+  async function handleUpdateClientScope(userId, clientAccess) {
     clearMessages();
-    if (!clientName) {
-      setError('Choose a client before saving access.');
+    if (!Array.isArray(clientAccess) || clientAccess.length === 0) {
+      setError('Choose at least one client before saving access.');
       return false;
     }
     setBusy(true);
     try {
-      const cleanedAreas = (areas || []).filter((a) => typeof a === 'string' && a.trim());
-      await api.updateUser(userId, { client_name: clientName, client_areas: cleanedAreas });
-      setSuccess(
-        cleanedAreas.length > 0
-          ? `Access updated — ${clientName}: ${cleanedAreas.join(', ')}`
-          : `Access updated — ${clientName}: all areas`
-      );
+      await api.updateUser(userId, { client_access: clientAccess });
+      const label = clientAccess.map((entry) => (
+        Array.isArray(entry.areas) && entry.areas.length > 0
+          ? `${entry.client}: ${entry.areas.join(', ')}`
+          : `${entry.client}: all areas`
+      )).join(' · ');
+      setSuccess(`Access updated — ${label}`);
       onUsersChanged?.();
       return true;
     } catch (err) {

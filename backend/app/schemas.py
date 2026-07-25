@@ -6,6 +6,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.models import ApprovalState, PinType, RoleEnum, SiteStatus, TMTicketStatus
 
 
+class ClientAccessEntry(BaseModel):
+    """One company in a client-role account's allowed set."""
+    client: str
+    # None / omitted / [] = all areas for this client.
+    areas: list[str] | None = None
+
+
 class UserRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -13,10 +20,12 @@ class UserRead(BaseModel):
     name: str
     email: str
     role: RoleEnum
-    # Only meaningful when role == "client" — the client-portal frontend
-    # uses these to show "You're viewing sites for {client_name}".
+    # Only meaningful when role == "client". Prefer `client_access` for
+    # multi-company accounts; `client_name`/`client_areas` remain as the
+    # legacy single-company mirror (first entry / its areas).
     client_name: str | None = None
     client_areas: list[str] | None = None
+    client_access: list[ClientAccessEntry] | None = None
 
 
 class SiteSprayRecordRead(BaseModel):

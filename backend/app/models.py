@@ -29,10 +29,11 @@ class RoleEnum(str, enum.Enum):
     # TV stats summary. Boots straight into TVDashboard on login.
     tv = "tv"
     # External, invite-only account for an oil & gas client contact
-    # (Shell, CNRL, etc.). Scoped to exactly one company (`User.client_name`)
-    # and, optionally, a subset of that company's areas (`User.client_areas`).
-    # Enforced via a deny-by-default allowlist in `app.auth.get_current_user`
-    # — see CLIENT_ALLOWED_ROUTES. Read-only everywhere it's allowed.
+    # (Shell, CNRL, etc.). Scoped to one or more companies via
+    # `User.client_access` (preferred) or legacy `User.client_name` +
+    # optional `User.client_areas`. Enforced via a deny-by-default
+    # allowlist in `app.auth.get_current_user` — see CLIENT_ALLOWED_ROUTES.
+    # Read-only everywhere it's allowed.
     client = "client"
 
 
@@ -66,17 +67,22 @@ class User(Base):
     role: Mapped[RoleEnum] = mapped_column(Enum(RoleEnum), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    # Only meaningful when role == RoleEnum.client. Must match an existing
-    # `sites.client` / `pipelines.client` value exactly (admins pick it from
-    # a dropdown built off that same list — see UserManagementPanel — so
-    # there's no free-typed spelling drift). Synced from Supabase
-    # `app_metadata.client_name` on every request in `_upsert_supabase_user`.
+    # Only meaningful when role == RoleEnum.client. Legacy single-company
+    # scope — kept in sync as a mirror of the first `client_access` entry
+    # so older rows and tools keep working. Prefer `client_access`.
+    # Must match an existing `sites.client` / `pipelines.client` value
+    # exactly (admins pick from the map's client list).
     client_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    # Only meaningful when role == RoleEnum.client. Empty/NULL means "all
-    # areas for client_name". Non-empty restricts visibility to sites/
-    # pipelines whose `area` is in this list (case-insensitive) — e.g. a
-    # CNRL contact who should only see one field office's area.
+    # Legacy flat area allowlist for the single `client_name` company.
+    # Empty/NULL means "all areas for that company". Ignored for scoping
+    # when `client_access` is present (areas live per entry there).
     client_areas: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Preferred multi-company scope for role == client:
+    #   [{"client": "FSJ Hospital", "areas": ["A"]}, {"client": "City…", "areas": null}]
+    # `areas` null/[]/omitted = all areas for that client. See
+    # `app.client_scope.resolve_client_access`. DB is authoritative over JWT
+    # once the row has a scope (see auth._upsert_supabase_user).
+    client_access: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
     created_sites: Mapped[list["Site"]] = relationship(
         back_populates="created_by_user",
@@ -674,8 +680,12 @@ class ClientInvite(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     token: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    # Legacy single-company fields (still required on create for older
+    # rows). Prefer `client_access` when present; `client_name` mirrors
+    # the first entry for signup-page display back-compat.
     client_name: Mapped[str] = mapped_column(String(120), nullable=False)
     client_areas: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    client_access: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

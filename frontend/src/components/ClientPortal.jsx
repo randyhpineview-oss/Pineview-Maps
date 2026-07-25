@@ -67,10 +67,44 @@ function uniqueSorted(values) {
  * Data scoping is enforced by the backend (see backend/app/auth.py's client
  * allowlist + apply_client_scope) — every `api.*` call here just uses the
  * normal endpoints and the server only ever returns rows within this
- * account's client_name/client_areas. The client-side filtering below is
- * purely FilterBar UX, never a security boundary.
+ * account's client_access. The client-side filtering below is purely
+ * FilterBar UX, never a security boundary.
  */
-export default function ClientPortal({ clientName, clientAreas, userDisplayName, onSignOut, isOnline = true }) {
+function normalizeAccessEntry(entry) {
+  const client = typeof entry?.client === 'string' ? entry.client.trim() : '';
+  if (!client) return null;
+  const areas = Array.isArray(entry?.areas)
+    ? entry.areas.filter((a) => typeof a === 'string' && a.trim())
+    : [];
+  return { client, areas: areas.length > 0 ? areas : null };
+}
+
+function accessFromLegacy(clientName, clientAreas) {
+  const name = typeof clientName === 'string' ? clientName.trim() : '';
+  if (!name) return [];
+  const areas = Array.isArray(clientAreas)
+    ? clientAreas.filter((a) => typeof a === 'string' && a.trim())
+    : [];
+  return [{ client: name, areas: areas.length > 0 ? areas : null }];
+}
+
+function resolveAccessFromUser(user, fallbackName, fallbackAreas) {
+  if (Array.isArray(user?.client_access) && user.client_access.length > 0) {
+    return user.client_access.map(normalizeAccessEntry).filter(Boolean);
+  }
+  const fromLegacy = accessFromLegacy(user?.client_name, user?.client_areas);
+  if (fromLegacy.length) return fromLegacy;
+  return accessFromLegacy(fallbackName, fallbackAreas);
+}
+
+export default function ClientPortal({
+  clientName,
+  clientAreas,
+  clientAccess,
+  userDisplayName,
+  onSignOut,
+  isOnline = true,
+}) {
   const [activeTab, setActiveTab] = useState(TAB_MAP);
   const [sites, setSites] = useState([]);
   const [pipelines, setPipelines] = useState([]);
@@ -86,10 +120,12 @@ export default function ClientPortal({ clientName, clientAreas, userDisplayName,
   // props can lag an admin re-scope until the token refreshes; the session
   // endpoint uses the same DB preference as site/pipeline list queries.
   // Props seed the first paint only; once session answers, they are ignored.
-  const [liveClientName, setLiveClientName] = useState(clientName || null);
-  const [liveClientAreas, setLiveClientAreas] = useState(
-    Array.isArray(clientAreas) ? clientAreas : null,
-  );
+  const [liveClientAccess, setLiveClientAccess] = useState(() => {
+    if (Array.isArray(clientAccess) && clientAccess.length > 0) {
+      return clientAccess.map(normalizeAccessEntry).filter(Boolean);
+    }
+    return accessFromLegacy(clientName, clientAreas);
+  });
   const [scopeFromSession, setScopeFromSession] = useState(false);
 
   const [selectedSite, setSelectedSite] = useState(null);
@@ -135,14 +171,10 @@ export default function ClientPortal({ clientName, clientAreas, userDisplayName,
       if (sessionResult.status === 'fulfilled') {
         const user = sessionResult.value?.user;
         if (user) {
-          const name = typeof user.client_name === 'string' ? user.client_name.trim() : '';
-          if (name) setLiveClientName(name);
-          const areas = Array.isArray(user.client_areas)
-            ? user.client_areas.filter((a) => typeof a === 'string' && a.trim())
-            : [];
-          // Empty/null = "all areas for this client" (same contract as
-          // apply_client_scope). Must overwrite a stale JWT seed.
-          setLiveClientAreas(areas.length > 0 ? areas : null);
+          const access = resolveAccessFromUser(user, clientName, clientAreas);
+          // Must overwrite a stale JWT seed — empty access stays empty
+          // (fail closed for FilterBar options).
+          setLiveClientAccess(access);
           setScopeFromSession(true);
         }
       }
@@ -157,13 +189,13 @@ export default function ClientPortal({ clientName, clientAreas, userDisplayName,
   // JWT props are only a bootstrap until /api/session lands. Never let
   // them stomp a DB-authoritative scope we already fetched.
   useEffect(() => {
-    if (scopeFromSession || !clientName) return;
-    setLiveClientName(clientName);
-  }, [clientName, scopeFromSession]);
-  useEffect(() => {
     if (scopeFromSession) return;
-    setLiveClientAreas(Array.isArray(clientAreas) && clientAreas.length > 0 ? clientAreas : null);
-  }, [clientAreas, scopeFromSession]);
+    if (Array.isArray(clientAccess) && clientAccess.length > 0) {
+      setLiveClientAccess(clientAccess.map(normalizeAccessEntry).filter(Boolean));
+      return;
+    }
+    setLiveClientAccess(accessFromLegacy(clientName, clientAreas));
+  }, [clientAccess, clientName, clientAreas, scopeFromSession]);
 
   // Keep the selected site's fields fresh across refresh ticks without
   // stomping the sheet when the row disappears mid-view.
@@ -200,52 +232,89 @@ export default function ClientPortal({ clientName, clientAreas, userDisplayName,
   }, [accountMenuOpen]);
 
   // ── Filter scope ──────────────────────────────────────────────────────
-  // Prefer live DB scope from /api/session. Company area options for the
-  // unrestricted case are derived from loaded pins (same approach as
-  // App.jsx `areas` / `getAreasForClient`) — empty/`null`/`[]`
-  // `client_areas` means "all areas for this client_name", NOT "no area
-  // filter options".
+  // Prefer live DB scope from /api/session. For unrestricted companies,
+  // area options are derived from loaded pins (same approach as App.jsx).
+  // Restricted companies contribute only their allowlisted areas.
   const scopedClients = useMemo(() => {
-    if (liveClientName) return [liveClientName];
+    if (liveClientAccess.length > 0) {
+      return uniqueSorted(liveClientAccess.map((e) => e.client));
+    }
     return uniqueSorted([
       ...sites.map((s) => s.client),
       ...pipelines.map((p) => p.client),
     ]);
-  }, [liveClientName, sites, pipelines]);
+  }, [liveClientAccess, sites, pipelines]);
 
-  // Distinct areas on this company's already-scoped sites + pipelines.
-  // Mirrors App.jsx's areas memo (dedupe by nameKey, display normalizeName).
-  const companyAreasFromPins = useMemo(() => {
-    const clientKey = nameKey(liveClientName);
+  const allowedClientKeys = useMemo(
+    () => new Set(liveClientAccess.map((e) => nameKey(e.client)).filter(Boolean)),
+    [liveClientAccess],
+  );
+
+  // Areas from pins that belong to unrestricted allowed companies (or, when
+  // FilterBar has a client selected, only that company).
+  const pinAreasForUnrestricted = useMemo(() => {
+    const unrestrictedKeys = new Set(
+      liveClientAccess
+        .filter((e) => !e.areas)
+        .map((e) => nameKey(e.client))
+        .filter(Boolean),
+    );
+    // No structured access yet — treat all loaded pins as in-scope.
+    const acceptAllUnrestricted = liveClientAccess.length === 0;
     const seen = new Map();
     const consider = (client, area) => {
-      // When we know the company, keep pin-derived areas aligned to it
-      // (defensive — list endpoints already apply_client_scope).
-      if (clientKey && nameKey(client) !== clientKey) return;
+      const cKey = nameKey(client);
+      if (!acceptAllUnrestricted) {
+        if (!cKey || !unrestrictedKeys.has(cKey)) return;
+      } else if (allowedClientKeys.size > 0 && cKey && !allowedClientKeys.has(cKey)) {
+        return;
+      }
       const key = nameKey(area);
       if (!key || seen.has(key)) return;
       seen.set(key, normalizeName(area));
     };
     for (const s of sites) consider(s.client, s.area);
     for (const p of pipelines) consider(p.client, p.area);
-    // If the client_name string drifts from pin.client, still surface
-    // every area on the scoped payload rather than an empty dropdown.
     if (seen.size === 0) {
       for (const s of sites) consider(null, s.area);
       for (const p of pipelines) consider(null, p.area);
     }
     return [...seen.values()].sort((a, b) => a.localeCompare(b));
-  }, [liveClientName, sites, pipelines]);
+  }, [liveClientAccess, allowedClientKeys, sites, pipelines]);
 
   const scopedAreas = useMemo(() => {
-    // Restricted account: only the allowlisted areas (may include names
-    // with no current pins — keep those so admin scope edits stay visible).
-    if (Array.isArray(liveClientAreas) && liveClientAreas.length > 0) {
-      return uniqueSorted(liveClientAreas);
+    const restricted = [];
+    let hasUnrestricted = liveClientAccess.length === 0;
+    for (const entry of liveClientAccess) {
+      if (entry.areas && entry.areas.length > 0) {
+        restricted.push(...entry.areas);
+      } else {
+        hasUnrestricted = true;
+      }
     }
-    // Unrestricted (null / [] / missing): real area names from company data.
-    return companyAreasFromPins;
-  }, [liveClientAreas, companyAreasFromPins]);
+    const fromPins = hasUnrestricted ? pinAreasForUnrestricted : [];
+    return uniqueSorted([...restricted, ...fromPins]);
+  }, [liveClientAccess, pinAreasForUnrestricted]);
+
+  const companiesLabel = useMemo(() => {
+    if (liveClientAccess.length === 0) return clientName || 'Client portal';
+    return liveClientAccess.map((e) => e.client).join(', ');
+  }, [liveClientAccess, clientName]);
+
+  const areasLabel = useMemo(() => {
+    const parts = liveClientAccess.map((entry) => {
+      if (entry.areas && entry.areas.length > 0) {
+        return `${entry.client}: ${entry.areas.join(', ')}`;
+      }
+      return `${entry.client}: all areas`;
+    });
+    if (parts.length === 0) return 'All areas';
+    if (parts.length === 1 && liveClientAccess[0]?.areas) {
+      return liveClientAccess[0].areas.join(', ');
+    }
+    if (parts.length === 1) return 'All areas';
+    return parts.join(' · ');
+  }, [liveClientAccess]);
 
   // Drop filter selections that no longer exist in the effective scope
   // (e.g. admin renamed the company or swapped areas). Without this, a
@@ -467,10 +536,7 @@ export default function ClientPortal({ clientName, clientAreas, userDisplayName,
     setPipelineDragOffset(0);
   }
 
-  const userInitial = (userDisplayName || liveClientName || clientName || 'C').trim().charAt(0).toUpperCase() || 'C';
-  const areasLabel = Array.isArray(liveClientAreas) && liveClientAreas.length > 0
-    ? liveClientAreas.join(', ')
-    : 'All areas';
+  const userInitial = (userDisplayName || companiesLabel || clientName || 'C').trim().charAt(0).toUpperCase() || 'C';
 
   return (
     <div className="app-shell">
@@ -479,7 +545,7 @@ export default function ClientPortal({ clientName, clientAreas, userDisplayName,
         <span className="topbar-title">Pineview Maps</span>
         <div className="topbar-right">
           <span className={`badge ${isOnline ? 'online' : 'offline'}`}>{isOnline ? 'Online' : 'Offline'}</span>
-          {/* Company + allowed areas live inside this popover rather than as
+          {/* Companies + allowed areas live inside this popover rather than as
               an inline topbar badge — on a phone the badge wrapped onto a
               second row and pushed the map down. */}
           <div className="topbar-account-menu" ref={accountMenuRef}>
@@ -499,10 +565,13 @@ export default function ClientPortal({ clientName, clientAreas, userDisplayName,
                 <div className="topbar-account-name" role="presentation">
                   {userDisplayName}
                   <span className="topbar-account-name-scope">
-                    {liveClientName || clientName || 'Client portal'}
-                    {' — '}
-                    {areasLabel}
+                    {companiesLabel}
                   </span>
+                  {liveClientAccess.length > 0 ? (
+                    <span className="topbar-account-name-scope" style={{ display: 'block', marginTop: 4 }}>
+                      {areasLabel}
+                    </span>
+                  ) : null}
                 </div>
                 <button
                   type="button"

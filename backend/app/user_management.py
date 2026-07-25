@@ -15,6 +15,14 @@ from supabase import create_client
 import secrets
 
 from app.auth import MANAGES_PINS, get_current_user, is_dev_email, require_roles, _stable_user_id
+from app.client_scope import (
+    build_scope_app_metadata,
+    clean_client_access,
+    display_client_names,
+    legacy_fields_from_access,
+    parse_scope_payload,
+    resolve_client_access,
+)
 from app.config import get_settings
 from app.database import get_db
 from app.email_service import email_transport_configured, send_password_setup_link
@@ -104,6 +112,11 @@ class UserCreate(BaseModel):
     name: str = ""
 
 
+class ClientAccessEntryIn(BaseModel):
+    client: str
+    areas: Optional[list[str]] = None
+
+
 class UserUpdate(BaseModel):
     role: Optional[RoleEnum] = None
     name: Optional[str] = None
@@ -111,6 +124,9 @@ class UserUpdate(BaseModel):
     # re-scope an already-created client without recreating the account.
     # Rejected (400) if the target user isn't currently a client — use
     # invite-client to create one.
+    # Prefer `client_access` (multi-company). Legacy single-company fields
+    # still accepted and converted.
+    client_access: Optional[list[ClientAccessEntryIn]] = None
     client_name: Optional[str] = None
     client_areas: Optional[list[str]] = None
 
@@ -129,9 +145,10 @@ class UserResponse(BaseModel):
     email_confirmed_at: Optional[str] = None
     # Soft delete timestamp - if set, user is deleted but data preserved
     deleted_at: Optional[str] = None
-    # Only meaningful when role == "client". See models.py::User for semantics.
+    # Only meaningful when role == "client". Prefer client_access.
     client_name: Optional[str] = None
     client_areas: Optional[list[str]] = None
+    client_access: Optional[list[dict]] = None
 
 
 def _format_user(user) -> UserResponse:
@@ -153,6 +170,12 @@ def _format_user(user) -> UserResponse:
         or user_metadata.get("name")
         or (user.email.split("@")[0].title() if user.email else "")
     )
+    access = resolve_client_access(
+        client_access=app_metadata.get("client_access"),
+        client_name=app_metadata.get("client_name"),
+        client_areas=app_metadata.get("client_areas"),
+    ) or None
+    mirror_name, mirror_areas = legacy_fields_from_access(access)
     return UserResponse(
         id=user.id,
         email=user.email or "",
@@ -162,8 +185,9 @@ def _format_user(user) -> UserResponse:
         last_sign_in_at=str(user.last_sign_in_at) if user.last_sign_in_at else None,
         email_confirmed_at=str(user.email_confirmed_at) if getattr(user, "email_confirmed_at", None) else None,
         deleted_at=str(user.deleted_at) if getattr(user, "deleted_at", None) else None,
-        client_name=app_metadata.get("client_name"),
-        client_areas=app_metadata.get("client_areas") or None,
+        client_name=mirror_name or app_metadata.get("client_name"),
+        client_areas=mirror_areas if access else (app_metadata.get("client_areas") or None),
+        client_access=access,
     )
 
 
@@ -274,8 +298,7 @@ def _mirror_client_scope_locally(
     db: Session,
     user_id: str,
     email: Optional[str],
-    client_name: Optional[str],
-    client_areas: Optional[list[str]],
+    client_access: Optional[list[dict]],
 ) -> None:
     """Copy a client's freshly-saved scope onto their local `users` row.
 
@@ -293,11 +316,33 @@ def _mirror_client_scope_locally(
     is the fix.
     """
     try:
+        access = clean_client_access(client_access)
+        name, areas = legacy_fields_from_access(access)
         local_user = _find_local_user(db, user_id, email)
         if local_user is None:
+            # Invite / first-edit before the client has logged in — seed the
+            # local row so get_current_user has DB-authoritative scope on
+            # their very first request (not only after JWT upsert).
+            if not email:
+                return
+            local_user = User(
+                id=_stable_user_id(user_id),
+                email=email,
+                name=email.split("@")[0].title(),
+                role=RoleEnum.client,
+                is_active=True,
+                client_access=access,
+                client_name=name,
+                client_areas=areas,
+            )
+            db.add(local_user)
+            db.commit()
             return
-        local_user.client_name = client_name
-        local_user.client_areas = client_areas or None
+        local_user.client_access = access
+        local_user.client_name = name
+        local_user.client_areas = areas
+        if local_user.role != RoleEnum.client:
+            local_user.role = RoleEnum.client
         db.commit()
     except Exception as exc:
         try:
@@ -333,8 +378,8 @@ def update_user(
 
     Writes to `app_metadata` — see `create_user` docstring for why.
     Changing a user's role AWAY from `client` here does not clear
-    `client_name`/`client_areas` from app_metadata, but that's harmless:
-    `app/auth.py` only reads those fields when `role == client`.
+    client scope from app_metadata, but that's harmless: `app/auth.py`
+    only reads those fields when `role == client`.
 
     A client-scope change is ALSO mirrored onto the local `users` row so it
     takes effect on the client's very next request instead of waiting for
@@ -356,31 +401,71 @@ def update_user(
         current_user_obj = getattr(current, "user", None) or current
         existing_app_metadata = dict(getattr(current_user_obj, "app_metadata", None) or {})
 
-        if payload.client_name is not None or payload.client_areas is not None:
-            if existing_app_metadata.get("role") != RoleEnum.client.value:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="client_name/client_areas can only be set on an existing client account.",
-                )
+        scope_touch = (
+            payload.client_access is not None
+            or payload.client_name is not None
+            or payload.client_areas is not None
+        )
+        if scope_touch and existing_app_metadata.get("role") != RoleEnum.client.value:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="client_access can only be set on an existing client account.",
+            )
 
         if payload.role is not None:
             existing_app_metadata["role"] = payload.role.value
         if payload.name is not None:
             existing_app_metadata["name"] = payload.name
-        if payload.client_name is not None:
-            trimmed = payload.client_name.strip()
-            if not trimmed:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="client_name cannot be empty")
-            existing_app_metadata["client_name"] = trimmed
-        if payload.client_areas is not None:
-            cleaned = [a.strip() for a in payload.client_areas if isinstance(a, str) and a.strip()]
-            existing_app_metadata["client_areas"] = cleaned or None
+
+        new_access: Optional[list[dict]] = None
+        if scope_touch:
+            try:
+                # Prefer structured client_access when provided. Legacy fields
+                # alone still work for single-company edits from older UIs.
+                if payload.client_access is not None:
+                    new_access = parse_scope_payload(
+                        client_access=[e.model_dump() for e in payload.client_access],
+                    )
+                else:
+                    # Partial legacy update: start from existing scope, then
+                    # overlay name and/or areas.
+                    current_access = resolve_client_access(
+                        client_access=existing_app_metadata.get("client_access"),
+                        client_name=existing_app_metadata.get("client_name"),
+                        client_areas=existing_app_metadata.get("client_areas"),
+                    )
+                    if payload.client_name is not None:
+                        new_access = parse_scope_payload(
+                            client_name=payload.client_name,
+                            client_areas=(
+                                payload.client_areas
+                                if payload.client_areas is not None
+                                else (current_access[0]["areas"] if len(current_access) == 1 else None)
+                            ),
+                        )
+                    else:
+                        # areas-only update on a single-company account
+                        if len(current_access) != 1:
+                            raise ValueError(
+                                "Send client_access when editing a multi-company account."
+                            )
+                        new_access = parse_scope_payload(
+                            client_name=current_access[0]["client"],
+                            client_areas=payload.client_areas,
+                        )
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+            # Replace scope keys cleanly (drop stale areas when unrestricted).
+            existing_app_metadata.pop("client_access", None)
+            existing_app_metadata.pop("client_name", None)
+            existing_app_metadata.pop("client_areas", None)
+            existing_app_metadata.update(build_scope_app_metadata(new_access))
 
         if (
             payload.role is None
             and payload.name is None
-            and payload.client_name is None
-            and payload.client_areas is None
+            and not scope_touch
         ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -394,13 +479,12 @@ def update_user(
 
         result = client.auth.admin.update_user_by_id(user_id, update_data)
 
-        if payload.client_name is not None or payload.client_areas is not None:
+        if scope_touch:
             _mirror_client_scope_locally(
                 db,
                 user_id=user_id,
                 email=getattr(current_user_obj, "email", None),
-                client_name=existing_app_metadata.get("client_name"),
-                client_areas=existing_app_metadata.get("client_areas"),
+                client_access=new_access,
             )
 
         return _format_user(result.user)
@@ -743,13 +827,12 @@ async def send_user_password_reset(
 class InviteClientRequest(BaseModel):
     email: EmailStr
     name: str = ""
-    # Must exactly match an existing sites/pipelines `client` value — the
-    # frontend populates this from the same dropdown as the map's client
-    # filter, so there's no free-typed spelling drift.
-    client_name: str
-    # Optional. Empty/omitted = the client can see every area for
-    # client_name. Non-empty restricts them to just those areas (e.g. a
-    # CNRL contact who only covers one field office).
+    # Preferred: one or more companies, each with optional area allowlist.
+    # Client names must exactly match existing sites/pipelines `client`
+    # values — the frontend populates them from the map's client list.
+    client_access: Optional[list[ClientAccessEntryIn]] = None
+    # Legacy single-company fields (still accepted).
+    client_name: Optional[str] = None
     client_areas: Optional[list[str]] = None
 
 
@@ -765,16 +848,20 @@ async def invite_client(
     """Create a read-only client-portal account and email them a one-tap
     "set your password" link (Flow A).
 
-    The account is created with `role: "client"` and the given
-    `client_name`/`client_areas` in `app_metadata` — never `user_metadata`,
-    so the client can't edit their own scope. The password is a random
-    value nobody is ever told; the recipient sets their own via the
-    setup-link email (same mechanism as `send_user_password_reset`).
+    The account is created with `role: "client"` and `client_access` (plus
+    legacy mirrors) in `app_metadata` — never `user_metadata`, so the client
+    can't edit their own scope. The password is a random value nobody is
+    ever told; the recipient sets their own via the setup-link email
+    (same mechanism as `send_user_password_reset`).
     """
-    client_name = payload.client_name.strip()
-    if not client_name:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="client_name is required")
-    client_areas = [a.strip() for a in (payload.client_areas or []) if isinstance(a, str) and a.strip()] or None
+    try:
+        access = parse_scope_payload(
+            client_access=[e.model_dump() for e in payload.client_access] if payload.client_access else None,
+            client_name=payload.client_name,
+            client_areas=payload.client_areas,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
     if db is None:
         raise HTTPException(
@@ -794,20 +881,11 @@ async def invite_client(
     display_name = payload.name.strip() or payload.email.split("@")[0].title()
     client = get_supabase_admin()
 
-    # `app_metadata` is sent as a plain dict over the wire (JSON), so an
-    # explicit `None` here becomes a JSON `null` value under `client_areas`
-    # rather than the key being absent. Both are harmless to read back
-    # (get_current_user/_format_user already handle either), but omitting
-    # the key entirely is the more conservative choice for any Postgres-side
-    # trigger/function on this project that might not expect an explicit
-    # null in a JSONB column it isn't defensively coded against.
     app_metadata: dict = {
         "role": RoleEnum.client.value,
         "name": display_name,
-        "client_name": client_name,
+        **build_scope_app_metadata(access),
     }
-    if client_areas:
-        app_metadata["client_areas"] = client_areas
 
     try:
         result = client.auth.admin.create_user(
@@ -835,12 +913,6 @@ async def invite_client(
             error_code,
             error_status,
         )
-        # "Database error creating new user" is GoTrue's generic wrapper for
-        # a Postgres-level failure during the auth.users/auth.identities
-        # insert — most commonly a leftover row (soft-deleted or otherwise
-        # incomplete) still occupying this email, or a custom trigger on
-        # auth.users rejecting the row. Neither is fixable by retrying with
-        # the same email, so say so explicitly instead of just "try again".
         hint = ""
         if "database error" in error_msg.lower():
             hint = (
@@ -856,6 +928,12 @@ async def invite_client(
         )
 
     user_id = result.user.id
+    _mirror_client_scope_locally(
+        db,
+        user_id=user_id,
+        email=payload.email,
+        client_access=access,
+    )
 
     try:
         reset_code = PasswordResetCode(email=payload.email, expires_at=datetime.utcnow() + timedelta(hours=24))
@@ -885,7 +963,12 @@ async def invite_client(
             detail="Account created but the email failed to send. Use 'Send password reset' from the user list to retry.",
         )
 
-    logger.info("Client account created + setup link sent to %s (client=%s)", mask_email(payload.email), client_name)
+    companies = display_client_names(access)
+    logger.info(
+        "Client account created + setup link sent to %s (clients=%s)",
+        mask_email(payload.email),
+        companies,
+    )
     return SimpleMessageResponse(
         message=f"Client account created. A one-tap setup link was emailed to {payload.email}.",
     )

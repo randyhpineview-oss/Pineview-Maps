@@ -90,9 +90,23 @@ export default function ClientSignupPage({ token, onDone }) {
     if (onDone) onDone();
   };
 
-  const areasLabel = Array.isArray(inviteInfo?.client_areas) && inviteInfo.client_areas.length > 0
-    ? ` (${inviteInfo.client_areas.join(', ')})`
-    : '';
+  const accessLabel = (() => {
+    const access = Array.isArray(inviteInfo?.client_access) ? inviteInfo.client_access : null;
+    if (access && access.length > 0) {
+      return access.map((entry) => {
+        const client = entry?.client || '';
+        const areas = Array.isArray(entry?.areas) && entry.areas.length > 0
+          ? ` (${entry.areas.join(', ')})`
+          : '';
+        return `${client}${areas}`;
+      }).join(', ');
+    }
+    const name = inviteInfo?.client_name || '';
+    const areas = Array.isArray(inviteInfo?.client_areas) && inviteInfo.client_areas.length > 0
+      ? ` (${inviteInfo.client_areas.join(', ')})`
+      : '';
+    return `${name}${areas}`;
+  })();
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', background: 'linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #0f172a 100%)' }}>
@@ -150,7 +164,7 @@ export default function ClientSignupPage({ token, onDone }) {
                 Pineview Client Portal
               </h1>
               <p style={{ textAlign: 'center', color: '#6b7280', marginBottom: '2rem' }}>
-                You're setting up access for <strong>{inviteInfo?.client_name}</strong>{areasLabel}
+                You&apos;re setting up access for <strong>{accessLabel}</strong>
               </p>
 
               {error && (

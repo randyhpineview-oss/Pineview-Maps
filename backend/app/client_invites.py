@@ -1,27 +1,28 @@
 """Client self-signup via a single-use, admin-generated invite link (Flow B).
 
 Flow:
-  1. Admin (or field lead) picks a client company (dropdown, same list as
-     the map's client filter) and, optionally, one or more areas, then
+  1. Admin (or field lead) picks one or more client companies (same list as
+     the map's client filter) and, optionally, areas per company, then
      calls POST /api/admin/client-invites. Backend returns a URL of the
      form ``{frontend_url}/?client_invite=<token>``.
   2. Admin copies that URL and sends it themselves — by text, email,
      whatever — to the client contact. There is no in-app "send" button;
      the link itself is the invite.
   3. The client opens the link. The frontend calls
-     GET /api/auth/client-invite/{token} to show them which company
+     GET /api/auth/client-invite/{token} to show them which company(ies)
      they're signing up for, then collects name/email/password and posts
      to POST /api/auth/client-signup.
   4. Backend validates the (unexpired, unused) token, creates the Supabase
-     user with role="client" + the invite's client_name/client_areas in
+     user with role="client" + the invite's client_access in
      `app_metadata` (never user_metadata — see app/auth.py), marks the
      invite used, and emails a confirmation link exactly like the
      existing worker QR-signup flow in app/signup.py.
 
 This is Flow B, distinct from app/user_management.py::invite_client
 (Flow A — admin enters the client's email directly and the backend emails
-a personal one-tap setup link). Both produce the same end state: a
-role="client" Supabase user scoped to one client_name (+ optional areas).
+a personal setup link). Both produce the same end state: a
+role="client" Supabase user scoped to one or more companies (+ optional
+per-company areas).
 """
 
 from datetime import datetime
@@ -33,6 +34,13 @@ from sqlalchemy.orm import Session
 from supabase import create_client
 
 from app.auth import MANAGES_PINS, get_current_user, require_roles
+from app.client_scope import (
+    build_scope_app_metadata,
+    display_client_names,
+    legacy_fields_from_access,
+    parse_scope_payload,
+    resolve_client_access,
+)
 from app.config import get_settings
 from app.database import get_db
 from app.email_service import send_signup_confirmation
@@ -58,8 +66,15 @@ def _get_supabase_admin():
 # ── Schemas ──────────────────────────────────────────────────────────
 
 
+class ClientAccessEntryIn(BaseModel):
+    client: str
+    areas: Optional[list[str]] = None
+
+
 class CreateClientInviteRequest(BaseModel):
-    client_name: str = Field(..., min_length=1, max_length=120)
+    client_access: Optional[list[ClientAccessEntryIn]] = None
+    # Legacy single-company fields (still accepted).
+    client_name: Optional[str] = None
     client_areas: Optional[list[str]] = None
 
 
@@ -67,12 +82,14 @@ class ClientInviteUrlResponse(BaseModel):
     url: str
     client_name: str
     client_areas: Optional[list[str]] = None
+    client_access: Optional[list[dict]] = None
     expires_at: str
 
 
 class ClientInviteInfoResponse(BaseModel):
     client_name: str
     client_areas: Optional[list[str]] = None
+    client_access: Optional[list[dict]] = None
 
 
 class ClientSignupRequest(BaseModel):
@@ -84,6 +101,14 @@ class ClientSignupRequest(BaseModel):
 
 class ClientSignupResponse(BaseModel):
     message: str
+
+
+def _invite_access(invite: ClientInvite) -> list[dict]:
+    return resolve_client_access(
+        client_access=getattr(invite, "client_access", None),
+        client_name=invite.client_name,
+        client_areas=invite.client_areas,
+    )
 
 
 # ── Admin: create + list invites ──────────────────────────────────────
@@ -104,14 +129,20 @@ def create_client_invite(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Client invites are not available — backend has no database session.",
         )
-    client_name = payload.client_name.strip()
-    if not client_name:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="client_name is required")
-    client_areas = [a.strip() for a in (payload.client_areas or []) if isinstance(a, str) and a.strip()] or None
+    try:
+        access = parse_scope_payload(
+            client_access=[e.model_dump() for e in payload.client_access] if payload.client_access else None,
+            client_name=payload.client_name,
+            client_areas=payload.client_areas,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
+    mirror_name, mirror_areas = legacy_fields_from_access(access)
     invite = ClientInvite(
-        client_name=client_name,
-        client_areas=client_areas,
+        client_name=mirror_name or access[0]["client"],
+        client_areas=mirror_areas,
+        client_access=access,
         created_by_user_id=getattr(current_user, "id", None),
     )
     db.add(invite)
@@ -121,8 +152,9 @@ def create_client_invite(
     url = f"{settings.frontend_url.rstrip('/')}/?client_invite={invite.token}"
     return ClientInviteUrlResponse(
         url=url,
-        client_name=client_name,
-        client_areas=client_areas,
+        client_name=invite.client_name,
+        client_areas=mirror_areas,
+        client_access=access,
         expires_at=invite.expires_at.isoformat(),
     )
 
@@ -138,7 +170,7 @@ def get_client_invite(
     db: Session = Depends(get_db),
 ) -> ClientInviteInfoResponse:
     """Public lookup so the signup page can show "You're signing up for
-    <Client>" before the visitor enters anything. Never reveals whether a
+    <Client(s)>" before the visitor enters anything. Never reveals whether a
     *different* token exists — only whether *this* token is currently
     valid.
     """
@@ -150,7 +182,13 @@ def get_client_invite(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="This invite link is invalid or has expired. Ask your Pineview contact for a new one.",
         )
-    return ClientInviteInfoResponse(client_name=invite.client_name, client_areas=invite.client_areas)
+    access = _invite_access(invite)
+    name, areas = legacy_fields_from_access(access)
+    return ClientInviteInfoResponse(
+        client_name=name or invite.client_name,
+        client_areas=areas,
+        client_access=access or None,
+    )
 
 
 @router.post(
@@ -164,8 +202,8 @@ async def client_signup(request: Request, payload: ClientSignupRequest, db: Sess
 
     Mirrors app/signup.py::worker_signup's shape (create user with
     email_confirm=False, mint a confirmation link, email it), but forces
-    role="client" + the invite's client_name/client_areas into
-    `app_metadata` instead of `user_metadata`.
+    role="client" + the invite's client_access into `app_metadata` instead
+    of `user_metadata`.
     """
     if db is None:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Not available")
@@ -179,17 +217,13 @@ async def client_signup(request: Request, payload: ClientSignupRequest, db: Sess
 
     display_name = payload.name.strip() or payload.email.split("@")[0].title()
     client = _get_supabase_admin()
+    access = _invite_access(invite)
 
-    # Omit client_areas entirely when unset rather than sending an explicit
-    # JSON null — see the matching comment in
-    # app/user_management.py::invite_client for why.
     app_metadata: dict = {
         "role": RoleEnum.client.value,
         "name": display_name,
-        "client_name": invite.client_name,
+        **build_scope_app_metadata(access),
     }
-    if invite.client_areas:
-        app_metadata["client_areas"] = invite.client_areas
 
     try:
         client.auth.admin.create_user(
@@ -271,4 +305,9 @@ async def client_signup(request: Request, payload: ClientSignupRequest, db: Sess
             detail="Account created but confirmation email failed to send. Contact Pineview.",
         )
 
+    logger.info(
+        "Client signup via invite for %s (clients=%s)",
+        mask_email(payload.email),
+        display_client_names(access),
+    )
     return ClientSignupResponse(message="Check your email to confirm your account.")

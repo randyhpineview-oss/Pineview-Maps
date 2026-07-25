@@ -901,6 +901,10 @@ export default function App() {
   const clientPortalAreas = Array.isArray(rawClientPortalAreas) && rawClientPortalAreas.length > 0
     ? rawClientPortalAreas
     : null;
+  const rawClientPortalAccess = session?.user?.app_metadata?.client_access;
+  const clientPortalAccess = Array.isArray(rawClientPortalAccess) && rawClientPortalAccess.length > 0
+    ? rawClientPortalAccess
+    : null;
 
   // Display label for the current user, computed once and reused by both
   // the inline (tablet/PC) name badge and the mobile avatar menu. Mirrors
@@ -6188,6 +6192,7 @@ export default function App() {
         <ClientPortal
           clientName={clientPortalName}
           clientAreas={clientPortalAreas}
+          clientAccess={clientPortalAccess}
           userDisplayName={userDisplayName}
           onSignOut={handleSignOut}
           isOnline={isOnline}

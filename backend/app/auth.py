@@ -1,14 +1,20 @@
 from collections.abc import Callable
-from typing import Optional
+from typing import Any, Optional
 import hashlib
 import re
 
 import jwt
 from fastapi import Depends, HTTPException, Request, status
 from jwt import PyJWKClient
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
+from app.client_scope import (
+    clean_client_access,
+    legacy_fields_from_access,
+    resolve_client_access,
+    resolve_user_client_access,
+)
 from app.config import get_settings
 from app.database import get_db
 from app.log_util import get_logger, mask_email, short_id
@@ -93,6 +99,7 @@ DEMO_USERS = {
         "role": RoleEnum.client,
         "client_name": "Demo Client Co",
         "client_areas": None,
+        "client_access": [{"client": "Demo Client Co", "areas": None}],
     },
 }
 
@@ -114,6 +121,7 @@ def _upsert_supabase_user(
     role: RoleEnum,
     client_name: Optional[str] = None,
     client_areas: Optional[list[str]] = None,
+    client_access: Optional[list[dict]] = None,
 ) -> User:
     """Ensure a User row exists in the local `users` table for a Supabase-authenticated
     caller so FK-backed columns (e.g. `created_by_user_id`) can reference it.
@@ -129,17 +137,25 @@ def _upsert_supabase_user(
       - Insert if neither exists. Update name/role/client scope if they changed.
 
     One exception to "sync from the JWT": for `role == client`, the local row is
-    AUTHORITATIVE for `client_name`/`client_areas` once it has a `client_name`.
-    An admin re-scoping a client writes both Supabase `app_metadata` and this row
-    (see user_management.update_user), but the client's already-issued JWT keeps
-    the old values until it refreshes (~1h). Syncing from the JWT here would undo
-    the edit on their very next request, which is exactly the bug the DB-side
-    write exists to avoid. The JWT is still used to seed a brand-new row, and to
-    backfill a row that has never had a scope.
+    AUTHORITATIVE for client scope once it has any scope (`client_access` or
+    legacy `client_name`). An admin re-scoping a client writes both Supabase
+    `app_metadata` and this row (see user_management.update_user), but the
+    client's already-issued JWT keeps the old values until it refreshes (~1h).
+    Syncing from the JWT here would undo the edit on their very next request.
+    The JWT is still used to seed a brand-new row, and to backfill a row that
+    has never had a scope. Legacy rows with only `client_name` are upgraded
+    in-place to `client_access` on read.
 
     Never raises — auth should continue to work even if the users table is read-only
     (we fall back to a transient User object in that case).
     """
+    access = resolve_client_access(
+        client_access=client_access,
+        client_name=client_name,
+        client_areas=client_areas,
+    ) or None
+    mirror_name, mirror_areas = legacy_fields_from_access(access)
+
     try:
         existing = db.query(User).filter(User.id == actual_id).first()
         if existing is None:
@@ -151,8 +167,9 @@ def _upsert_supabase_user(
                 email=email,
                 name=name,
                 role=role,
-                client_name=client_name,
-                client_areas=client_areas,
+                client_name=mirror_name,
+                client_areas=mirror_areas,
+                client_access=access,
             )
             db.add(new_user)
             db.commit()
@@ -168,17 +185,29 @@ def _upsert_supabase_user(
             existing.role = role
             changed = True
         if role == RoleEnum.client:
+            existing_access = resolve_user_client_access(existing)
             # DB wins — only backfill a row that has no scope yet.
-            if not existing.client_name and client_name:
-                existing.client_name = client_name
-                existing.client_areas = client_areas
+            if not existing_access and access:
+                existing.client_access = access
+                existing.client_name = mirror_name
+                existing.client_areas = mirror_areas
+                changed = True
+            elif existing_access and not getattr(existing, "client_access", None):
+                # On-read upgrade: legacy client_name/areas → client_access.
+                existing.client_access = existing_access
+                name2, areas2 = legacy_fields_from_access(existing_access)
+                existing.client_name = name2
+                existing.client_areas = areas2
                 changed = True
         else:
-            if existing.client_name != client_name:
-                existing.client_name = client_name
+            if existing.client_name != mirror_name:
+                existing.client_name = mirror_name
                 changed = True
-            if existing.client_areas != client_areas:
-                existing.client_areas = client_areas
+            if existing.client_areas != mirror_areas:
+                existing.client_areas = mirror_areas
+                changed = True
+            if getattr(existing, "client_access", None) != access:
+                existing.client_access = access
                 changed = True
         if changed:
             db.commit()
@@ -204,8 +233,9 @@ def _upsert_supabase_user(
             email=email,
             name=name,
             role=role,
-            client_name=client_name,
-            client_areas=client_areas,
+            client_name=mirror_name,
+            client_areas=mirror_areas,
+            client_access=access,
         )
 
 
@@ -216,7 +246,7 @@ def _upsert_supabase_user(
 # calls `require_roles`. This means a new endpoint added anywhere in the
 # app is automatically safe for clients on day one; nobody has to
 # remember to audit it. Every matched read below is ALSO filtered by
-# `client_name`/`client_areas` at the query level (see main.py /
+# the caller's client_access scope at the query level (see main.py /
 # pipeline_routes.py) — being on this list only grants reachability, not
 # visibility into other companies' data.
 CLIENT_ALLOWED_ROUTES: tuple[tuple[str, "re.Pattern[str]"], ...] = (
@@ -344,15 +374,22 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
             or user_email.split("@")[0].title()
         )
 
-        client_name: Optional[str] = None
-        client_areas: Optional[list[str]] = None
+        jwt_access: Optional[list[dict]] = None
+        jwt_client_name: Optional[str] = None
+        jwt_client_areas: Optional[list[str]] = None
         if role_enum == RoleEnum.client:
+            jwt_access = clean_client_access(app_metadata.get("client_access"))
             raw_client_name = app_metadata.get("client_name")
-            client_name = raw_client_name.strip() if isinstance(raw_client_name, str) else None
+            jwt_client_name = raw_client_name.strip() if isinstance(raw_client_name, str) else None
             raw_areas = app_metadata.get("client_areas")
             if isinstance(raw_areas, list):
                 cleaned = [a.strip() for a in raw_areas if isinstance(a, str) and a.strip()]
-                client_areas = cleaned or None
+                jwt_client_areas = cleaned or None
+            if not jwt_access:
+                jwt_access = resolve_client_access(
+                    client_name=jwt_client_name,
+                    client_areas=jwt_client_areas,
+                ) or None
 
         # Deterministic integer id derived from the Supabase UUID so the
         # same user maps to the same local row across gunicorn workers
@@ -370,17 +407,20 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
                 email=user_email,
                 name=user_name,
                 role=role_enum,
-                client_name=client_name,
-                client_areas=client_areas,
+                client_name=jwt_client_name,
+                client_areas=jwt_client_areas,
+                client_access=jwt_access,
             )
         else:
+            mirror_name, mirror_areas = legacy_fields_from_access(jwt_access)
             user = User(
                 id=actual_id,
                 email=user_email,
                 name=user_name,
                 role=role_enum,
-                client_name=client_name,
-                client_areas=client_areas,
+                client_name=mirror_name or jwt_client_name,
+                client_areas=mirror_areas if jwt_access else jwt_client_areas,
+                client_access=jwt_access,
             )
 
         # Instant re-scope: for clients, prefer the local row's scope over the
@@ -391,20 +431,19 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
         # predates client scoping), we keep the JWT values so scoping and auth
         # still work rather than silently narrowing them to "see nothing".
         if role_enum == RoleEnum.client:
-            db_client_name = getattr(user, "client_name", None)
-            if isinstance(db_client_name, str) and db_client_name.strip():
-                db_areas = getattr(user, "client_areas", None)
-                if isinstance(db_areas, list):
-                    cleaned_db_areas = [a.strip() for a in db_areas if isinstance(a, str) and a.strip()] or None
-                else:
-                    cleaned_db_areas = None
-                # Only assign on an actual change — this row is usually a live
-                # ORM object and a no-op write would still dirty it.
-                if cleaned_db_areas != db_areas:
-                    user.client_areas = cleaned_db_areas
+            db_access = resolve_user_client_access(user)
+            if db_access:
+                mirror_name, mirror_areas = legacy_fields_from_access(db_access)
+                # Assign on the live object so query helpers see DB scope
+                # even when the ORM attributes were stale mirrors.
+                user.client_access = db_access
+                user.client_name = mirror_name
+                user.client_areas = mirror_areas
             else:
-                user.client_name = client_name
-                user.client_areas = client_areas
+                mirror_name, mirror_areas = legacy_fields_from_access(jwt_access)
+                user.client_access = jwt_access
+                user.client_name = mirror_name or jwt_client_name
+                user.client_areas = mirror_areas if jwt_access else jwt_client_areas
 
         # Instant revoke: an admin soft-delete sets is_active=False on the
         # local row, but the caller's Supabase JWT stays cryptographically
@@ -452,38 +491,63 @@ def client_scope_matches(user: User, client_value: Optional[str], area_value: Op
     is a narrowing check, not a general permission check. Case-insensitive
     on both fields (site/pipeline client & area strings are normalized to
     Title Case on save, but this stays defensive against drift).
+
+    Multi-company: the row's client must match one entry in
+    ``client_access``. If that entry has an areas allowlist, the row's
+    area must be in it; unrestricted entries match any area for that client.
     """
     if user.role != RoleEnum.client:
         return True
-    if not user.client_name or not client_value:
+    if not client_value:
         return False
-    if user.client_name.strip().lower() != client_value.strip().lower():
+    access = resolve_user_client_access(user)
+    if not access:
         return False
-    if user.client_areas:
-        if not area_value:
+    client_key = client_value.strip().lower()
+    area_key = area_value.strip().lower() if isinstance(area_value, str) and area_value.strip() else None
+    for entry in access:
+        if entry["client"].strip().lower() != client_key:
+            continue
+        allowed_areas = entry.get("areas")
+        if not allowed_areas:
+            return True
+        if not area_key:
             return False
-        allowed = {a.strip().lower() for a in user.client_areas}
-        if area_value.strip().lower() not in allowed:
-            return False
-    return True
+        allowed = {a.strip().lower() for a in allowed_areas}
+        return area_key in allowed
+    return False
 
 
 def apply_client_scope(query, user: User, client_column, area_column):
     """Narrow a SQLAlchemy query to a client-role user's scope.
 
-    No-op for every other role. For a client user with no `client_name`
-    configured (shouldn't happen via the invite flows, but fail safe
-    rather than leaking all rows if it does), returns zero rows.
+    No-op for every other role. For a client user with no scope configured
+    (shouldn't happen via the invite flows, but fail safe rather than
+    leaking all rows if it does), returns zero rows.
+
+    Multi-company scope is an OR of per-company predicates: each entry
+    matches its client, and if that entry has areas, also restricts area.
     """
     if user.role != RoleEnum.client:
         return query
-    if not user.client_name:
+    access = resolve_user_client_access(user)
+    if not access:
         return query.filter(False)  # noqa: FBT003 — intentional "match nothing"
-    query = query.filter(func.lower(client_column) == user.client_name.strip().lower())
-    if user.client_areas:
-        allowed = [a.strip().lower() for a in user.client_areas]
-        query = query.filter(func.lower(area_column).in_(allowed))
-    return query
+
+    clauses: list[Any] = []
+    for entry in access:
+        client_key = entry["client"].strip().lower()
+        client_clause = func.lower(client_column) == client_key
+        allowed_areas = entry.get("areas")
+        if allowed_areas:
+            area_keys = [a.strip().lower() for a in allowed_areas]
+            clauses.append(and_(client_clause, func.lower(area_column).in_(area_keys)))
+        else:
+            clauses.append(client_clause)
+
+    if len(clauses) == 1:
+        return query.filter(clauses[0])
+    return query.filter(or_(*clauses))
 
 
 def require_roles(*roles: RoleEnum) -> Callable:

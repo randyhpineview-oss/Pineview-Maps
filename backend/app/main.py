@@ -12,6 +12,7 @@ from sqlalchemy import and_, func, inspect, or_, text
 from sqlalchemy.orm import Session, defer, joinedload
 
 from app.auth import MANAGES_PINS, apply_client_scope, client_scope_matches, get_current_user, require_roles, seed_demo_users
+from app.client_scope import legacy_fields_from_access, resolve_user_client_access
 from app.config import get_settings
 from app.database import Base, SessionLocal, engine, get_db
 from app.kml_import import parse_kml_file
@@ -104,6 +105,7 @@ from app.schemas import (
     SiteStatusUpdate,
     SprayRecordFilesUpload,
     TypeChangeRequest,
+    UserRead,
 )
 
 settings = get_settings()
@@ -702,6 +704,15 @@ def _migrate_add_columns() -> None:
                         fresh_conn.execute(text("ALTER TABLE users ADD COLUMN client_areas JSONB"))
             except Exception as e:
                 print(f"[STARTUP] Could not add users.client_areas column: {e}")
+        if "client_access" not in existing_user_cols:
+            try:
+                with engine.begin() as fresh_conn:
+                    if is_sqlite:
+                        fresh_conn.execute(text("ALTER TABLE users ADD COLUMN client_access JSON"))
+                    else:
+                        fresh_conn.execute(text("ALTER TABLE users ADD COLUMN client_access JSONB"))
+            except Exception as e:
+                print(f"[STARTUP] Could not add users.client_access column: {e}")
 
     # ── client_invites table (Flow B: admin generates a single-use invite
     # link and copies it into a text/email manually).
@@ -709,6 +720,22 @@ def _migrate_add_columns() -> None:
         Base.metadata.create_all(bind=engine, tables=[ClientInvite.__table__], checkfirst=True)
     except Exception as e:
         print(f"[STARTUP] Could not ensure client_invites table: {e}")
+
+    # Multi-company invite scope column (nullable; older invites keep
+    # working via client_name/client_areas alone).
+    try:
+        # Re-inspect after create_all so a freshly-created table is visible.
+        insp = inspect(engine)
+        if insp.has_table("client_invites"):
+            invite_cols = {col["name"] for col in insp.get_columns("client_invites")}
+            if "client_access" not in invite_cols:
+                with engine.begin() as fresh_conn:
+                    if is_sqlite:
+                        fresh_conn.execute(text("ALTER TABLE client_invites ADD COLUMN client_access JSON"))
+                    else:
+                        fresh_conn.execute(text("ALTER TABLE client_invites ADD COLUMN client_access JSONB"))
+    except Exception as e:
+        print(f"[STARTUP] Could not ensure client_invites.client_access column: {e}")
 
     # ── Sync local users.is_active with Supabase Auth (one-time cleanup).
     # Marks any local user whose email is NOT in Supabase Auth as inactive.
@@ -835,7 +862,24 @@ def health_check() -> dict[str, str]:
 
 @app.get("/api/session", response_model=SessionResponse)
 def session(current_user: User = Depends(get_current_user)) -> SessionResponse:
-    return SessionResponse(user=current_user)
+    """Return the caller's identity + (for clients) resolved multi-company scope.
+
+    Client scope is resolved from DB-authoritative ``client_access`` (with
+    legacy ``client_name``/``client_areas`` fallback) so the portal FilterBar
+    and account popover track admin edits without waiting on a JWT refresh.
+    """
+    user_read = UserRead.model_validate(current_user)
+    if current_user.role == RoleEnum.client:
+        access = resolve_user_client_access(current_user)
+        name, areas = legacy_fields_from_access(access)
+        user_read = user_read.model_copy(
+            update={
+                "client_access": access or None,
+                "client_name": name,
+                "client_areas": areas,
+            }
+        )
+    return SessionResponse(user=user_read)
 
 
 @app.get("/api/next-ticket")
@@ -1070,19 +1114,8 @@ def sites_delta(
     )
     # A client role should still learn about a removal of one of THEIR
     # sites, but never learn that some other company's site id exists —
-    # even a bare int id is information disclosure across tenants. Scoping
-    # this one is a plain-column filter (not `apply_client_scope`, which
-    # takes model columns) since it's a distinct query shape.
-    if current_user.role == RoleEnum.client:
-        if not current_user.client_name:
-            removed_q = removed_q.filter(False)  # noqa: FBT003
-        else:
-            removed_q = removed_q.filter(
-                func.lower(Site.client) == current_user.client_name.strip().lower()
-            )
-            if current_user.client_areas:
-                allowed = [a.strip().lower() for a in current_user.client_areas]
-                removed_q = removed_q.filter(func.lower(Site.area).in_(allowed))
+    # even a bare int id is information disclosure across tenants.
+    removed_q = apply_client_scope(removed_q, current_user, Site.client, Site.area)
     ids_removed = [row[0] for row in removed_q.all()]
 
     return SitesDeltaResponse(
@@ -2952,7 +2985,7 @@ def restore_site(
 def _client_may_access_file_url(db: Session, current_user: User, url: str, *, is_photo: bool) -> bool:
     """For the client role only: true if `url` is a pdf_url (or one of the
     photo_urls) on a spray record belonging to a site/pipeline within the
-    caller's client_name/client_areas scope.
+    caller's client_access scope.
 
     Without this check, /api/pdf-proxy and /api/proxy-photo would let any
     authenticated client fetch ANY Dropbox file the backend knows the URL
@@ -2961,7 +2994,7 @@ def _client_may_access_file_url(db: Session, current_user: User, url: str, *, is
     """
     if current_user.role != RoleEnum.client:
         return True
-    if not url or not current_user.client_name:
+    if not url or not resolve_user_client_access(current_user):
         return False
 
     try:
