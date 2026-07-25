@@ -535,15 +535,17 @@ function UserRow({
           >
             Edit name
           </button>
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={busy}
-            onClick={() => setEditingRole(true)}
-            style={{ fontSize: '0.8rem' }}
-          >
-            Change role
-          </button>
+          {!isClient ? (
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={busy}
+              onClick={() => setEditingRole(true)}
+              style={{ fontSize: '0.8rem' }}
+            >
+              Change role
+            </button>
+          ) : null}
           {isClient ? (
             <button
               className="secondary-button"

@@ -548,6 +548,18 @@ def update_user(
         current_user_obj = getattr(current, "user", None) or current
         existing_app_metadata = dict(getattr(current_user_obj, "app_metadata", None) or {})
 
+        # Clients are invite-only external accounts — never promote/demote
+        # them into in-house roles via this endpoint.
+        if (
+            payload.role is not None
+            and existing_app_metadata.get("role") == RoleEnum.client.value
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Client accounts can't be changed to an in-house role. Delete the client "
+                "and create a staff user separately if needed.",
+            )
+
         scope_touch = (
             payload.client_access is not None
             or payload.client_name is not None
