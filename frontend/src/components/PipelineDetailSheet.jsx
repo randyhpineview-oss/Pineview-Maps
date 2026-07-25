@@ -14,6 +14,11 @@ function buildEditState(pipeline) {
 export default function PipelineDetailSheet({
   pipeline,
   canManage = false,
+  // Gates the two data-changing status actions ("Mark Inspection" and
+  // "⚠ Issue with Pipeline"). Same name and `true` default as the prop
+  // SiteDetailSheet already uses, so worker/admin callers are unchanged;
+  // ClientPortal passes `false` for its read-only sheet.
+  canEditStatus = true,
   onSavePipeline,
   onDeletePipeline,
   onMarkInspection,
@@ -145,17 +150,19 @@ export default function PipelineDetailSheet({
 
       {/* Action buttons */}
       <div style={{ padding: '0 0.75rem 0.75rem' }}>
-        <div className="button-row" style={{ marginBottom: '0.5rem' }}>
-          <button
-            className="primary-button"
-            type="button"
-            onClick={() => onMarkInspection?.(pipeline)}
-            disabled={adminBusy || pipeline.approval_state === 'pending_review'}
-            style={{ flex: 1 }}
-          >
-            Mark Inspection
-          </button>
-        </div>
+        {canEditStatus ? (
+          <div className="button-row" style={{ marginBottom: '0.5rem' }}>
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => onMarkInspection?.(pipeline)}
+              disabled={adminBusy || pipeline.approval_state === 'pending_review'}
+              style={{ flex: 1 }}
+            >
+              Mark Inspection
+            </button>
+          </div>
+        ) : null}
         {/* "⚠ Issue with Pipeline" entry. After the reason prompt, App.jsx
             takes over: it puts the map into segment-selection mode and
             shows a confirm popup with Yes-Fill-Sheet / Skip / Cancel
@@ -163,30 +170,32 @@ export default function PipelineDetailSheet({
             inline Yes/Skip prompt that used to render here is gone — it
             forced the choice before the worker had picked a segment,
             which made the "Skip" path always cover the whole pipeline. */}
-        <div className="button-row" style={{ marginBottom: '0.5rem' }}>
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={adminBusy || pipeline.approval_state === 'pending_review'}
-            style={{ flex: 1, background: '#64748b' }}
-            onClick={async () => {
-              // The prompt's `validate` hook collapses what used to be
-              // two dialogs (window.prompt then a follow-up alert when
-              // empty) into one round-trip — the error renders inline
-              // below the input on Enter without dismissing.
-              const reason = await prompt({
-                title: 'Issue with pipeline',
-                message: 'Why is there an issue with this pipeline? (This will be saved on the spray record so the next person can see why.)',
-                placeholder: 'Reason',
-                validate: (v) => v.trim() ? null : 'A reason is required.',
-              });
-              if (reason === null) return;
-              onMarkIssueNotInspected?.(pipeline, reason);
-            }}
-          >
-            ⚠ Issue with Pipeline
-          </button>
-        </div>
+        {canEditStatus ? (
+          <div className="button-row" style={{ marginBottom: '0.5rem' }}>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={adminBusy || pipeline.approval_state === 'pending_review'}
+              style={{ flex: 1, background: '#64748b' }}
+              onClick={async () => {
+                // The prompt's `validate` hook collapses what used to be
+                // two dialogs (window.prompt then a follow-up alert when
+                // empty) into one round-trip — the error renders inline
+                // below the input on Enter without dismissing.
+                const reason = await prompt({
+                  title: 'Issue with pipeline',
+                  message: 'Why is there an issue with this pipeline? (This will be saved on the spray record so the next person can see why.)',
+                  placeholder: 'Reason',
+                  validate: (v) => v.trim() ? null : 'A reason is required.',
+                });
+                if (reason === null) return;
+                onMarkIssueNotInspected?.(pipeline, reason);
+              }}
+            >
+              ⚠ Issue with Pipeline
+            </button>
+          </div>
+        ) : null}
 
         {canManage && !isEditing && (
           <div className="button-row">

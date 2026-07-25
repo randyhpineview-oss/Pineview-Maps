@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 
 import { api } from '../lib/api';
@@ -198,16 +198,83 @@ function roleBadgeStyle(role) {
   }
 }
 
-function UserRow({ user, busy, onUpdateRole, onUpdateName, onDelete, onConfirmEmail, onSendPasswordReset, currentUserEmail }) {
+function UserRow({
+  user,
+  busy,
+  onUpdateRole,
+  onUpdateName,
+  onUpdateClientScope,
+  onDelete,
+  onConfirmEmail,
+  onSendPasswordReset,
+  currentUserEmail,
+  clients = [],
+  getAreasForClient,
+}) {
   const [editingRole, setEditingRole] = useState(false);
   const [editingName, setEditingName] = useState(false);
+  const [editingScope, setEditingScope] = useState(false);
   const [selectedRole, setSelectedRole] = useState(user.role);
   const [editedName, setEditedName] = useState(user.name || '');
+  const [scopeClient, setScopeClient] = useState(user.client_name || '');
+  const [scopeAreas, setScopeAreas] = useState(
+    Array.isArray(user.client_areas) ? user.client_areas : []
+  );
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
 
   const isSelf = currentUserEmail && user.email === currentUserEmail;
   const emailUnconfirmed = !user.email_confirmed_at;
+  const isClient = user.role === 'client';
+
+  // The map's client list is derived from live sites, so a client account
+  // could be scoped to a company that currently has none. Keep its stored
+  // value selectable so opening the editor can't silently reassign them.
+  const clientOptions = useMemo(() => {
+    const list = Array.isArray(clients) ? clients.filter(Boolean) : [];
+    if (user.client_name && !list.includes(user.client_name)) {
+      return [user.client_name, ...list];
+    }
+    return list;
+  }, [clients, user.client_name]);
+
+  // Same reasoning for areas: union the derived areas with any the account
+  // is already restricted to, so an area with no current sites still shows
+  // up (checked) instead of quietly disappearing on save.
+  const availableAreas = useMemo(() => {
+    const derived = scopeClient && typeof getAreasForClient === 'function'
+      ? (getAreasForClient(scopeClient) || [])
+      : [];
+    const extras = scopeClient === user.client_name && Array.isArray(user.client_areas)
+      ? user.client_areas
+      : [];
+    return [...new Set([...derived, ...extras])];
+  }, [scopeClient, getAreasForClient, user.client_name, user.client_areas]);
+
+  function openScopeEditor() {
+    setScopeClient(user.client_name || '');
+    setScopeAreas(Array.isArray(user.client_areas) ? user.client_areas : []);
+    setEditingScope(true);
+  }
+
+  // An area picked for one company is meaningless for another, so switching
+  // the client resets to "all areas" — same as InviteClientPanel.
+  function handleScopeClientChange(value) {
+    setScopeClient(value);
+    setScopeAreas([]);
+  }
+
+  function toggleScopeArea(area) {
+    setScopeAreas((prev) => (
+      prev.includes(area) ? prev.filter((a) => a !== area) : [...prev, area]
+    ));
+  }
+
+  async function handleSaveScope() {
+    if (!scopeClient) return;
+    const ok = await onUpdateClientScope?.(user.id, scopeClient, scopeAreas);
+    if (ok !== false) setEditingScope(false);
+  }
 
   function handleSaveRole() {
     if (selectedRole !== user.role) {
@@ -280,7 +347,7 @@ function UserRow({ user, busy, onUpdateRole, onUpdateName, onDelete, onConfirmEm
         {user.last_sign_in_at ? ` · Last login: ${new Date(user.last_sign_in_at).toLocaleDateString()}` : ''}
       </div>
 
-      {user.role === 'client' && user.client_name ? (
+      {isClient && user.client_name ? (
         <div className="small-text" style={{ marginTop: '0.3rem', color: '#fbbf24' }}>
           Scoped to: {user.client_name}
           {Array.isArray(user.client_areas) && user.client_areas.length > 0
@@ -316,6 +383,73 @@ function UserRow({ user, busy, onUpdateRole, onUpdateName, onDelete, onConfirmEm
             Cancel
           </button>
         </div>
+      ) : editingScope ? (
+        <div style={{ marginTop: '0.5rem' }}>
+          <div className="list-grid">
+            <select value={scopeClient} onChange={(e) => handleScopeClientChange(e.target.value)}>
+              <option value="">Select client…</option>
+              {clientOptions.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+
+            {scopeClient && availableAreas.length > 0 ? (
+              <div>
+                <div className="small-text" style={{ marginBottom: '0.35rem' }}>
+                  Areas (leave all unchecked for every area of {scopeClient})
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  {availableAreas.map((area) => (
+                    <label
+                      key={area}
+                      className="small-text"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.3rem',
+                        padding: '2px 8px',
+                        borderRadius: '4px',
+                        background: scopeAreas.includes(area) ? 'rgba(59,130,246,0.25)' : 'rgba(148,163,184,0.1)',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={scopeAreas.includes(area)}
+                        onChange={() => toggleScopeArea(area)}
+                      />
+                      {area}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ) : scopeClient ? (
+              <div className="small-text" style={{ color: '#94a3b8' }}>
+                No areas on record for {scopeClient} — they'll see every area of this client.
+              </div>
+            ) : null}
+          </div>
+
+          <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <button
+              className="primary-button"
+              type="button"
+              disabled={busy || !scopeClient}
+              onClick={handleSaveScope}
+              style={{ padding: '4px 12px', fontSize: '0.8rem' }}
+            >
+              Save access
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => setEditingScope(false)}
+              style={{ padding: '4px 12px', fontSize: '0.8rem' }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
       ) : (
         <div className="button-row" style={{ marginTop: '0.55rem' }}>
           <button
@@ -336,6 +470,18 @@ function UserRow({ user, busy, onUpdateRole, onUpdateName, onDelete, onConfirmEm
           >
             Change role
           </button>
+          {isClient ? (
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={busy}
+              onClick={openScopeEditor}
+              title="Change which company and areas this client account can see. Takes effect without them logging out."
+              style={{ fontSize: '0.8rem' }}
+            >
+              Edit access
+            </button>
+          ) : null}
           {emailUnconfirmed && !isSelf ? (
             <button
               className="secondary-button"
@@ -403,7 +549,14 @@ function UserRow({ user, busy, onUpdateRole, onUpdateName, onDelete, onConfirmEm
   );
 }
 
-export default function UserManagementPanel({ busy: externalBusy, currentUserEmail, cachedUsers = [], onUsersChanged }) {
+export default function UserManagementPanel({
+  busy: externalBusy,
+  currentUserEmail,
+  cachedUsers = [],
+  onUsersChanged,
+  clients = [],
+  getAreasForClient,
+}) {
   const users = cachedUsers;
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -482,6 +635,36 @@ export default function UserManagementPanel({ busy: externalBusy, currentUserEma
       onUsersChanged?.();
     } catch (err) {
       setError(err.message || 'Failed to update user');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Client accounts only. Always sends BOTH fields: the backend treats an
+  // omitted field as "leave alone", and an empty `client_areas` array as
+  // "every area of this client" — so clearing every checkbox has to be an
+  // explicit [] rather than undefined. Returns false so the row can keep the
+  // editor open when the save fails.
+  async function handleUpdateClientScope(userId, clientName, areas) {
+    clearMessages();
+    if (!clientName) {
+      setError('Choose a client before saving access.');
+      return false;
+    }
+    setBusy(true);
+    try {
+      const cleanedAreas = (areas || []).filter((a) => typeof a === 'string' && a.trim());
+      await api.updateUser(userId, { client_name: clientName, client_areas: cleanedAreas });
+      setSuccess(
+        cleanedAreas.length > 0
+          ? `Access updated — ${clientName}: ${cleanedAreas.join(', ')}`
+          : `Access updated — ${clientName}: all areas`
+      );
+      onUsersChanged?.();
+      return true;
+    } catch (err) {
+      setError(err.message || 'Failed to update client access');
+      return false;
     } finally {
       setBusy(false);
     }
@@ -608,10 +791,13 @@ export default function UserManagementPanel({ busy: externalBusy, currentUserEma
                 busy={isBusy}
                 onUpdateRole={handleUpdateRole}
                 onUpdateName={handleUpdateName}
+                onUpdateClientScope={handleUpdateClientScope}
                 onDelete={handleDeleteUser}
                 onConfirmEmail={handleConfirmEmail}
                 onSendPasswordReset={handleSendPasswordReset}
                 currentUserEmail={currentUserEmail}
+                clients={clients}
+                getAreasForClient={getAreasForClient}
               />
             ))
           )}

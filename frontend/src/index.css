@@ -202,6 +202,16 @@ button { cursor: pointer; }
   text-transform: uppercase;
 }
 
+/* Company + allowed-areas line under the name in the client portal's
+   account popover. Deliberately muted rather than reusing the orange
+   `-sub` variant above, which reads as an active-mode warning. */
+.topbar-account-name-scope {
+  font-size: 0.68rem;
+  color: #9ab1d6;
+  font-weight: 500;
+  white-space: normal;
+}
+
 .topbar-account-item {
   background: transparent;
   border: none;
@@ -1172,53 +1182,6 @@ button[title="Open keyboard shortcuts"],
 .gm-style .gm-control-active.gmnoprint,
 .gm-style .gmnoprint {
   display: none !important;
-}
-
-/* ───── Client Portal detail panel ─────
-   ClientPortal.jsx implements its own tiny, self-contained layout and
-   deliberately does NOT reuse `.side-panel` here — that class defaults to
-   `transform: translateX(100%)` (permanently off-screen) and only becomes
-   visible once the app-shell (App.jsx) toggles on a `.open` modifier class.
-   ClientPortal never added `.open`, so borrowing `.side-panel` left the
-   detail sheet in the DOM but invisible off the right edge of the screen on
-   every viewport size — that was the actual "no site details" bug. This
-   class gives the client portal its own always-visible desktop panel and a
-   mobile bottom-sheet, independent of the main app's overlay mechanics. */
-.client-portal-detail {
-  flex: 1 1 40%;
-  max-width: 420px;
-  min-width: 280px;
-  overflow-y: auto;
-  padding: 1rem;
-  border-left: 1px solid rgba(148, 163, 184, 0.15);
-  box-sizing: border-box;
-}
-
-@media (max-width: 768px) {
-  .client-portal-detail {
-    position: fixed;
-    top: auto;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    width: 100%;
-    max-width: 100%;
-    min-width: 0;
-    height: 70vh;
-    max-height: 70vh;
-    z-index: 30;
-    background: #0b1220;
-    border-left: none;
-    border-top: 1px solid rgba(148, 163, 184, 0.2);
-    border-radius: 16px 16px 0 0;
-    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.4);
-    transform: translateY(100%);
-    transition: transform 0.28s ease;
-    will-change: transform;
-  }
-  .client-portal-detail.open {
-    transform: translateY(0);
-  }
 }
 
 /* (Removed) `@keyframes upload-stripe` previously powered a 60 fps diagonal

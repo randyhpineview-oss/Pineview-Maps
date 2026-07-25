@@ -6183,6 +6183,7 @@ export default function App() {
           clientAreas={clientPortalAreas}
           userDisplayName={userDisplayName}
           onSignOut={handleSignOut}
+          isOnline={isOnline}
         />
       </Suspense>
     );

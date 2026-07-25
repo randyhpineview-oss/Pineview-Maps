@@ -128,6 +128,15 @@ def _upsert_supabase_user(
         claimed this email, or a demo-seeded row exists with this email).
       - Insert if neither exists. Update name/role/client scope if they changed.
 
+    One exception to "sync from the JWT": for `role == client`, the local row is
+    AUTHORITATIVE for `client_name`/`client_areas` once it has a `client_name`.
+    An admin re-scoping a client writes both Supabase `app_metadata` and this row
+    (see user_management.update_user), but the client's already-issued JWT keeps
+    the old values until it refreshes (~1h). Syncing from the JWT here would undo
+    the edit on their very next request, which is exactly the bug the DB-side
+    write exists to avoid. The JWT is still used to seed a brand-new row, and to
+    backfill a row that has never had a scope.
+
     Never raises — auth should continue to work even if the users table is read-only
     (we fall back to a transient User object in that case).
     """
@@ -158,12 +167,19 @@ def _upsert_supabase_user(
         if existing.role != role:
             existing.role = role
             changed = True
-        if existing.client_name != client_name:
-            existing.client_name = client_name
-            changed = True
-        if existing.client_areas != client_areas:
-            existing.client_areas = client_areas
-            changed = True
+        if role == RoleEnum.client:
+            # DB wins — only backfill a row that has no scope yet.
+            if not existing.client_name and client_name:
+                existing.client_name = client_name
+                existing.client_areas = client_areas
+                changed = True
+        else:
+            if existing.client_name != client_name:
+                existing.client_name = client_name
+                changed = True
+            if existing.client_areas != client_areas:
+                existing.client_areas = client_areas
+                changed = True
         if changed:
             db.commit()
             db.refresh(existing)
@@ -366,6 +382,29 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
                 client_name=client_name,
                 client_areas=client_areas,
             )
+
+        # Instant re-scope: for clients, prefer the local row's scope over the
+        # JWT's. An admin edit lands on that row immediately, whereas the
+        # client's token carries the old app_metadata until it refreshes (up to
+        # ~1h) — same window the revoke check below closes. If the row has no
+        # scope (a transient fallback object from a DB hiccup, or a row that
+        # predates client scoping), we keep the JWT values so scoping and auth
+        # still work rather than silently narrowing them to "see nothing".
+        if role_enum == RoleEnum.client:
+            db_client_name = getattr(user, "client_name", None)
+            if isinstance(db_client_name, str) and db_client_name.strip():
+                db_areas = getattr(user, "client_areas", None)
+                if isinstance(db_areas, list):
+                    cleaned_db_areas = [a.strip() for a in db_areas if isinstance(a, str) and a.strip()] or None
+                else:
+                    cleaned_db_areas = None
+                # Only assign on an actual change — this row is usually a live
+                # ORM object and a no-op write would still dirty it.
+                if cleaned_db_areas != db_areas:
+                    user.client_areas = cleaned_db_areas
+            else:
+                user.client_name = client_name
+                user.client_areas = client_areas
 
         # Instant revoke: an admin soft-delete sets is_active=False on the
         # local row, but the caller's Supabase JWT stays cryptographically

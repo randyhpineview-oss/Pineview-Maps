@@ -19,7 +19,7 @@ from app.config import get_settings
 from app.database import get_db
 from app.email_service import email_transport_configured, send_password_setup_link
 from app.log_util import get_logger, mask_email, short_id
-from app.models import PasswordResetCode, RoleEnum, User
+from app.models import ClientInvite, PasswordResetCode, RoleEnum, User
 
 router = APIRouter(prefix="/api/admin/users", tags=["user-management"])
 
@@ -255,6 +255,69 @@ def create_user(payload: UserCreate) -> UserResponse:
         )
 
 
+def _find_local_user(db: Session, user_id: str, email: Optional[str]) -> Optional[User]:
+    """Locate the local `users` row for a Supabase user id.
+
+    Email first (it's the unique column and survives id-scheme changes), then
+    the deterministic hash of the Supabase UUID that `auth.py` inserts under.
+    """
+    if db is None:
+        return None
+    if email:
+        found = db.query(User).filter(User.email == email).first()
+        if found is not None:
+            return found
+    return db.query(User).filter(User.id == _stable_user_id(user_id)).first()
+
+
+def _mirror_client_scope_locally(
+    db: Session,
+    user_id: str,
+    email: Optional[str],
+    client_name: Optional[str],
+    client_areas: Optional[list[str]],
+) -> None:
+    """Copy a client's freshly-saved scope onto their local `users` row.
+
+    This is what makes an admin's edit visible to a signed-in client
+    immediately: `get_current_user` reads scope off this row in preference to
+    the (now stale) `app_metadata` baked into their JWT.
+
+    A missing local row is fine and silent — the client has never hit an
+    authenticated endpoint, so their first request will seed the row from a
+    freshly-minted JWT that already carries the new scope. A genuine DB error,
+    though, is surfaced as a 500: `_upsert_supabase_user` deliberately stops
+    syncing client scope from the JWT, so a silently-skipped write would leave
+    the client pinned to their old scope indefinitely. The Supabase write has
+    already landed and this whole handler is idempotent, so retrying the PATCH
+    is the fix.
+    """
+    try:
+        local_user = _find_local_user(db, user_id, email)
+        if local_user is None:
+            return
+        local_user.client_name = client_name
+        local_user.client_areas = client_areas or None
+        db.commit()
+    except Exception as exc:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        logger.exception(
+            "Failed to mirror client scope onto local row for %s: %s",
+            short_id(user_id),
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "Saved in Supabase but the local scope update failed, so the change may not "
+                "reach the client until they sign in again. Please retry."
+            ),
+        )
+
+
 @router.patch(
     "/{user_id}",
     response_model=UserResponse,
@@ -264,6 +327,7 @@ def update_user(
     user_id: str,
     payload: UserUpdate,
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> UserResponse:
     """Update a Supabase Auth user's role or name.
 
@@ -271,6 +335,10 @@ def update_user(
     Changing a user's role AWAY from `client` here does not clear
     `client_name`/`client_areas` from app_metadata, but that's harmless:
     `app/auth.py` only reads those fields when `role == client`.
+
+    A client-scope change is ALSO mirrored onto the local `users` row so it
+    takes effect on the client's very next request instead of waiting for
+    their JWT to refresh. See `app/auth.py::_upsert_supabase_user`.
     """
     if payload.role == RoleEnum.client:
         raise HTTPException(
@@ -325,6 +393,16 @@ def update_user(
             update_data["user_metadata"] = {"name": payload.name}
 
         result = client.auth.admin.update_user_by_id(user_id, update_data)
+
+        if payload.client_name is not None or payload.client_areas is not None:
+            _mirror_client_scope_locally(
+                db,
+                user_id=user_id,
+                email=getattr(current_user_obj, "email", None),
+                client_name=existing_app_metadata.get("client_name"),
+                client_areas=existing_app_metadata.get("client_areas"),
+            )
+
         return _format_user(result.user)
     except HTTPException:
         raise
@@ -338,6 +416,66 @@ def update_user(
         )
 
 
+def _purge_client_local_data(
+    db: Session,
+    local_user: Optional[User],
+    email: Optional[str],
+) -> None:
+    """Remove a hard-deleted client's local footprint so a re-invite starts clean.
+
+    Deletes the local `users` row outright plus the two email-keyed artifacts a
+    client account leaves behind: outstanding password-setup codes (Flow A) and
+    the invite row their signup consumed (Flow B). Invites they created
+    themselves shouldn't exist — creating one needs a pin-managing role — but
+    `client_invites.created_by_user_id` is a nullable FK onto `users.id`, so we
+    clear it rather than let it block the delete.
+
+    If the users row still can't be deleted (some table we don't know about
+    referencing it), fall back to `is_active=False`. A client with linked rows
+    is not a reason to hand the admin a 500 — the account still needs to stop
+    working, and the residual email can be cleared by hand.
+    """
+    if db is None:
+        return
+    try:
+        if email:
+            db.query(PasswordResetCode).filter(PasswordResetCode.email == email).delete(
+                synchronize_session=False
+            )
+            db.query(ClientInvite).filter(ClientInvite.used_by_email == email).delete(
+                synchronize_session=False
+            )
+        if local_user is not None:
+            db.query(ClientInvite).filter(
+                ClientInvite.created_by_user_id == local_user.id
+            ).update({ClientInvite.created_by_user_id: None}, synchronize_session=False)
+            db.delete(local_user)
+        db.commit()
+    except Exception as exc:
+        logger.warning(
+            "Hard delete of local client row failed (%s) — deactivating instead",
+            type(exc).__name__,
+        )
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        if local_user is None:
+            return
+        try:
+            # Re-read: the rolled-back session may hold a stale/expunged instance.
+            fallback = db.query(User).filter(User.id == local_user.id).first()
+            if fallback is not None:
+                fallback.is_active = False
+                db.commit()
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            logger.exception("Could not deactivate local client row after failed hard delete")
+
+
 @router.delete(
     "/{user_id}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -348,33 +486,57 @@ def delete_user(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> None:
-    """Delete a Supabase Auth user (soft delete - preserves data but disables login)."""
+    """Delete a Supabase Auth user.
+
+    Clients are HARD-deleted (Supabase Auth row and local `users` row both
+    removed) so the email is freed for a later re-invite. A soft-deleted
+    Supabase row keeps its email reserved, which is what produces the
+    "Database error creating new user" failure when the same contact is
+    invited again the following season.
+
+    Every other role is soft-deleted as before: staff ids are referenced by
+    sites, spray records, check-ins, quotes and T&M tickets — some of those
+    columns are NOT NULL — so removing the row would either fail outright or
+    orphan work history that still needs to say who did the work.
+    """
     client = get_supabase_admin()
     _guard_dev_account(client, user_id, current_user)
     try:
-        # Capture the email BEFORE soft-deleting. After deletion, Supabase may
+        # Capture the email and role BEFORE deleting. After deletion, Supabase may
         # not return the user (or may omit the email), leaving the local users
         # row active and causing the deleted account to keep appearing in crew
         # pickers and roster lists.
         target_email = None
+        target_role = None
         try:
             result = client.auth.admin.get_user_by_id(user_id)
             target = getattr(result, "user", None) or result
             target_email = getattr(target, "email", None)
+            target_app_metadata = getattr(target, "app_metadata", None) or {}
+            if isinstance(target_app_metadata, dict):
+                target_role = target_app_metadata.get("role")
         except Exception:
             pass
 
-        client.auth.admin.delete_user(user_id, should_soft_delete=True)
+        # Only hard-delete on a POSITIVE identification as a client. If the
+        # lookup above failed we don't know the role, and soft delete is the
+        # safe answer — a staff account wrongly hard-deleted takes their work
+        # history's attribution with it, while a client left soft-deleted just
+        # means the admin has to clear the email manually later.
+        # `is_dev_email` is belt-and-suspenders: the dev account is an admin so
+        # it can't reach this branch anyway, but _guard_dev_account lets the dev
+        # act on their own account and must never be bypassed by a new path.
+        hard_delete = target_role == RoleEnum.client.value and not is_dev_email(target_email)
 
-        # Also mark the local users row as inactive so they disappear from pickers.
-        local_user = None
-        if target_email:
-            local_user = db.query(User).filter(User.email == target_email).first()
-        if local_user is None:
-            # Fallback: the local users.id is the stable hash of the Supabase UUID,
-            # so we can still deactivate the row even if the email lookup failed.
-            local_user = db.query(User).filter(User.id == _stable_user_id(user_id)).first()
-        if local_user:
+        client.auth.admin.delete_user(user_id, should_soft_delete=not hard_delete)
+
+        local_user = _find_local_user(db, user_id, target_email)
+
+        if hard_delete:
+            _purge_client_local_data(db, local_user, target_email)
+        elif local_user:
+            # Mark the local row inactive so they disappear from pickers, and so
+            # `get_current_user` rejects their still-valid JWT on the next request.
             local_user.is_active = False
             db.commit()
     except Exception as exc:
