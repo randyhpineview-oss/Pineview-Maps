@@ -102,6 +102,131 @@ def get_supabase_admin():
     return create_client(settings.supabase_url, settings.supabase_service_role_key)
 
 
+def _normalize_email(email: Optional[str]) -> str:
+    return (email or "").strip().lower()
+
+
+def _auth_users_from_list_result(result) -> list:
+    if result is None:
+        return []
+    if isinstance(result, list):
+        return result
+    users = getattr(result, "users", None)
+    if users is not None:
+        return list(users)
+    if isinstance(result, dict):
+        return list(result.get("users") or [])
+    return []
+
+
+def _list_all_auth_users(client) -> list:
+    """Paginate Supabase Admin list_users (default page is too small for a full roster)."""
+    users: list = []
+    page = 1
+    per_page = 200
+    while page <= 50:
+        try:
+            result = client.auth.admin.list_users(page=page, per_page=per_page)
+        except TypeError:
+            # Older supabase-py: list_users() takes no kwargs.
+            result = client.auth.admin.list_users()
+            return _auth_users_from_list_result(result)
+        batch = _auth_users_from_list_result(result)
+        if not batch:
+            break
+        users.extend(batch)
+        if len(batch) < per_page:
+            break
+        page += 1
+    return users
+
+
+def _auth_role(user) -> str:
+    app_metadata = getattr(user, "app_metadata", None) or {}
+    user_metadata = getattr(user, "user_metadata", None) or {}
+    if isinstance(app_metadata, dict) and app_metadata.get("role"):
+        return str(app_metadata.get("role"))
+    if isinstance(user_metadata, dict) and user_metadata.get("role"):
+        return str(user_metadata.get("role"))
+    return "worker"
+
+
+def _prefer_auth_user(users: list):
+    """Among Auth rows sharing an email, keep the real account (confirmed / logged-in)."""
+
+    def score(u) -> tuple:
+        confirmed = 1 if getattr(u, "email_confirmed_at", None) else 0
+        signed_in = 1 if getattr(u, "last_sign_in_at", None) else 0
+        last = str(getattr(u, "last_sign_in_at", None) or "")
+        created = str(getattr(u, "created_at", None) or "")
+        return (confirmed, signed_in, last, created)
+
+    return max(users, key=score)
+
+
+def _find_auth_users_by_email(client, email: str) -> list:
+    needle = _normalize_email(email)
+    if not needle:
+        return []
+    return [
+        u
+        for u in _list_all_auth_users(client)
+        if _normalize_email(getattr(u, "email", None)) == needle
+        and not getattr(u, "deleted_at", None)
+    ]
+
+
+def _dedupe_auth_users_by_email(users: list) -> list:
+    by_email: dict[str, list] = {}
+    order: list[str] = []
+    for u in users:
+        if getattr(u, "deleted_at", None):
+            continue
+        key = _normalize_email(getattr(u, "email", None)) or f"id:{getattr(u, 'id', '')}"
+        if key not in by_email:
+            by_email[key] = [u]
+            order.append(key)
+        else:
+            by_email[key].append(u)
+    out = []
+    for key in order:
+        group = by_email[key]
+        out.append(_prefer_auth_user(group) if len(group) > 1 else group[0])
+    return out
+
+
+def _purge_duplicate_client_auth_users(client, keep_user_id: str, email: Optional[str]) -> int:
+    """Hard-delete extra Auth rows for the same email (duplicate client shells).
+
+    Keeps ``keep_user_id``. Only deletes other ``role=client`` accounts —
+    never staff (admin/office/crew_lead/worker/tv).
+    """
+    matches = _find_auth_users_by_email(client, email or "")
+    purged = 0
+    for u in matches:
+        uid = getattr(u, "id", None)
+        if not uid or str(uid) == str(keep_user_id):
+            continue
+        if _auth_role(u) != RoleEnum.client.value:
+            continue
+        try:
+            client.auth.admin.delete_user(str(uid), should_soft_delete=False)
+            purged += 1
+            logger.info(
+                "Purged duplicate client Auth user %s for %s (kept %s)",
+                short_id(uid),
+                mask_email(email),
+                short_id(keep_user_id),
+            )
+        except Exception:
+            logger.exception(
+                "Failed to purge duplicate client Auth user %s for %s",
+                short_id(uid),
+                mask_email(email),
+            )
+    return purged
+
+
 # ── Request / Response schemas ──────────────────────────────────────
 
 
@@ -200,18 +325,40 @@ def _format_user(user) -> UserResponse:
     dependencies=[Depends(require_roles(RoleEnum.admin))],
 )
 def list_users(current_user: User = Depends(get_current_user)) -> list[UserResponse]:
-    """List all Supabase Auth users (excluding soft-deleted)."""
+    """List all Supabase Auth users (excluding soft-deleted).
+
+    Collapses duplicate Auth rows that share an email (common leftover from
+    re-inviting a client) so User Management shows one card per person.
+    Extra ``client`` duplicates are hard-deleted in the background — the
+    confirmed / last-login account is kept.
+    """
     client = get_supabase_admin()
     try:
-        result = client.auth.admin.list_users()
-        # result is a list of User objects
-        users = result if isinstance(result, list) else (result or [])
-        # Filter out soft-deleted users
+        users = _list_all_auth_users(client)
         active_users = [u for u in users if not getattr(u, "deleted_at", None)]
-        # Hide the dev account from everyone except the dev themselves.
         if not is_dev_email(getattr(current_user, "email", None)):
-            active_users = [u for u in active_users if not is_dev_email(getattr(u, "email", None))]
-        return [_format_user(u) for u in active_users]
+            active_users = [
+                u for u in active_users if not is_dev_email(getattr(u, "email", None))
+            ]
+
+        # Purge extra client Auth rows for the same email, then dedupe the
+        # response so the admin never sees two "randy" cards.
+        by_email: dict[str, list] = {}
+        for u in active_users:
+            key = _normalize_email(getattr(u, "email", None))
+            if not key:
+                continue
+            by_email.setdefault(key, []).append(u)
+        for email_key, group in by_email.items():
+            if len(group) < 2:
+                continue
+            if not any(_auth_role(u) == RoleEnum.client.value for u in group):
+                continue
+            keep = _prefer_auth_user(group)
+            _purge_duplicate_client_auth_users(client, str(keep.id), email_key)
+
+        deduped = _dedupe_auth_users_by_email(active_users)
+        return [_format_user(u) for u in deduped]
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -480,10 +627,14 @@ def update_user(
         result = client.auth.admin.update_user_by_id(user_id, update_data)
 
         if scope_touch:
+            target_email = getattr(current_user_obj, "email", None)
+            # Edit access must update THIS account — never leave a second
+            # Unconfirmed client card for the same email in User Management.
+            _purge_duplicate_client_auth_users(client, user_id, target_email)
             _mirror_client_scope_locally(
                 db,
                 user_id=user_id,
-                email=getattr(current_user_obj, "email", None),
+                email=target_email,
                 client_access=new_access,
             )
 
@@ -845,14 +996,11 @@ async def invite_client(
     payload: InviteClientRequest,
     db: Session = Depends(get_db),
 ) -> SimpleMessageResponse:
-    """Create a read-only client-portal account and email them a one-tap
-    "set your password" link (Flow A).
+    """Create OR update a read-only client-portal account and email a setup link.
 
-    The account is created with `role: "client"` and `client_access` (plus
-    legacy mirrors) in `app_metadata` — never `user_metadata`, so the client
-    can't edit their own scope. The password is a random value nobody is
-    ever told; the recipient sets their own via the setup-link email
-    (same mechanism as `send_user_password_reset`).
+    If this email already has a client account, scope is updated in place
+    (same as Edit access) — we never create a second Unconfirmed card for
+    the same person. Non-client accounts with the email still conflict.
     """
     try:
         access = parse_scope_payload(
@@ -887,47 +1035,93 @@ async def invite_client(
         **build_scope_app_metadata(access),
     }
 
-    try:
-        result = client.auth.admin.create_user(
-            {
-                "email": payload.email,
-                "password": secrets.token_urlsafe(32),  # nobody is ever told this
-                "email_confirm": True,
-                "app_metadata": app_metadata,
-                "user_metadata": {"name": display_name},
-            }
-        )
-    except Exception as exc:
-        error_msg = str(exc)
-        error_code = getattr(exc, "code", None)
-        error_status = getattr(exc, "status", None)
-        if "already been registered" in error_msg.lower() or "already exists" in error_msg.lower():
+    existing_matches = _find_auth_users_by_email(client, payload.email)
+    updated_existing = False
+    user_id: str
+
+    if existing_matches:
+        keep = _prefer_auth_user(existing_matches)
+        existing_role = _auth_role(keep)
+        if existing_role != RoleEnum.client.value:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="A user with this email already exists",
+                detail=(
+                    "A non-client user with this email already exists. "
+                    "Delete or rename that account before inviting them as a client."
+                ),
             )
-        logger.exception(
-            "Error creating client user %s: %s (code=%s status=%s)",
-            mask_email(payload.email),
-            type(exc).__name__,
-            error_code,
-            error_status,
-        )
-        hint = ""
-        if "database error" in error_msg.lower():
-            hint = (
-                " This usually means a leftover or soft-deleted Supabase Auth user already "
-                "occupies this email — check the Supabase dashboard (Authentication > Users, "
-                "including any 'deleted' filter) for an existing row with this address, or ask "
-                "your developer to check Postgres Logs in the Supabase dashboard for the exact "
-                "underlying error."
+        user_id = str(keep.id)
+        # Preserve an admin-set display name if the invite form left name blank.
+        if not payload.name.strip():
+            existing_meta = getattr(keep, "app_metadata", None) or {}
+            existing_name = existing_meta.get("name") if isinstance(existing_meta, dict) else None
+            if existing_name:
+                display_name = existing_name
+                app_metadata["name"] = display_name
+        try:
+            client.auth.admin.update_user_by_id(
+                user_id,
+                {
+                    "email_confirm": True,
+                    "app_metadata": app_metadata,
+                    "user_metadata": {"name": display_name},
+                },
             )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create client account ({type(exc).__name__}): {error_msg}{hint}",
-        )
+        except Exception as exc:
+            logger.exception(
+                "Error updating existing client %s: %s",
+                mask_email(payload.email),
+                type(exc).__name__,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to update existing client account ({type(exc).__name__}): {exc}",
+            )
+        _purge_duplicate_client_auth_users(client, user_id, payload.email)
+        updated_existing = True
+    else:
+        try:
+            result = client.auth.admin.create_user(
+                {
+                    "email": payload.email,
+                    "password": secrets.token_urlsafe(32),  # nobody is ever told this
+                    "email_confirm": True,
+                    "app_metadata": app_metadata,
+                    "user_metadata": {"name": display_name},
+                }
+            )
+        except Exception as exc:
+            error_msg = str(exc)
+            error_code = getattr(exc, "code", None)
+            error_status = getattr(exc, "status", None)
+            if "already been registered" in error_msg.lower() or "already exists" in error_msg.lower():
+                # Race / soft-deleted row — surface a clear conflict.
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="A user with this email already exists",
+                )
+            logger.exception(
+                "Error creating client user %s: %s (code=%s status=%s)",
+                mask_email(payload.email),
+                type(exc).__name__,
+                error_code,
+                error_status,
+            )
+            hint = ""
+            if "database error" in error_msg.lower():
+                hint = (
+                    " This usually means a leftover or soft-deleted Supabase Auth user already "
+                    "occupies this email — check the Supabase dashboard (Authentication > Users, "
+                    "including any 'deleted' filter) for an existing row with this address, or ask "
+                    "your developer to check Postgres Logs in the Supabase dashboard for the exact "
+                    "underlying error."
+                )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to create client account ({type(exc).__name__}): {error_msg}{hint}",
+            )
+        user_id = result.user.id
 
-    user_id = result.user.id
     _mirror_client_scope_locally(
         db,
         user_id=user_id,
@@ -936,19 +1130,36 @@ async def invite_client(
     )
 
     try:
-        reset_code = PasswordResetCode(email=payload.email, expires_at=datetime.utcnow() + timedelta(hours=24))
+        existing_codes = (
+            db.query(PasswordResetCode)
+            .filter(
+                PasswordResetCode.email == payload.email,
+                PasswordResetCode.is_used == False,  # noqa: E712
+            )
+            .all()
+        )
+        for code in existing_codes:
+            code.is_used = True
+        reset_code = PasswordResetCode(
+            email=payload.email,
+            expires_at=datetime.utcnow() + timedelta(hours=24),
+        )
         db.add(reset_code)
         db.commit()
         db.refresh(reset_code)
     except Exception as exc:
         db.rollback()
-        logger.exception("DB error issuing client setup link for %s: %s", mask_email(payload.email), type(exc).__name__)
+        logger.exception(
+            "DB error issuing client setup link for %s: %s",
+            mask_email(payload.email),
+            type(exc).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=(
-                f"Account created but could not issue setup link ({type(exc).__name__}: {exc}). "
-                "The client account already exists in Supabase — use 'Send password reset' from "
-                "the user list below to retry sending them a link."
+                f"Account {'updated' if updated_existing else 'created'} but could not issue "
+                f"setup link ({type(exc).__name__}: {exc}). Use 'Send setup link' from the "
+                "user list to retry."
             ),
         )
 
@@ -957,18 +1168,33 @@ async def invite_client(
     try:
         await send_password_setup_link(payload.email, setup_url, display_name)
     except Exception as exc:
-        logger.exception("Email error sending client setup link to %s: %s", mask_email(payload.email), type(exc).__name__)
+        logger.exception(
+            "Email error sending client setup link to %s: %s",
+            mask_email(payload.email),
+            type(exc).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Account created but the email failed to send. Use 'Send password reset' from the user list to retry.",
+            detail=(
+                f"Account {'updated' if updated_existing else 'created'} but the email failed "
+                "to send. Use 'Send setup link' from the user list to retry."
+            ),
         )
 
     companies = display_client_names(access)
     logger.info(
-        "Client account created + setup link sent to %s (clients=%s)",
+        "Client account %s + setup link sent to %s (clients=%s)",
+        "updated" if updated_existing else "created",
         mask_email(payload.email),
         companies,
     )
+    if updated_existing:
+        return SimpleMessageResponse(
+            message=(
+                f"Updated existing client access for {payload.email} "
+                f"({companies}) and emailed a setup link. No new account was created."
+            ),
+        )
     return SimpleMessageResponse(
         message=f"Client account created. A one-tap setup link was emailed to {payload.email}.",
     )

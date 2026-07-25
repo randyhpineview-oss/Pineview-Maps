@@ -15,8 +15,10 @@ Flow:
   4. Backend validates the (unexpired, unused) token, creates the Supabase
      user with role="client" + the invite's client_access in
      `app_metadata` (never user_metadata — see app/auth.py), marks the
-     invite used, and emails a confirmation link exactly like the
-     existing worker QR-signup flow in app/signup.py.
+     invite used, and confirms the email immediately. The invite link
+     itself is the authorization — we do NOT call generate_link(signup),
+     which has been observed to create a second Unconfirmed Auth row for
+     the same email.
 
 This is Flow B, distinct from app/user_management.py::invite_client
 (Flow A — admin enters the client's email directly and the backend emails
@@ -43,10 +45,16 @@ from app.client_scope import (
 )
 from app.config import get_settings
 from app.database import get_db
-from app.email_service import send_signup_confirmation
 from app.log_util import get_logger, mask_email
 from app.models import ClientInvite, RoleEnum, User
 from app.rate_limit import limiter
+from app.user_management import (
+    _auth_role,
+    _find_auth_users_by_email,
+    _mirror_client_scope_locally,
+    _prefer_auth_user,
+    _purge_duplicate_client_auth_users,
+)
 
 router = APIRouter(tags=["client-invites"])
 
@@ -200,10 +208,10 @@ def get_client_invite(
 async def client_signup(request: Request, payload: ClientSignupRequest, db: Session = Depends(get_db)) -> ClientSignupResponse:
     """Consume a single-use client invite link and create the account.
 
-    Mirrors app/signup.py::worker_signup's shape (create user with
-    email_confirm=False, mint a confirmation link, email it), but forces
-    role="client" + the invite's client_access into `app_metadata` instead
-    of `user_metadata`.
+    Creates with ``email_confirm=True`` — the invite link is the trust
+    signal, so the client can log in immediately with the password they
+    just chose. We deliberately avoid ``generate_link(type=signup)``, which
+    can mint a second Unconfirmed Auth user for the same email.
     """
     if db is None:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Not available")
@@ -219,6 +227,19 @@ async def client_signup(request: Request, payload: ClientSignupRequest, db: Sess
     client = _get_supabase_admin()
     access = _invite_access(invite)
 
+    existing = _find_auth_users_by_email(client, payload.email)
+    if existing:
+        keep = _prefer_auth_user(existing)
+        if _auth_role(keep) == RoleEnum.client.value:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An account with this email already exists. Try logging in, or use 'Forgot password'.",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists. Contact Pineview if you need client access.",
+        )
+
     app_metadata: dict = {
         "role": RoleEnum.client.value,
         "name": display_name,
@@ -226,11 +247,11 @@ async def client_signup(request: Request, payload: ClientSignupRequest, db: Sess
     }
 
     try:
-        client.auth.admin.create_user(
+        result = client.auth.admin.create_user(
             {
                 "email": payload.email,
                 "password": payload.password,
-                "email_confirm": False,
+                "email_confirm": True,
                 "app_metadata": app_metadata,
                 "user_metadata": {"name": display_name},
             }
@@ -260,54 +281,24 @@ async def client_signup(request: Request, payload: ClientSignupRequest, db: Sess
             )
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail)
 
-    # Burn the token now that the account exists — a retry (e.g. the
-    # confirmation-link step below failing) should not let the same link
-    # create a second account.
+    user_id = str(result.user.id)
+    _purge_duplicate_client_auth_users(client, user_id, payload.email)
+    _mirror_client_scope_locally(
+        db,
+        user_id=user_id,
+        email=payload.email,
+        client_access=access,
+    )
+
     invite.used_at = datetime.utcnow()
     invite.used_by_email = payload.email
     db.commit()
-
-    confirmation_url: Optional[str] = None
-    try:
-        link_result = client.auth.admin.generate_link(
-            {
-                "type": "signup",
-                "email": payload.email,
-                "password": payload.password,
-                "options": {"redirect_to": f"{settings.frontend_url.rstrip('/')}/"},
-            }
-        )
-        props = getattr(link_result, "properties", None) or {}
-        if isinstance(props, dict):
-            confirmation_url = props.get("action_link") or props.get("action_url")
-        else:
-            confirmation_url = getattr(props, "action_link", None)
-        if not confirmation_url and isinstance(link_result, dict):
-            inner = link_result.get("properties") or link_result.get("data") or {}
-            if isinstance(inner, dict):
-                confirmation_url = inner.get("action_link") or inner.get("action_url")
-    except Exception as exc:
-        logger.exception("Error generating confirmation link for %s: %s", mask_email(payload.email), type(exc).__name__)
-
-    if not confirmation_url:
-        logger.warning("No confirmation link returned for client signup %s", mask_email(payload.email))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Account created but confirmation email could not be prepared. Contact Pineview.",
-        )
-
-    try:
-        await send_signup_confirmation(payload.email, confirmation_url, display_name)
-    except Exception as exc:
-        logger.exception("Error sending confirmation email to %s: %s", mask_email(payload.email), type(exc).__name__)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Account created but confirmation email failed to send. Contact Pineview.",
-        )
 
     logger.info(
         "Client signup via invite for %s (clients=%s)",
         mask_email(payload.email),
         display_client_names(access),
     )
-    return ClientSignupResponse(message="Check your email to confirm your account.")
+    return ClientSignupResponse(
+        message="Account created. You can log in now with the email and password you just set.",
+    )

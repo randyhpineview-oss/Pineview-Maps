@@ -18,8 +18,9 @@ const MapIcon = () => (
  *   - Looks up the token first via GET /api/auth/client-invite/{token} to
  *     show "You're signing up for <Client>" before collecting anything.
  *   - Submits to POST /api/auth/client-signup, which forces role="client"
- *     + the invite's client_name/client_areas server-side — nothing here
- *     is trusted from the client for authorization.
+ *     + the invite's client_access server-side — nothing here is trusted
+ *     from the browser for authorization. Email is confirmed immediately
+ *     (the invite link is the trust signal); they can log in right away.
  */
 export default function ClientSignupPage({ token, onDone }) {
   const [inviteInfo, setInviteInfo] = useState(null);
@@ -136,21 +137,18 @@ export default function ClientSignupPage({ token, onDone }) {
                 </svg>
               </div>
               <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.5rem', color: '#111827' }}>
-                Check your email
+                You&apos;re all set
               </h2>
               <p style={{ color: '#6b7280', marginBottom: '1.5rem', lineHeight: 1.5 }}>
-                We've sent a confirmation link to <strong>{email}</strong>.
-                Click it to activate your account, then come back here to log in.
-              </p>
-              <p style={{ color: '#9ca3af', fontSize: '0.8rem', marginBottom: '1.5rem' }}>
-                Didn't get it? Check your spam folder. The link expires in 24 hours.
+                Your account for <strong>{email}</strong> is ready.
+                Log in with the password you just chose.
               </p>
               <button
                 type="button"
                 onClick={handleBackToLogin}
                 style={{ background: 'linear-gradient(90deg, #2563eb, #4f46e5)', color: 'white', fontWeight: 600, padding: '0.75rem 1.5rem', borderRadius: '0.5rem', border: 'none', cursor: 'pointer', fontSize: '0.95rem' }}
               >
-                Back to Login
+                Go to Login
               </button>
             </div>
           ) : (
