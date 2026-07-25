@@ -3363,6 +3363,32 @@ export default function App() {
       if (!row || row.id == null) return;
       setCachedUsers((prev) => {
         if (payload.eventType === 'DELETE') return removeById(prev, row.id);
+        // Admin User Management is keyed by Supabase Auth UUIDs. Local
+        // `public.users` rows use integer hash ids — upserting them by id
+        // creates a second card for the same email (often labeled
+        // "Unconfirmed" because Auth fields are missing). Merge into the
+        // existing Auth card by email instead.
+        const emailKey = (row.email || '').trim().toLowerCase();
+        if (emailKey) {
+          const existingIdx = prev.findIndex(
+            (u) => (u.email || '').trim().toLowerCase() === emailKey
+          );
+          if (existingIdx !== -1) {
+            const existing = prev[existingIdx];
+            const existingIsAuth = typeof existing.id === 'string' && String(existing.id).includes('-');
+            const incomingIsLocal = typeof row.id === 'number'
+              || (typeof row.id === 'string' && !String(row.id).includes('-'));
+            if (existingIsAuth && incomingIsLocal) {
+              const next = prev.slice();
+              next[existingIdx] = {
+                ...existing,
+                name: row.name || existing.name,
+                role: row.role || existing.role,
+              };
+              return next;
+            }
+          }
+        }
         return upsertById(prev, row);
       });
       // Persist the single-row change directly to IDB. Previously this

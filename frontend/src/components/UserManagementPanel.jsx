@@ -231,6 +231,44 @@ function formatClientAccessLabel(access) {
   )).join(' · ');
 }
 
+/** One card per email — prefer confirmed Auth users over local-roster ghosts. */
+function dedupeUsersByEmail(users) {
+  const list = Array.isArray(users) ? users : [];
+  const byEmail = new Map();
+  const noEmail = [];
+
+  const score = (u) => ([
+    u?.email_confirmed_at ? 1 : 0,
+    u?.last_sign_in_at ? 1 : 0,
+    (typeof u?.id === 'string' && String(u.id).includes('-')) ? 1 : 0,
+    String(u?.last_sign_in_at || ''),
+    String(u?.created_at || ''),
+  ]);
+
+  const better = (a, b) => {
+    const sa = score(a);
+    const sb = score(b);
+    for (let i = 0; i < sa.length; i += 1) {
+      if (sa[i] > sb[i]) return true;
+      if (sa[i] < sb[i]) return false;
+    }
+    return false;
+  };
+
+  for (const user of list) {
+    const key = (user?.email || '').trim().toLowerCase();
+    if (!key) {
+      noEmail.push(user);
+      continue;
+    }
+    const prev = byEmail.get(key);
+    if (!prev || better(user, prev)) {
+      byEmail.set(key, user);
+    }
+  }
+  return [...byEmail.values(), ...noEmail];
+}
+
 function UserRow({
   user,
   busy,
@@ -633,7 +671,10 @@ export default function UserManagementPanel({
   clients = [],
   getAreasForClient,
 }) {
-  const users = cachedUsers;
+  // Realtime can inject local `users` rows (integer ids) alongside Supabase
+  // Auth rows (UUIDs) for the same email — collapse those here so Edit name
+  // never resurfaces a second "Unconfirmed" client card.
+  const users = useMemo(() => dedupeUsersByEmail(cachedUsers), [cachedUsers]);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [busy, setBusy] = useState(false);

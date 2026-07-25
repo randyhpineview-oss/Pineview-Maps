@@ -198,8 +198,9 @@ def _dedupe_auth_users_by_email(users: list) -> list:
 def _purge_duplicate_client_auth_users(client, keep_user_id: str, email: Optional[str]) -> int:
     """Hard-delete extra Auth rows for the same email (duplicate client shells).
 
-    Keeps ``keep_user_id``. Only deletes other ``role=client`` accounts —
-    never staff (admin/office/crew_lead/worker/tv).
+    Keeps ``keep_user_id``. Deletes other ``role=client`` accounts and any
+    never-confirmed / never-signed-in shell sharing the email. Never deletes
+    a confirmed staff account (admin/office/crew_lead/worker/tv).
     """
     matches = _find_auth_users_by_email(client, email or "")
     purged = 0
@@ -207,20 +208,42 @@ def _purge_duplicate_client_auth_users(client, keep_user_id: str, email: Optiona
         uid = getattr(u, "id", None)
         if not uid or str(uid) == str(keep_user_id):
             continue
-        if _auth_role(u) != RoleEnum.client.value:
+        role = _auth_role(u)
+        confirmed = getattr(u, "email_confirmed_at", None)
+        last_login = getattr(u, "last_sign_in_at", None)
+        is_client = role == RoleEnum.client.value
+        is_unused_shell = (not confirmed) and (not last_login)
+        # Confirmed in-house roles must never be deleted via this helper.
+        staff_roles = {
+            RoleEnum.admin.value,
+            RoleEnum.office.value,
+            RoleEnum.crew_lead.value,
+            RoleEnum.worker.value,
+            RoleEnum.tv.value,
+        }
+        if role in staff_roles and confirmed:
+            continue
+        if not (is_client or is_unused_shell):
             continue
         try:
-            client.auth.admin.delete_user(str(uid), should_soft_delete=False)
+            result = client.auth.admin.delete_user(str(uid), should_soft_delete=False)
+            # Some supabase-py versions return {error: ...} instead of raising.
+            err = getattr(result, "error", None)
+            if err is None and isinstance(result, dict):
+                err = result.get("error")
+            if err is not None:
+                raise RuntimeError(str(err))
             purged += 1
             logger.info(
-                "Purged duplicate client Auth user %s for %s (kept %s)",
+                "Purged duplicate Auth user %s for %s (kept %s, role=%s)",
                 short_id(uid),
                 mask_email(email),
                 short_id(keep_user_id),
+                role,
             )
         except Exception:
             logger.exception(
-                "Failed to purge duplicate client Auth user %s for %s",
+                "Failed to purge duplicate Auth user %s for %s",
                 short_id(uid),
                 mask_email(email),
             )
@@ -341,8 +364,8 @@ def list_users(current_user: User = Depends(get_current_user)) -> list[UserRespo
                 u for u in active_users if not is_dev_email(getattr(u, "email", None))
             ]
 
-        # Purge extra client Auth rows for the same email, then dedupe the
-        # response so the admin never sees two "randy" cards.
+        # Purge extra Auth rows for the same email, then rebuild the response
+        # from survivors only (never trust in-memory rows after a delete).
         by_email: dict[str, list] = {}
         for u in active_users:
             key = _normalize_email(getattr(u, "email", None))
@@ -357,7 +380,18 @@ def list_users(current_user: User = Depends(get_current_user)) -> list[UserRespo
             keep = _prefer_auth_user(group)
             _purge_duplicate_client_auth_users(client, str(keep.id), email_key)
 
-        deduped = _dedupe_auth_users_by_email(active_users)
+        # Re-list after purge so a failed-delete doesn't leave ghosts, and so
+        # soft-deleted leftovers (deleted_at set) drop out of the response.
+        refreshed = [
+            u
+            for u in _list_all_auth_users(client)
+            if not getattr(u, "deleted_at", None)
+        ]
+        if not is_dev_email(getattr(current_user, "email", None)):
+            refreshed = [
+                u for u in refreshed if not is_dev_email(getattr(u, "email", None))
+            ]
+        deduped = _dedupe_auth_users_by_email(refreshed)
         return [_format_user(u) for u in deduped]
     except Exception as exc:
         raise HTTPException(
@@ -638,17 +672,26 @@ def update_user(
 
         result = client.auth.admin.update_user_by_id(user_id, update_data)
 
-        if scope_touch:
-            target_email = getattr(current_user_obj, "email", None)
-            # Edit access must update THIS account — never leave a second
-            # Unconfirmed client card for the same email in User Management.
+        target_email = getattr(current_user_obj, "email", None)
+        target_role = existing_app_metadata.get("role")
+        # Any edit to a client (name, access, …) must keep a single Auth row
+        # for that email — editing the name was previously recreating the
+        # "Unconfirmed" duplicate card in User Management.
+        if target_role == RoleEnum.client.value:
             _purge_duplicate_client_auth_users(client, user_id, target_email)
-            _mirror_client_scope_locally(
-                db,
-                user_id=user_id,
-                email=target_email,
-                client_access=new_access,
-            )
+            if scope_touch:
+                _mirror_client_scope_locally(
+                    db,
+                    user_id=user_id,
+                    email=target_email,
+                    client_access=new_access,
+                )
+            elif payload.name is not None and db is not None:
+                # Keep local display name in sync without inventing scope.
+                local_user = _find_local_user(db, user_id, target_email)
+                if local_user is not None and local_user.name != payload.name:
+                    local_user.name = payload.name
+                    db.commit()
 
         return _format_user(result.user)
     except HTTPException:
