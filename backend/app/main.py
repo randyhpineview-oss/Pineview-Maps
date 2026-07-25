@@ -287,11 +287,19 @@ def startup_event() -> None:
             print("[STARTUP] Check-in tables ensured")
         except Exception as e:
             print(f"Warning: Could not create check-in tables: {e}")
-        # Run column migrations on Postgres too
+        # Critical ORM columns first — must not be swallowed. A missed
+        # _MIGRATION_VERSION bump previously left prod without
+        # users.client_access while the model already SELECTed it.
+        _ensure_client_access_columns()
+        # Run remaining column migrations on Postgres too
         try:
             _migrate_add_columns()
         except Exception as e:
             print(f"Warning: Column migration failed: {e}")
+            # If the always-on ensure somehow failed inside migrate, do not
+            # leave the process up to die on the next User query.
+            if "client_access" in str(e):
+                raise
         try:
             with engine.begin() as conn:
                 # Get the actual sequence name for the sites.id column
@@ -317,7 +325,52 @@ def startup_event() -> None:
 # Format: an opaque-but-meaningful string. Date-prefix + initial keeps
 # bumps obvious in git blame. The exact value doesn't matter as long as
 # it differs from any prior committed value.
-_MIGRATION_VERSION = "2026-07-22-client-role"
+#
+# NOTE: Critical columns required by the ORM on every request (e.g.
+# users.client_access) are ALSO ensured by `_ensure_client_access_columns()`
+# *before* this short-circuit, so forgetting a bump cannot brick boot.
+_MIGRATION_VERSION = "2026-07-25-client-access"
+
+
+def _ensure_client_access_columns() -> None:
+    """Idempotently add ``client_access`` columns required by the ORM.
+
+    Runs on every boot, including when ``_migrate_add_columns`` short-circuits
+    on an already-stamped ``schema_meta.migration_version``. ``create_all``
+    never ALTERs existing tables, so this explicit ADD COLUMN is required.
+
+    Raises on failure so the process does not continue and then die on the
+    first ``SELECT users.client_access`` with UndefinedColumn.
+    """
+    if engine is None:
+        return
+
+    is_sqlite = str(engine.url).startswith("sqlite")
+    col_type = "JSON" if is_sqlite else "JSONB"
+
+    # Ensure the invites table exists before we try to ALTER it. Harmless
+    # when the table is already present (checkfirst=True).
+    try:
+        Base.metadata.create_all(bind=engine, tables=[ClientInvite.__table__], checkfirst=True)
+    except Exception as e:
+        print(f"[STARTUP] FATAL: could not ensure client_invites table: {e}")
+        raise
+
+    alters = (
+        ("users", f"ALTER TABLE users ADD COLUMN IF NOT EXISTS client_access {col_type}"),
+        (
+            "client_invites",
+            f"ALTER TABLE client_invites ADD COLUMN IF NOT EXISTS client_access {col_type}",
+        ),
+    )
+    for table, ddl in alters:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(ddl))
+            print(f"[STARTUP] Ensured {table}.client_access ({col_type}) exists")
+        except Exception as e:
+            print(f"[STARTUP] FATAL: failed to ensure {table}.client_access: {e}")
+            raise
 
 
 def _migrate_add_columns() -> None:
@@ -328,11 +381,18 @@ def _migrate_add_columns() -> None:
     the ~200 ms of inspect() reflection + redundant CREATE INDEX
     round-trips on every container wake. Idempotent on first run
     against any DB (fresh or already-migrated).
+
+    Critical ORM columns (``users.client_access``, etc.) are ensured
+    *before* the short-circuit so a missed version bump cannot leave the
+    app querying a missing column.
     """
     if engine is None:
         return
 
     is_sqlite = str(engine.url).startswith("sqlite")
+
+    # Always-on: must succeed before any User / ClientInvite ORM query.
+    _ensure_client_access_columns()
 
     # ── Short-circuit: skip the body if this DB is already on the
     # current MIGRATION_VERSION. The schema_meta table itself is
@@ -704,38 +764,15 @@ def _migrate_add_columns() -> None:
                         fresh_conn.execute(text("ALTER TABLE users ADD COLUMN client_areas JSONB"))
             except Exception as e:
                 print(f"[STARTUP] Could not add users.client_areas column: {e}")
-        if "client_access" not in existing_user_cols:
-            try:
-                with engine.begin() as fresh_conn:
-                    if is_sqlite:
-                        fresh_conn.execute(text("ALTER TABLE users ADD COLUMN client_access JSON"))
-                    else:
-                        fresh_conn.execute(text("ALTER TABLE users ADD COLUMN client_access JSONB"))
-            except Exception as e:
-                print(f"[STARTUP] Could not add users.client_access column: {e}")
 
     # ── client_invites table (Flow B: admin generates a single-use invite
     # link and copies it into a text/email manually).
+    # users.client_access / client_invites.client_access are ensured at the
+    # top of this function via `_ensure_client_access_columns()`.
     try:
         Base.metadata.create_all(bind=engine, tables=[ClientInvite.__table__], checkfirst=True)
     except Exception as e:
         print(f"[STARTUP] Could not ensure client_invites table: {e}")
-
-    # Multi-company invite scope column (nullable; older invites keep
-    # working via client_name/client_areas alone).
-    try:
-        # Re-inspect after create_all so a freshly-created table is visible.
-        insp = inspect(engine)
-        if insp.has_table("client_invites"):
-            invite_cols = {col["name"] for col in insp.get_columns("client_invites")}
-            if "client_access" not in invite_cols:
-                with engine.begin() as fresh_conn:
-                    if is_sqlite:
-                        fresh_conn.execute(text("ALTER TABLE client_invites ADD COLUMN client_access JSON"))
-                    else:
-                        fresh_conn.execute(text("ALTER TABLE client_invites ADD COLUMN client_access JSONB"))
-    except Exception as e:
-        print(f"[STARTUP] Could not ensure client_invites.client_access column: {e}")
 
     # ── Sync local users.is_active with Supabase Auth (one-time cleanup).
     # Marks any local user whose email is NOT in Supabase Auth as inactive.
