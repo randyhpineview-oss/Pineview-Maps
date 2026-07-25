@@ -891,7 +891,9 @@ export default function App() {
   const actualCanAdmin = userRole === 'admin' || userRole === 'office';
   const actualIsCrewLead = userRole === 'crew_lead';
   const actualCanManagePins = actualCanAdmin || actualIsCrewLead;
-  // Client-portal scope — only meaningful when userRole === 'client'.
+  // Client-portal scope bootstrap from the Supabase JWT. This can lag an
+  // admin re-scope until the token refreshes; ClientPortal re-fetches the
+  // DB-authoritative values via GET /api/session for FilterBar + labels.
   const clientPortalName = session?.user?.app_metadata?.client_name || null;
   const clientPortalAreas = session?.user?.app_metadata?.client_areas || null;
 
@@ -7186,7 +7188,9 @@ export default function App() {
           <div className="side-panel-header">
             <h2>Sites</h2>
             <span className="small-text">
-              {isLoading ? 'Loading…' : `${visibleSites.length} site${visibleSites.length === 1 ? '' : 's'}`}
+              {isLoading
+                ? 'Loading…'
+                : `${visibleSites.length + visiblePipelines.length} result${(visibleSites.length + visiblePipelines.length) === 1 ? '' : 's'}`}
             </span>
           </div>
           <div className="side-panel-body">
@@ -7197,21 +7201,43 @@ export default function App() {
               <span className="legend-chip"><span className="legend-dot" style={{ background: '#94a3b8' }} /> Issue</span>
               <span className="legend-chip"><span className="legend-dot" style={{ background: '#3b82f6' }} /> Water</span>
               <span className="legend-chip"><span className="legend-dot" style={{ background: '#eab308' }} /> Quad</span>
+              <span className="legend-chip"><span className="legend-dot" style={{ background: '#38bdf8' }} /> Pipeline</span>
               <span className="legend-chip"><span className="legend-dot" style={{ background: '#f59e0b' }} /> Pending</span>
             </div>
             <div className="list-grid">
-              {visibleSites.length === 0 ? (
-                <div className="site-row small-text">No sites match filters.</div>
+              {(visibleSites.length + visiblePipelines.length) === 0 ? (
+                <div className="site-row small-text">No sites or pipelines match filters.</div>
               ) : (
-                visibleSites.map((site) => (
-                  <button className="site-row" key={site.id || site.cacheId} type="button" onClick={() => { handleOpenDetail(site, { fromSitesList: true }); setActiveTab(TAB_MAP); }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
-                      <strong>{site.lsd || 'Unnamed'}</strong>
-                      {site.approval_state === 'pending_review' ? <span className="pending-badge">Pending</span> : null}
-                    </div>
-                    <div className="small-text">{pinTypeLabel(site.pin_type)} • {site.client || '—'} • {statusLabel(site.status)}</div>
-                  </button>
-                ))
+                <>
+                  {visibleSites.map((site) => (
+                    <button className="site-row" key={site.id || site.cacheId} type="button" onClick={() => { handleOpenDetail(site, { fromSitesList: true }); setActiveTab(TAB_MAP); }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
+                        <strong>{site.lsd || 'Unnamed'}</strong>
+                        {site.approval_state === 'pending_review' ? <span className="pending-badge">Pending</span> : null}
+                      </div>
+                      <div className="small-text">{pinTypeLabel(site.pin_type)} • {site.client || '—'} • {statusLabel(site.status)}</div>
+                    </button>
+                  ))}
+                  {visiblePipelines.map((pipeline) => (
+                    <button
+                      className="site-row site-row-pipeline"
+                      key={`pipeline-${pipeline.id}`}
+                      type="button"
+                      onClick={() => { handleOpenPipelineDetail(pipeline); setActiveTab(TAB_MAP); }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', alignItems: 'center' }}>
+                        <strong>{pipeline.name || 'Unnamed pipeline'}</strong>
+                        <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                          {pipeline.approval_state === 'pending_review' ? <span className="pending-badge">Pending</span> : null}
+                          <span className="pipeline-badge">Pipeline</span>
+                        </div>
+                      </div>
+                      <div className="small-text">
+                        Pipeline • {pipeline.client || '—'} • {pipeline.status === 'sprayed' ? 'Sprayed' : 'Not sprayed'}
+                      </div>
+                    </button>
+                  ))}
+                </>
               )}
             </div>
           </div>

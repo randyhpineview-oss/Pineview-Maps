@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 
 import { api } from '../lib/api';
-import { nameKey } from '../lib/mapUtils';
+import { nameKey, pinTypeLabel } from '../lib/mapUtils';
 import FilterBar from './FilterBar';
 import MapView from './MapView';
 import PipelineDetailSheet from './PipelineDetailSheet';
@@ -15,9 +15,10 @@ const TAB_MAP = 'map';
 const TAB_SITES = 'sites';
 
 const DEFAULT_FILTERS = { search: '', client: '', area: '', status: '', approval_state: '' };
-// No `trucks` / `crew` keys: those layers are worker/office-only and their
-// FilterBar rows are hidden here, so carrying the flags would be dead state.
-const DEFAULT_LAYERS = { lsd: true, water: true, quad_access: true, reclaimed: true, pipelines: true };
+// No `trucks` / `crew` / `water` / `quad_access` keys: those layers are
+// worker-internal and their FilterBar rows are hidden here. Water +
+// quad_access pins are also stripped server-side for the client role.
+const DEFAULT_LAYERS = { lsd: true, reclaimed: true, pipelines: true };
 
 const MapIcon = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>);
 const ListIcon = () => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>);
@@ -81,6 +82,16 @@ export default function ClientPortal({ clientName, clientAreas, userDisplayName,
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [listSearch, setListSearch] = useState('');
 
+  // Live scope from GET /api/session (DB-authoritative). JWT app_metadata
+  // props can lag an admin re-scope until the token refreshes; the session
+  // endpoint uses the same DB preference as site/pipeline list queries.
+  // Props seed the first paint only; once session answers, they are ignored.
+  const [liveClientName, setLiveClientName] = useState(clientName || null);
+  const [liveClientAreas, setLiveClientAreas] = useState(
+    Array.isArray(clientAreas) ? clientAreas : null,
+  );
+  const [scopeFromSession, setScopeFromSession] = useState(false);
+
   const [selectedSite, setSelectedSite] = useState(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [sprayRecords, setSprayRecords] = useState([]);
@@ -99,14 +110,17 @@ export default function ClientPortal({ clientName, clientAreas, userDisplayName,
 
   // ── Data loading ──────────────────────────────────────────────────────
   // Light periodic refresh — no delta-sync machinery needed for a single
-  // read-only account with a small, scoped dataset.
+  // read-only account with a small, scoped dataset. Session is fetched
+  // alongside so FilterBar options track admin scope edits without
+  // waiting for a JWT refresh.
   useEffect(() => {
     let cancelled = false;
 
     const load = async () => {
-      const [siteResult, pipelineResult] = await Promise.allSettled([
+      const [siteResult, pipelineResult, sessionResult] = await Promise.allSettled([
         api.listSites(),
         api.listPipelines(),
+        api.getSession(),
       ]);
       if (cancelled) return;
       if (siteResult.status === 'fulfilled') {
@@ -118,6 +132,20 @@ export default function ClientPortal({ clientName, clientAreas, userDisplayName,
       if (pipelineResult.status === 'fulfilled') {
         setPipelines(Array.isArray(pipelineResult.value) ? pipelineResult.value : []);
       }
+      if (sessionResult.status === 'fulfilled') {
+        const user = sessionResult.value?.user;
+        if (user) {
+          const name = typeof user.client_name === 'string' ? user.client_name.trim() : '';
+          if (name) setLiveClientName(name);
+          const areas = Array.isArray(user.client_areas)
+            ? user.client_areas.filter((a) => typeof a === 'string' && a.trim())
+            : [];
+          // Empty/null = "all areas for this client" (same contract as
+          // apply_client_scope). Must overwrite a stale JWT seed.
+          setLiveClientAreas(areas.length > 0 ? areas : null);
+          setScopeFromSession(true);
+        }
+      }
       setLoading(false);
     };
 
@@ -125,6 +153,17 @@ export default function ClientPortal({ clientName, clientAreas, userDisplayName,
     const interval = setInterval(() => { void load(); }, 60_000);
     return () => { cancelled = true; clearInterval(interval); };
   }, []);
+
+  // JWT props are only a bootstrap until /api/session lands. Never let
+  // them stomp a DB-authoritative scope we already fetched.
+  useEffect(() => {
+    if (scopeFromSession || !clientName) return;
+    setLiveClientName(clientName);
+  }, [clientName, scopeFromSession]);
+  useEffect(() => {
+    if (scopeFromSession) return;
+    setLiveClientAreas(Array.isArray(clientAreas) && clientAreas.length > 0 ? clientAreas : null);
+  }, [clientAreas, scopeFromSession]);
 
   // Keep the selected site's fields fresh across refresh ticks without
   // stomping the sheet when the row disappears mid-view.
@@ -161,28 +200,60 @@ export default function ClientPortal({ clientName, clientAreas, userDisplayName,
   }, [accountMenuOpen]);
 
   // ── Filter scope ──────────────────────────────────────────────────────
-  // `clientAreas` empty/null means "all areas for that client", so in that
-  // case the area dropdown is derived from whatever the server actually
-  // returned for this account.
+  // Prefer live DB scope from /api/session. Fall back to unique values on
+  // the already-scoped site/pipeline payloads so the dropdowns can never
+  // offer a company/area the map data itself doesn't contain.
+  // `liveClientAreas` empty/null means "all areas for that client".
   const scopedClients = useMemo(() => {
-    if (clientName) return [clientName];
-    return uniqueSorted(sites.map((s) => s.client));
-  }, [clientName, sites]);
+    if (liveClientName) return [liveClientName];
+    return uniqueSorted([
+      ...sites.map((s) => s.client),
+      ...pipelines.map((p) => p.client),
+    ]);
+  }, [liveClientName, sites, pipelines]);
 
   const scopedAreas = useMemo(() => {
-    if (Array.isArray(clientAreas) && clientAreas.length > 0) return uniqueSorted(clientAreas);
+    if (Array.isArray(liveClientAreas) && liveClientAreas.length > 0) {
+      return uniqueSorted(liveClientAreas);
+    }
     return uniqueSorted([...sites.map((s) => s.area), ...pipelines.map((p) => p.area)]);
-  }, [clientAreas, sites, pipelines]);
+  }, [liveClientAreas, sites, pipelines]);
+
+  // Drop filter selections that no longer exist in the effective scope
+  // (e.g. admin renamed the company or swapped areas). Without this, a
+  // stale selected client/area hides every newly-scoped pin.
+  useEffect(() => {
+    setFilters((current) => {
+      let next = current;
+      if (current.client) {
+        const stillValid = scopedClients.some(
+          (c) => nameKey(c) === nameKey(current.client),
+        );
+        if (!stillValid) next = { ...next, client: '' };
+      }
+      const areaValue = next.area || current.area;
+      if (areaValue) {
+        const stillValid = scopedAreas.some(
+          (a) => nameKey(a) === nameKey(areaValue),
+        );
+        if (!stillValid) next = { ...next, area: '' };
+      }
+      return next;
+    });
+  }, [scopedClients, scopedAreas]);
 
   const visibleSites = useMemo(() => {
     const normalizedSearch = filters.search.trim().toLowerCase();
     return sites.filter((site) => {
       if (isHiddenSite(site)) return false;
-      const isWater = site.pin_type === 'water';
-      if (site.pin_type && !layers[site.pin_type]) return false;
-      if (filters.client && nameKey(site.client) !== nameKey(filters.client) && !isWater) return false;
-      if (filters.area && nameKey(site.area) !== nameKey(filters.area) && !isWater) return false;
-      if (filters.status && site.status !== filters.status && !isWater) return false;
+      // Defense in depth: water / quad_access are internal pins. Backend
+      // already strips them for the client role; keep them off the map
+      // even if a stale cache or older API still handed one over.
+      if (site.pin_type === 'water' || site.pin_type === 'quad_access') return false;
+      if (site.pin_type && layers[site.pin_type] === false) return false;
+      if (filters.client && nameKey(site.client) !== nameKey(filters.client)) return false;
+      if (filters.area && nameKey(site.area) !== nameKey(filters.area)) return false;
+      if (filters.status && site.status !== filters.status) return false;
       if (filters.approval_state && site.approval_state !== filters.approval_state) return false;
       if (!normalizedSearch) return true;
       const haystack = [site.lsd, site.client, site.area].filter(Boolean).join(' ').toLowerCase();
@@ -205,13 +276,33 @@ export default function ClientPortal({ clientName, clientAreas, userDisplayName,
     });
   }, [filters, pipelines, layers.pipelines]);
 
-  const listSites = useMemo(() => {
+  // Unified Sites-tab rows: pins + pipelines, searchable together.
+  const listItems = useMemo(() => {
     const needle = listSearch.trim().toLowerCase();
-    if (!needle) return visibleSites;
-    return visibleSites.filter((site) => (
-      [site.lsd, site.client, site.area].filter(Boolean).join(' ').toLowerCase().includes(needle)
-    ));
-  }, [visibleSites, listSearch]);
+    const siteItems = visibleSites
+      .filter((site) => {
+        if (!needle) return true;
+        return [site.lsd, site.client, site.area].filter(Boolean).join(' ').toLowerCase().includes(needle);
+      })
+      .map((site) => ({
+        kind: 'site',
+        key: `site-${site.id}`,
+        sortLabel: (site.lsd || 'Unnamed pin').toLowerCase(),
+        site,
+      }));
+    const pipelineItems = visiblePipelines
+      .filter((pipeline) => {
+        if (!needle) return true;
+        return [pipeline.name, pipeline.client, pipeline.area].filter(Boolean).join(' ').toLowerCase().includes(needle);
+      })
+      .map((pipeline) => ({
+        kind: 'pipeline',
+        key: `pipeline-${pipeline.id}`,
+        sortLabel: (pipeline.name || 'Unnamed pipeline').toLowerCase(),
+        pipeline,
+      }));
+    return [...siteItems, ...pipelineItems].sort((a, b) => a.sortLabel.localeCompare(b.sortLabel));
+  }, [visibleSites, visiblePipelines, listSearch]);
 
   // ── Selection handlers ────────────────────────────────────────────────
   function closePipelineDetail() {
@@ -348,9 +439,9 @@ export default function ClientPortal({ clientName, clientAreas, userDisplayName,
     setPipelineDragOffset(0);
   }
 
-  const userInitial = (userDisplayName || clientName || 'C').trim().charAt(0).toUpperCase() || 'C';
-  const areasLabel = Array.isArray(clientAreas) && clientAreas.length > 0
-    ? clientAreas.join(', ')
+  const userInitial = (userDisplayName || liveClientName || clientName || 'C').trim().charAt(0).toUpperCase() || 'C';
+  const areasLabel = Array.isArray(liveClientAreas) && liveClientAreas.length > 0
+    ? liveClientAreas.join(', ')
     : 'All areas';
 
   return (
@@ -380,7 +471,7 @@ export default function ClientPortal({ clientName, clientAreas, userDisplayName,
                 <div className="topbar-account-name" role="presentation">
                   {userDisplayName}
                   <span className="topbar-account-name-scope">
-                    {clientName || 'Client portal'}
+                    {liveClientName || clientName || 'Client portal'}
                     {' — '}
                     {areasLabel}
                   </span>
@@ -470,6 +561,8 @@ export default function ClientPortal({ clientName, clientAreas, userDisplayName,
               onLayerToggle={(key) => setLayers((current) => ({ ...current, [key]: !current[key] }))}
               showTrucksOption={false}
               showCrewOption={false}
+              showWaterOption={false}
+              showQuadAccessOption={false}
             />
           </div>
         ) : null}
@@ -537,6 +630,7 @@ export default function ClientPortal({ clientName, clientAreas, userDisplayName,
                 highlightedSprayRecordId={highlightedSprayRecordId}
                 onHighlightSprayRecord={setHighlightedSprayRecordId}
                 onViewRecord={(record) => setPreviewingRecord(record)}
+                showDropboxLink={false}
               />
             ) : null}
           </div>
@@ -550,7 +644,9 @@ export default function ClientPortal({ clientName, clientAreas, userDisplayName,
           <div className="side-panel-header">
             <h2>Sites</h2>
             <span className="small-text">
-              {loading ? 'Loading…' : `${listSites.length} site${listSites.length === 1 ? '' : 's'}`}
+              {loading
+                ? 'Loading…'
+                : `${listItems.length} result${listItems.length === 1 ? '' : 's'}`}
             </span>
           </div>
           <div className="side-panel-body">
@@ -558,34 +654,53 @@ export default function ClientPortal({ clientName, clientAreas, userDisplayName,
               type="text"
               value={listSearch}
               onChange={(event) => setListSearch(event.target.value)}
-              placeholder="Search by LSD, client or area…"
+              placeholder="Search sites or pipelines…"
               style={{ marginBottom: '0.75rem' }}
             />
             <div className="legend" style={{ marginBottom: '0.75rem' }}>
               <span className="legend-chip"><span className="legend-dot" style={{ background: '#22c55e' }} /> Inspected</span>
               <span className="legend-chip"><span className="legend-dot" style={{ background: '#ef4444' }} /> Not inspected</span>
               <span className="legend-chip"><span className="legend-dot" style={{ background: '#94a3b8' }} /> Issue</span>
-              <span className="legend-chip"><span className="legend-dot" style={{ background: '#3b82f6' }} /> Water</span>
-              <span className="legend-chip"><span className="legend-dot" style={{ background: '#eab308' }} /> Quad</span>
+              <span className="legend-chip"><span className="legend-dot" style={{ background: '#38bdf8' }} /> Pipeline</span>
             </div>
             {loading ? (
               <p className="small-text">Loading sites…</p>
-            ) : listSites.length === 0 ? (
-              <p className="small-text">No sites found.</p>
+            ) : listItems.length === 0 ? (
+              <p className="small-text">No sites or pipelines found.</p>
             ) : (
               <div className="list-grid">
-                {listSites.map((site) => (
-                  <button
-                    className="site-row"
-                    key={site.id}
-                    type="button"
-                    onClick={() => { handleOpenDetail(site, { fromSitesList: true }); setActiveTab(TAB_MAP); }}
-                  >
-                    <div style={{ fontWeight: 600 }}>{site.lsd || 'Unnamed pin'}</div>
-                    <div className="small-text">
-                      {[site.client, site.area].filter(Boolean).join(' • ') || 'No area set'}
-                    </div>
-                  </button>
+                {listItems.map((item) => (
+                  item.kind === 'pipeline' ? (
+                    <button
+                      className="site-row site-row-pipeline"
+                      key={item.key}
+                      type="button"
+                      onClick={() => { handleOpenPipelineDetail(item.pipeline); setActiveTab(TAB_MAP); }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', alignItems: 'center' }}>
+                        <div style={{ fontWeight: 600 }}>{item.pipeline.name || 'Unnamed pipeline'}</div>
+                        <span className="pipeline-badge">Pipeline</span>
+                      </div>
+                      <div className="small-text">
+                        {[item.pipeline.client, item.pipeline.area].filter(Boolean).join(' • ') || 'No area set'}
+                        {` • ${item.pipeline.status === 'sprayed' ? 'Sprayed' : 'Not sprayed'}`}
+                      </div>
+                    </button>
+                  ) : (
+                    <button
+                      className="site-row"
+                      key={item.key}
+                      type="button"
+                      onClick={() => { handleOpenDetail(item.site, { fromSitesList: true }); setActiveTab(TAB_MAP); }}
+                    >
+                      <div style={{ fontWeight: 600 }}>{item.site.lsd || 'Unnamed pin'}</div>
+                      <div className="small-text">
+                        {pinTypeLabel(item.site.pin_type)}
+                        {' • '}
+                        {[item.site.client, item.site.area].filter(Boolean).join(' • ') || 'No area set'}
+                      </div>
+                    </button>
+                  )
                 ))}
               </div>
             )}
@@ -599,6 +714,7 @@ export default function ClientPortal({ clientName, clientAreas, userDisplayName,
             record={previewingRecord}
             onClose={() => setPreviewingRecord(null)}
             canRegenerate={false}
+            showDropboxLink={false}
           />
         </Suspense>
       ) : null}

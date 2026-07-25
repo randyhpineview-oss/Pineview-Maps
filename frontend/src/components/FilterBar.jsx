@@ -24,6 +24,10 @@ export default function FilterBar({
   onLayerToggle,
   showTrucksOption = true,
   showCrewOption = true,
+  // Client portal hides Water / Quad Access (internal pins). Defaults
+  // stay true so worker/admin/office/crew_lead/tv callers are unchanged.
+  showWaterOption = true,
+  showQuadAccessOption = true,
 }) {
   const [focused, setFocused] = useState(false);
   const [layersOpen, setLayersOpen] = useState(false);
@@ -33,9 +37,11 @@ export default function FilterBar({
     const hidden = new Set();
     if (!showTrucksOption) hidden.add('trucks');
     if (!showCrewOption) hidden.add('crew');
+    if (!showWaterOption) hidden.add('water');
+    if (!showQuadAccessOption) hidden.add('quad_access');
     if (hidden.size === 0) return LAYER_OPTIONS;
     return LAYER_OPTIONS.filter((opt) => !hidden.has(opt.key));
-  }, [showTrucksOption, showCrewOption]);
+  }, [showTrucksOption, showCrewOption, showWaterOption, showQuadAccessOption]);
 
   const query = filters.search.trim().toLowerCase();
 

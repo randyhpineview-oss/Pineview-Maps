@@ -30,9 +30,19 @@ function pdfLink(url) {
     .replace(/[?&]$/, '');
 }
 
-export default function PdfPreviewOverlay({ record, onClose, canRegenerate = false, cachedLookups = null, onRegenerated = null }) {
+export default function PdfPreviewOverlay({
+  record,
+  onClose,
+  canRegenerate = false,
+  cachedLookups = null,
+  onRegenerated = null,
+  // Raw Dropbox link in the overlay chrome / error fallback. Defaults
+  // true for workers; ClientPortal passes false so clients only view
+  // via the in-app pdf-proxy bytes already loaded below.
+  showDropboxLink = true,
+}) {
   const d = record?.lease_sheet_data || {};
-  const directUrl = pdfLink(record?.pdf_url || null);
+  const directUrl = showDropboxLink ? pdfLink(record?.pdf_url || null) : null;
   const ticket = record?.ticket_number || d.ticket_number || '';
   const [pdfBytes, setPdfBytes] = useState(null);
   const [error, setError] = useState(null);

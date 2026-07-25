@@ -980,12 +980,13 @@ def list_sites(
     )
 
     # Client-role scoping: narrow to the caller's company (+ optional
-    # areas) before any other filter, and hide water pins entirely — those
-    # are a shared internal resource with no client, not something an
-    # external client-portal account should see. No-op for every other role.
+    # areas) before any other filter, and hide water + quad-access pins —
+    # those are shared internal resources, not something an external
+    # client-portal account should see (and the client Layers menu does
+    # not expose toggles for them). No-op for every other role.
     query = apply_client_scope(query, current_user, Site.client, Site.area)
     if current_user.role == RoleEnum.client:
-        query = query.filter(Site.pin_type != PinType.water)
+        query = query.filter(Site.pin_type.notin_([PinType.water, PinType.quad_access]))
 
     if client:
         query = query.filter(Site.client == client)
@@ -1050,7 +1051,7 @@ def sites_delta(
     )
     items_q = apply_client_scope(items_q, current_user, Site.client, Site.area)
     if current_user.role == RoleEnum.client:
-        items_q = items_q.filter(Site.pin_type != PinType.water)
+        items_q = items_q.filter(Site.pin_type.notin_([PinType.water, PinType.quad_access]))
     sites = items_q.all()
     has_spray_map = _has_spray_map_for(db, [s.id for s in sites])
     items = _build_site_list_items(sites, has_spray_map)
@@ -1101,7 +1102,8 @@ def get_site(
     if site.deleted_at is not None or site.approval_state == ApprovalState.rejected:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Site not found")
     if current_user.role == RoleEnum.client and (
-        site.pin_type == PinType.water or not client_scope_matches(current_user, site.client, site.area)
+        site.pin_type in (PinType.water, PinType.quad_access)
+        or not client_scope_matches(current_user, site.client, site.area)
     ):
         # 404, not 403 — don't confirm to a client that a site id outside
         # their scope exists at all.

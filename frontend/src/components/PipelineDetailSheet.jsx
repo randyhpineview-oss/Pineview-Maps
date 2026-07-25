@@ -43,6 +43,9 @@ export default function PipelineDetailSheet({
   // are unique to each pipeline.
   clientSuggestions = [],
   getAreasForClient,
+  // Raw Dropbox "Open PDF ↗" link. Workers/admins keep it; the client
+  // portal passes false so clients only get in-app "📄 View" (pdf-proxy).
+  showDropboxLink = true,
 }) {
   const { prompt } = useDialog();
   const [isEditing, setIsEditing] = useState(false);
@@ -299,7 +302,7 @@ export default function PipelineDetailSheet({
                           >
                             📄 View
                           </button>
-                          {record.pdf_url ? (
+                          {showDropboxLink && record.pdf_url ? (
                             <a
                               href={record.pdf_url}
                               target="_blank"

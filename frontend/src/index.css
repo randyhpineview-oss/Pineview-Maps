@@ -962,6 +962,26 @@ button { cursor: pointer; }
 
 button.site-row { cursor: pointer; }
 
+/* Pipeline rows in the Sites list — distinct from pin rows so workers
+   and clients can tell a pipeline apart at a glance. */
+.site-row-pipeline {
+  border-left: 3px solid #38bdf8;
+  background: rgba(14, 36, 56, 0.85);
+}
+
+.pipeline-badge {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #7dd3fc;
+  background: rgba(56, 189, 248, 0.14);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 6px;
+  padding: 0.1rem 0.4rem;
+  flex-shrink: 0;
+}
+
 .primary-button,
 .secondary-button,
 .danger-button,
