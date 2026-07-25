@@ -9,6 +9,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from supabase import create_client
 
@@ -24,7 +25,7 @@ from app.client_scope import (
     resolve_client_access,
 )
 from app.config import get_settings
-from app.database import get_db
+from app.database import engine, get_db
 from app.email_service import email_transport_configured, send_password_setup_link
 from app.log_util import get_logger, mask_email, short_id
 from app.models import ClientInvite, PasswordResetCode, RoleEnum, User
@@ -195,6 +196,134 @@ def _dedupe_auth_users_by_email(users: list) -> list:
     return out
 
 
+def _postgres_auth_schema_available(db: Optional[Session]) -> bool:
+    """True when we can query Supabase ``auth.users`` / ``auth.identities`` via SQL."""
+    if db is None or engine is None:
+        return False
+    try:
+        return engine.dialect.name == "postgresql"
+    except Exception:
+        return False
+
+
+def _hard_delete_auth_user(client, user_id: str) -> None:
+    """Hard-delete an Auth user; raise if the SDK returns an error object."""
+    result = client.auth.admin.delete_user(str(user_id), should_soft_delete=False)
+    err = getattr(result, "error", None)
+    if err is None and isinstance(result, dict):
+        err = result.get("error")
+    if err is not None:
+        raise RuntimeError(str(err))
+
+
+def _find_auth_user_ids_holding_email(db: Session, email: str) -> list[str]:
+    """Return Auth user ids still claiming this email (including soft-deleted ghosts).
+
+    Soft-delete obfuscates ``auth.users.email`` (so the dashboard search is empty)
+    but often leaves ``auth.identities.email`` intact — that's what blocks
+    ``create_user`` with "Database error creating new user".
+    """
+    if not _postgres_auth_schema_available(db):
+        return []
+    email_l = _normalize_email(email)
+    if not email_l:
+        return []
+    try:
+        rows = db.execute(
+            text(
+                """
+                SELECT DISTINCT user_id::text AS uid
+                FROM auth.identities
+                WHERE lower(email) = :email
+                   OR lower(coalesce(identity_data->>'email', '')) = :email
+                UNION
+                SELECT id::text AS uid
+                FROM auth.users
+                WHERE lower(email) = :email
+                """
+            ),
+            {"email": email_l},
+        ).fetchall()
+        return [r[0] for r in rows if r and r[0]]
+    except Exception as exc:
+        logger.warning(
+            "Could not scan auth.identities/users for %s: %s",
+            mask_email(email),
+            type(exc).__name__,
+        )
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return []
+
+
+def _purge_auth_email_residue(db: Optional[Session], email: Optional[str]) -> list[str]:
+    """Hard-delete every Auth user still holding this email (identity or users row).
+
+    Used after client delete and as a create_user recovery path so an email that
+    looks "gone" in the Supabase Users UI can still be re-invited.
+    """
+    if db is None or not email:
+        return []
+    ids = _find_auth_user_ids_holding_email(db, email)
+    if not ids:
+        return []
+    client = get_supabase_admin()
+    purged: list[str] = []
+    for uid in ids:
+        try:
+            _hard_delete_auth_user(client, uid)
+            purged.append(uid)
+            logger.info(
+                "Purged Auth residue user %s still holding %s",
+                short_id(uid),
+                mask_email(email),
+            )
+        except Exception:
+            # Last resort: SQL hard-delete (CASCADE clears identities/sessions).
+            try:
+                db.execute(text("DELETE FROM auth.users WHERE id = CAST(:id AS uuid)"), {"id": uid})
+                db.commit()
+                purged.append(uid)
+                logger.info(
+                    "SQL hard-deleted Auth residue user %s for %s",
+                    short_id(uid),
+                    mask_email(email),
+                )
+            except Exception:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                logger.exception(
+                    "Failed to purge Auth residue user %s for %s",
+                    short_id(uid),
+                    mask_email(email),
+                )
+    # Belt-and-suspenders: clear any leftover identity rows by email even if
+    # the parent user row is already gone.
+    if _postgres_auth_schema_available(db):
+        try:
+            db.execute(
+                text(
+                    """
+                    DELETE FROM auth.identities
+                    WHERE lower(email) = :email
+                       OR lower(coalesce(identity_data->>'email', '')) = :email
+                    """
+                ),
+                {"email": _normalize_email(email)},
+            )
+            db.commit()
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+    return purged
+
+
 def _purge_duplicate_client_auth_users(client, keep_user_id: str, email: Optional[str]) -> int:
     """Hard-delete extra Auth rows for the same email (duplicate client shells).
 
@@ -226,13 +355,7 @@ def _purge_duplicate_client_auth_users(client, keep_user_id: str, email: Optiona
         if not (is_client or is_unused_shell):
             continue
         try:
-            result = client.auth.admin.delete_user(str(uid), should_soft_delete=False)
-            # Some supabase-py versions return {error: ...} instead of raising.
-            err = getattr(result, "error", None)
-            if err is None and isinstance(result, dict):
-                err = result.get("error")
-            if err is not None:
-                raise RuntimeError(str(err))
+            _hard_delete_auth_user(client, str(uid))
             purged += 1
             logger.info(
                 "Purged duplicate Auth user %s for %s (kept %s, role=%s)",
@@ -808,36 +931,45 @@ def delete_user(
         except Exception:
             pass
 
-        # Only hard-delete on a POSITIVE identification as a client. If the
-        # lookup above failed we don't know the role, and soft delete is the
-        # safe answer — a staff account wrongly hard-deleted takes their work
-        # history's attribution with it, while a client left soft-deleted just
-        # means the admin has to clear the email manually later.
-        # `is_dev_email` is belt-and-suspenders: the dev account is an admin so
-        # it can't reach this branch anyway, but _guard_dev_account lets the dev
-        # act on their own account and must never be bypassed by a new path.
-        hard_delete = target_role == RoleEnum.client.value and not is_dev_email(target_email)
-
-        client.auth.admin.delete_user(user_id, should_soft_delete=not hard_delete)
-
         local_user = _find_local_user(db, user_id, target_email)
+        local_is_client = (
+            local_user is not None
+            and getattr(local_user, "role", None) == RoleEnum.client
+        )
+
+        # Hard-delete clients so the email is freed for re-invite. Soft-delete
+        # leaves an obfuscated auth.users row + an auth.identities.email that
+        # still blocks create_user — invisible in the Users dashboard search.
+        # Fall back to the local role when Auth metadata lookup failed.
+        hard_delete = (
+            (target_role == RoleEnum.client.value or local_is_client)
+            and not is_dev_email(target_email)
+        )
 
         if hard_delete:
+            _hard_delete_auth_user(client, user_id)
+            # Wipe identity residue that soft-delete historically left behind
+            # (and any sibling Auth rows for the same email).
+            _purge_auth_email_residue(db, target_email)
             _purge_client_local_data(db, local_user, target_email)
-        elif local_user:
-            # Mark the local row inactive so they disappear from pickers, and so
-            # `get_current_user` rejects their still-valid JWT on the next request.
-            local_user.is_active = False
-            db.commit()
+        else:
+            client.auth.admin.delete_user(user_id, should_soft_delete=True)
+            if local_user:
+                # Mark the local row inactive so they disappear from pickers, and so
+                # `get_current_user` rejects their still-valid JWT on the next request.
+                local_user.is_active = False
+                db.commit()
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception(
             "Error deleting user %s: %s", short_id(user_id), type(exc).__name__
         )
         error_detail = str(exc)
-        if "Database error" in error_detail:
+        if "Database error" in error_detail or "storage" in error_detail.lower():
             error_detail = (
-                "Cannot delete user - they likely have related records in the database. "
-                "Please delete their associated data first (e.g., spray records, checkins, etc.) "
+                "Cannot delete user — Supabase still has related data (often Storage "
+                "objects owned by this Auth user, or a leftover auth.identities row). "
                 f"Original error: {error_detail}"
             )
         raise HTTPException(
@@ -1135,46 +1267,81 @@ async def invite_client(
         _purge_duplicate_client_auth_users(client, user_id, payload.email)
         updated_existing = True
     else:
+        create_payload = {
+            "email": payload.email,
+            "password": secrets.token_urlsafe(32),  # nobody is ever told this
+            "email_confirm": True,
+            "app_metadata": app_metadata,
+            "user_metadata": {"name": display_name},
+        }
         try:
-            result = client.auth.admin.create_user(
-                {
-                    "email": payload.email,
-                    "password": secrets.token_urlsafe(32),  # nobody is ever told this
-                    "email_confirm": True,
-                    "app_metadata": app_metadata,
-                    "user_metadata": {"name": display_name},
-                }
-            )
+            result = client.auth.admin.create_user(create_payload)
         except Exception as exc:
             error_msg = str(exc)
-            error_code = getattr(exc, "code", None)
-            error_status = getattr(exc, "status", None)
-            if "already been registered" in error_msg.lower() or "already exists" in error_msg.lower():
-                # Race / soft-deleted row — surface a clear conflict.
+            error_l = error_msg.lower()
+            # Soft-deleted / identity-ghost residue: email looks free in the
+            # Users UI but create_user still hits a unique constraint. Purge
+            # auth.identities (+ users) holding this email and retry once.
+            if (
+                "database error" in error_l
+                or "already been registered" in error_l
+                or "already exists" in error_l
+                or "duplicate" in error_l
+            ):
+                purged = _purge_auth_email_residue(db, payload.email)
+                if purged:
+                    logger.info(
+                        "Cleared %d Auth residue row(s) for %s; retrying create_user",
+                        len(purged),
+                        mask_email(payload.email),
+                    )
+                    try:
+                        result = client.auth.admin.create_user(create_payload)
+                    except Exception as retry_exc:
+                        logger.exception(
+                            "Retry create_user failed for %s: %s",
+                            mask_email(payload.email),
+                            type(retry_exc).__name__,
+                        )
+                        raise HTTPException(
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail=(
+                                f"Failed to create client account after clearing leftover Auth "
+                                f"data ({type(retry_exc).__name__}): {retry_exc}"
+                            ),
+                        ) from retry_exc
+                elif "already been registered" in error_l or "already exists" in error_l:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="A user with this email already exists",
+                    ) from exc
+                else:
+                    logger.exception(
+                        "Error creating client user %s: %s",
+                        mask_email(payload.email),
+                        type(exc).__name__,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=(
+                            f"Failed to create client account ({type(exc).__name__}): {error_msg}. "
+                            "A leftover soft-deleted Auth identity may still hold this email — "
+                            "try Invite again after deploy, or run in Supabase SQL: "
+                            "SELECT * FROM auth.identities WHERE lower(email) = lower('...');"
+                        ),
+                    ) from exc
+            else:
+                logger.exception(
+                    "Error creating client user %s: %s (code=%s status=%s)",
+                    mask_email(payload.email),
+                    type(exc).__name__,
+                    getattr(exc, "code", None),
+                    getattr(exc, "status", None),
+                )
                 raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="A user with this email already exists",
-                )
-            logger.exception(
-                "Error creating client user %s: %s (code=%s status=%s)",
-                mask_email(payload.email),
-                type(exc).__name__,
-                error_code,
-                error_status,
-            )
-            hint = ""
-            if "database error" in error_msg.lower():
-                hint = (
-                    " This usually means a leftover or soft-deleted Supabase Auth user already "
-                    "occupies this email — check the Supabase dashboard (Authentication > Users, "
-                    "including any 'deleted' filter) for an existing row with this address, or ask "
-                    "your developer to check Postgres Logs in the Supabase dashboard for the exact "
-                    "underlying error."
-                )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to create client account ({type(exc).__name__}): {error_msg}{hint}",
-            )
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to create client account ({type(exc).__name__}): {error_msg}",
+                ) from exc
         user_id = result.user.id
 
     _mirror_client_scope_locally(

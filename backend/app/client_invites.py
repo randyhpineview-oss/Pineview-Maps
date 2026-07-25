@@ -53,6 +53,7 @@ from app.user_management import (
     _find_auth_users_by_email,
     _mirror_client_scope_locally,
     _prefer_auth_user,
+    _purge_auth_email_residue,
     _purge_duplicate_client_auth_users,
 )
 
@@ -246,40 +247,65 @@ async def client_signup(request: Request, payload: ClientSignupRequest, db: Sess
         **build_scope_app_metadata(access),
     }
 
+    create_payload = {
+        "email": payload.email,
+        "password": payload.password,
+        "email_confirm": True,
+        "app_metadata": app_metadata,
+        "user_metadata": {"name": display_name},
+    }
     try:
-        result = client.auth.admin.create_user(
-            {
-                "email": payload.email,
-                "password": payload.password,
-                "email_confirm": True,
-                "app_metadata": app_metadata,
-                "user_metadata": {"name": display_name},
-            }
-        )
+        result = client.auth.admin.create_user(create_payload)
     except Exception as exc:
         msg = str(exc).lower()
-        if "already been registered" in msg or "already exists" in msg or "duplicate" in msg:
-            # Don't burn the invite on a duplicate-email attempt — let the
-            # admin's link keep working for the real intended recipient.
-            logger.info("Duplicate client signup attempt for %s", mask_email(payload.email))
+        if (
+            "database error" in msg
+            or "already been registered" in msg
+            or "already exists" in msg
+            or "duplicate" in msg
+        ):
+            purged = _purge_auth_email_residue(db, payload.email)
+            if purged:
+                try:
+                    result = client.auth.admin.create_user(create_payload)
+                except Exception as retry_exc:
+                    logger.exception(
+                        "Retry client signup failed for %s: %s",
+                        mask_email(payload.email),
+                        type(retry_exc).__name__,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"Could not create account after clearing leftover Auth data: {retry_exc}",
+                    ) from retry_exc
+            elif "already been registered" in msg or "already exists" in msg or "duplicate" in msg:
+                logger.info("Duplicate client signup attempt for %s", mask_email(payload.email))
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="An account with this email already exists. Try logging in, or use 'Forgot password'.",
+                ) from exc
+            else:
+                logger.exception(
+                    "Error creating client user %s: %s",
+                    mask_email(payload.email),
+                    type(exc).__name__,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Could not create account ({type(exc).__name__}): {exc}",
+                ) from exc
+        else:
+            logger.exception(
+                "Error creating client user %s: %s (code=%s status=%s)",
+                mask_email(payload.email),
+                type(exc).__name__,
+                getattr(exc, "code", None),
+                getattr(exc, "status", None),
+            )
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="An account with this email already exists. Try logging in, or use 'Forgot password'.",
-            )
-        logger.exception(
-            "Error creating client user %s: %s (code=%s status=%s)",
-            mask_email(payload.email),
-            type(exc).__name__,
-            getattr(exc, "code", None),
-            getattr(exc, "status", None),
-        )
-        detail = f"Could not create account ({type(exc).__name__}): {exc}"
-        if "database error" in msg:
-            detail += (
-                " This usually means a leftover Supabase Auth account already exists for this "
-                "email — contact Pineview instead of retrying with the same address."
-            )
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail)
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Could not create account ({type(exc).__name__}): {exc}",
+            ) from exc
 
     user_id = str(result.user.id)
     _purge_duplicate_client_auth_users(client, user_id, payload.email)
