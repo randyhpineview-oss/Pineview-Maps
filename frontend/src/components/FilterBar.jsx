@@ -17,6 +17,7 @@ export default function FilterBar({
   clients,
   areas,
   sites = [],
+  pipelines = [],
   onChange,
   onSearchSelect,
   onClearAll,
@@ -64,17 +65,28 @@ export default function FilterBar({
   // `areas` list. Without this keying the filtered list would silently
   // drop any area whose underlying rows hadn't been re-saved since
   // the canonicalization rolled out.
+  //
+  // Pipelines must be included — a company can have area coverage on
+  // pipelines only. If nothing matches (client-name drift, pins still
+  // loading), keep the provided `areas` list rather than emptying the
+  // dropdown to a bare "All areas" option.
   const filteredAreas = useMemo(() => {
     if (!filters.client) return areas; // All clients → show all areas
     const clientKey = nameKey(filters.client);
-    const areaKeysForClient = new Set(
-      sites
-        .filter((s) => nameKey(s.client) === clientKey)
-        .map((s) => nameKey(s.area))
-        .filter(Boolean)
-    );
+    const areaKeysForClient = new Set();
+    for (const s of sites) {
+      if (nameKey(s.client) !== clientKey) continue;
+      const key = nameKey(s.area);
+      if (key) areaKeysForClient.add(key);
+    }
+    for (const p of pipelines) {
+      if (nameKey(p.client) !== clientKey) continue;
+      const key = nameKey(p.area);
+      if (key) areaKeysForClient.add(key);
+    }
+    if (areaKeysForClient.size === 0) return areas;
     return areas.filter((area) => areaKeysForClient.has(nameKey(area)));
-  }, [areas, filters.client, sites]);
+  }, [areas, filters.client, sites, pipelines]);
 
   const suggestions = useMemo(() => {
     if (!query || query.length < 1) return [];

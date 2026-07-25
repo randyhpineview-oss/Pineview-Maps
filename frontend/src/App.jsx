@@ -895,7 +895,12 @@ export default function App() {
   // admin re-scope until the token refreshes; ClientPortal re-fetches the
   // DB-authoritative values via GET /api/session for FilterBar + labels.
   const clientPortalName = session?.user?.app_metadata?.client_name || null;
-  const clientPortalAreas = session?.user?.app_metadata?.client_areas || null;
+  // Empty/`[]` JWT areas mean unrestricted company access — never pass a
+  // truthy empty array through to ClientPortal as if it were a scope list.
+  const rawClientPortalAreas = session?.user?.app_metadata?.client_areas;
+  const clientPortalAreas = Array.isArray(rawClientPortalAreas) && rawClientPortalAreas.length > 0
+    ? rawClientPortalAreas
+    : null;
 
   // Display label for the current user, computed once and reused by both
   // the inline (tablet/PC) name badge and the mobile avatar menu. Mirrors
@@ -6620,6 +6625,7 @@ export default function App() {
               clients={clients}
               areas={areas}
               sites={sites}
+              pipelines={pipelines}
               onChange={(key, value) => setFilters((c) => ({ ...c, [key]: value }))}
               onSearchSelect={handleSearchSelect}
               onClearAll={() => setFilters(DEFAULT_FILTERS)}

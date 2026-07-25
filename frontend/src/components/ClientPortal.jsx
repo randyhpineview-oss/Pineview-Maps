@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 
 import { api } from '../lib/api';
-import { nameKey, pinTypeLabel } from '../lib/mapUtils';
+import { nameKey, normalizeName, pinTypeLabel } from '../lib/mapUtils';
 import FilterBar from './FilterBar';
 import MapView from './MapView';
 import PipelineDetailSheet from './PipelineDetailSheet';
@@ -200,10 +200,11 @@ export default function ClientPortal({ clientName, clientAreas, userDisplayName,
   }, [accountMenuOpen]);
 
   // ── Filter scope ──────────────────────────────────────────────────────
-  // Prefer live DB scope from /api/session. Fall back to unique values on
-  // the already-scoped site/pipeline payloads so the dropdowns can never
-  // offer a company/area the map data itself doesn't contain.
-  // `liveClientAreas` empty/null means "all areas for that client".
+  // Prefer live DB scope from /api/session. Company area options for the
+  // unrestricted case are derived from loaded pins (same approach as
+  // App.jsx `areas` / `getAreasForClient`) — empty/`null`/`[]`
+  // `client_areas` means "all areas for this client_name", NOT "no area
+  // filter options".
   const scopedClients = useMemo(() => {
     if (liveClientName) return [liveClientName];
     return uniqueSorted([
@@ -212,12 +213,39 @@ export default function ClientPortal({ clientName, clientAreas, userDisplayName,
     ]);
   }, [liveClientName, sites, pipelines]);
 
+  // Distinct areas on this company's already-scoped sites + pipelines.
+  // Mirrors App.jsx's areas memo (dedupe by nameKey, display normalizeName).
+  const companyAreasFromPins = useMemo(() => {
+    const clientKey = nameKey(liveClientName);
+    const seen = new Map();
+    const consider = (client, area) => {
+      // When we know the company, keep pin-derived areas aligned to it
+      // (defensive — list endpoints already apply_client_scope).
+      if (clientKey && nameKey(client) !== clientKey) return;
+      const key = nameKey(area);
+      if (!key || seen.has(key)) return;
+      seen.set(key, normalizeName(area));
+    };
+    for (const s of sites) consider(s.client, s.area);
+    for (const p of pipelines) consider(p.client, p.area);
+    // If the client_name string drifts from pin.client, still surface
+    // every area on the scoped payload rather than an empty dropdown.
+    if (seen.size === 0) {
+      for (const s of sites) consider(null, s.area);
+      for (const p of pipelines) consider(null, p.area);
+    }
+    return [...seen.values()].sort((a, b) => a.localeCompare(b));
+  }, [liveClientName, sites, pipelines]);
+
   const scopedAreas = useMemo(() => {
+    // Restricted account: only the allowlisted areas (may include names
+    // with no current pins — keep those so admin scope edits stay visible).
     if (Array.isArray(liveClientAreas) && liveClientAreas.length > 0) {
       return uniqueSorted(liveClientAreas);
     }
-    return uniqueSorted([...sites.map((s) => s.area), ...pipelines.map((p) => p.area)]);
-  }, [liveClientAreas, sites, pipelines]);
+    // Unrestricted (null / [] / missing): real area names from company data.
+    return companyAreasFromPins;
+  }, [liveClientAreas, companyAreasFromPins]);
 
   // Drop filter selections that no longer exist in the effective scope
   // (e.g. admin renamed the company or swapped areas). Without this, a
@@ -554,6 +582,7 @@ export default function ClientPortal({ clientName, clientAreas, userDisplayName,
               clients={scopedClients}
               areas={scopedAreas}
               sites={sites}
+              pipelines={pipelines}
               onChange={(key, value) => setFilters((current) => ({ ...current, [key]: value }))}
               onSearchSelect={handleSearchSelect}
               onClearAll={() => setFilters(DEFAULT_FILTERS)}
