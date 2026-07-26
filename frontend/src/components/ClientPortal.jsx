@@ -995,6 +995,8 @@ export default function ClientPortal({
             className="float-btn"
             type="button"
             onClick={() => setIsFilterOpen((open) => !open)}
+            aria-expanded={isFilterOpen}
+            aria-label={isFilterOpen ? 'Hide filters' : 'Show filters'}
           >
             ☰ Filters
           </button>
@@ -1038,7 +1040,7 @@ export default function ClientPortal({
           onTouchEnd={handleDetailTouchEnd}
         >
           <div className="side-panel-header">
-            <button className="back-btn" type="button" onClick={handleCloseDetail}>←</button>
+            <button className="back-btn" type="button" onClick={handleCloseDetail} aria-label="Close site details">←</button>
             <h2>Site Details</h2>
           </div>
           <div className="side-panel-body" ref={detailBodyRef}>
@@ -1071,7 +1073,7 @@ export default function ClientPortal({
           onTouchEnd={handlePipelineTouchEnd}
         >
           <div className="side-panel-header">
-            <button className="back-btn" type="button" onClick={closePipelineDetail}>←</button>
+            <button className="back-btn" type="button" onClick={closePipelineDetail} aria-label="Close pipeline details">←</button>
             <h2>Pipeline Details</h2>
           </div>
           <div className="side-panel-body" ref={pipelineDetailBodyRef}>
