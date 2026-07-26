@@ -628,6 +628,18 @@ button { cursor: pointer; }
   to { opacity: 0; transform: scale(0.96); }
 }
 
+/* Opacity-only fade for panels where scale/transform would expand
+   backdrop-filter paint to the full containing block (full-width look). */
+@keyframes ui-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes ui-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
 /* ───── Filter overlay ───── */
 .filter-overlay {
   position: absolute;
@@ -674,28 +686,33 @@ button { cursor: pointer; }
   position: absolute;
   top: 100px;
   left: 12px;
+  right: auto;
   z-index: 12;
   background: rgba(9, 17, 31, 0.95);
   border: 1px solid rgba(143, 182, 255, 0.14);
   border-radius: 14px;
   padding: 0.75rem;
-  width: 280px;
-  max-width: calc(100vw - 24px);
+  /* Explicit cap — do not use scale/transform animation on this node:
+     with backdrop-filter it can paint full-bleed across .main-area. */
+  width: min(280px, calc(100vw - 24px));
+  max-width: min(280px, calc(100vw - 24px));
   max-height: calc(100% - 116px);
   overflow-x: hidden;
   overflow-y: auto;
   backdrop-filter: blur(12px);
-  transform-origin: top left;
-  animation: ui-fade-scale-in 0.18s ease-out;
+  animation: ui-fade-in 0.18s ease-out;
 }
 
 .crew-overlay--closing {
-  animation: ui-fade-scale-out 0.18s ease-in forwards;
+  animation: ui-fade-out 0.18s ease-in forwards;
   pointer-events: none;
 }
 
 @media (min-width: 769px) {
-  .crew-overlay { width: 320px; }
+  .crew-overlay {
+    width: min(320px, calc(100vw - 24px));
+    max-width: min(320px, calc(100vw - 24px));
+  }
 }
 
 /* On phones the previous 220px width clipped names + hid the Locate
@@ -705,6 +722,7 @@ button { cursor: pointer; }
 @media (max-width: 480px) {
   .crew-overlay {
     width: calc(100vw - 24px);
+    max-width: calc(100vw - 24px);
     padding: 0.6rem;
     border-radius: 12px;
   }
