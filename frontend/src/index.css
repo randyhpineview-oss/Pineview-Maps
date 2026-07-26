@@ -753,6 +753,12 @@ button { cursor: pointer; }
   background: linear-gradient(135deg, #2563eb, #1d4ed8);
 }
 
+/* Client portal has no "+" add-pin FAB, so the locate control sits in
+   the primary FAB slot instead of stacking above it. */
+.fab.location-fab.location-fab--solo {
+  bottom: 16px;
+}
+
 .fab-menu {
   position: absolute;
   bottom: 72px;

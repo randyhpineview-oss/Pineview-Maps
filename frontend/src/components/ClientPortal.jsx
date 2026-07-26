@@ -141,10 +141,22 @@ export default function ClientPortal({
   const [zoomTarget, setZoomTarget] = useState(null);
   const [previewingRecord, setPreviewingRecord] = useState(null);
 
+  // Mirror App.jsx's "center on me" / follow-mode stack so clients get the
+  // same locate FAB + blue user-dot + follow toggle workers already have.
+  const [userLocation, setUserLocation] = useState(null);
+  const [isFollowingUser, setIsFollowingUser] = useState(false);
+  // 'granted' | 'denied' | 'prompt' | 'unsupported' | 'unknown'
+  const [geoPermission, setGeoPermission] = useState('unknown');
+  const [locationMessage, setLocationMessage] = useState('');
+
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [showAppSupport, setShowAppSupport] = useState(false);
   const accountMenuRef = useRef(null);
   const mapRef = useRef(null);
+  const lastFollowUpdateRef = useRef(0);
+  const smoothedLocationRef = useRef(null);
+  const lastLocationUpdateRef = useRef(0);
+  const locationMessageTimerRef = useRef(null);
 
   // ── Data loading ──────────────────────────────────────────────────────
   // Light periodic refresh — no delta-sync machinery needed for a single
@@ -232,6 +244,156 @@ export default function ClientPortal({
     document.addEventListener('pointerdown', handleOutside);
     return () => document.removeEventListener('pointerdown', handleOutside);
   }, [accountMenuOpen]);
+
+  function showLocationMessage(text) {
+    setLocationMessage(text);
+    if (locationMessageTimerRef.current) {
+      clearTimeout(locationMessageTimerRef.current);
+    }
+    locationMessageTimerRef.current = setTimeout(() => {
+      setLocationMessage('');
+      locationMessageTimerRef.current = null;
+    }, 4000);
+  }
+
+  useEffect(() => () => {
+    if (locationMessageTimerRef.current) clearTimeout(locationMessageTimerRef.current);
+  }, []);
+
+  // ── Geolocation permission tracking (mirrors App.jsx) ─────────────────
+  // Gate watchPosition on an explicit grant so iOS PWA doesn't re-prompt
+  // on every cold launch. The locate FAB is the one intentional prompt.
+  useEffect(() => {
+    if (!navigator.geolocation) {
+      setGeoPermission('unsupported');
+      return undefined;
+    }
+    if (!navigator.permissions || typeof navigator.permissions.query !== 'function') {
+      setGeoPermission('unsupported');
+      return undefined;
+    }
+
+    let cancelled = false;
+    let permissionStatus = null;
+
+    const onChange = () => {
+      if (cancelled || !permissionStatus) return;
+      setGeoPermission(permissionStatus.state);
+    };
+
+    navigator.permissions
+      .query({ name: 'geolocation' })
+      .then((status) => {
+        if (cancelled) return;
+        permissionStatus = status;
+        setGeoPermission(status.state);
+        status.addEventListener('change', onChange);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setGeoPermission('unsupported');
+      });
+
+    return () => {
+      cancelled = true;
+      if (permissionStatus) {
+        try { permissionStatus.removeEventListener('change', onChange); } catch { /* ignore */ }
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!navigator.geolocation) return undefined;
+    if (geoPermission !== 'granted' && geoPermission !== 'unsupported') return undefined;
+
+    let watchId = null;
+
+    const smoothLocationTransition = (currentLocation, targetLocation, factor = 0.3) => {
+      if (!currentLocation) return targetLocation;
+      return {
+        lat: currentLocation.lat + (targetLocation.lat - currentLocation.lat) * factor,
+        lng: currentLocation.lng + (targetLocation.lng - currentLocation.lng) * factor,
+      };
+    };
+
+    const startWatch = () => {
+      if (watchId != null) return;
+      watchId = navigator.geolocation.watchPosition(
+        (position) => {
+          const rawLocation = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          };
+          const now = Date.now();
+          const timeSinceLastUpdate = now - lastLocationUpdateRef.current;
+          if (timeSinceLastUpdate > 50) {
+            lastLocationUpdateRef.current = now;
+            const smoothedLocation = smoothLocationTransition(
+              smoothedLocationRef.current,
+              rawLocation,
+              0.08,
+            );
+            smoothedLocationRef.current = smoothedLocation;
+            setUserLocation(smoothedLocation);
+            if (isFollowingUser && mapRef.current && now - lastFollowUpdateRef.current > 500) {
+              lastFollowUpdateRef.current = now;
+              setZoomTarget({
+                latitude: smoothedLocation.lat,
+                longitude: smoothedLocation.lng,
+                _ts: Date.now(),
+                _isFollowMode: true,
+              });
+            }
+          }
+        },
+        (error) => {
+          console.error('Location tracking error:', error);
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 5000,
+        },
+      );
+    };
+
+    const stopWatch = () => {
+      if (watchId == null) return;
+      navigator.geolocation.clearWatch(watchId);
+      watchId = null;
+    };
+
+    const shouldWatch = () =>
+      activeTab === TAB_MAP && document.visibilityState === 'visible';
+
+    if (shouldWatch()) startWatch();
+
+    const onVisibilityChange = () => {
+      if (shouldWatch()) startWatch();
+      else stopWatch();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      stopWatch();
+    };
+  }, [isFollowingUser, activeTab, geoPermission]);
+
+  useEffect(() => {
+    if (!isFollowingUser || !userLocation) return undefined;
+    const interval = setInterval(() => {
+      if (isFollowingUser && userLocation && mapRef.current) {
+        setZoomTarget({
+          latitude: userLocation.lat,
+          longitude: userLocation.lng,
+          _ts: Date.now(),
+          _isFollowMode: true,
+        });
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isFollowingUser, userLocation]);
 
   // ── Filter scope ──────────────────────────────────────────────────────
   // Prefer live DB scope from /api/session. For unrestricted companies,
@@ -457,6 +619,66 @@ export default function ClientPortal({
     if (activeTab !== TAB_MAP) setActiveTab(TAB_MAP);
   }
 
+  function handleCenterOnUserLocation() {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      showLocationMessage("Couldn't get location — GPS is not available on this device.");
+      return;
+    }
+
+    if (!userLocation) {
+      showLocationMessage('Getting location…');
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const location = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          };
+          setUserLocation(location);
+          setIsFollowingUser(true);
+          setZoomTarget({
+            latitude: location.lat,
+            longitude: location.lng,
+            _ts: Date.now(),
+            _isFollowMode: true,
+          });
+          showLocationMessage('Follow mode on');
+          setGeoPermission('granted');
+        },
+        (error) => {
+          console.error('Error getting location:', error);
+          if (error && error.code === error.PERMISSION_DENIED) {
+            showLocationMessage("Location access denied — enable in your phone's Settings → Safari/Pineview Maps → Location.");
+            setGeoPermission('denied');
+          } else if (error && error.code === error.TIMEOUT) {
+            showLocationMessage("Couldn't get GPS in time. Make sure Location is on and try again.");
+          } else {
+            showLocationMessage("Couldn't get location — check GPS permissions.");
+          }
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 0,
+        },
+      );
+      return;
+    }
+
+    if (isFollowingUser) {
+      setIsFollowingUser(false);
+      showLocationMessage('Follow mode off');
+    } else {
+      setIsFollowingUser(true);
+      setZoomTarget({
+        latitude: userLocation.lat,
+        longitude: userLocation.lng,
+        _ts: Date.now(),
+        _isFollowMode: true,
+      });
+      showLocationMessage('Follow mode on');
+    }
+  }
+
   function handleSearchSelect(site) {
     const isPhone = isPhoneDevice();
     setSelectedSite(site);
@@ -612,6 +834,7 @@ export default function ClientPortal({
             onMapClick={handleMapDismiss}
             onMapLoad={(map) => { mapRef.current = map; }}
             zoomToSite={zoomTarget}
+            userLocation={userLocation}
             detailOpen={detailOpen || pipelineDetailOpen}
             pipelines={visiblePipelines}
             selectedPipeline={selectedPipeline}
@@ -643,6 +866,42 @@ export default function ClientPortal({
           >
             {error}
           </div>
+        ) : null}
+
+        {!error && locationMessage ? (
+          <div
+            className="float-btn"
+            role="status"
+            style={{
+              position: 'absolute',
+              top: 12,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 14,
+              maxWidth: 'calc(100% - 24px)',
+              background: 'rgba(9, 17, 31, 0.92)',
+              color: '#e5eefb',
+              borderColor: 'rgba(143, 182, 255, 0.18)',
+            }}
+          >
+            {locationMessage}
+          </div>
+        ) : null}
+
+        {activeTab === TAB_MAP ? (
+          <button
+            className={`fab location-fab location-fab--solo ${isFollowingUser ? 'following' : ''}`}
+            type="button"
+            onClick={handleCenterOnUserLocation}
+            title={isFollowingUser ? 'Stop following my location' : 'Center on my location'}
+            aria-label={isFollowingUser ? 'Stop following my location' : 'Center on my location'}
+            aria-pressed={isFollowingUser}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
+            </svg>
+          </button>
         ) : null}
 
         {/* floating filter button */}
