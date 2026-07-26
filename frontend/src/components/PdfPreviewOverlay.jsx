@@ -244,43 +244,49 @@ export default function PdfPreviewOverlay({
       position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
       zIndex: 50, backgroundColor: '#4b5563', display: 'flex', flexDirection: 'column',
     }}>
-      {/* ── Toolbar ── */}
-      <div style={{
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        padding: '10px 16px', background: '#1f2937', borderBottom: '1px solid #374151',
-        gap: '8px', flexShrink: 0,
-      }}>
-        <span style={{ color: '#f9fafb', fontWeight: 600, flex: 1, fontSize: '0.95rem' }}>
+      {/* ── Toolbar ──
+          Classes in index.css keep × visible on narrow screens: title
+          truncates, regen shortens to "↻ Regen", close never shrinks. */}
+      <div className="pdf-preview-toolbar">
+        <span className="pdf-preview-toolbar__title">
           Lease Sheet {ticket ? `— ${ticket}` : ''}
         </span>
-        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+        <div className="pdf-preview-toolbar__actions">
           {canRegenerate && record?.id ? (
-            <button onClick={handleRegenerate} disabled={regenerating}
+            <button
+              type="button"
+              className="pdf-preview-regen-btn"
+              onClick={handleRegenerate}
+              disabled={regenerating}
               title="Re-render this lease sheet's PDF and re-upload to Dropbox. Use this to repair PDFs that were corrupted by the old double-serialization bug."
-              style={{
-                background: 'none', border: '1px solid #f59e0b', color: '#fbbf24',
-                fontSize: '0.8rem', padding: '4px 10px', borderRadius: 6,
-                cursor: regenerating ? 'wait' : 'pointer', whiteSpace: 'nowrap',
-                opacity: regenerating ? 0.6 : 1,
-              }}>
-              {regenerating ? 'Regenerating…' : '↻ Regenerate PDF'}
+            >
+              {regenerating ? (
+                <>
+                  <span className="pdf-preview-regen-full">Regenerating…</span>
+                  <span className="pdf-preview-regen-short">Regen…</span>
+                </>
+              ) : (
+                <>
+                  <span className="pdf-preview-regen-full">↻ Regenerate PDF</span>
+                  <span className="pdf-preview-regen-short">↻ Regen</span>
+                </>
+              )}
             </button>
           ) : null}
           {pdfBytes ? (
-            <button onClick={handlePrint}
-              style={{ background: 'none', border: 'none', color: '#60a5fa', fontSize: '0.85rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+            <button type="button" onClick={handlePrint}
+              style={{ background: 'none', border: 'none', color: '#60a5fa', fontSize: '0.85rem', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>
               Print
             </button>
           ) : null}
           {directUrl ? (
             <a href={directUrl} target="_blank" rel="noopener noreferrer"
-              style={{ color: '#60a5fa', fontSize: '0.85rem', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+              style={{ color: '#60a5fa', fontSize: '0.85rem', textDecoration: 'none', whiteSpace: 'nowrap', flexShrink: 0 }}>
               Open PDF ↗
             </a>
           ) : null}
         </div>
-        <button onClick={onClose}
-          style={{ background: 'none', border: 'none', color: '#9ca3af', fontSize: '1.5rem', cursor: 'pointer' }}>
+        <button type="button" className="pdf-preview-toolbar__close" onClick={onClose} aria-label="Close">
           ×
         </button>
       </div>

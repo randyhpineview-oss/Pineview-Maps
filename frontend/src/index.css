@@ -1529,6 +1529,88 @@ button[title="Open keyboard shortcuts"],
   .overview-grid { --card-min: 140px; gap: 10px; }
 }
 
+/* PdfPreviewOverlay toolbar — keep close (×) on-screen when admin
+   Regenerate + Print + Open PDF crowd a phone-width header. */
+.pdf-preview-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  background: #1f2937;
+  border-bottom: 1px solid #374151;
+  gap: 8px;
+  flex-shrink: 0;
+  min-width: 0;
+}
+.pdf-preview-toolbar__title {
+  color: #f9fafb;
+  font-weight: 600;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.95rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pdf-preview-toolbar__actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.pdf-preview-toolbar__close {
+  background: none;
+  border: none;
+  color: #9ca3af;
+  font-size: 1.5rem;
+  cursor: pointer;
+  flex: 0 0 auto;
+  line-height: 1;
+  padding: 0 2px;
+}
+.pdf-preview-regen-btn {
+  background: none;
+  border: 1px solid #f59e0b;
+  color: #fbbf24;
+  font-size: 0.8rem;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 1;
+  min-width: 0;
+}
+.pdf-preview-regen-btn:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+.pdf-preview-regen-short {
+  display: none;
+}
+@media (max-width: 480px) {
+  .pdf-preview-toolbar {
+    padding: 8px 10px;
+    gap: 6px;
+  }
+  .pdf-preview-toolbar__actions {
+    gap: 6px;
+  }
+  .pdf-preview-toolbar__title {
+    font-size: 0.85rem;
+  }
+  .pdf-preview-regen-btn {
+    font-size: 0.7rem;
+    padding: 3px 6px;
+  }
+  .pdf-preview-regen-full {
+    display: none;
+  }
+  .pdf-preview-regen-short {
+    display: inline;
+  }
+}
+
 .overview-detail-panel {
   margin-top: 16px;
   background: #0f172a;
