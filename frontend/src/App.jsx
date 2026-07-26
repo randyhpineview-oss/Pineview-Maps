@@ -24,7 +24,13 @@ import {
   stripFilesForLane1,
 } from './lib/uploadLanes';
 import { nearestFraction } from './lib/mapUtils';
-import { onAuthStateChange, signOut, supabase } from './lib/supabaseClient';
+import {
+  ACCESS_TOKEN_STORAGE_KEY,
+  ensureFreshSession,
+  onAuthStateChange,
+  signOut,
+  supabase,
+} from './lib/supabaseClient';
 import { useAppUpdate } from './lib/useAppUpdate';
 import { APP_VERSION_LABEL } from './version';
 import {
@@ -666,7 +672,17 @@ export default function App() {
   // matters most for the client-portal role (external accounts on
   // possibly-shared machines) but is applied to every sign-out uniformly —
   // a fresh login always re-syncs from the server regardless of role.
+  // Distinguishes intentional Sign out / worker day-end from Supabase
+  // auto-SIGNED_OUT (failed refresh after long background). LoginPage
+  // uses this to show a calm session-expired notice for the latter.
+  const intentionalSignOutRef = useRef(false);
+  // True once we've observed an authenticated session this page lifetime
+  // — so cold-start SIGNED_OUT (no stored session) does not look like an
+  // unexpected kick.
+  const hadAuthenticatedSessionRef = useRef(false);
+
   const handleSignOut = useCallback(async () => {
+    intentionalSignOutRef.current = true;
     try {
       const { clearAllOfflineData } = await import('./lib/offlineStore');
       await clearAllOfflineData();
@@ -2121,9 +2137,22 @@ export default function App() {
             setIsAuthLoading(false);
             
             if (authSession?.access_token) {
-              localStorage.setItem('supabase-access-token', authSession.access_token);
+              localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, authSession.access_token);
+              hadAuthenticatedSessionRef.current = true;
             } else {
-              localStorage.removeItem('supabase-access-token');
+              localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+            }
+
+            // Unexpected SIGNED_OUT after we were authenticated (refresh
+            // failed after background idle) — not an intentional Sign out
+            // / worker day-end. Leave a LoginPage notice so clients don't
+            // see a bare login form and assume a hard "error"/timeout.
+            if (event === 'SIGNED_OUT') {
+              if (hadAuthenticatedSessionRef.current && !intentionalSignOutRef.current) {
+                try { sessionStorage.setItem('pv:sessionExpiredNotice', '1'); } catch { /* ignore */ }
+              }
+              intentionalSignOutRef.current = false;
+              hadAuthenticatedSessionRef.current = false;
             }
 
             // Drain the upload queue when we get a fresh token. Covers
@@ -2159,6 +2188,25 @@ export default function App() {
       mounted = false;
     };
   }, []);
+
+  // ── Session keep-alive on tab wake (all roles, including client) ───────
+  // ClientPortal skips the worker poll/upload machinery that otherwise
+  // keeps tokens warm. Mobile PWAs also throttle Supabase's auto-refresh
+  // timers while backgrounded. On visibility restore, refresh if the
+  // access token is expired or near expiry so the next API call (and
+  // the mirrored localStorage JWT) stays valid without kicking to login.
+  useEffect(() => {
+    if (!user || !supabase) return undefined;
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (!window.navigator.onLine) return;
+      ensureFreshSession({ minTtlSec: 120 }).catch(() => { /* non-fatal */ });
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    // Also nudge once on mount in case we hydrated mid-expiry window.
+    onVisible();
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [user]);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);

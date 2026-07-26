@@ -18,17 +18,20 @@
 //     "stuck at 100%" feel during server work should cap the displayed
 //     fraction to ~0.95 until the promise actually resolves.
 
+import { getAccessToken } from './supabaseClient';
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/$/, '');
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const USE_SUPABASE_AUTH = !!SUPABASE_URL && !!SUPABASE_ANON_KEY;
 
-export function requestWithUploadProgress(path, opts) {
+export async function requestWithUploadProgress(path, opts) {
   const o = opts || {};
   const method = o.method || 'POST';
   const body = o.body;
   const onProgress = o.onProgress;
   const demoUser = o.demoUser || 'worker';
+  const authToken = USE_SUPABASE_AUTH ? await getAccessToken() : null;
 
   return new Promise(function (resolve, reject) {
     const xhr = new XMLHttpRequest();
@@ -37,8 +40,7 @@ export function requestWithUploadProgress(path, opts) {
     xhr.setRequestHeader('Content-Type', 'application/json');
 
     if (USE_SUPABASE_AUTH) {
-      const token = localStorage.getItem('supabase-access-token');
-      if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+      if (authToken) xhr.setRequestHeader('Authorization', 'Bearer ' + authToken);
     } else {
       xhr.setRequestHeader('X-Demo-User', demoUser);
     }

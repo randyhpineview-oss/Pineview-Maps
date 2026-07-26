@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 
 import { api } from '../lib/api';
 import { nameKey, normalizeName, pinTypeLabel } from '../lib/mapUtils';
+import { ensureFreshSession } from '../lib/supabaseClient';
 import { useAppUpdate } from '../lib/useAppUpdate';
 import { APP_VERSION_LABEL } from '../version';
 import AppSupportOverlay from './AppSupportCard';
@@ -167,16 +168,31 @@ export default function ClientPortal({
   const smoothedLocationRef = useRef(null);
   const lastLocationUpdateRef = useRef(0);
   const locationMessageTimerRef = useRef(null);
+  // Tracks whether we've ever successfully loaded sites — used so a
+  // transient 401/timeout on a later poll doesn't paint a sticky error
+  // over an already-working map.
+  const hasLoadedSitesRef = useRef(false);
 
   // ── Data loading ──────────────────────────────────────────────────────
   // Light periodic refresh — no delta-sync machinery needed for a single
   // read-only account with a small, scoped dataset. Session is fetched
   // alongside so FilterBar options track admin scope edits without
   // waiting for a JWT refresh.
+  //
+  // Pause while the tab is hidden (same pattern as App.jsx's poll loop)
+  // and ensureFreshSession on wake so a client who left the portal open
+  // for hours doesn't hit a cascade of expired-JWT 401s. api.js also
+  // silently refreshes+retries once on 401.
   useEffect(() => {
     let cancelled = false;
+    let interval = null;
 
     const load = async () => {
+      // Soft keep-alive before the parallel GETs — cheap no-op when the
+      // access token still has >2 min of life.
+      try { await ensureFreshSession({ minTtlSec: 120 }); } catch { /* non-fatal */ }
+      if (cancelled) return;
+
       const [siteResult, pipelineResult, sessionResult] = await Promise.allSettled([
         api.listSites(),
         api.listPipelines(),
@@ -185,9 +201,16 @@ export default function ClientPortal({
       if (cancelled) return;
       if (siteResult.status === 'fulfilled') {
         setSites(Array.isArray(siteResult.value) ? siteResult.value : []);
+        hasLoadedSitesRef.current = true;
         setError('');
       } else {
-        setError(siteResult.reason?.message || 'Could not load sites.');
+        // Keep showing prior map data on transient auth/network blips;
+        // api.js already retried once after a silent token refresh.
+        const msg = siteResult.reason?.message || 'Could not load sites.';
+        const transient = /401|Network error|timed out/i.test(msg);
+        if (!(hasLoadedSitesRef.current && transient)) {
+          setError(msg);
+        }
       }
       if (pipelineResult.status === 'fulfilled') {
         setPipelines(Array.isArray(pipelineResult.value) ? pipelineResult.value : []);
@@ -205,15 +228,39 @@ export default function ClientPortal({
       setLoading(false);
     };
 
+    const startInterval = () => {
+      if (interval != null) return;
+      interval = setInterval(() => {
+        void load();
+        // Piggyback version check on the same tick (iOS PWA-friendly) —
+        // mirrors App.jsx's runPollTick → checkAppVersion path.
+        checkAppVersion();
+      }, 60_000);
+    };
+    const stopInterval = () => {
+      if (interval == null) return;
+      clearInterval(interval);
+      interval = null;
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void load();
+        startInterval();
+      } else {
+        stopInterval();
+      }
+    };
+
     void load();
-    const interval = setInterval(() => {
-      void load();
-      // Piggyback version check on the same tick (iOS PWA-friendly) —
-      // mirrors App.jsx's runPollTick → checkAppVersion path.
-      checkAppVersion();
-    }, 60_000);
-    return () => { cancelled = true; clearInterval(interval); };
-  }, [checkAppVersion]);
+    if (document.visibilityState === 'visible') startInterval();
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      cancelled = true;
+      stopInterval();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [checkAppVersion, clientName, clientAreas]);
 
   // JWT props are only a bootstrap until /api/session lands. Never let
   // them stomp a DB-authoritative scope we already fetched.

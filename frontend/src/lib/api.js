@@ -1,3 +1,5 @@
+import { getAccessToken, refreshAccessToken } from './supabaseClient';
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/$/, '') || '';
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
@@ -20,17 +22,26 @@ if (typeof window !== 'undefined' && import.meta.env.DEV) {
 }
 
 async function request(path, options = {}) {
-  const { demoUser = 'worker', body, formData, headers = {}, timeoutMs = 20_000, ...rest } = options;
+  const {
+    demoUser = 'worker',
+    body,
+    formData,
+    headers = {},
+    timeoutMs = 20_000,
+    _authRetried = false,
+    ...rest
+  } = options;
 
   const requestHeaders = { ...headers };
 
-  // If using Supabase, add Bearer token from localStorage
+  // Prefer the live Supabase session over a possibly-stale localStorage
+  // mirror (backgrounded client PWAs often miss TOKEN_REFRESHED).
   if (USE_SUPABASE_AUTH) {
-    const token = localStorage.getItem('supabase-access-token');
+    const token = await getAccessToken();
     if (token) {
       requestHeaders['Authorization'] = `Bearer ${token}`;
     } else {
-      console.warn('[API] No Supabase token found in localStorage');
+      console.warn('[API] No Supabase access token available');
     }
   } else {
     // Development: use X-Demo-User header
@@ -80,6 +91,17 @@ async function request(path, options = {}) {
   }
 
   let response = await doFetch();
+
+  // Expired access token after a long background: silent refresh + one
+  // retry. Single-flight refreshAccessToken avoids ClientPortal's parallel
+  // GETs racing refresh-token rotation into a false SIGNED_OUT.
+  // Real auth failures (disabled account, revoked refresh) still surface.
+  if (response.status === 401 && USE_SUPABASE_AUTH && !_authRetried) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) {
+      return request(path, { ...options, _authRetried: true });
+    }
+  }
 
   if (!response.ok) {
     let message = 'Request failed';
@@ -359,11 +381,11 @@ export const api = {
    * @param {AbortSignal} [signal] Optional AbortSignal to cancel the fetch.
    * @returns {Promise<Uint8Array>}
    */
-  async fetchPdfBytes(pdfUrl, signal, { bustCache = false } = {}) {
+  async fetchPdfBytes(pdfUrl, signal, { bustCache = false } = {}, _authRetried = false) {
     if (!pdfUrl) throw new Error('No pdf_url on this record.');
     const headers = {};
     if (USE_SUPABASE_AUTH) {
-      const token = localStorage.getItem('supabase-access-token');
+      const token = await getAccessToken();
       if (token) headers['Authorization'] = `Bearer ${token}`;
     } else {
       headers['X-Demo-User'] = 'worker';
@@ -381,6 +403,12 @@ export const api = {
       signal,
       cache: bustCache ? 'no-store' : 'default',
     });
+    if (resp.status === 401 && USE_SUPABASE_AUTH && !_authRetried) {
+      const refreshed = await refreshAccessToken();
+      if (refreshed) {
+        return api.fetchPdfBytes(pdfUrl, signal, { bustCache }, true);
+      }
+    }
     if (!resp.ok) {
       let message = `PDF proxy failed (${resp.status})`;
       try {
@@ -929,13 +957,20 @@ export const api = {
 
     const headers = {};
     if (USE_SUPABASE_AUTH) {
-      const token = localStorage.getItem('supabase-access-token');
+      const token = await getAccessToken();
       if (token) headers['Authorization'] = `Bearer ${token}`;
     } else {
       headers['X-Demo-User'] = 'admin';
     }
 
-    const resp = await fetch(url, { headers, signal });
+    let resp = await fetch(url, { headers, signal });
+    if (resp.status === 401 && USE_SUPABASE_AUTH) {
+      const refreshed = await refreshAccessToken();
+      if (refreshed) {
+        headers['Authorization'] = `Bearer ${refreshed}`;
+        resp = await fetch(url, { headers, signal });
+      }
+    }
     if (!resp.ok) {
       let detail = resp.statusText || 'Download failed';
       try { detail = (await resp.json()).detail || detail; } catch { /* keep default */ }

@@ -110,14 +110,20 @@ export default function LoginPage({ onLoginSuccess }) {
     window.history.replaceState({}, document.title, cleaned);
   }, []);
 
-  // Worker end-of-day auto sign-out leaves this flag so the login screen
-  // can explain the kick (green info, not a red auth error).
+  // Worker end-of-day auto sign-out / unexpected session expiry leave
+  // flags so the login screen can explain the kick (green info, not a
+  // red auth error that looks like a timeout failure).
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
       if (sessionStorage.getItem('pv:workerDayEndedNotice') === '1') {
         sessionStorage.removeItem('pv:workerDayEndedNotice');
         setSuccess('Your workday session ended. Please sign in again to continue.');
+        return;
+      }
+      if (sessionStorage.getItem('pv:sessionExpiredNotice') === '1') {
+        sessionStorage.removeItem('pv:sessionExpiredNotice');
+        setSuccess('Your session expired while this page was idle. Please sign in again to continue.');
       }
     } catch { /* ignore */ }
   }, []);
