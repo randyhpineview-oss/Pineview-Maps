@@ -578,18 +578,18 @@ export default function ClientPortal({
                 <button
                   type="button"
                   role="menuitem"
-                  className="topbar-account-item"
-                  onClick={() => { setAccountMenuOpen(false); setShowAppSupport(true); }}
-                >
-                  App support
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
                   className="topbar-account-item topbar-account-item-danger"
                   onClick={() => { setAccountMenuOpen(false); onSignOut?.(); }}
                 >
                   Sign out
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="topbar-account-item topbar-account-item-quiet"
+                  onClick={() => { setAccountMenuOpen(false); setShowAppSupport(true); }}
+                >
+                  App support
                 </button>
               </div>
             ) : null}

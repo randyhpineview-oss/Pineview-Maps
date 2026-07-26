@@ -6466,14 +6466,6 @@ export default function App() {
                 >
                   🧪 Tank Mix Recipes
                 </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="topbar-account-item"
-                  onClick={() => { setAccountMenuOpen(false); setShowAppSupport(true); }}
-                >
-                  App support
-                </button>
                 {actualCanManagePins ? (
                   <button
                     type="button"
@@ -6491,6 +6483,14 @@ export default function App() {
                   onClick={() => { setAccountMenuOpen(false); handleSignOut(); }}
                 >
                   Sign out
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="topbar-account-item topbar-account-item-quiet"
+                  onClick={() => { setAccountMenuOpen(false); setShowAppSupport(true); }}
+                >
+                  App support
                 </button>
                 <div
                   role="presentation"

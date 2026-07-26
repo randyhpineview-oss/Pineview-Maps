@@ -241,7 +241,22 @@ button { cursor: pointer; }
   color: #fee2e2;
 }
 
-/* App support overlay (account menu → separate screen, like Tank Mix). */
+/* Quiet account-menu entry — sits under Sign out, above version. */
+.topbar-account-item-quiet {
+  font-size: 0.72rem !important;
+  font-weight: 500 !important;
+  padding: 6px 12px !important;
+  color: #9ab1d6 !important;
+  opacity: 0.9;
+}
+
+.topbar-account-item-quiet:hover,
+.topbar-account-item-quiet:active {
+  color: #d7e4fa !important;
+  opacity: 1;
+}
+
+/* App support overlay — card is the logo; contacts sit on its dark area. */
 .app-support-backdrop {
   position: fixed;
   inset: 0;
@@ -257,13 +272,12 @@ button { cursor: pointer; }
 
 .app-support-modal {
   position: relative;
-  background-color: #0f172a;
-  border: 1px solid rgba(143, 182, 255, 0.22);
-  border-radius: 16px;
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.75);
-  width: 100%;
-  max-width: 360px;
+  width: min(280px, 100%);
+  border: 1px solid rgba(143, 182, 255, 0.35);
+  border-radius: 14px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8);
   overflow: hidden;
+  background: #000;
   animation: app-support-fade-in 0.2s ease-out;
 }
 
@@ -272,68 +286,70 @@ button { cursor: pointer; }
   to { opacity: 1; transform: scale(1); }
 }
 
-.app-support-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px 18px 8px;
-}
-
-.app-support-title {
-  margin: 0;
-  font-size: 1.15rem;
-  font-weight: 700;
-  color: #ffffff;
+.app-support-logo {
+  display: block;
+  width: 100%;
+  height: auto;
+  vertical-align: top;
 }
 
 .app-support-close {
-  background: transparent;
-  border: none;
-  color: #9ab1d6;
-  font-size: 1.15rem;
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(143, 182, 255, 0.35);
+  color: #e5eefb;
+  font-size: 0.95rem;
   cursor: pointer;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 8px;
+  line-height: 1;
 }
 
 .app-support-close:hover,
 .app-support-close:active {
-  background: rgba(143, 182, 255, 0.10);
-  color: #e5eefb;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
 }
 
-.app-support-body {
+/* Overlaid on the black lower band of the logo artwork. */
+.app-support-contacts {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 10%;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  padding: 4px 18px 24px;
+  gap: 4px;
+  padding: 0 12px;
   text-align: center;
+  pointer-events: none;
 }
 
-.app-support-logo {
-  display: block;
-  width: min(240px, 100%);
-  height: auto;
-  border-radius: 10px;
-  margin-bottom: 4px;
+.app-support-contacts .app-support-link {
+  pointer-events: auto;
 }
 
 .app-support-link {
-  font-size: 0.95rem;
-  color: #93c5fd;
+  font-size: 0.82rem;
+  color: #7dd3fc;
   text-decoration: none;
   font-weight: 600;
-  line-height: 1.4;
+  line-height: 1.35;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
 }
 
 .app-support-link:hover,
 .app-support-link:active {
-  color: #bfdbfe;
+  color: #bae6fd;
   text-decoration: underline;
 }
 
