@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 
 import { api } from '../lib/api';
 import { nameKey, normalizeName, pinTypeLabel } from '../lib/mapUtils';
-import AppSupportCard from './AppSupportCard';
+import AppSupportOverlay from './AppSupportCard';
 import FilterBar from './FilterBar';
 import MapView from './MapView';
 import PipelineDetailSheet from './PipelineDetailSheet';
@@ -142,6 +142,7 @@ export default function ClientPortal({
   const [previewingRecord, setPreviewingRecord] = useState(null);
 
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [showAppSupport, setShowAppSupport] = useState(false);
   const accountMenuRef = useRef(null);
   const mapRef = useRef(null);
 
@@ -577,17 +578,26 @@ export default function ClientPortal({
                 <button
                   type="button"
                   role="menuitem"
+                  className="topbar-account-item"
+                  onClick={() => { setAccountMenuOpen(false); setShowAppSupport(true); }}
+                >
+                  App support
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
                   className="topbar-account-item topbar-account-item-danger"
                   onClick={() => { setAccountMenuOpen(false); onSignOut?.(); }}
                 >
                   Sign out
                 </button>
-                <AppSupportCard />
               </div>
             ) : null}
           </div>
         </div>
       </header>
+
+      {showAppSupport ? <AppSupportOverlay onClose={() => setShowAppSupport(false)} /> : null}
 
       {/* ── Main area: map is always behind ── */}
       <main className="main-area">

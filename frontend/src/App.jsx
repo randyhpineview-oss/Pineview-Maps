@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import AppSupportCard from './components/AppSupportCard';
+import AppSupportOverlay from './components/AppSupportCard';
 import AutocompleteInput from './components/AutocompleteInput';
 import CrewSidebar from './components/CrewSidebar';
 import { useDialog } from './components/DialogProvider';
@@ -598,6 +598,7 @@ export default function App() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [fabOpen, setFabOpen] = useState(false);
   const [showTankMix, setShowTankMix] = useState(false);
+  const [showAppSupport, setShowAppSupport] = useState(false);
   const [addPinType, setAddPinType] = useState(null);
   const [addPinLocation, setAddPinLocation] = useState(null);
   const [addPinForm, setAddPinForm] = useState({ lsd: '', client: '', area: '' });
@@ -6465,6 +6466,14 @@ export default function App() {
                 >
                   🧪 Tank Mix Recipes
                 </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="topbar-account-item"
+                  onClick={() => { setAccountMenuOpen(false); setShowAppSupport(true); }}
+                >
+                  App support
+                </button>
                 {actualCanManagePins ? (
                   <button
                     type="button"
@@ -6483,7 +6492,6 @@ export default function App() {
                 >
                   Sign out
                 </button>
-                <AppSupportCard />
                 <div
                   role="presentation"
                   style={{ padding: '0.4rem 0.75rem 0.5rem', textAlign: 'center', opacity: 0.6, fontSize: '0.7rem', color: '#9ab1d6' }}
@@ -7677,6 +7685,7 @@ export default function App() {
         </div>
 
         {showTankMix && <TankMixChartOverlay onClose={() => setShowTankMix(false)} />}
+        {showAppSupport ? <AppSupportOverlay onClose={() => setShowAppSupport(false)} /> : null}
       </main>
 
       {/* ── Reports dashboard (admin/office full-page overlay) ──
