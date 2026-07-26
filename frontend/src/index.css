@@ -270,6 +270,15 @@ button { cursor: pointer; }
   padding: 16px;
 }
 
+/* On phones, sit the card a bit higher than true center — thumb reach /
+   keyboard-safe area feel better when it isn’t dead-middle of the screen. */
+@media (max-width: 480px) {
+  .app-support-backdrop {
+    align-items: flex-start;
+    padding-top: 18vh;
+  }
+}
+
 .app-support-modal {
   position: relative;
   width: min(280px, 100%);
