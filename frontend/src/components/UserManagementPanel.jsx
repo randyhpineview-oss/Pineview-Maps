@@ -678,6 +678,9 @@ export default function UserManagementPanel({
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [busy, setBusy] = useState(false);
+  // List filter: Pineview staff (left dropdown) vs external clients (right).
+  const [listMode, setListMode] = useState('staff'); // 'staff' | 'clients'
+  const [staffRoleFilter, setStaffRoleFilter] = useState('all'); // 'all' | role value
 
   // New user form
   const [showForm, setShowForm] = useState(false);
@@ -687,6 +690,23 @@ export default function UserManagementPanel({
   const [newRole, setNewRole] = useState('worker');
 
   const isBusy = busy || externalBusy;
+
+  const staffCount = useMemo(
+    () => users.filter((u) => u.role !== 'client').length,
+    [users]
+  );
+  const clientCount = useMemo(
+    () => users.filter((u) => u.role === 'client').length,
+    [users]
+  );
+  const filteredUsers = useMemo(() => {
+    if (listMode === 'clients') {
+      return users.filter((u) => u.role === 'client');
+    }
+    const staff = users.filter((u) => u.role !== 'client');
+    if (staffRoleFilter === 'all') return staff;
+    return staff.filter((u) => u.role === staffRoleFilter);
+  }, [users, listMode, staffRoleFilter]);
 
   function clearMessages() {
     setError('');
@@ -844,6 +864,61 @@ export default function UserManagementPanel({
         </button>
       </div>
 
+      <div
+        style={{
+          display: 'flex',
+          gap: '0.5rem',
+          alignItems: 'stretch',
+          marginBottom: '0.75rem',
+          flexWrap: 'wrap',
+        }}
+      >
+        <select
+          value={listMode === 'staff' ? staffRoleFilter : 'all'}
+          onChange={(e) => {
+            setListMode('staff');
+            setStaffRoleFilter(e.target.value);
+          }}
+          aria-label="Filter Pineview staff by role"
+          style={{
+            flex: '1 1 12rem',
+            minWidth: '10rem',
+            opacity: listMode === 'staff' ? 1 : 0.65,
+            border: listMode === 'staff' ? '1px solid #2563eb' : '1px solid #334155',
+            borderRadius: '6px',
+            padding: '6px 10px',
+            fontSize: '0.85rem',
+            background: listMode === 'staff' ? 'rgba(37,99,235,0.12)' : 'rgba(15,23,42,0.6)',
+            color: '#e2e8f0',
+          }}
+        >
+          <option value="all">Pineview staff ({staffCount})</option>
+          {ASSIGNABLE_ROLES.map((r) => {
+            const count = users.filter((u) => u.role === r.value).length;
+            return (
+              <option key={r.value} value={r.value}>
+                {r.label} ({count})
+              </option>
+            );
+          })}
+        </select>
+        <button
+          type="button"
+          className={listMode === 'clients' ? 'primary-button' : 'secondary-button'}
+          onClick={() => setListMode('clients')}
+          style={{
+            flex: '0 0 auto',
+            fontSize: '0.85rem',
+            padding: '6px 14px',
+            border: listMode === 'clients' ? undefined : '1px solid #b45309',
+            color: listMode === 'clients' ? undefined : '#fbbf24',
+          }}
+          title="Show only external client-portal accounts"
+        >
+          Clients ({clientCount})
+        </button>
+      </div>
+
       {error ? (
         <div style={{ background: '#7f1d1d', color: '#fca5a5', padding: '0.5rem 0.75rem', borderRadius: '6px', marginBottom: '0.75rem', fontSize: '0.85rem' }}>
           {error}
@@ -894,12 +969,18 @@ export default function UserManagementPanel({
       ) : null}
 
       <div className="list-grid">
-          {users.length === 0 ? (
+          {filteredUsers.length === 0 ? (
             <div className="site-row">
-              <div className="small-text">No users found.</div>
+              <div className="small-text">
+                {listMode === 'clients'
+                  ? 'No client accounts yet. Use Invite a Client above.'
+                  : staffRoleFilter === 'all'
+                    ? 'No Pineview staff users found.'
+                    : `No ${ASSIGNABLE_ROLES.find((r) => r.value === staffRoleFilter)?.label || staffRoleFilter} users.`}
+              </div>
             </div>
           ) : (
-            users.map((user) => (
+            filteredUsers.map((user) => (
               <UserRow
                 key={user.id}
                 user={user}
