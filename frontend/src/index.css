@@ -303,9 +303,30 @@ button { cursor: pointer; }
   to { opacity: 1; transform: scale(1); }
 }
 
+@keyframes app-support-backdrop-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes app-support-card-out {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.96); }
+}
+
+.app-support-backdrop--closing {
+  animation: app-support-backdrop-out 0.18s ease-in forwards;
+  pointer-events: none;
+}
+
+.app-support-backdrop--closing .app-support-modal {
+  animation: app-support-card-out 0.2s ease-in forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .app-support-backdrop,
-  .app-support-modal {
+  .app-support-modal,
+  .app-support-backdrop--closing,
+  .app-support-backdrop--closing .app-support-modal {
     animation: none;
   }
 }
