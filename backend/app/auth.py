@@ -72,10 +72,10 @@ def _stable_user_id(sub: str) -> int:
 MANAGES_PINS: tuple[RoleEnum, ...] = (RoleEnum.admin, RoleEnum.office, RoleEnum.crew_lead)
 
 
-# Developer account. Hidden from other users' user lists (User Management,
-# roster, crew picker, Check-ins Dashboard) and protected from update/delete
-# by anyone except the dev themselves. The dev still sees their own account
-# when logged in, for testing.
+# Developer account. Always hidden from User Management / roster / crew
+# pickers / Check-ins Dashboard (including when the dev is logged in) so
+# nobody can accidentally change its role. Still protected from
+# update/delete by anyone except the dev themselves via `_guard_dev_account`.
 DEV_ACCOUNT_EMAIL = "randyh.pineview@gmail.com"
 
 

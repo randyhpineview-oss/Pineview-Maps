@@ -59,9 +59,8 @@ def list_roster(
     crew picker, etc.) without exposing Supabase-Auth fields.
     """
     rows = db.query(User).filter(User.is_active.is_(True)).order_by(User.name.asc()).all()
-    # Hide the dev account from everyone except the dev themselves.
-    if not is_dev_email(getattr(current_user, "email", None)):
-        rows = [u for u in rows if not is_dev_email(u.email)]
+    # Always hide the protected developer account from pickers.
+    rows = [u for u in rows if not is_dev_email(u.email)]
     return [
         RosterUser(
             id=u.id,
@@ -481,11 +480,12 @@ def list_users(current_user: User = Depends(get_current_user)) -> list[UserRespo
     client = get_supabase_admin()
     try:
         users = _list_all_auth_users(client)
-        active_users = [u for u in users if not getattr(u, "deleted_at", None)]
-        if not is_dev_email(getattr(current_user, "email", None)):
-            active_users = [
-                u for u in active_users if not is_dev_email(getattr(u, "email", None))
-            ]
+        active_users = [
+            u
+            for u in users
+            if not getattr(u, "deleted_at", None)
+            and not is_dev_email(getattr(u, "email", None))
+        ]
 
         # Purge extra Auth rows for the same email, then rebuild the response
         # from survivors only (never trust in-memory rows after a delete).
@@ -509,11 +509,8 @@ def list_users(current_user: User = Depends(get_current_user)) -> list[UserRespo
             u
             for u in _list_all_auth_users(client)
             if not getattr(u, "deleted_at", None)
+            and not is_dev_email(getattr(u, "email", None))
         ]
-        if not is_dev_email(getattr(current_user, "email", None)):
-            refreshed = [
-                u for u in refreshed if not is_dev_email(getattr(u, "email", None))
-            ]
         deduped = _dedupe_auth_users_by_email(refreshed)
         return [_format_user(u) for u in deduped]
     except Exception as exc:

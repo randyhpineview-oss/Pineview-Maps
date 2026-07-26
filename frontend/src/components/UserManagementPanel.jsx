@@ -181,6 +181,14 @@ const ASSIGNABLE_ROLES = [
 // Full set, including "client" — used for badge-label lookups only.
 const ROLES = [...ASSIGNABLE_ROLES, { value: 'client', label: 'Client' }];
 
+// Protected developer account — never show in User Management (matches
+// backend `DEV_ACCOUNT_EMAIL`). Belt-and-suspenders vs Realtime/cache.
+const HIDDEN_DEV_EMAIL = 'randyh.pineview@gmail.com';
+
+function isHiddenDevEmail(email) {
+  return (email || '').trim().toLowerCase() === HIDDEN_DEV_EMAIL;
+}
+
 function roleBadgeStyle(role) {
   switch (role) {
     case 'admin':
@@ -673,8 +681,12 @@ export default function UserManagementPanel({
 }) {
   // Realtime can inject local `users` rows (integer ids) alongside Supabase
   // Auth rows (UUIDs) for the same email — collapse those here so Edit name
-  // never resurfaces a second "Unconfirmed" client card.
-  const users = useMemo(() => dedupeUsersByEmail(cachedUsers), [cachedUsers]);
+  // never resurfaces a second "Unconfirmed" client card. Also strip the
+  // protected developer account so it never appears in this panel.
+  const users = useMemo(
+    () => dedupeUsersByEmail(cachedUsers).filter((u) => !isHiddenDevEmail(u?.email)),
+    [cachedUsers]
+  );
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [busy, setBusy] = useState(false);
