@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import AppSupportCard from './components/AppSupportCard';
 import AutocompleteInput from './components/AutocompleteInput';
 import CrewSidebar from './components/CrewSidebar';
 import { useDialog } from './components/DialogProvider';
@@ -6482,6 +6483,7 @@ export default function App() {
                 >
                   Sign out
                 </button>
+                <AppSupportCard />
                 <div
                   role="presentation"
                   style={{ padding: '0.4rem 0.75rem 0.5rem', textAlign: 'center', opacity: 0.6, fontSize: '0.7rem', color: '#9ab1d6' }}

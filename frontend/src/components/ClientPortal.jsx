@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 
 import { api } from '../lib/api';
 import { nameKey, normalizeName, pinTypeLabel } from '../lib/mapUtils';
+import AppSupportCard from './AppSupportCard';
 import FilterBar from './FilterBar';
 import MapView from './MapView';
 import PipelineDetailSheet from './PipelineDetailSheet';
@@ -581,6 +582,7 @@ export default function ClientPortal({
                 >
                   Sign out
                 </button>
+                <AppSupportCard />
               </div>
             ) : null}
           </div>
