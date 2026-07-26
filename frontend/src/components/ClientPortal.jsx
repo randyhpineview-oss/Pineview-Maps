@@ -687,6 +687,43 @@ export default function ClientPortal({
     setIsFilterOpen(false);
   }
 
+  // ── Swipe-to-dismiss for Sites side panel (right swipe, same as App.jsx) ──
+  const sitesPanelTouchStartX = useRef(null);
+  const [sitesPanelDragOffset, setSitesPanelDragOffset] = useState(0);
+  const [sitesPanelDragging, setSitesPanelDragging] = useState(false);
+
+  const getPanelWidth = () => {
+    if (typeof window === 'undefined') return 380;
+    return window.innerWidth <= 768 ? window.innerWidth : 380;
+  };
+
+  function handleSitesPanelTouchStart(event) {
+    if (activeTab !== TAB_SITES) return;
+    sitesPanelTouchStartX.current = event.touches[0].clientX;
+    setSitesPanelDragging(true);
+    setSitesPanelDragOffset(0);
+  }
+
+  function handleSitesPanelTouchMove(event) {
+    if (sitesPanelTouchStartX.current === null) return;
+    const delta = event.touches[0].clientX - sitesPanelTouchStartX.current;
+    // Only allow dragging to the right (positive delta)
+    if (delta > 0) {
+      setSitesPanelDragOffset(delta);
+      event.preventDefault();
+    }
+  }
+
+  function handleSitesPanelTouchEnd() {
+    if (sitesPanelTouchStartX.current === null) return;
+    if (sitesPanelDragOffset > getPanelWidth() / 2) {
+      setActiveTab(TAB_MAP);
+    }
+    sitesPanelTouchStartX.current = null;
+    setSitesPanelDragging(false);
+    setSitesPanelDragOffset(0);
+  }
+
   // ── Swipe-to-dismiss for the two bottom sheets ────────────────────────
   const detailTouchStartY = useRef(null);
   const detailBodyRef = useRef(null);
@@ -1005,10 +1042,18 @@ export default function ClientPortal({
           </div>
         </div>
 
-        {/* ── Sites list panel ── */}
+        {/* ── Sites list panel ──
+            Same left-to-right live swipe-to-dismiss as App.jsx Sites panel. */}
         <div
-          className={`side-panel ${activeTab === TAB_SITES ? 'open' : ''}`}
-          style={{ transform: activeTab === TAB_SITES ? 'translateX(0)' : 'translateX(100%)' }}
+          className={`side-panel ${activeTab === TAB_SITES ? 'open' : ''} ${sitesPanelDragging ? 'dragging' : ''}`}
+          onTouchStart={handleSitesPanelTouchStart}
+          onTouchMove={handleSitesPanelTouchMove}
+          onTouchEnd={handleSitesPanelTouchEnd}
+          style={{
+            transform: activeTab === TAB_SITES
+              ? `translateX(${sitesPanelDragOffset}px)`
+              : 'translateX(100%)',
+          }}
         >
           <div className="side-panel-header">
             <h2>Sites</h2>
