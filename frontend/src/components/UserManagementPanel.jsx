@@ -887,11 +887,24 @@ export default function UserManagementPanel({
       >
         <select
           value={listMode === 'staff' ? staffRoleFilter : 'all'}
+          onPointerDown={(e) => {
+            // From Clients: first tap only switches to staff — don't open the
+            // role list yet. Second tap (already on staff) opens the filter.
+            if (listMode !== 'staff') {
+              e.preventDefault();
+              setListMode('staff');
+            }
+          }}
           onChange={(e) => {
             setListMode('staff');
             setStaffRoleFilter(e.target.value);
           }}
           aria-label="Filter Pineview staff by role"
+          title={
+            listMode === 'staff'
+              ? 'Filter Pineview staff by role'
+              : 'Show Pineview staff (tap again to filter by role)'
+          }
           style={{
             flex: '1 1 12rem',
             minWidth: '10rem',
@@ -902,6 +915,7 @@ export default function UserManagementPanel({
             fontSize: '0.85rem',
             background: listMode === 'staff' ? 'rgba(37,99,235,0.12)' : 'rgba(15,23,42,0.6)',
             color: '#e2e8f0',
+            cursor: 'pointer',
           }}
         >
           <option value="all">Pineview staff ({staffCount})</option>
