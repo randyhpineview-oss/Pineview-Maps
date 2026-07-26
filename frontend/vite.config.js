@@ -135,6 +135,7 @@ export default defineConfig({
         'icon-192.png',
         'icon-512.png',
         'logo.png',
+        'randys-custom-apps-logo.png',
       ],
       injectManifest: {
         // Precache the JS/CSS/HTML produced by the build. `.mjs` is

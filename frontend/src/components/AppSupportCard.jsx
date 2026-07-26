@@ -3,9 +3,12 @@ import { APP_SUPPORT } from '../lib/appSupport';
 /**
  * Full-screen overlay for App support — the card IS the logo, with phone /
  * email sitting on the dark area under the mark, plus a close (✕) control.
+ *
+ * Shell paints immediately (aspect-ratio + preloaded logo); enter motion is
+ * a short intentional fade/scale, not a wait-for-image reveal.
  */
 export default function AppSupportOverlay({ onClose }) {
-  const { business, email, phoneDisplay, phoneTel, logoSrc } = APP_SUPPORT;
+  const { business, email, phoneDisplay, phoneTel, logoSrc, logoWidth, logoHeight } = APP_SUPPORT;
 
   return (
     <div className="app-support-backdrop" onClick={onClose}>
@@ -19,7 +22,10 @@ export default function AppSupportOverlay({ onClose }) {
           className="app-support-logo"
           src={logoSrc}
           alt={business}
+          width={logoWidth}
+          height={logoHeight}
           decoding="async"
+          fetchPriority="high"
         />
         <button
           type="button"

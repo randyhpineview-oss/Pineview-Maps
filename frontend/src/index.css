@@ -261,13 +261,16 @@ button { cursor: pointer; }
   position: fixed;
   inset: 0;
   background-color: rgba(0, 0, 0, 0.82);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  /* Lighter blur than 12px — full-viewport backdrop-filter is the main
+     open hitch; 8px still reads polished without a paint stall. */
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 9999;
   padding: 16px;
+  animation: app-support-backdrop-in 0.18s ease-out;
 }
 
 /* On phones, sit the card a bit higher than true center — thumb reach /
@@ -287,19 +290,34 @@ button { cursor: pointer; }
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8);
   overflow: hidden;
   background: #000;
-  animation: app-support-fade-in 0.2s ease-out;
+  animation: app-support-card-in 0.2s ease-out;
 }
 
-@keyframes app-support-fade-in {
-  from { opacity: 0; transform: scale(0.95); }
+@keyframes app-support-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes app-support-card-in {
+  from { opacity: 0; transform: scale(0.96); }
   to { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-support-backdrop,
+  .app-support-modal {
+    animation: none;
+  }
 }
 
 .app-support-logo {
   display: block;
   width: 100%;
   height: auto;
+  /* Reserve space before bitmap decode so the shell never collapses. */
+  aspect-ratio: 682 / 1024;
   vertical-align: top;
+  background: #000;
 }
 
 .app-support-close {
