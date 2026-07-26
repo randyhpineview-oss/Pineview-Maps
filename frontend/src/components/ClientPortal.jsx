@@ -3,6 +3,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { api } from '../lib/api';
 import { nameKey, normalizeName, pinTypeLabel } from '../lib/mapUtils';
 import { ensureFreshSession } from '../lib/supabaseClient';
+import { useAnimatedPresence } from '../lib/useAnimatedPresence';
 import { useAppUpdate } from '../lib/useAppUpdate';
 import { APP_VERSION_LABEL } from '../version';
 import AppSupportOverlay from './AppSupportCard';
@@ -118,6 +119,7 @@ export default function ClientPortal({
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [layers, setLayers] = useState(DEFAULT_LAYERS);
   const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const filterPresence = useAnimatedPresence(isFilterOpen);
   const [listSearch, setListSearch] = useState('');
 
   // Live scope from GET /api/session (DB-authoritative). JWT app_metadata
@@ -153,6 +155,7 @@ export default function ClientPortal({
   const [locationMessage, setLocationMessage] = useState('');
 
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const accountMenuPresence = useAnimatedPresence(accountMenuOpen);
   const [showAppSupport, setShowAppSupport] = useState(false);
   const accountMenuRef = useRef(null);
 
@@ -886,8 +889,11 @@ export default function ClientPortal({
                 <span className="topbar-account-trigger-dot topbar-account-trigger-dot--update" aria-hidden="true" />
               ) : null}
             </button>
-            {accountMenuOpen ? (
-              <div className="topbar-account-popover" role="menu">
+            {accountMenuPresence.mounted ? (
+              <div
+                className={`topbar-account-popover${accountMenuPresence.closing ? ' topbar-account-popover--closing' : ''}`}
+                role="menu"
+              >
                 <div className="topbar-account-name" role="presentation">
                   {userDisplayName}
                   <span className="topbar-account-name-scope">
@@ -1049,8 +1055,8 @@ export default function ClientPortal({
           </button>
         </div>
 
-        {isFilterOpen ? (
-          <div className="filter-overlay">
+        {filterPresence.mounted ? (
+          <div className={`filter-overlay${filterPresence.closing ? ' filter-overlay--closing' : ''}`}>
             <FilterBar
               filters={filters}
               clients={scopedClients}

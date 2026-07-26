@@ -1,11 +1,43 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { OVERLAY_EXIT_MS } from '../lib/useAnimatedPresence';
+
+function prefersReducedMotion() {
+  return typeof window !== 'undefined'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
 
 export default function TankMixChartOverlay({ onClose }) {
+  const [closing, setClosing] = useState(false);
+  const closedRef = useRef(false);
+
+  const requestClose = () => {
+    if (closedRef.current || closing) return;
+    if (prefersReducedMotion()) {
+      closedRef.current = true;
+      onClose();
+      return;
+    }
+    setClosing(true);
+  };
+
+  useEffect(() => {
+    if (!closing) return undefined;
+    const timer = window.setTimeout(() => {
+      if (closedRef.current) return;
+      closedRef.current = true;
+      onClose();
+    }, OVERLAY_EXIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [closing, onClose]);
+
   // Prevent clicks inside the modal from bubbling up to the backdrop
   const handleModalClick = (e) => e.stopPropagation();
 
   return (
-    <div className="tank-mix-backdrop" onClick={onClose}>
+    <div
+      className={`tank-mix-backdrop${closing ? ' tank-mix-backdrop--closing' : ''}`}
+      onClick={requestClose}
+    >
       <style>{`
         .tank-mix-backdrop {
           position: fixed;
@@ -21,6 +53,7 @@ export default function TankMixChartOverlay({ onClose }) {
           justify-content: center;
           z-index: 9999;
           padding: 16px;
+          animation: tank-mix-backdrop-in 0.18s ease-out;
         }
 
         .tank-mix-modal {
@@ -34,12 +67,45 @@ export default function TankMixChartOverlay({ onClose }) {
           display: flex;
           flex-direction: column;
           overflow: hidden;
-          animation: tank-mix-fade-in 0.2s ease-out;
+          animation: tank-mix-card-in 0.2s ease-out;
         }
 
-        @keyframes tank-mix-fade-in {
-          from { opacity: 0; transform: scale(0.95); }
+        @keyframes tank-mix-backdrop-in {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+
+        @keyframes tank-mix-card-in {
+          from { opacity: 0; transform: scale(0.96); }
           to { opacity: 1; transform: scale(1); }
+        }
+
+        @keyframes tank-mix-backdrop-out {
+          from { opacity: 1; }
+          to { opacity: 0; }
+        }
+
+        @keyframes tank-mix-card-out {
+          from { opacity: 1; transform: scale(1); }
+          to { opacity: 0; transform: scale(0.96); }
+        }
+
+        .tank-mix-backdrop--closing {
+          animation: tank-mix-backdrop-out 0.18s ease-in forwards;
+          pointer-events: none;
+        }
+
+        .tank-mix-backdrop--closing .tank-mix-modal {
+          animation: tank-mix-card-out 0.2s ease-in forwards;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .tank-mix-backdrop,
+          .tank-mix-modal,
+          .tank-mix-backdrop--closing,
+          .tank-mix-backdrop--closing .tank-mix-modal {
+            animation: none;
+          }
         }
 
         .tank-mix-header {
@@ -236,7 +302,7 @@ export default function TankMixChartOverlay({ onClose }) {
           </h2>
           <button
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
             className="tank-mix-close-x"
             title="Close"
           >
@@ -338,7 +404,7 @@ export default function TankMixChartOverlay({ onClose }) {
         <div className="tank-mix-footer">
           <button
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
             className="tank-mix-close-btn"
           >
             Close

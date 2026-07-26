@@ -31,6 +31,7 @@ import {
   signOut,
   supabase,
 } from './lib/supabaseClient';
+import { useAnimatedPresence } from './lib/useAnimatedPresence';
 import { useAppUpdate } from './lib/useAppUpdate';
 import { APP_VERSION_LABEL } from './version';
 import {
@@ -339,8 +340,10 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState(TAB_MAP);
   const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const filterPresence = useAnimatedPresence(isFilterOpen);
   const [detailOpen, setDetailOpen] = useState(false);
   const [fabOpen, setFabOpen] = useState(false);
+  const fabMenuPresence = useAnimatedPresence(fabOpen);
   const [showTankMix, setShowTankMix] = useState(false);
   const [showAppSupport, setShowAppSupport] = useState(false);
   const [addPinType, setAddPinType] = useState(null);
@@ -715,6 +718,7 @@ export default function App() {
   // the inline layout unchanged via CSS (see `.topbar-account-menu` /
   // `.topbar-account-inline-only` in index.css).
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const accountMenuPresence = useAnimatedPresence(accountMenuOpen);
   const accountMenuRef = useRef(null);
   useEffect(() => {
     if (!accountMenuOpen) return;
@@ -6228,8 +6232,11 @@ export default function App() {
                 <span className="topbar-account-trigger-dot" aria-hidden="true" />
               ) : null}
             </button>
-            {accountMenuOpen ? (
-              <div className="topbar-account-popover" role="menu">
+            {accountMenuPresence.mounted ? (
+              <div
+                className={`topbar-account-popover${accountMenuPresence.closing ? ' topbar-account-popover--closing' : ''}`}
+                role="menu"
+              >
                 <div className="topbar-account-name" role="presentation">
                   {userDisplayName}
                   {viewAsWorker ? (
@@ -6450,8 +6457,8 @@ export default function App() {
           />
         ) : null}
 
-        {isFilterOpen ? (
-          <div className="filter-overlay">
+        {filterPresence.mounted ? (
+          <div className={`filter-overlay${filterPresence.closing ? ' filter-overlay--closing' : ''}`}>
             <FilterBar
               filters={filters}
               clients={clients}
@@ -6896,8 +6903,8 @@ export default function App() {
               </svg>
             </button>
             <button className="fab" type="button" onClick={() => setFabOpen((c) => !c)}>+</button>
-            {fabOpen ? (
-              <div className="fab-menu">
+            {fabMenuPresence.mounted ? (
+              <div className={`fab-menu${fabMenuPresence.closing ? ' fab-menu--closing' : ''}`}>
                 <button type="button" onClick={() => handleFabSelect('lsd')}>LSD</button>
                 <button type="button" onClick={() => handleFabSelect('water')}>Water</button>
                 <button type="button" onClick={() => handleFabSelect('quad_access')}>Quad Access</button>
