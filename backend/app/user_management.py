@@ -9,7 +9,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 from supabase import create_client
 
@@ -586,16 +586,38 @@ def create_user(payload: UserCreate) -> UserResponse:
 def _find_local_user(db: Session, user_id: str, email: Optional[str]) -> Optional[User]:
     """Locate the local `users` row for a Supabase user id.
 
-    Email first (it's the unique column and survives id-scheme changes), then
-    the deterministic hash of the Supabase UUID that `auth.py` inserts under.
+    Email first (case-insensitive — Table Editor rows often differ in casing
+    from Auth), then the deterministic hash of the Supabase UUID that
+    `auth.py` inserts under.
     """
     if db is None:
         return None
-    if email:
-        found = db.query(User).filter(User.email == email).first()
+    email_l = _normalize_email(email)
+    if email_l:
+        found = db.query(User).filter(func.lower(User.email) == email_l).first()
         if found is not None:
             return found
-    return db.query(User).filter(User.id == _stable_user_id(user_id)).first()
+    if user_id:
+        return db.query(User).filter(User.id == _stable_user_id(user_id)).first()
+    return None
+
+
+def _find_local_users_for_client_purge(
+    db: Session,
+    local_user: Optional[User],
+    email: Optional[str],
+) -> list[User]:
+    """All local ``public.users`` rows that must go when a client is deleted."""
+    by_id: dict[int, User] = {}
+    if local_user is not None and getattr(local_user, "id", None) is not None:
+        by_id[int(local_user.id)] = local_user
+    email_l = _normalize_email(email)
+    if email_l:
+        for row in db.query(User).filter(func.lower(User.email) == email_l).all():
+            by_id[int(row.id)] = row
+    # Prefer deleting client-role rows; if email matches a staff account we
+    # still only purge when the caller already decided this was a client delete.
+    return list(by_id.values())
 
 
 def _mirror_client_scope_locally(
@@ -829,64 +851,144 @@ def update_user(
         )
 
 
+def _detach_local_user_fks(db: Session, user_id: int) -> None:
+    """Clear / delete rows that reference ``public.users.id`` so the user can go.
+
+    Clients almost never own spray/check-in history, but a leftover FK is
+    exactly why Table Editor still showed a deleted client. Nullable FKs are
+    nulled; hard child rows (quote drafts, checkins) are deleted.
+    """
+    uid = {"uid": user_id}
+    statements = (
+        "DELETE FROM quote_drafts WHERE user_id = :uid",
+        "DELETE FROM checkins WHERE user_id = :uid",
+        "DELETE FROM shift_changes WHERE changed_by_user_id = :uid",
+        "UPDATE client_invites SET created_by_user_id = NULL WHERE created_by_user_id = :uid",
+        "UPDATE sites SET created_by_user_id = NULL WHERE created_by_user_id = :uid",
+        "UPDATE sites SET approved_by_user_id = NULL WHERE approved_by_user_id = :uid",
+        "UPDATE sites SET pending_change_requested_by_user_id = NULL WHERE pending_change_requested_by_user_id = :uid",
+        "UPDATE sites SET deleted_by_user_id = NULL WHERE deleted_by_user_id = :uid",
+        "UPDATE sites SET last_inspected_by_user_id = NULL WHERE last_inspected_by_user_id = :uid",
+        "UPDATE site_spray_records SET sprayed_by_user_id = NULL WHERE sprayed_by_user_id = :uid",
+        "UPDATE site_spray_records SET deleted_by_user_id = NULL WHERE deleted_by_user_id = :uid",
+        "UPDATE site_spray_records SET created_by_user_id = NULL WHERE created_by_user_id = :uid",
+        "UPDATE pipelines SET created_by_user_id = NULL WHERE created_by_user_id = :uid",
+        "UPDATE pipelines SET deleted_by_user_id = NULL WHERE deleted_by_user_id = :uid",
+        "UPDATE pipeline_spray_records SET sprayed_by_user_id = NULL WHERE sprayed_by_user_id = :uid",
+        "UPDATE pipeline_spray_records SET deleted_by_user_id = NULL WHERE deleted_by_user_id = :uid",
+        "UPDATE quotes SET created_by_user_id = NULL WHERE created_by_user_id = :uid",
+        "UPDATE quotes SET deleted_by_user_id = NULL WHERE deleted_by_user_id = :uid",
+        "UPDATE time_materials_tickets SET created_by_user_id = NULL WHERE created_by_user_id = :uid",
+        "UPDATE time_materials_tickets SET approved_by_user_id = NULL WHERE approved_by_user_id = :uid",
+        "UPDATE hydroseed_daily_records SET created_by_user_id = NULL WHERE created_by_user_id = :uid",
+        "UPDATE hydroseed_daily_records SET deleted_by_user_id = NULL WHERE deleted_by_user_id = :uid",
+        "UPDATE hydroseed_tickets SET created_by_user_id = NULL WHERE created_by_user_id = :uid",
+        "UPDATE hydroseed_tickets SET approved_by_user_id = NULL WHERE approved_by_user_id = :uid",
+        "UPDATE site_updates SET created_by_user_id = NULL WHERE created_by_user_id = :uid",
+        "UPDATE devices SET created_by_user_id = NULL WHERE created_by_user_id = :uid",
+        "UPDATE devices SET updated_by_user_id = NULL WHERE updated_by_user_id = :uid",
+        "UPDATE devices SET assigned_user_id = NULL WHERE assigned_user_id = :uid",
+    )
+    for sql in statements:
+        try:
+            with db.begin_nested():
+                db.execute(text(sql), uid)
+        except Exception:
+            # Unknown / renamed table — ignore and continue detaching others.
+            continue
+
+
 def _purge_client_local_data(
     db: Session,
     local_user: Optional[User],
     email: Optional[str],
 ) -> None:
-    """Remove a hard-deleted client's local footprint so a re-invite starts clean.
+    """Remove a hard-deleted client's ``public.users`` row (Table Editor → users).
 
-    Deletes the local `users` row outright plus the two email-keyed artifacts a
-    client account leaves behind: outstanding password-setup codes (Flow A) and
-    the invite row their signup consumed (Flow B). Invites they created
-    themselves shouldn't exist — creating one needs a pin-managing role — but
-    `client_invites.created_by_user_id` is a nullable FK onto `users.id`, so we
-    clear it rather than let it block the delete.
-
-    If the users row still can't be deleted (some table we don't know about
-    referencing it), fall back to `is_active=False`. A client with linked rows
-    is not a reason to hand the admin a 500 — the account still needs to stop
-    working, and the residual email can be cleared by hand.
+    Also clears password-setup codes and client invites keyed by email. This
+    must actually DELETE the row — leaving ``is_active=False`` is what made
+    deleted clients reappear in Table Editor and block clean re-invites.
     """
     if db is None:
         return
+    email_l = _normalize_email(email)
     try:
-        if email:
-            db.query(PasswordResetCode).filter(PasswordResetCode.email == email).delete(
-                synchronize_session=False
-            )
-            db.query(ClientInvite).filter(ClientInvite.used_by_email == email).delete(
-                synchronize_session=False
-            )
-        if local_user is not None:
+        if email_l:
+            db.query(PasswordResetCode).filter(
+                func.lower(PasswordResetCode.email) == email_l
+            ).delete(synchronize_session=False)
             db.query(ClientInvite).filter(
-                ClientInvite.created_by_user_id == local_user.id
+                func.lower(ClientInvite.used_by_email) == email_l
+            ).delete(synchronize_session=False)
+
+        targets = _find_local_users_for_client_purge(db, local_user, email)
+        for row in targets:
+            _detach_local_user_fks(db, int(row.id))
+            db.query(ClientInvite).filter(
+                ClientInvite.created_by_user_id == row.id
             ).update({ClientInvite.created_by_user_id: None}, synchronize_session=False)
-            db.delete(local_user)
+            db.delete(row)
+
+        # Belt-and-suspenders: SQL delete by email in case ORM missed a row
+        # (casing / session identity issues).
+        if email_l:
+            db.execute(
+                text("DELETE FROM users WHERE lower(email) = :email"),
+                {"email": email_l},
+            )
         db.commit()
+        if targets or email_l:
+            logger.info(
+                "Cleared public.users for deleted client %s (rows=%s)",
+                mask_email(email),
+                len(targets),
+            )
     except Exception as exc:
-        logger.warning(
-            "Hard delete of local client row failed (%s) — deactivating instead",
+        logger.exception(
+            "Hard delete of local client row(s) failed for %s: %s — retrying SQL purge",
+            mask_email(email),
             type(exc).__name__,
         )
         try:
             db.rollback()
         except Exception:
             pass
-        if local_user is None:
-            return
+        # Last resort: detach + delete by id/email without giving up and
+        # leaving an is_active=False ghost in Table Editor.
         try:
-            # Re-read: the rolled-back session may hold a stale/expunged instance.
-            fallback = db.query(User).filter(User.id == local_user.id).first()
-            if fallback is not None:
-                fallback.is_active = False
-                db.commit()
+            targets = _find_local_users_for_client_purge(db, None, email)
+            if local_user is not None and local_user.id not in {t.id for t in targets}:
+                targets.append(local_user)
+            for row in targets:
+                _detach_local_user_fks(db, int(row.id))
+                db.execute(text("DELETE FROM users WHERE id = :uid"), {"uid": int(row.id)})
+            if email_l:
+                db.execute(
+                    text("DELETE FROM users WHERE lower(email) = :email"),
+                    {"email": email_l},
+                )
+            db.commit()
+            logger.info(
+                "SQL-purged public.users for deleted client %s",
+                mask_email(email),
+            )
         except Exception:
             try:
                 db.rollback()
             except Exception:
                 pass
-            logger.exception("Could not deactivate local client row after failed hard delete")
+            logger.exception(
+                "Could not remove public.users row for deleted client %s",
+                mask_email(email),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=(
+                    "Auth user was removed but the local users table row could not be "
+                    "deleted (a related record still references it). Delete that row in "
+                    "Table Editor → users, or contact your developer."
+                ),
+            )
 
 
 @router.delete(
