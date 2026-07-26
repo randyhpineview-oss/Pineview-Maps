@@ -110,6 +110,18 @@ export default function LoginPage({ onLoginSuccess }) {
     window.history.replaceState({}, document.title, cleaned);
   }, []);
 
+  // Worker end-of-day auto sign-out leaves this flag so the login screen
+  // can explain the kick (green info, not a red auth error).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      if (sessionStorage.getItem('pv:workerDayEndedNotice') === '1') {
+        sessionStorage.removeItem('pv:workerDayEndedNotice');
+        setSuccess('Your workday session ended. Please sign in again to continue.');
+      }
+    } catch { /* ignore */ }
+  }, []);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');

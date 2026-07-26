@@ -161,6 +161,21 @@ function demoSession(role) {
   };
 }
 
+// Local calendar day as YYYY-MM-DD. Avoid `toLocaleDateString('en-CA')` —
+// some mobile WebViews ignore the locale and return system-formatted
+// strings, which made worker day-rollover comparisons flip mid-day and
+// look like a random session timeout.
+function localDateKey(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+const WORKER_SIGN_IN_DAY_KEY = 'pv:workerSignInDay';
+const WORKER_DAY_ENDED_NOTICE_KEY = 'pv:workerDayEndedNotice';
+const WORKER_DAY_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 function siteIdentityKey(value) {
   if (value == null) return '';
   if (typeof value === 'object') {
@@ -2161,31 +2176,37 @@ export default function App() {
   // under another teammate's session left over from a shared device. We
   // record the local date on every authenticated render and sign the worker
   // out as soon as the local calendar day rolls over (or if a stale session
-  // from a previous day is detected on app load). Admin/office accounts are
-  // exempt — they routinely keep long-lived sessions on office machines.
+  // from a previous day is detected on app load). Admin/office/client/
+  // crew_lead accounts are exempt — they routinely keep long-lived sessions.
+  // A LoginPage notice is set so the kick is explained (not a red "error").
   useEffect(() => {
     if (!user) return;
     if (userRole !== 'worker') return;
-    const KEY = 'pv:workerSignInDay';
-    const today = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD, local tz
+    const today = localDateKey();
     let stored = null;
-    try { stored = localStorage.getItem(KEY); } catch { /* ignore */ }
-    if (!stored) {
-      try { localStorage.setItem(KEY, today); } catch { /* ignore */ }
+    try { stored = localStorage.getItem(WORKER_SIGN_IN_DAY_KEY); } catch { /* ignore */ }
+    // Missing or legacy/non-ISO keys: stamp today without signing out.
+    // (Old builds used toLocaleDateString which could write non-ISO strings.)
+    if (!stored || !WORKER_DAY_KEY_RE.test(stored)) {
+      try { localStorage.setItem(WORKER_SIGN_IN_DAY_KEY, today); } catch { /* ignore */ }
       stored = today;
     }
+    const endWorkerDay = () => {
+      try { localStorage.removeItem(WORKER_SIGN_IN_DAY_KEY); } catch { /* ignore */ }
+      try { sessionStorage.setItem(WORKER_DAY_ENDED_NOTICE_KEY, '1'); } catch { /* ignore */ }
+      // Clear offline cache too — shared-device rationale for this policy.
+      handleSignOut().catch(() => { /* non-fatal */ });
+    };
     const checkRollover = () => {
-      const now = new Date().toLocaleDateString('en-CA');
+      const now = localDateKey();
       let last = today;
-      try { last = localStorage.getItem(KEY) || today; } catch { /* ignore */ }
-      if (last && last !== now) {
-        try { localStorage.removeItem(KEY); } catch { /* ignore */ }
-        signOut().catch(() => { /* non-fatal */ });
+      try { last = localStorage.getItem(WORKER_SIGN_IN_DAY_KEY) || today; } catch { /* ignore */ }
+      if (last && WORKER_DAY_KEY_RE.test(last) && last !== now) {
+        endWorkerDay();
       }
     };
     if (stored !== today) {
-      try { localStorage.removeItem(KEY); } catch { /* ignore */ }
-      signOut().catch(() => { /* non-fatal */ });
+      endWorkerDay();
       return;
     }
     const interval = window.setInterval(checkRollover, 60_000);
@@ -2195,7 +2216,7 @@ export default function App() {
       window.clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [user, userRole]);
+  }, [user, userRole, handleSignOut]);
 
   useEffect(() => {
     void refreshQueueCount();
