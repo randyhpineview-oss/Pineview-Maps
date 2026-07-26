@@ -3,10 +3,9 @@ import { APP_SUPPORT } from '../lib/appSupport';
 /**
  * Full-screen overlay for App support contact info.
  * Opened from the account menu (same pattern as Tank Mix Recipes).
- * Logo sits faded behind the text.
  */
 export default function AppSupportOverlay({ onClose }) {
-  const { name, business, email, phoneDisplay, phoneTel, logoSrc } = APP_SUPPORT;
+  const { business, email, phoneDisplay, phoneTel, logoSrc } = APP_SUPPORT;
 
   return (
     <div className="app-support-backdrop" onClick={onClose}>
@@ -16,13 +15,6 @@ export default function AppSupportOverlay({ onClose }) {
         aria-labelledby="app-support-title"
         onClick={(e) => e.stopPropagation()}
       >
-        <img
-          className="app-support-bg-logo"
-          src={logoSrc}
-          alt=""
-          aria-hidden="true"
-          decoding="async"
-        />
         <div className="app-support-header">
           <h2 id="app-support-title" className="app-support-title">App support</h2>
           <button
@@ -35,8 +27,12 @@ export default function AppSupportOverlay({ onClose }) {
           </button>
         </div>
         <div className="app-support-body">
-          <div className="app-support-name">{name}</div>
-          <div className="app-support-business">{business}</div>
+          <img
+            className="app-support-logo"
+            src={logoSrc}
+            alt={business}
+            decoding="async"
+          />
           <a className="app-support-link" href={`tel:${phoneTel}`}>
             {phoneDisplay}
           </a>
