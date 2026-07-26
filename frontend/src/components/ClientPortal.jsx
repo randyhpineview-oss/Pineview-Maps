@@ -1,7 +1,9 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { api } from '../lib/api';
 import { nameKey, normalizeName, pinTypeLabel } from '../lib/mapUtils';
+import { useAppUpdate } from '../lib/useAppUpdate';
+import { APP_VERSION_LABEL } from '../version';
 import AppSupportOverlay from './AppSupportCard';
 import FilterBar from './FilterBar';
 import MapView from './MapView';
@@ -152,6 +154,14 @@ export default function ClientPortal({
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [showAppSupport, setShowAppSupport] = useState(false);
   const accountMenuRef = useRef(null);
+
+  // Same SW + /version.json "Update Now" flow as the worker/admin App —
+  // clients install the same PWA and need the same reload affordance.
+  const { swUpdateAvailable, handleAppUpdate: applyAppUpdate, checkAppVersion } = useAppUpdate();
+  const handleAppUpdate = useCallback(async () => {
+    setAccountMenuOpen(false);
+    await applyAppUpdate();
+  }, [applyAppUpdate]);
   const mapRef = useRef(null);
   const lastFollowUpdateRef = useRef(0);
   const smoothedLocationRef = useRef(null);
@@ -196,9 +206,14 @@ export default function ClientPortal({
     };
 
     void load();
-    const interval = setInterval(() => { void load(); }, 60_000);
+    const interval = setInterval(() => {
+      void load();
+      // Piggyback version check on the same tick (iOS PWA-friendly) —
+      // mirrors App.jsx's runPollTick → checkAppVersion path.
+      checkAppVersion();
+    }, 60_000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, []);
+  }, [checkAppVersion]);
 
   // JWT props are only a bootstrap until /api/session lands. Never let
   // them stomp a DB-authoritative scope we already fetched.
@@ -812,7 +827,7 @@ export default function ClientPortal({
           <div className="topbar-account-menu" ref={accountMenuRef}>
             <button
               type="button"
-              className="topbar-account-trigger"
+              className={`topbar-account-trigger${swUpdateAvailable ? ' topbar-account-trigger--update' : ''}`}
               onClick={() => setAccountMenuOpen((open) => !open)}
               aria-label="Account menu"
               aria-expanded={accountMenuOpen}
@@ -820,6 +835,9 @@ export default function ClientPortal({
               title={userDisplayName}
             >
               {userInitial}
+              {swUpdateAvailable ? (
+                <span className="topbar-account-trigger-dot topbar-account-trigger-dot--update" aria-hidden="true" />
+              ) : null}
             </button>
             {accountMenuOpen ? (
               <div className="topbar-account-popover" role="menu">
@@ -850,6 +868,36 @@ export default function ClientPortal({
                 >
                   App support
                 </button>
+                <div
+                  role="presentation"
+                  style={{ padding: '0.4rem 0.75rem 0.5rem', textAlign: 'center', opacity: 0.6, fontSize: '0.7rem', color: '#9ab1d6' }}
+                  title={`Build ${APP_VERSION_LABEL}`}
+                >
+                  {APP_VERSION_LABEL}
+                </div>
+                {swUpdateAvailable ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={handleAppUpdate}
+                    style={{
+                      display: 'block',
+                      width: 'calc(100% - 1.5rem)',
+                      margin: '0 0.75rem 0.5rem',
+                      padding: '0.45rem 0.75rem',
+                      background: '#2563eb',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '6px',
+                      fontSize: '0.78rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      textAlign: 'center',
+                    }}
+                  >
+                    ↑ Update Now
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </div>
