@@ -125,6 +125,7 @@ export default function CrewSidebar({
   onClose,
   expandedShiftIds = null,
   onToggleShiftExpanded,
+  closing = false,
 }) {
   const now = new Date();
   const tierRank = { red: 0, yellow: 1, blue: 2, green: 3 };
@@ -155,7 +156,7 @@ export default function CrewSidebar({
   const totalPeople = groups.reduce((s, g) => s + g.crewSize, 0);
 
   return (
-    <div className="crew-overlay">
+    <div className={`crew-overlay${closing ? ' crew-overlay--closing' : ''}`}>
       <div
         style={{
           display: 'flex',

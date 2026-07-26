@@ -400,6 +400,7 @@ export default function App() {
   const [selectedCrewKey, setSelectedCrewKey] = useState(null);
   // Toggles the manager-only "Crew on shift" list overlay on the map.
   const [showCrewPanel, setShowCrewPanel] = useState(false);
+  const crewPanelPresence = useAnimatedPresence(showCrewPanel);
   // Shift ids whose crew members are expanded in the sidebar AND on the
   // map. Collapsed (default) = only the lead pin/row is shown so a
   // 5-crew shift doesn't bury the office in 5 stacked pins. Toggled from
@@ -6446,7 +6447,7 @@ export default function App() {
           ) : null}
         </div>
 
-        {canManagePins && showCrewPanel ? (
+        {canManagePins && crewPanelPresence.mounted ? (
           <CrewSidebar
             shifts={crewShifts}
             selectedKey={selectedCrewKey}
@@ -6454,6 +6455,7 @@ export default function App() {
             onClose={() => setShowCrewPanel(false)}
             expandedShiftIds={expandedCrewShiftIds}
             onToggleShiftExpanded={toggleCrewShiftExpanded}
+            closing={crewPanelPresence.closing}
           />
         ) : null}
 

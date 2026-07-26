@@ -656,6 +656,8 @@ button { cursor: pointer; }
   .topbar-account-popover--closing,
   .filter-overlay,
   .filter-overlay--closing,
+  .crew-overlay,
+  .crew-overlay--closing,
   .fab-menu,
   .fab-menu--closing {
     animation: none;
@@ -683,6 +685,13 @@ button { cursor: pointer; }
   overflow-x: hidden;
   overflow-y: auto;
   backdrop-filter: blur(12px);
+  transform-origin: top left;
+  animation: ui-fade-scale-in 0.18s ease-out;
+}
+
+.crew-overlay--closing {
+  animation: ui-fade-scale-out 0.18s ease-in forwards;
+  pointer-events: none;
 }
 
 @media (min-width: 769px) {
