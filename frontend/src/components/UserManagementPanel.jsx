@@ -417,7 +417,7 @@ function UserRow({
           >
             {ROLES.find((r) => r.value === user.role)?.label || user.role}
           </span>
-          {emailUnconfirmed ? (
+          {emailUnconfirmed && !isClient ? (
             <span
               className="pending-badge"
               title="This worker has not yet clicked the link in their signup confirmation email. Login and password reset will fail until they do — or until you click 'Confirm email' below."
@@ -596,7 +596,7 @@ function UserRow({
               Edit access
             </button>
           ) : null}
-          {emailUnconfirmed && !isSelf ? (
+          {emailUnconfirmed && !isSelf && !isClient ? (
             <button
               className="secondary-button"
               type="button"
