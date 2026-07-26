@@ -7,6 +7,13 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url
 ).href;
 
+// Zoom model: pages are rendered at fit-to-width, so zoom=1 is the floor
+// (full-width page fit). Users can pinch/Ctrl+scroll above 1 to inspect
+// detail; zooming out past fit-width is blocked so multi-page PDFs stay
+// one-finger scrollable via the container's native overflow.
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 5;
+
 /**
  * Renders a PDF (one canvas per page, stacked vertically) with pinch-to-zoom
  * + pan (mobile) and Ctrl+scroll zoom (desktop). Zoom is centered on the
@@ -28,7 +35,7 @@ export default function PdfPreviewViewer({ pdfBase64, pdfBytes }) {
   // All mutable transform state lives in a ref to avoid re-renders during gestures
   const stateRef = useRef({
     // CSS transform values
-    zoom: 1,       // current zoom multiplier (1 = fit-to-width)
+    zoom: 1,       // current zoom multiplier (1 = fit-to-width; also the minimum)
     panX: 0,       // px offset
     panY: 0,
     // Pinch tracking
@@ -205,7 +212,8 @@ export default function PdfPreviewViewer({ pdfBase64, pdfBytes }) {
         s.pinchStartPanX = s.panX;
         s.pinchStartPanY = s.panY;
       } else if (e.touches.length === 1 && s.zoom > 1.01) {
-        // Single-finger pan only when zoomed in
+        // Single-finger pan only when zoomed in. At fit-width (zoom=1),
+        // leave the gesture to native overflow scroll (touch-action: pan-y).
         s.dragging = true;
         s.dragStartX = e.touches[0].clientX;
         s.dragStartY = e.touches[0].clientY;
@@ -219,7 +227,10 @@ export default function PdfPreviewViewer({ pdfBase64, pdfBytes }) {
         e.preventDefault();
         const dist = getDist(e.touches);
         const mid = getMid(e.touches);
-        const newZoom = Math.max(0.5, Math.min(5, s.pinchStartZoom * (dist / s.pinchStartDist)));
+        const newZoom = Math.max(
+          MIN_ZOOM,
+          Math.min(MAX_ZOOM, s.pinchStartZoom * (dist / s.pinchStartDist))
+        );
 
         // Zoom toward the pinch midpoint.
         // With transformOrigin='0 0', the math is:
@@ -235,10 +246,16 @@ export default function PdfPreviewViewer({ pdfBase64, pdfBytes }) {
         const ratio = newZoom / s.pinchStartZoom;
 
         s.zoom = newZoom;
-        // Keep the pinch midpoint anchored in place, and also follow any
-        // translation of the midpoint as both fingers move together.
-        s.panX = midInContainerX - ratio * (midInContainerX - s.pinchStartPanX) + (mid.x - s.pinchMidX);
-        s.panY = midInContainerY - ratio * (midInContainerY - s.pinchStartPanY) + (mid.y - s.pinchMidY);
+        if (newZoom <= MIN_ZOOM) {
+          // At fit-width: clear pan so native one-finger vertical scroll works.
+          s.panX = 0;
+          s.panY = 0;
+        } else {
+          // Keep the pinch midpoint anchored in place, and also follow any
+          // translation of the midpoint as both fingers move together.
+          s.panX = midInContainerX - ratio * (midInContainerX - s.pinchStartPanX) + (mid.x - s.pinchMidX);
+          s.panY = midInContainerY - ratio * (midInContainerY - s.pinchStartPanY) + (mid.y - s.pinchMidY);
+        }
         applyTransform();
       } else if (s.dragging && e.touches.length === 1) {
         e.preventDefault();
@@ -252,9 +269,9 @@ export default function PdfPreviewViewer({ pdfBase64, pdfBytes }) {
       if (e.touches.length < 2) s.pinching = false;
       if (e.touches.length < 1) s.dragging = false;
 
-      // Snap back to zoom=1 if close (but only when zoomed IN toward 1;
-      // allow zoom-out below 1 for small-screen viewing).
-      if (!s.pinching && s.zoom > 1 && s.zoom < 1.05) {
+      // Snap back to fit-width (zoom=1) when close, clearing pan so native
+      // one-finger vertical scroll works for multi-page PDFs.
+      if (!s.pinching && s.zoom < 1.05) {
         s.zoom = 1;
         s.panX = 0;
         s.panY = 0;
@@ -268,7 +285,7 @@ export default function PdfPreviewViewer({ pdfBase64, pdfBytes }) {
       if (!e.ctrlKey) return;  // no preventDefault → default scroll behavior
       e.preventDefault();
       const factor = e.deltaY > 0 ? 0.9 : 1.1;
-      const newZoom = Math.max(0.5, Math.min(5, s.zoom * factor));
+      const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, s.zoom * factor));
 
       // Same anchor math as pinch — zoom toward the cursor.
       const rect = container.getBoundingClientRect();
@@ -276,11 +293,16 @@ export default function PdfPreviewViewer({ pdfBase64, pdfBytes }) {
       const cursorY = e.clientY - rect.top;
       const ratio = newZoom / s.zoom;
 
-      s.panX = cursorX - ratio * (cursorX - s.panX);
-      s.panY = cursorY - ratio * (cursorY - s.panY);
-      s.zoom = newZoom;
-
-      if (s.zoom > 1 && s.zoom < 1.05) { s.zoom = 1; s.panX = 0; s.panY = 0; }
+      if (newZoom <= MIN_ZOOM) {
+        s.zoom = 1;
+        s.panX = 0;
+        s.panY = 0;
+      } else {
+        s.panX = cursorX - ratio * (cursorX - s.panX);
+        s.panY = cursorY - ratio * (cursorY - s.panY);
+        s.zoom = newZoom;
+        if (s.zoom < 1.05) { s.zoom = 1; s.panX = 0; s.panY = 0; }
+      }
       applyTransform();
     };
 
