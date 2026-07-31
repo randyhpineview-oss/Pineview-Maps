@@ -67,6 +67,7 @@ import {
   upsertRecent,
   upsertSite,
   deleteHydroseedDailyDraft,
+  deleteCachedPdf,
   putCachedPdf,
 } from './lib/offlineStore';
 import { formatDate, nameKey, normalizeName, pinTypeLabel, statusLabel } from './lib/mapUtils';
@@ -1574,11 +1575,33 @@ export default function App() {
             // an existing ticket number (from the record being edited),
             // so we don't need to call ensurePdfAndTicket — the form
             // already produced a fresh PDF when the worker hit Save.
-            await requestWithUploadProgress(`/api/site-spray-records/${item.targetId}`, {
+            const updatedRecord = await requestWithUploadProgress(`/api/site-spray-records/${item.targetId}`, {
               method: 'PATCH',
               body: item.payload,
               onProgress: onLane1Bytes,
             });
+            // Keep the View-PDF overlay in sync: create writes ticket: cache,
+            // regenerate deletes it, but edit used to leave the pre-edit PDF
+            // cached — so View showed stale bytes while Dropbox/Edit were fine.
+            try {
+              const tn =
+                item.ticket_number
+                || item.payload?.ticket_number
+                || updatedRecord?.ticket_number
+                || null;
+              const freshPdf = item.payload?.pdf_base64 || null;
+              if (tn && freshPdf) {
+                await putCachedPdf(`ticket:${tn}`, freshPdf);
+              } else if (tn) {
+                await deleteCachedPdf(`ticket:${tn}`);
+              }
+              // Dropbox may overwrite in place (same url) — refresh/bust url keys too.
+              if (updatedRecord?.pdf_url && freshPdf) {
+                await putCachedPdf(`url:${updatedRecord.pdf_url}`, freshPdf);
+              } else if (updatedRecord?.pdf_url) {
+                await deleteCachedPdf(`url:${updatedRecord.pdf_url}`);
+              }
+            } catch { /* non-fatal — cache is best-effort */ }
             try {
               const siteId = item.payload?.site_id || 0;
               if (Number.isInteger(siteId) && siteId > 0) {
